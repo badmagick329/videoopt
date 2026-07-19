@@ -103,6 +103,8 @@ internal static class CliApplication
         builder.Services.AddSingleton<IFileScanner, FileScanner>();
         builder.Services.AddSingleton<Func<string, ICrfSearchClient>>(_ => abAv1Path => new AbAv1CrfSearchClient(abAv1Path));
         builder.Services.AddSingleton<Func<string, IVideoEncoder>>(_ => abAv1Path => new AbAv1VideoEncoder(abAv1Path));
+        builder.Services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
+        builder.Services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
         return builder.Build();
     }
 
@@ -137,6 +139,8 @@ internal static class CliApplication
             CliCommandKind.Scan => await RunScanAsync(services.GetRequiredService<IFileScanner>(), configuration, command, cancellationToken),
             CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
             CliCommandKind.Encode => await RunEncodeAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.OutputPath!, cancellationToken),
+            CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command.OutputPath!, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -372,6 +376,7 @@ internal static class CliApplication
         var sourceDirectory = Path.GetDirectoryName(sourcePath)!;
         var outputDirectory = Path.Combine(sourceDirectory, ".video-optimiser");
         var outputPath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(sourcePath)}.{Guid.NewGuid():N}.encoding{Path.GetExtension(sourcePath)}");
+        var fingerprint = await services.GetRequiredService<IFileFingerprintService>().CreateAsync(sourcePath, cancellationToken);
         var encoder = services.GetRequiredService<Func<string, IVideoEncoder>>()(configuration.Settings.Tools.AbAv1Path);
         if (command.DryRun)
         {
@@ -385,8 +390,57 @@ internal static class CliApplication
         Console.WriteLine($"Encoding to temporary file: {outputPath}");
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
         var result = await encoder.EncodeAsync(sourcePath, outputPath, command.Crf.Value, configuration.Settings.Quality, progress, cancellationToken);
+        await services.GetRequiredService<IOutputManifestStore>().SaveAsync(new OutputManifest { SourcePath = sourcePath, SourceFingerprint = fingerprint, OutputPath = outputPath, Crf = command.Crf.Value, CreatedUtc = DateTimeOffset.UtcNow }, cancellationToken);
         Console.WriteLine($"Temporary AV1 file created: {result.OutputPath} ({result.Duration:g})");
         return (int)ExitCode.Success;
+    }
+
+    private static async Task<int> RunValidateAsync(IServiceProvider services, LoadedConfiguration configuration, string outputPath, CancellationToken cancellationToken)
+    {
+        var store = services.GetRequiredService<IOutputManifestStore>();
+        var manifest = await store.LoadAsync(Path.GetFullPath(outputPath), cancellationToken);
+        var failures = new List<string>();
+        if (!File.Exists(manifest.SourcePath) || !File.Exists(manifest.OutputPath)) failures.Add("Source or temporary output is missing.");
+        var source = failures.Count == 0 ? await services.GetRequiredService<Func<string, IMediaProbe>>()(configuration.Settings.Tools.FfprobePath).ProbeAsync(manifest.SourcePath, cancellationToken) : null;
+        var output = failures.Count == 0 ? await services.GetRequiredService<Func<string, IMediaProbe>>()(configuration.Settings.Tools.FfprobePath).ProbeAsync(manifest.OutputPath, cancellationToken) : null;
+        if (output is not null && output.PrimaryVideoCodec != "av1") failures.Add("Output video is not AV1.");
+        if (source is not null && output is not null)
+        {
+            if (Math.Abs((source.DurationSeconds ?? 0) - (output.DurationSeconds ?? 0)) > configuration.Settings.Validation.DurationToleranceSeconds) failures.Add("Output duration differs from source.");
+            if (source.AudioStreamCount != output.AudioStreamCount || source.SubtitleStreamCount != output.SubtitleStreamCount) failures.Add("Output stream counts differ from source.");
+        }
+        var sourceSize = new FileInfo(manifest.SourcePath).Length;
+        var outputSize = new FileInfo(manifest.OutputPath).Length;
+        var saved = (decimal)(sourceSize - outputSize) / sourceSize * 100;
+        if (configuration.Settings.Savings.RequireSmallerOutput && outputSize >= sourceSize || saved < configuration.Settings.Savings.MinimumPercentageSaved) failures.Add("Output does not meet savings policy.");
+        manifest.Validation = new ValidationReport { Passed = failures.Count == 0, Failures = failures, SourceSizeBytes = sourceSize, OutputSizeBytes = outputSize, PercentageSaved = saved, ValidatedUtc = DateTimeOffset.UtcNow };
+        await store.SaveAsync(manifest, cancellationToken);
+        Console.WriteLine(manifest.Validation.Passed ? $"Validation passed: saved {saved:F1}%" : "Validation failed: " + string.Join("; ", failures));
+        return manifest.Validation.Passed ? (int)ExitCode.Success : (int)ExitCode.ValidationFailure;
+    }
+
+    private static async Task<int> RunFinalizeAsync(IServiceProvider services, LoadedConfiguration configuration, string outputPath, CancellationToken cancellationToken)
+    {
+        var store = services.GetRequiredService<IOutputManifestStore>();
+        var manifest = await store.LoadAsync(Path.GetFullPath(outputPath), cancellationToken);
+        if (manifest.Validation?.Passed != true) { Console.Error.WriteLine("Run validate successfully before finalize."); return (int)ExitCode.ValidationFailure; }
+        if (!configuration.Settings.Original.Action.Equals("delete", StringComparison.OrdinalIgnoreCase)) { Console.Error.WriteLine("finalize currently requires original.action: delete."); return (int)ExitCode.InvalidConfiguration; }
+        if (await services.GetRequiredService<IFileFingerprintService>().CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint) { Console.Error.WriteLine("Source changed after encoding."); return (int)ExitCode.ProcessingFailure; }
+        var rollback = Path.Combine(Path.GetDirectoryName(manifest.SourcePath)!, $"{Path.GetFileNameWithoutExtension(manifest.SourcePath)}.{Guid.NewGuid():N}.original.pending-delete{Path.GetExtension(manifest.SourcePath)}");
+        try
+        {
+            File.Move(manifest.SourcePath, rollback);
+            File.Move(manifest.OutputPath, manifest.SourcePath);
+            if (!File.Exists(manifest.SourcePath) || new FileInfo(manifest.SourcePath).Length == 0) throw new IOException("Installed output is missing.");
+            File.Delete(rollback);
+            Console.WriteLine("Finalization complete. Original deleted.");
+            return (int)ExitCode.Success;
+        }
+        catch
+        {
+            if (!File.Exists(manifest.SourcePath) && File.Exists(rollback)) File.Move(rollback, manifest.SourcePath);
+            throw;
+        }
     }
 
     private const string Usage = """
@@ -398,6 +452,8 @@ Usage:
   video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--json]
   video-optimiser process <file> [--config <path>] [--force] [--dry-run]
   video-optimiser encode <file> --crf <number> [--config <path>] [--dry-run]
+  video-optimiser validate <temporary-output> [--config <path>]
+  video-optimiser finalize <temporary-output> [--config <path>]
 """;
 }
 
@@ -411,10 +467,10 @@ internal enum CliCommandKind
     Doctor,
     Scan,
     Process,
-    Encode
+    Encode, Validate, Finalize
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, int? Crf = null)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, int? Crf = null, string? OutputPath = null)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -479,6 +535,8 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["scan"] => CliCommandKind.Scan,
             ["process", _] => CliCommandKind.Process,
             ["encode", _] => CliCommandKind.Encode,
+            ["validate", _] => CliCommandKind.Validate,
+            ["finalize", _] => CliCommandKind.Finalize,
             _ => CliCommandKind.Invalid
         };
 
@@ -505,7 +563,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         if (dryRun && kind is not (CliCommandKind.Process or CliCommandKind.Encode)) return Invalid("--dry-run is only supported by process and encode.");
         if (crf is not null && kind != CliCommandKind.Encode) return Invalid("--crf is only supported by encode.");
 
-        return new CliCommand(kind, configurationPath, scanPath, recursive, json, null, kind is CliCommandKind.Process or CliCommandKind.Encode ? remaining[1] : null, force, dryRun, crf);
+        return new CliCommand(kind, configurationPath, scanPath, recursive, json, null, kind is CliCommandKind.Process or CliCommandKind.Encode ? remaining[1] : null, force, dryRun, crf, kind is CliCommandKind.Validate or CliCommandKind.Finalize ? remaining[1] : null);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, message);
