@@ -3,6 +3,7 @@ video-optimiser.yaml
 jobs.db
 jobs.db-*
 logs/
+.ab-av1-*/
 **/bin/
 **/obj/
 .vs/
