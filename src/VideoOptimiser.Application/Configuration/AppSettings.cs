@@ -85,6 +85,16 @@ public sealed class QualitySettings
     public int Preset { get; set; } = 6;
     public string Encoder { get; set; } = "libsvtav1";
     public string PixelFormat { get; set; } = "yuv420p10le";
+    public CrfSearchSettings CrfSearch { get; set; } = new();
+}
+
+public sealed class CrfSearchSettings
+{
+    public bool Enabled { get; set; } = true;
+    public int MinCrf { get; set; } = 18;
+    public int MaxCrf { get; set; } = 50;
+    public int SampleCount { get; set; } = 5;
+    public string SampleDuration { get; set; } = "20s";
 }
 
 public sealed class OutputSettings

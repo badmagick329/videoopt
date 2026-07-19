@@ -7,10 +7,12 @@ using Serilog;
 using Serilog.Events;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Infrastructure.Processing;
 using VideoOptimiser.Infrastructure.Scanning;
 
 return await CliApplication.RunAsync(args);
@@ -43,7 +45,21 @@ internal static class CliApplication
             }
 
             using var host = BuildHost();
-            return await ExecuteAsync(host.Services, command, CancellationToken.None);
+            using var cancellationSource = new CancellationTokenSource();
+            ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                cancellationSource.Cancel();
+            };
+            Console.CancelKeyPress += cancelHandler;
+            try
+            {
+                return await ExecuteAsync(host.Services, command, cancellationSource.Token);
+            }
+            finally
+            {
+                Console.CancelKeyPress -= cancelHandler;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -85,6 +101,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<IFileStabilityService, FileStabilityService>();
         builder.Services.AddSingleton<Func<string, IMediaProbe>>(_ => ffprobePath => new FfprobeMediaProbe(ffprobePath));
         builder.Services.AddSingleton<IFileScanner, FileScanner>();
+        builder.Services.AddSingleton<Func<string, ICrfSearchClient>>(_ => abAv1Path => new AbAv1CrfSearchClient(abAv1Path));
         return builder.Build();
     }
 
@@ -117,6 +134,7 @@ internal static class CliApplication
             CliCommandKind.ConfigValidate => ValidateConfiguration(services.GetRequiredService<ISettingsValidator>(), configuration),
             CliCommandKind.Doctor => await RunDoctorAsync(services.GetRequiredService<IDoctorService>(), configuration, command.Json, cancellationToken),
             CliCommandKind.Scan => await RunScanAsync(services.GetRequiredService<IFileScanner>(), configuration, command, cancellationToken),
+            CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -260,6 +278,80 @@ internal static class CliApplication
         return report.EligibleCount > 0 ? (int)ExitCode.Success : (int)ExitCode.NoEligibleFiles;
     }
 
+    private static async Task<int> RunProcessAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
+    {
+        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
+        if (diagnostics.Count > 0)
+        {
+            foreach (var diagnostic in diagnostics)
+            {
+                Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}");
+            }
+
+            return (int)ExitCode.InvalidConfiguration;
+        }
+
+        var sourcePath = Path.GetFullPath(command.ProcessPath!);
+        if (!File.Exists(sourcePath))
+        {
+            Console.Error.WriteLine($"Source file does not exist: {sourcePath}");
+            return (int)ExitCode.ProcessingFailure;
+        }
+
+        if (!command.Force && !configuration.Settings.Watch.Roots.Any(root => IsWithinRoot(sourcePath, root.Path)))
+        {
+            Console.Error.WriteLine("Source file is outside configured watch roots. Use --force to bypass this check.");
+            return (int)ExitCode.ProcessingFailure;
+        }
+
+        var info = new FileInfo(sourcePath);
+        if (!HumanReadableValues.TryParseSize(configuration.Settings.Processing.MinimumFileSize, out var minimumSize) || info.Length < minimumSize)
+        {
+            Console.Error.WriteLine("Source file is below processing.minimumFileSize. Use --force to bypass this check.");
+            return (int)ExitCode.NoEligibleFiles;
+        }
+
+        var stability = await services.GetRequiredService<IFileStabilityService>().WaitUntilStableAsync(
+            sourcePath,
+            configuration.Settings.Watch.Stability,
+            requireRepeatedObservations: false,
+            cancellationToken: cancellationToken);
+        if (!stability.IsStable)
+        {
+            Console.Error.WriteLine($"Source is not ready: {stability.Reason}");
+            return (int)ExitCode.ProcessingFailure;
+        }
+
+        var media = await services.GetRequiredService<Func<string, IMediaProbe>>()(configuration.Settings.Tools.FfprobePath).ProbeAsync(sourcePath, cancellationToken);
+        if (!command.Force && !configuration.Settings.Eligibility.RequiredVideoCodecs.Contains(media.PrimaryVideoCodec, StringComparer.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine($"Source codec is {media.PrimaryVideoCodec}; expected {string.Join(", ", configuration.Settings.Eligibility.RequiredVideoCodecs)}. Use --force to bypass this check.");
+            return (int)ExitCode.NoEligibleFiles;
+        }
+
+        var client = services.GetRequiredService<Func<string, ICrfSearchClient>>()(configuration.Settings.Tools.AbAv1Path);
+        if (command.DryRun)
+        {
+            Console.WriteLine("Would run:");
+            Console.WriteLine(configuration.Settings.Tools.AbAv1Path + " " + string.Join(" ", client.BuildArguments(sourcePath, configuration.Settings.Quality).Select(Quote)));
+            return (int)ExitCode.Success;
+        }
+
+        Console.WriteLine($"CRF search: {sourcePath}");
+        var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
+        var result = await client.SearchAsync(sourcePath, configuration.Settings.Quality, progress, cancellationToken);
+        Console.WriteLine($"Selected CRF: {result.Crf} ({result.Duration:g})");
+        return (int)ExitCode.Success;
+    }
+
+    private static bool IsWithinRoot(string sourcePath, string rootPath)
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath)) + Path.DirectorySeparatorChar;
+        return sourcePath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string Quote(string value) => value.Any(char.IsWhiteSpace) ? $"\"{value}\"" : value;
+
     private const string Usage = """
 Usage:
   video-optimiser config init [--config <path>]
@@ -267,6 +359,7 @@ Usage:
   video-optimiser config validate [--config <path>]
   video-optimiser doctor [--config <path>] [--json]
   video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--json]
+  video-optimiser process <file> [--config <path>] [--force] [--dry-run]
 """;
 }
 
@@ -278,10 +371,11 @@ internal enum CliCommandKind
     ConfigShow,
     ConfigValidate,
     Doctor,
-    Scan
+    Scan,
+    Process
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool Json, string? Error)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -291,6 +385,8 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         var remaining = new List<string>();
         string? configurationPath = null;
         string? scanPath = null;
+        var force = false;
+        var dryRun = false;
         var recursive = false;
         var json = false;
 
@@ -315,6 +411,10 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                     recursive = true;
                     break;
                 case "--dry-run":
+                    dryRun = true;
+                    break;
+                case "--force":
+                    force = true;
                     break;
                 case "--help" or "-h" or "help":
                     return new CliCommand(CliCommandKind.Help, null, null, false, false, null);
@@ -331,6 +431,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["config", "validate"] => CliCommandKind.ConfigValidate,
             ["doctor"] => CliCommandKind.Doctor,
             ["scan"] => CliCommandKind.Scan,
+            ["process", _] => CliCommandKind.Process,
             _ => CliCommandKind.Invalid
         };
 
@@ -349,7 +450,12 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("--path and --recursive are only supported by scan.");
         }
 
-        return new CliCommand(kind, configurationPath, scanPath, recursive, json, null);
+        if ((force || dryRun) && kind != CliCommandKind.Process)
+        {
+            return Invalid("--force and --dry-run are only supported by process.");
+        }
+
+        return new CliCommand(kind, configurationPath, scanPath, recursive, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, message);

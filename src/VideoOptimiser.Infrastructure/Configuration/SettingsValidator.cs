@@ -37,6 +37,9 @@ public sealed class SettingsValidator : ISettingsValidator
         AddWhen(settings.Processing.RetryCount < 0, "InvalidRetryCount", "processing.retryCount cannot be negative.");
         AddWhen(settings.Quality.MinimumVmaf is < 0 or > 100, "InvalidVmaf", "quality.minimumVmaf must be between 0 and 100.");
         AddWhen(settings.Quality.Preset < 0, "InvalidPreset", "quality.preset cannot be negative.");
+        AddWhen(settings.Quality.CrfSearch.MinCrf > settings.Quality.CrfSearch.MaxCrf, "InvalidCrfRange", "quality.crfSearch.minCrf cannot exceed maxCrf.");
+        AddWhen(settings.Quality.CrfSearch.SampleCount < 1, "InvalidSampleCount", "quality.crfSearch.sampleCount must be at least 1.");
+        ValidateDuration(settings.Quality.CrfSearch.SampleDuration, "quality.crfSearch.sampleDuration", diagnostics);
         AddWhen(string.IsNullOrWhiteSpace(settings.Quality.Encoder), "EncoderRequired", "quality.encoder is required.");
         AddWhen(!IsOneOf(settings.Output.Container, "preserve", "mkv", "mp4"), "InvalidContainer", "output.container must be preserve, mkv, or mp4.");
         AddWhen(string.IsNullOrWhiteSpace(settings.Output.TemporarySuffix), "TemporarySuffixRequired", "output.temporarySuffix is required.");

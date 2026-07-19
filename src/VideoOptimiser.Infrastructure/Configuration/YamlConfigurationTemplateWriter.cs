@@ -75,6 +75,12 @@ quality:
   preset: 6
   encoder: "libsvtav1"
   pixelFormat: "yuv420p10le"
+  crfSearch:
+    enabled: true
+    minCrf: 18
+    maxCrf: 50
+    sampleCount: 5
+    sampleDuration: "20s"
 
 output:
   container: "preserve"
