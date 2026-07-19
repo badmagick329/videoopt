@@ -1,5 +1,8 @@
 notes/*
 video-optimiser.yaml
+jobs.db
+jobs.db-*
+logs/
 **/bin/
 **/obj/
 .vs/
