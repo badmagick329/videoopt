@@ -12,6 +12,7 @@ public sealed class FileScanner(
         IReadOnlyList<WatchRootSettings> roots,
         AppSettings settings,
         bool useImmediateStabilityCheck = false,
+        bool stopAfterFirstEligible = false,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -63,7 +64,12 @@ public sealed class FileScanner(
                         continue;
                     }
 
-                    items.Add(await EvaluateAsync(canonicalPath, settings, useImmediateStabilityCheck, progress, cancellationToken));
+                    var item = await EvaluateAsync(canonicalPath, settings, useImmediateStabilityCheck, progress, cancellationToken);
+                    items.Add(item);
+                    if (stopAfterFirstEligible && item.Status == ScanItemStatus.Eligible)
+                    {
+                        return new ScanReport(items, issues);
+                    }
                 }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

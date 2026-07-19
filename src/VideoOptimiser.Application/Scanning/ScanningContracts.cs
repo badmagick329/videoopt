@@ -57,6 +57,7 @@ public interface IFileScanner
         IReadOnlyList<WatchRootSettings> roots,
         AppSettings settings,
         bool useImmediateStabilityCheck = false,
+        bool stopAfterFirstEligible = false,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }
