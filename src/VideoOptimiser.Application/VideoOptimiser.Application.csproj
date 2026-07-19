@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\VideoOptimiser.Domain\VideoOptimiser.Domain.csproj" />
+  </ItemGroup>
+</Project>

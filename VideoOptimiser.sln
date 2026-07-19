@@ -1,0 +1,42 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoOptimiser.Domain", "src\VideoOptimiser.Domain\VideoOptimiser.Domain.csproj", "{E0C3FBB4-604B-4F87-94BD-0E7963D64C50}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoOptimiser.Application", "src\VideoOptimiser.Application\VideoOptimiser.Application.csproj", "{1A7C0F3A-792B-4877-9D15-B0737A96336D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoOptimiser.Infrastructure", "src\VideoOptimiser.Infrastructure\VideoOptimiser.Infrastructure.csproj", "{4B658A69-1B98-411A-B7CE-0661F9643F25}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoOptimiser.Cli", "src\VideoOptimiser.Cli\VideoOptimiser.Cli.csproj", "{55434B12-93B5-486E-8F2A-49020A98A60F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoOptimiser.UnitTests", "tests\VideoOptimiser.UnitTests\VideoOptimiser.UnitTests.csproj", "{E91F9A8E-4B5B-44FE-9F7B-2B1E52B374B2}"
+EndProject
+Global
+  GlobalSection(SolutionConfigurationPlatforms) = preSolution
+    Debug|Any CPU = Debug|Any CPU
+    Release|Any CPU = Release|Any CPU
+  EndGlobalSection
+  GlobalSection(ProjectConfigurationPlatforms) = postSolution
+    {E0C3FBB4-604B-4F87-94BD-0E7963D64C50}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {E0C3FBB4-604B-4F87-94BD-0E7963D64C50}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {E0C3FBB4-604B-4F87-94BD-0E7963D64C50}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {E0C3FBB4-604B-4F87-94BD-0E7963D64C50}.Release|Any CPU.Build.0 = Release|Any CPU
+    {1A7C0F3A-792B-4877-9D15-B0737A96336D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {1A7C0F3A-792B-4877-9D15-B0737A96336D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {1A7C0F3A-792B-4877-9D15-B0737A96336D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {1A7C0F3A-792B-4877-9D15-B0737A96336D}.Release|Any CPU.Build.0 = Release|Any CPU
+    {4B658A69-1B98-411A-B7CE-0661F9643F25}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {4B658A69-1B98-411A-B7CE-0661F9643F25}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {4B658A69-1B98-411A-B7CE-0661F9643F25}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {4B658A69-1B98-411A-B7CE-0661F9643F25}.Release|Any CPU.Build.0 = Release|Any CPU
+    {55434B12-93B5-486E-8F2A-49020A98A60F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {55434B12-93B5-486E-8F2A-49020A98A60F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {55434B12-93B5-486E-8F2A-49020A98A60F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {55434B12-93B5-486E-8F2A-49020A98A60F}.Release|Any CPU.Build.0 = Release|Any CPU
+    {E91F9A8E-4B5B-44FE-9F7B-2B1E52B374B2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {E91F9A8E-4B5B-44FE-9F7B-2B1E52B374B2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {E91F9A8E-4B5B-44FE-9F7B-2B1E52B374B2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {E91F9A8E-4B5B-44FE-9F7B-2B1E52B374B2}.Release|Any CPU.Build.0 = Release|Any CPU
+  EndGlobalSection
+EndGlobal
