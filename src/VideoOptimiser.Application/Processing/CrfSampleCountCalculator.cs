@@ -10,16 +10,6 @@ public static class CrfSampleCountCalculator
         }
 
         var minutes = durationSeconds.Value / 60d;
-        if (minutes <= 2)
-        {
-            return 2;
-        }
-
-        if (minutes <= 4)
-        {
-            return (int)Math.Ceiling(minutes);
-        }
-
-        return Math.Min(12, 4 + (int)Math.Ceiling((minutes - 4) / 3));
+        return Math.Clamp((int)Math.Ceiling(minutes / 2), 2, 12);
     }
 }
