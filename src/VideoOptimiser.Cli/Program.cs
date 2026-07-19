@@ -7,9 +7,11 @@ using Serilog;
 using Serilog.Events;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Infrastructure.Scanning;
 
 return await CliApplication.RunAsync(args);
 
@@ -80,6 +82,9 @@ internal static class CliApplication
         builder.Services.AddSingleton<IDatabaseInitializer, SqliteDatabaseInitializer>();
         builder.Services.AddSingleton<IToolVerifier, ProcessToolVerifier>();
         builder.Services.AddSingleton<IDoctorService, DoctorService>();
+        builder.Services.AddSingleton<IFileStabilityService, FileStabilityService>();
+        builder.Services.AddSingleton<Func<string, IMediaProbe>>(_ => ffprobePath => new FfprobeMediaProbe(ffprobePath));
+        builder.Services.AddSingleton<IFileScanner, FileScanner>();
         return builder.Build();
     }
 
@@ -111,6 +116,7 @@ internal static class CliApplication
             CliCommandKind.ConfigShow => ShowConfiguration(configuration),
             CliCommandKind.ConfigValidate => ValidateConfiguration(services.GetRequiredService<ISettingsValidator>(), configuration),
             CliCommandKind.Doctor => await RunDoctorAsync(services.GetRequiredService<IDoctorService>(), configuration, command.Json, cancellationToken),
+            CliCommandKind.Scan => await RunScanAsync(services.GetRequiredService<IFileScanner>(), configuration, command, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -196,12 +202,71 @@ internal static class CliApplication
         return (int)report.ExitCode;
     }
 
+    private static async Task<int> RunScanAsync(IFileScanner scanner, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
+    {
+        var roots = string.IsNullOrWhiteSpace(command.ScanPath)
+            ? configuration.Settings.Watch.Roots
+            : [new WatchRootSettings { Path = Path.GetFullPath(command.ScanPath), Recursive = command.Recursive }];
+        if (string.IsNullOrWhiteSpace(command.ScanPath) && command.Recursive)
+        {
+            roots = roots.Select(root => new WatchRootSettings { Path = root.Path, Recursive = true }).ToList();
+        }
+
+        IProgress<ScanProgress>? progress = command.Json
+            ? null
+            : new InlineProgress<ScanProgress>(update => Console.WriteLine($"{update.Stage,-20} {update.Path} — {update.Message}"));
+        var report = await scanner.ScanAsync(
+            roots,
+            configuration.Settings,
+            useImmediateStabilityCheck: true,
+            progress: progress,
+            cancellationToken: cancellationToken);
+        if (command.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                eligibleCount = report.EligibleCount,
+                items = report.Items.Select(item => new
+                {
+                    path = item.Path,
+                    status = item.Status.ToString(),
+                    reason = item.Reason,
+                    sizeBytes = item.SizeBytes,
+                    primaryVideoCodec = item.MediaInfo?.PrimaryVideoCodec
+                }),
+                issues = report.Issues.Select(issue => new { path = issue.Path, message = issue.Message })
+            }, JsonOptions));
+        }
+        else
+        {
+            foreach (var item in report.Items)
+            {
+                Console.WriteLine($"{item.Status,-20} {item.Path} — {item.Reason}");
+            }
+
+            foreach (var issue in report.Issues)
+            {
+                Console.Error.WriteLine($"Issue                {issue.Path} — {issue.Message}");
+            }
+
+            Console.WriteLine($"Eligible files: {report.EligibleCount}");
+        }
+
+        if (report.Items.Any(item => item.Status == ScanItemStatus.ProbeFailed) || report.Issues.Count > 0)
+        {
+            return (int)ExitCode.GeneralFailure;
+        }
+
+        return report.EligibleCount > 0 ? (int)ExitCode.Success : (int)ExitCode.NoEligibleFiles;
+    }
+
     private const string Usage = """
 Usage:
   video-optimiser config init [--config <path>]
   video-optimiser config show [--config <path>]
   video-optimiser config validate [--config <path>]
   video-optimiser doctor [--config <path>] [--json]
+  video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--json]
 """;
 }
 
@@ -212,10 +277,11 @@ internal enum CliCommandKind
     ConfigInit,
     ConfigShow,
     ConfigValidate,
-    Doctor
+    Doctor,
+    Scan
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, bool Json, string? Error)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool Json, string? Error)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -224,6 +290,8 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
     {
         var remaining = new List<string>();
         string? configurationPath = null;
+        string? scanPath = null;
+        var recursive = false;
         var json = false;
 
         for (var index = 0; index < args.Length; index++)
@@ -238,8 +306,18 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                 case "--json":
                     json = true;
                     break;
+                case "--path" when index + 1 < args.Length:
+                    scanPath = args[++index];
+                    break;
+                case "--path":
+                    return Invalid("--path requires a folder.");
+                case "--recursive":
+                    recursive = true;
+                    break;
+                case "--dry-run":
+                    break;
                 case "--help" or "-h" or "help":
-                    return new CliCommand(CliCommandKind.Help, null, false, null);
+                    return new CliCommand(CliCommandKind.Help, null, null, false, false, null);
                 default:
                     remaining.Add(args[index]);
                     break;
@@ -252,6 +330,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["config", "show"] => CliCommandKind.ConfigShow,
             ["config", "validate"] => CliCommandKind.ConfigValidate,
             ["doctor"] => CliCommandKind.Doctor,
+            ["scan"] => CliCommandKind.Scan,
             _ => CliCommandKind.Invalid
         };
 
@@ -260,13 +339,23 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("Unknown or incomplete command.");
         }
 
-        if (json && kind != CliCommandKind.Doctor)
+        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.Scan))
         {
-            return Invalid("--json is only supported by doctor.");
+            return Invalid("--json is only supported by doctor and scan.");
         }
 
-        return new CliCommand(kind, configurationPath, json, null);
+        if ((scanPath is not null || recursive) && kind != CliCommandKind.Scan)
+        {
+            return Invalid("--path and --recursive are only supported by scan.");
+        }
+
+        return new CliCommand(kind, configurationPath, scanPath, recursive, json, null);
     }
 
-    private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, false, message);
+    private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, message);
+}
+
+internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T value) => report(value);
 }

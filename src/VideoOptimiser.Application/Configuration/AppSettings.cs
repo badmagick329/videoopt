@@ -7,6 +7,7 @@ public sealed class AppSettings
     public DatabaseSettings Database { get; set; } = new();
     public LoggingSettings Logging { get; set; } = new();
     public WatchSettings Watch { get; set; } = new();
+    public EligibilitySettings Eligibility { get; set; } = new();
     public ProcessingSettings Processing { get; set; } = new();
     public QualitySettings Quality { get; set; } = new();
     public OutputSettings Output { get; set; } = new();
@@ -40,12 +41,32 @@ public sealed class WatchSettings
 {
     public List<WatchRootSettings> Roots { get; set; } = [];
     public string ReconciliationInterval { get; set; } = "10m";
+    public StabilitySettings Stability { get; set; } = new();
 }
 
 public sealed class WatchRootSettings
 {
     public string Path { get; set; } = string.Empty;
     public bool Recursive { get; set; } = true;
+}
+
+public sealed class StabilitySettings
+{
+    public string PollInterval { get; set; } = "15s";
+    public int RequiredStableChecks { get; set; } = 4;
+    public string MinimumAge { get; set; } = "2m";
+    public string Timeout { get; set; } = "24h";
+}
+
+public sealed class EligibilitySettings
+{
+    public List<string> Extensions { get; set; } = [".mkv", ".mp4", ".mov", ".m4v"];
+    public List<string> RequiredVideoCodecs { get; set; } = ["h264"];
+    public List<string> ExcludedExtensions { get; set; } = [".tmp", ".part", ".partial"];
+    public List<string> ExcludedNamePatterns { get; set; } = ["*.encoding.*", "*.crf-search.*", "*.video-optimiser.*"];
+    public List<string> ExcludedDirectories { get; set; } = [".video-optimiser", "Archive"];
+    public bool IgnoreHiddenFiles { get; set; } = true;
+    public bool IgnoreSystemFiles { get; set; } = true;
 }
 
 public sealed class ProcessingSettings

@@ -47,6 +47,20 @@ logging:
 watch:
   roots: []
   reconciliationInterval: "10m"
+  stability:
+    pollInterval: "15s"
+    requiredStableChecks: 4
+    minimumAge: "2m"
+    timeout: "24h"
+
+eligibility:
+  extensions: [".mkv", ".mp4", ".mov", ".m4v"]
+  requiredVideoCodecs: ["h264"]
+  excludedExtensions: [".tmp", ".part", ".partial"]
+  excludedNamePatterns: ["*.encoding.*", "*.crf-search.*", "*.video-optimiser.*"]
+  excludedDirectories: [".video-optimiser", "Archive"]
+  ignoreHiddenFiles: true
+  ignoreSystemFiles: true
 
 processing:
   minimumFileSize: "2GiB"
