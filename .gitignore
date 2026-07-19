@@ -1,1 +1,5 @@
 notes/*
+video-optimiser.yaml
+**/bin/
+**/obj/
+.vs/
