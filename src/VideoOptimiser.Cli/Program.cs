@@ -105,6 +105,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<Func<string, IVideoEncoder>>(_ => abAv1Path => new AbAv1VideoEncoder(abAv1Path));
         builder.Services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
         builder.Services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
+        builder.Services.AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
         return builder.Build();
     }
 
@@ -426,21 +427,9 @@ internal static class CliApplication
         if (manifest.Validation?.Passed != true) { Console.Error.WriteLine("Run validate successfully before finalize."); return (int)ExitCode.ValidationFailure; }
         if (!configuration.Settings.Original.Action.Equals("delete", StringComparison.OrdinalIgnoreCase)) { Console.Error.WriteLine("finalize currently requires original.action: delete."); return (int)ExitCode.InvalidConfiguration; }
         if (await services.GetRequiredService<IFileFingerprintService>().CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint) { Console.Error.WriteLine("Source changed after encoding."); return (int)ExitCode.ProcessingFailure; }
-        var rollback = Path.Combine(Path.GetDirectoryName(manifest.SourcePath)!, $"{Path.GetFileNameWithoutExtension(manifest.SourcePath)}.{Guid.NewGuid():N}.original.pending-delete{Path.GetExtension(manifest.SourcePath)}");
-        try
-        {
-            File.Move(manifest.SourcePath, rollback);
-            File.Move(manifest.OutputPath, manifest.SourcePath);
-            if (!File.Exists(manifest.SourcePath) || new FileInfo(manifest.SourcePath).Length == 0) throw new IOException("Installed output is missing.");
-            File.Delete(rollback);
-            Console.WriteLine("Finalization complete. Original deleted.");
-            return (int)ExitCode.Success;
-        }
-        catch
-        {
-            if (!File.Exists(manifest.SourcePath) && File.Exists(rollback)) File.Move(rollback, manifest.SourcePath);
-            throw;
-        }
+        await services.GetRequiredService<ISafeFileInstaller>().InstallAsync(manifest.SourcePath, manifest.OutputPath, cancellationToken);
+        Console.WriteLine("Finalization complete. Original deleted.");
+        return (int)ExitCode.Success;
     }
 
     private const string Usage = """

@@ -2,7 +2,7 @@
 
 Windows CLI for converting H.264 videos to AV1 safely.
 
-Current status: scan files, find a CRF, and encode to a **separate temporary file**. It does not replace, archive, or delete originals.
+Current status: scan files, find a CRF, encode a temporary AV1, validate it, then explicitly replace the original.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ Current status: scan files, find a CRF, and encode to a **separate temporary fil
 dotnet run --project src/VideoOptimiser.Cli -- config init --config .\video-optimiser.yaml
 ```
 
-Edit `watch.roots` to your video folder and set `original.archiveDirectory`. Then check setup:
+Edit `watch.roots` to your video folder and set `original.action: "delete"`. Then check setup:
 
 ```powershell
 dotnet run --project src/VideoOptimiser.Cli -- doctor --config .\video-optimiser.yaml
@@ -57,5 +57,4 @@ Use `Ctrl+C` to stop `process` or `encode`.
 - `process` only creates short temporary samples to calculate CRF.
 - `encode` creates a separate temporary AV1 file.
 - `validate` checks the temporary AV1 before replacement.
-- `finalize` is explicit and uses a rollback filename before deleting the original.
-- No command currently replaces, archives, or deletes an original file.
+- `finalize` is explicit: it renames the original to a rollback file, installs the AV1, then deletes the rollback file.
