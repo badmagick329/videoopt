@@ -102,6 +102,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<Func<string, IMediaProbe>>(_ => ffprobePath => new FfprobeMediaProbe(ffprobePath));
         builder.Services.AddSingleton<IFileScanner, FileScanner>();
         builder.Services.AddSingleton<Func<string, ICrfSearchClient>>(_ => abAv1Path => new AbAv1CrfSearchClient(abAv1Path));
+        builder.Services.AddSingleton<Func<string, IVideoEncoder>>(_ => abAv1Path => new AbAv1VideoEncoder(abAv1Path));
         return builder.Build();
     }
 
@@ -135,6 +136,7 @@ internal static class CliApplication
             CliCommandKind.Doctor => await RunDoctorAsync(services.GetRequiredService<IDoctorService>(), configuration, command.Json, cancellationToken),
             CliCommandKind.Scan => await RunScanAsync(services.GetRequiredService<IFileScanner>(), configuration, command, cancellationToken),
             CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.Encode => await RunEncodeAsync(services, configuration, command, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -352,6 +354,41 @@ internal static class CliApplication
 
     private static string Quote(string value) => value.Any(char.IsWhiteSpace) ? $"\"{value}\"" : value;
 
+    private static async Task<int> RunEncodeAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
+    {
+        var sourcePath = Path.GetFullPath(command.ProcessPath!);
+        if (!File.Exists(sourcePath))
+        {
+            Console.Error.WriteLine($"Source file does not exist: {sourcePath}");
+            return (int)ExitCode.ProcessingFailure;
+        }
+
+        if (command.Crf is null or < 1 or > 63)
+        {
+            Console.Error.WriteLine("--crf must be between 1 and 63.");
+            return (int)ExitCode.InvalidArguments;
+        }
+
+        var sourceDirectory = Path.GetDirectoryName(sourcePath)!;
+        var outputDirectory = Path.Combine(sourceDirectory, ".video-optimiser");
+        var outputPath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(sourcePath)}.{Guid.NewGuid():N}.encoding{Path.GetExtension(sourcePath)}");
+        var encoder = services.GetRequiredService<Func<string, IVideoEncoder>>()(configuration.Settings.Tools.AbAv1Path);
+        if (command.DryRun)
+        {
+            Console.WriteLine("Would write temporary output:");
+            Console.WriteLine(outputPath);
+            Console.WriteLine(configuration.Settings.Tools.AbAv1Path + " " + string.Join(" ", encoder.BuildArguments(sourcePath, outputPath, command.Crf.Value, configuration.Settings.Quality).Select(Quote)));
+            return (int)ExitCode.Success;
+        }
+
+        Directory.CreateDirectory(outputDirectory);
+        Console.WriteLine($"Encoding to temporary file: {outputPath}");
+        var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
+        var result = await encoder.EncodeAsync(sourcePath, outputPath, command.Crf.Value, configuration.Settings.Quality, progress, cancellationToken);
+        Console.WriteLine($"Temporary AV1 file created: {result.OutputPath} ({result.Duration:g})");
+        return (int)ExitCode.Success;
+    }
+
     private const string Usage = """
 Usage:
   video-optimiser config init [--config <path>]
@@ -360,6 +397,7 @@ Usage:
   video-optimiser doctor [--config <path>] [--json]
   video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--json]
   video-optimiser process <file> [--config <path>] [--force] [--dry-run]
+  video-optimiser encode <file> --crf <number> [--config <path>] [--dry-run]
 """;
 }
 
@@ -372,10 +410,11 @@ internal enum CliCommandKind
     ConfigValidate,
     Doctor,
     Scan,
-    Process
+    Process,
+    Encode
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, int? Crf = null)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -387,6 +426,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         string? scanPath = null;
         var force = false;
         var dryRun = false;
+        int? crf = null;
         var recursive = false;
         var json = false;
 
@@ -416,6 +456,12 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                 case "--force":
                     force = true;
                     break;
+                case "--crf" when index + 1 < args.Length && int.TryParse(args[index + 1], out var parsedCrf):
+                    crf = parsedCrf;
+                    index++;
+                    break;
+                case "--crf":
+                    return Invalid("--crf requires an integer.");
                 case "--help" or "-h" or "help":
                     return new CliCommand(CliCommandKind.Help, null, null, false, false, null);
                 default:
@@ -432,6 +478,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["doctor"] => CliCommandKind.Doctor,
             ["scan"] => CliCommandKind.Scan,
             ["process", _] => CliCommandKind.Process,
+            ["encode", _] => CliCommandKind.Encode,
             _ => CliCommandKind.Invalid
         };
 
@@ -450,12 +497,15 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("--path and --recursive are only supported by scan.");
         }
 
-        if ((force || dryRun) && kind != CliCommandKind.Process)
+        if (force && kind != CliCommandKind.Process)
         {
-            return Invalid("--force and --dry-run are only supported by process.");
+            return Invalid("--force is only supported by process.");
         }
 
-        return new CliCommand(kind, configurationPath, scanPath, recursive, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun);
+        if (dryRun && kind is not (CliCommandKind.Process or CliCommandKind.Encode)) return Invalid("--dry-run is only supported by process and encode.");
+        if (crf is not null && kind != CliCommandKind.Encode) return Invalid("--crf is only supported by encode.");
+
+        return new CliCommand(kind, configurationPath, scanPath, recursive, json, null, kind is CliCommandKind.Process or CliCommandKind.Encode ? remaining[1] : null, force, dryRun, crf);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, message);
