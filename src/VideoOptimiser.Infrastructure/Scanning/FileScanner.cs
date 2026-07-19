@@ -1,0 +1,149 @@
+using System.Text.RegularExpressions;
+using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Scanning;
+
+namespace VideoOptimiser.Infrastructure.Scanning;
+
+public sealed class FileScanner(
+    IFileStabilityService stabilityService,
+    Func<string, IMediaProbe> mediaProbeFactory) : IFileScanner
+{
+    public async Task<ScanReport> ScanAsync(
+        IReadOnlyList<WatchRootSettings> roots,
+        AppSettings settings,
+        bool useImmediateStabilityCheck = false,
+        IProgress<ScanProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var items = new List<ScanItem>();
+        var issues = new List<ScanIssue>();
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var attributesToSkip = FileAttributes.ReparsePoint;
+        if (settings.Eligibility.IgnoreHiddenFiles)
+        {
+            attributesToSkip |= FileAttributes.Hidden;
+        }
+
+        if (settings.Eligibility.IgnoreSystemFiles)
+        {
+            attributesToSkip |= FileAttributes.System;
+        }
+
+        var options = new EnumerationOptions
+        {
+            IgnoreInaccessible = true,
+            RecurseSubdirectories = false,
+            ReturnSpecialDirectories = false,
+            AttributesToSkip = attributesToSkip
+        };
+
+        foreach (var root in roots)
+        {
+            if (!Directory.Exists(root.Path))
+            {
+                issues.Add(new ScanIssue(root.Path, "Watch root does not exist."));
+                continue;
+            }
+
+            options.RecurseSubdirectories = root.Recursive;
+            try
+            {
+                foreach (var path in Directory.EnumerateFiles(root.Path, "*", options))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var canonicalPath = Path.GetFullPath(path);
+                    if (!seenPaths.Add(canonicalPath))
+                    {
+                        continue;
+                    }
+
+                    if (IsWithinExcludedDirectory(canonicalPath, settings.Eligibility.ExcludedDirectories))
+                    {
+                        items.Add(new ScanItem(canonicalPath, ScanItemStatus.Ineligible, "File is in an excluded directory."));
+                        continue;
+                    }
+
+                    items.Add(await EvaluateAsync(canonicalPath, settings, useImmediateStabilityCheck, progress, cancellationToken));
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                issues.Add(new ScanIssue(root.Path, exception.Message));
+            }
+        }
+
+        return new ScanReport(items, issues);
+    }
+
+    private async Task<ScanItem> EvaluateAsync(string path, AppSettings settings, bool useImmediateStabilityCheck, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    {
+        var fileName = Path.GetFileName(path);
+        var extension = Path.GetExtension(path);
+        if (!settings.Eligibility.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+        {
+            return new ScanItem(path, ScanItemStatus.Ineligible, "Extension is not allowed.");
+        }
+
+        if (settings.Eligibility.ExcludedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase) ||
+            settings.Eligibility.ExcludedNamePatterns.Any(pattern => IsMatch(fileName, pattern)))
+        {
+            return new ScanItem(path, ScanItemStatus.Ineligible, "File name is excluded by configuration.");
+        }
+
+        var info = new FileInfo(path);
+        if (!info.Exists)
+        {
+            return new ScanItem(path, ScanItemStatus.WaitingForStability, "File no longer exists.");
+        }
+
+        if (info.Length < ParseMinimumFileSize(settings.Processing.MinimumFileSize))
+        {
+            return new ScanItem(path, ScanItemStatus.Ineligible, "File is below processing.minimumFileSize.", info.Length);
+        }
+
+        progress?.Report(new ScanProgress(
+            path,
+            "Stability",
+            useImmediateStabilityCheck
+                ? "Checking the file is readable and not newly written."
+                : $"Waiting for {settings.Watch.Stability.RequiredStableChecks} stable checks."));
+        var stability = await stabilityService.WaitUntilStableAsync(path, settings.Watch.Stability, !useImmediateStabilityCheck, cancellationToken);
+        if (!stability.IsStable)
+        {
+            return new ScanItem(path, ScanItemStatus.WaitingForStability, stability.Reason, info.Length);
+        }
+
+        try
+        {
+            progress?.Report(new ScanProgress(path, "Probing", "Running ffprobe."));
+            var mediaInfo = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
+            return settings.Eligibility.RequiredVideoCodecs.Contains(mediaInfo.PrimaryVideoCodec, StringComparer.OrdinalIgnoreCase)
+                ? new ScanItem(path, ScanItemStatus.Eligible, "Primary video stream uses a required codec.", info.Length, mediaInfo)
+                : new ScanItem(path, ScanItemStatus.Ineligible, $"Primary video codec is {mediaInfo.PrimaryVideoCodec}, not an allowed codec.", info.Length, mediaInfo);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            return new ScanItem(path, ScanItemStatus.ProbeFailed, exception.Message, info.Length);
+        }
+    }
+
+    private static long ParseMinimumFileSize(string value) => VideoOptimiser.Domain.HumanReadableValues.TryParseSize(value, out var bytes) ? bytes : long.MaxValue;
+
+    private static bool IsMatch(string fileName, string globPattern) => Regex.IsMatch(fileName, "^" + Regex.Escape(globPattern).Replace("\\*", ".*").Replace("\\?", ".") + "$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool IsWithinExcludedDirectory(string path, IReadOnlyCollection<string> excludedDirectories)
+    {
+        var directory = Path.GetDirectoryName(path);
+        while (!string.IsNullOrWhiteSpace(directory))
+        {
+            if (excludedDirectories.Contains(Path.GetFileName(directory), StringComparer.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            directory = Path.GetDirectoryName(directory);
+        }
+
+        return false;
+    }
+}

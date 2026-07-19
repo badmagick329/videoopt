@@ -27,9 +27,13 @@ public sealed class SettingsValidator : ISettingsValidator
         ValidateSize(settings.Processing.MinimumFileSize, "processing.minimumFileSize", diagnostics);
         ValidateSize(settings.Savings.MinimumBytesSaved, "savings.minimumBytesSaved", diagnostics);
         ValidateDuration(settings.Watch.ReconciliationInterval, "watch.reconciliationInterval", diagnostics);
+        ValidateDuration(settings.Watch.Stability.PollInterval, "watch.stability.pollInterval", diagnostics);
+        ValidateDuration(settings.Watch.Stability.MinimumAge, "watch.stability.minimumAge", diagnostics);
+        ValidateDuration(settings.Watch.Stability.Timeout, "watch.stability.timeout", diagnostics);
         ValidateDuration(settings.Processing.RetryDelay, "processing.retryDelay", diagnostics);
 
         AddWhen(settings.Processing.MaximumConcurrentJobs < 1, "InvalidConcurrency", "processing.maximumConcurrentJobs must be at least 1.");
+        AddWhen(settings.Watch.Stability.RequiredStableChecks < 1, "InvalidStableChecks", "watch.stability.requiredStableChecks must be at least 1.");
         AddWhen(settings.Processing.RetryCount < 0, "InvalidRetryCount", "processing.retryCount cannot be negative.");
         AddWhen(settings.Quality.MinimumVmaf is < 0 or > 100, "InvalidVmaf", "quality.minimumVmaf must be between 0 and 100.");
         AddWhen(settings.Quality.Preset < 0, "InvalidPreset", "quality.preset cannot be negative.");

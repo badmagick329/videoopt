@@ -35,12 +35,15 @@ video-optimiser config init [--config <path>]
 video-optimiser config show [--config <path>]
 video-optimiser config validate [--config <path>]
 video-optimiser doctor [--config <path>] [--json]
+video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--json]
 ```
 
 `config validate` checks configuration semantics without probing tools or writing a database. `doctor` checks configuration, makes configured log/archive/temp directories when possible, verifies write access and free-space visibility, initialises the SQLite migration ledger, and runs each tool's version command with safe process argument lists.
+
+`scan` is safe and read-only: it discovers configured files, skips links and excluded files, checks that a candidate is stable, asks `ffprobe` for media information, and reports whether the primary video stream is eligible. It never queues work, encodes media, moves files, archives files, or deletes files. By default, the configured two-minute age and four stable observations mean an eligible file can take at least 45 seconds to be reported.
 
 The most relevant current exit codes are `0` (success), `2` (invalid arguments), `3` (invalid configuration), `4` (missing dependency), and `1` (another diagnostics failure).
 
 ## Safety boundary
 
-Phase 1 only creates configuration, logs, diagnostic probe files, and the SQLite migration ledger. It never discovers candidates, runs an encode, creates temporary media output, moves an original, archives a video, or deletes a source.
+Phases 1–2 only create configuration, logs, diagnostic probe files, and the SQLite migration ledger. They can inspect media during `scan`, but never queue work, encode, create temporary media output, move an original, archive a video, or delete a source.
