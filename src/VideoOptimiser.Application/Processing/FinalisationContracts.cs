@@ -31,3 +31,8 @@ public interface IFileFingerprintService
 {
     Task<string> CreateAsync(string path, CancellationToken cancellationToken = default);
 }
+
+public interface ISafeFileInstaller
+{
+    Task InstallAsync(string sourcePath, string outputPath, CancellationToken cancellationToken = default);
+}
