@@ -55,6 +55,23 @@ public sealed class FileScannerTests : IDisposable
         report.Items.Should().ContainSingle(item => item.Path == path && item.Reason == "File is in an excluded directory.");
     }
 
+    [Fact]
+    public async Task ScanAsyncStopsAfterTheFirstEligibleFileWhenRequested()
+    {
+        await File.WriteAllBytesAsync(Path.Combine(_directory, "first.mkv"), [1, 2, 3]);
+        await File.WriteAllBytesAsync(Path.Combine(_directory, "second.mkv"), [4, 5, 6]);
+        var scanner = new FileScanner(new StableFileService(), _ => new CodecProbe());
+        var settings = new AppSettings
+        {
+            Processing = new ProcessingSettings { MinimumFileSize = "1B" },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] }
+        };
+
+        var report = await scanner.ScanAsync(settings.Watch.Roots, settings, stopAfterFirstEligible: true);
+
+        report.Items.Should().ContainSingle(item => item.Status == ScanItemStatus.Eligible);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))

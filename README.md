@@ -27,7 +27,10 @@ dotnet run --project src/VideoOptimiser.Cli -- doctor --config .\video-optimiser
 Always run commands through `dotnet run` for now; `video-optimiser` is not installed as a system command.
 
 ```powershell
-# Find eligible H.264 files. Read-only.
+# Find the next eligible H.264 file, then stop. Read-only.
+dotnet run --project src/VideoOptimiser.Cli -- scan --first --config .\video-optimiser.yaml
+
+# List every eligible file. Add --all for diagnostic output.
 dotnet run --project src/VideoOptimiser.Cli -- scan --config .\video-optimiser.yaml
 
 # Find a quality CRF for one file. No full output file is created.

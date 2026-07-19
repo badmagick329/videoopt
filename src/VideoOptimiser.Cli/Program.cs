@@ -237,13 +237,14 @@ internal static class CliApplication
             roots = roots.Select(root => new WatchRootSettings { Path = root.Path, Recursive = true }).ToList();
         }
 
-        IProgress<ScanProgress>? progress = command.Json
+        IProgress<ScanProgress>? progress = command.Json || !command.All
             ? null
             : new InlineProgress<ScanProgress>(update => Console.WriteLine($"{update.Stage,-20} {update.Path} — {update.Message}"));
         var report = await scanner.ScanAsync(
             roots,
             configuration.Settings,
             useImmediateStabilityCheck: true,
+            stopAfterFirstEligible: command.First,
             progress: progress,
             cancellationToken: cancellationToken);
         if (command.Json)
@@ -264,12 +265,12 @@ internal static class CliApplication
         }
         else
         {
-            foreach (var item in report.Items)
+            foreach (var item in report.Items.Where(item => command.All || item.Status == ScanItemStatus.Eligible))
             {
                 Console.WriteLine($"{item.Status,-20} {item.Path} — {item.Reason}");
             }
 
-            foreach (var issue in report.Issues)
+            foreach (var issue in report.Issues.Where(_ => command.All))
             {
                 Console.Error.WriteLine($"Issue                {issue.Path} — {issue.Message}");
             }
@@ -312,7 +313,7 @@ internal static class CliApplication
         }
 
         var info = new FileInfo(sourcePath);
-        if (!HumanReadableValues.TryParseSize(configuration.Settings.Processing.MinimumFileSize, out var minimumSize) || info.Length < minimumSize)
+        if (!command.Force && (!HumanReadableValues.TryParseSize(configuration.Settings.Processing.MinimumFileSize, out var minimumSize) || info.Length < minimumSize))
         {
             Console.Error.WriteLine("Source file is below processing.minimumFileSize. Use --force to bypass this check.");
             return (int)ExitCode.NoEligibleFiles;
@@ -336,17 +337,19 @@ internal static class CliApplication
             return (int)ExitCode.NoEligibleFiles;
         }
 
+        var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, configuration.Settings.Quality.CrfSearch.SampleCount);
+        var quality = CopyWithSampleCount(configuration.Settings.Quality, sampleCount);
         var client = services.GetRequiredService<Func<string, ICrfSearchClient>>()(configuration.Settings.Tools.AbAv1Path);
         if (command.DryRun)
         {
             Console.WriteLine("Would run:");
-            Console.WriteLine(configuration.Settings.Tools.AbAv1Path + " " + string.Join(" ", client.BuildArguments(sourcePath, configuration.Settings.Quality).Select(Quote)));
+            Console.WriteLine(configuration.Settings.Tools.AbAv1Path + " " + string.Join(" ", client.BuildArguments(sourcePath, quality).Select(Quote)));
             return (int)ExitCode.Success;
         }
 
-        Console.WriteLine($"CRF search: {sourcePath}");
+        Console.WriteLine($"CRF search: {sourcePath} ({sampleCount} samples)");
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
-        var result = await client.SearchAsync(sourcePath, configuration.Settings.Quality, progress, cancellationToken);
+        var result = await client.SearchAsync(sourcePath, quality, progress, cancellationToken);
         Console.WriteLine($"Selected CRF: {result.Crf} ({result.Duration:g})");
         return (int)ExitCode.Success;
     }
@@ -358,6 +361,22 @@ internal static class CliApplication
     }
 
     private static string Quote(string value) => value.Any(char.IsWhiteSpace) ? $"\"{value}\"" : value;
+
+    private static QualitySettings CopyWithSampleCount(QualitySettings source, int sampleCount) => new()
+    {
+        MinimumVmaf = source.MinimumVmaf,
+        Preset = source.Preset,
+        Encoder = source.Encoder,
+        PixelFormat = source.PixelFormat,
+        CrfSearch = new CrfSearchSettings
+        {
+            Enabled = source.CrfSearch.Enabled,
+            MinCrf = source.CrfSearch.MinCrf,
+            MaxCrf = source.CrfSearch.MaxCrf,
+            SampleCount = sampleCount,
+            SampleDuration = source.CrfSearch.SampleDuration
+        }
+    };
 
     private static async Task<int> RunEncodeAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
@@ -438,7 +457,7 @@ Usage:
   video-optimiser config show [--config <path>]
   video-optimiser config validate [--config <path>]
   video-optimiser doctor [--config <path>] [--json]
-  video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--json]
+  video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--first] [--all] [--json]
   video-optimiser process <file> [--config <path>] [--force] [--dry-run]
   video-optimiser encode <file> --crf <number> [--config <path>] [--dry-run]
   video-optimiser validate <temporary-output> [--config <path>]
@@ -459,7 +478,7 @@ internal enum CliCommandKind
     Encode, Validate, Finalize
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, int? Crf = null, string? OutputPath = null)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, int? Crf = null, string? OutputPath = null)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -473,6 +492,8 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         var dryRun = false;
         int? crf = null;
         var recursive = false;
+        var first = false;
+        var all = false;
         var json = false;
 
         for (var index = 0; index < args.Length; index++)
@@ -486,6 +507,12 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                     return Invalid("--config requires a path.");
                 case "--json":
                     json = true;
+                    break;
+                case "--all":
+                    all = true;
+                    break;
+                case "--first":
+                    first = true;
                     break;
                 case "--path" when index + 1 < args.Length:
                     scanPath = args[++index];
@@ -508,7 +535,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                 case "--crf":
                     return Invalid("--crf requires an integer.");
                 case "--help" or "-h" or "help":
-                    return new CliCommand(CliCommandKind.Help, null, null, false, false, null);
+                    return new CliCommand(CliCommandKind.Help, null, null, false, false, false, false, null);
                 default:
                     remaining.Add(args[index]);
                     break;
@@ -539,9 +566,14 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("--json is only supported by doctor and scan.");
         }
 
-        if ((scanPath is not null || recursive) && kind != CliCommandKind.Scan)
+        if ((scanPath is not null || recursive || first || all) && kind != CliCommandKind.Scan)
         {
-            return Invalid("--path and --recursive are only supported by scan.");
+            return Invalid("--path, --recursive, --first, and --all are only supported by scan.");
+        }
+
+        if (first && all)
+        {
+            return Invalid("--first and --all cannot be used together.");
         }
 
         if (force && kind != CliCommandKind.Process)
@@ -552,10 +584,10 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         if (dryRun && kind is not (CliCommandKind.Process or CliCommandKind.Encode)) return Invalid("--dry-run is only supported by process and encode.");
         if (crf is not null && kind != CliCommandKind.Encode) return Invalid("--crf is only supported by encode.");
 
-        return new CliCommand(kind, configurationPath, scanPath, recursive, json, null, kind is CliCommandKind.Process or CliCommandKind.Encode ? remaining[1] : null, force, dryRun, crf, kind is CliCommandKind.Validate or CliCommandKind.Finalize ? remaining[1] : null);
+        return new CliCommand(kind, configurationPath, scanPath, recursive, first, all, json, null, kind is CliCommandKind.Process or CliCommandKind.Encode ? remaining[1] : null, force, dryRun, crf, kind is CliCommandKind.Validate or CliCommandKind.Finalize ? remaining[1] : null);
     }
 
-    private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, message);
+    private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);
 }
 
 internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
