@@ -35,6 +35,12 @@ dotnet run --project src/VideoOptimiser.Cli -- process "C:\Videos\movie.mp4" --c
 
 # Encode using the selected CRF. Original remains untouched.
 dotnet run --project src/VideoOptimiser.Cli -- encode "C:\Videos\movie.mp4" --crf 44 --config .\video-optimiser.yaml
+
+# Check the temporary AV1 and its savings.
+dotnet run --project src/VideoOptimiser.Cli -- validate "C:\Videos\.video-optimiser\movie.encoding.mp4" --config .\video-optimiser.yaml
+
+# Explicitly replace the original only after validation passes.
+dotnet run --project src/VideoOptimiser.Cli -- finalize "C:\Videos\.video-optimiser\movie.encoding.mp4" --config .\video-optimiser.yaml
 ```
 
 `encode` writes its output under:
@@ -50,4 +56,6 @@ Use `Ctrl+C` to stop `process` or `encode`.
 - `scan` only reads files.
 - `process` only creates short temporary samples to calculate CRF.
 - `encode` creates a separate temporary AV1 file.
+- `validate` checks the temporary AV1 before replacement.
+- `finalize` is explicit and uses a rollback filename before deleting the original.
 - No command currently replaces, archives, or deletes an original file.
