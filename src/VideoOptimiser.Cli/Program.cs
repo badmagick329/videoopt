@@ -7,11 +7,13 @@ using Serilog;
 using Serilog.Events;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Infrastructure.Jobs;
 using VideoOptimiser.Infrastructure.Processing;
 using VideoOptimiser.Infrastructure.Scanning;
 
@@ -105,6 +107,9 @@ internal static class CliApplication
         builder.Services.AddSingleton<Func<string, IVideoEncoder>>(_ => abAv1Path => new AbAv1VideoEncoder(abAv1Path));
         builder.Services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
         builder.Services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
+        builder.Services.AddSingleton<IJobRepository, SqliteJobRepository>();
+        builder.Services.AddSingleton<IOutputValidationService, OutputValidationService>();
+        builder.Services.AddSingleton<IJobProcessor, JobProcessor>();
         builder.Services.AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
         return builder.Build();
     }
@@ -139,9 +144,10 @@ internal static class CliApplication
             CliCommandKind.Doctor => await RunDoctorAsync(services.GetRequiredService<IDoctorService>(), configuration, command.Json, cancellationToken),
             CliCommandKind.Scan => await RunScanAsync(services.GetRequiredService<IFileScanner>(), configuration, command, cancellationToken),
             CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
-            CliCommandKind.Encode => await RunEncodeAsync(services, configuration, command, cancellationToken),
-            CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.OutputPath!, cancellationToken),
-            CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command.OutputPath!, cancellationToken),
+            CliCommandKind.Status => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
+            CliCommandKind.History => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: true, command.Json, cancellationToken),
+            CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
+            CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command.JobId!, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -300,155 +306,119 @@ internal static class CliApplication
         }
 
         var sourcePath = Path.GetFullPath(command.ProcessPath!);
-        if (!File.Exists(sourcePath))
-        {
-            Console.Error.WriteLine($"Source file does not exist: {sourcePath}");
-            return (int)ExitCode.ProcessingFailure;
-        }
-
-        if (!command.Force && !configuration.Settings.Watch.Roots.Any(root => IsWithinRoot(sourcePath, root.Path)))
-        {
-            Console.Error.WriteLine("Source file is outside configured watch roots. Use --force to bypass this check.");
-            return (int)ExitCode.ProcessingFailure;
-        }
-
-        var info = new FileInfo(sourcePath);
-        if (!command.Force && (!HumanReadableValues.TryParseSize(configuration.Settings.Processing.MinimumFileSize, out var minimumSize) || info.Length < minimumSize))
-        {
-            Console.Error.WriteLine("Source file is below processing.minimumFileSize. Use --force to bypass this check.");
-            return (int)ExitCode.NoEligibleFiles;
-        }
-
-        var stability = await services.GetRequiredService<IFileStabilityService>().WaitUntilStableAsync(
-            sourcePath,
-            configuration.Settings.Watch.Stability,
-            requireRepeatedObservations: false,
-            cancellationToken: cancellationToken);
-        if (!stability.IsStable)
-        {
-            Console.Error.WriteLine($"Source is not ready: {stability.Reason}");
-            return (int)ExitCode.ProcessingFailure;
-        }
-
-        var media = await services.GetRequiredService<Func<string, IMediaProbe>>()(configuration.Settings.Tools.FfprobePath).ProbeAsync(sourcePath, cancellationToken);
-        if (!command.Force && !configuration.Settings.Eligibility.RequiredVideoCodecs.Contains(media.PrimaryVideoCodec, StringComparer.OrdinalIgnoreCase))
-        {
-            Console.Error.WriteLine($"Source codec is {media.PrimaryVideoCodec}; expected {string.Join(", ", configuration.Settings.Eligibility.RequiredVideoCodecs)}. Use --force to bypass this check.");
-            return (int)ExitCode.NoEligibleFiles;
-        }
-
-        var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, configuration.Settings.Quality.CrfSearch.SampleCount);
-        var quality = CopyWithSampleCount(configuration.Settings.Quality, sampleCount);
-        var client = services.GetRequiredService<Func<string, ICrfSearchClient>>()(configuration.Settings.Tools.AbAv1Path);
         if (command.DryRun)
         {
-            Console.WriteLine("Would run:");
-            Console.WriteLine(configuration.Settings.Tools.AbAv1Path + " " + string.Join(" ", client.BuildArguments(sourcePath, quality).Select(Quote)));
+            Console.WriteLine($"Would create a job for: {sourcePath}");
+            Console.WriteLine("Would run CRF search, encode a temporary AV1, then validate it. No source file would be changed.");
             return (int)ExitCode.Success;
         }
 
-        Console.WriteLine($"CRF search: {sourcePath} ({sampleCount} samples)");
+        var repository = services.GetRequiredService<IJobRepository>();
+        await repository.MarkActiveJobsInterruptedAsync(configuration.Settings.Database.Path, cancellationToken);
+        Console.WriteLine($"Processing: {sourcePath}");
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
-        var result = await client.SearchAsync(sourcePath, quality, progress, cancellationToken);
-        Console.WriteLine($"Selected CRF: {result.Crf} ({result.Duration:g})");
+        var result = await services.GetRequiredService<IJobProcessor>().ProcessAsync(configuration.Settings.Database.Path, sourcePath, configuration.Settings, command.Force, progress, cancellationToken);
+        if (result.ExitCode == ExitCode.Success)
+        {
+            Console.WriteLine(result.Message);
+        }
+        else
+        {
+            Console.Error.WriteLine(result.Message);
+        }
+
+        return (int)result.ExitCode;
+    }
+
+    private static async Task<int> RunJobListAsync(IJobRepository repository, LoadedConfiguration configuration, bool terminal, bool json, CancellationToken cancellationToken)
+    {
+        var jobs = await repository.ListAsync(configuration.Settings.Database.Path, terminal, cancellationToken);
+        if (json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(jobs.Select(job => new
+            {
+                id = job.Id.ToString("N"),
+                status = job.Status.ToString(),
+                sourcePath = job.SourcePath,
+                crf = job.Crf,
+                outputPath = job.OutputPath,
+                percentageSaved = job.PercentageSaved,
+                failureCategory = job.FailureCategory,
+                failureMessage = job.FailureMessage,
+                updatedUtc = job.UpdatedUtc
+            }), JsonOptions));
+        }
+        else if (jobs.Count == 0)
+        {
+            Console.WriteLine(terminal ? "No job history." : "No active jobs.");
+        }
+        else
+        {
+            foreach (var job in jobs)
+            {
+                var suffix = job.FailureMessage is null ? string.Empty : $" — {job.FailureCategory}: {job.FailureMessage}";
+                var savings = job.PercentageSaved is null ? string.Empty : $" {job.PercentageSaved:F1}% saved";
+                Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}");
+            }
+        }
+
         return (int)ExitCode.Success;
     }
 
-    private static bool IsWithinRoot(string sourcePath, string rootPath)
+    private static async Task<int> RunValidateAsync(IServiceProvider services, LoadedConfiguration configuration, string jobId, CancellationToken cancellationToken)
     {
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath)) + Path.DirectorySeparatorChar;
-        return sourcePath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string Quote(string value) => value.Any(char.IsWhiteSpace) ? $"\"{value}\"" : value;
-
-    private static QualitySettings CopyWithSampleCount(QualitySettings source, int sampleCount) => new()
-    {
-        MinimumVmaf = source.MinimumVmaf,
-        Preset = source.Preset,
-        Encoder = source.Encoder,
-        PixelFormat = source.PixelFormat,
-        CrfSearch = new CrfSearchSettings
-        {
-            Enabled = source.CrfSearch.Enabled,
-            MinCrf = source.CrfSearch.MinCrf,
-            MaxCrf = source.CrfSearch.MaxCrf,
-            SampleCount = sampleCount,
-            SampleDuration = source.CrfSearch.SampleDuration
-        }
-    };
-
-    private static async Task<int> RunEncodeAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
-    {
-        var sourcePath = Path.GetFullPath(command.ProcessPath!);
-        if (!File.Exists(sourcePath))
-        {
-            Console.Error.WriteLine($"Source file does not exist: {sourcePath}");
-            return (int)ExitCode.ProcessingFailure;
-        }
-
-        if (command.Crf is null or < 1 or > 63)
-        {
-            Console.Error.WriteLine("--crf must be between 1 and 63.");
-            return (int)ExitCode.InvalidArguments;
-        }
-
-        var sourceDirectory = Path.GetDirectoryName(sourcePath)!;
-        var outputDirectory = Path.Combine(sourceDirectory, ".video-optimiser");
-        var outputPath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(sourcePath)}.{Guid.NewGuid():N}.encoding{Path.GetExtension(sourcePath)}");
-        var fingerprint = await services.GetRequiredService<IFileFingerprintService>().CreateAsync(sourcePath, cancellationToken);
-        var encoder = services.GetRequiredService<Func<string, IVideoEncoder>>()(configuration.Settings.Tools.AbAv1Path);
-        if (command.DryRun)
-        {
-            Console.WriteLine("Would write temporary output:");
-            Console.WriteLine(outputPath);
-            Console.WriteLine(configuration.Settings.Tools.AbAv1Path + " " + string.Join(" ", encoder.BuildArguments(sourcePath, outputPath, command.Crf.Value, configuration.Settings.Quality).Select(Quote)));
-            return (int)ExitCode.Success;
-        }
-
-        Directory.CreateDirectory(outputDirectory);
-        Console.WriteLine($"Encoding to temporary file: {outputPath}");
-        var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
-        var result = await encoder.EncodeAsync(sourcePath, outputPath, command.Crf.Value, configuration.Settings.Quality, progress, cancellationToken);
-        await services.GetRequiredService<IOutputManifestStore>().SaveAsync(new OutputManifest { SourcePath = sourcePath, SourceFingerprint = fingerprint, OutputPath = outputPath, Crf = command.Crf.Value, CreatedUtc = DateTimeOffset.UtcNow }, cancellationToken);
-        Console.WriteLine($"Temporary AV1 file created: {result.OutputPath} ({result.Duration:g})");
-        return (int)ExitCode.Success;
-    }
-
-    private static async Task<int> RunValidateAsync(IServiceProvider services, LoadedConfiguration configuration, string outputPath, CancellationToken cancellationToken)
-    {
+        if (!Guid.TryParse(jobId, out var id)) { Console.Error.WriteLine("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
+        var repository = services.GetRequiredService<IJobRepository>();
+        var job = await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken);
+        if (job?.OutputPath is null) { Console.Error.WriteLine("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
         var store = services.GetRequiredService<IOutputManifestStore>();
-        var manifest = await store.LoadAsync(Path.GetFullPath(outputPath), cancellationToken);
-        var failures = new List<string>();
-        if (!File.Exists(manifest.SourcePath) || !File.Exists(manifest.OutputPath)) failures.Add("Source or temporary output is missing.");
-        var source = failures.Count == 0 ? await services.GetRequiredService<Func<string, IMediaProbe>>()(configuration.Settings.Tools.FfprobePath).ProbeAsync(manifest.SourcePath, cancellationToken) : null;
-        var output = failures.Count == 0 ? await services.GetRequiredService<Func<string, IMediaProbe>>()(configuration.Settings.Tools.FfprobePath).ProbeAsync(manifest.OutputPath, cancellationToken) : null;
-        if (output is not null && output.PrimaryVideoCodec != "av1") failures.Add("Output video is not AV1.");
-        if (source is not null && output is not null)
-        {
-            if (Math.Abs((source.DurationSeconds ?? 0) - (output.DurationSeconds ?? 0)) > configuration.Settings.Validation.DurationToleranceSeconds) failures.Add("Output duration differs from source.");
-            if (source.AudioStreamCount != output.AudioStreamCount || source.SubtitleStreamCount != output.SubtitleStreamCount) failures.Add("Output stream counts differ from source.");
-        }
-        var sourceSize = new FileInfo(manifest.SourcePath).Length;
-        var outputSize = new FileInfo(manifest.OutputPath).Length;
-        var saved = (decimal)(sourceSize - outputSize) / sourceSize * 100;
-        if (configuration.Settings.Savings.RequireSmallerOutput && outputSize >= sourceSize || saved < configuration.Settings.Savings.MinimumPercentageSaved) failures.Add("Output does not meet savings policy.");
-        manifest.Validation = new ValidationReport { Passed = failures.Count == 0, Failures = failures, SourceSizeBytes = sourceSize, OutputSizeBytes = outputSize, PercentageSaved = saved, ValidatedUtc = DateTimeOffset.UtcNow };
+        var manifest = await store.LoadAsync(job.OutputPath, cancellationToken);
+        manifest.Validation = await services.GetRequiredService<IOutputValidationService>().ValidateAsync(manifest, configuration.Settings, cancellationToken);
         await store.SaveAsync(manifest, cancellationToken);
-        Console.WriteLine(manifest.Validation.Passed ? $"Validation passed: saved {saved:F1}%" : "Validation failed: " + string.Join("; ", failures));
+        job.ValidationPassed = manifest.Validation.Passed;
+        job.SourceSizeBytes = manifest.Validation.SourceSizeBytes;
+        job.OutputSizeBytes = manifest.Validation.OutputSizeBytes;
+        job.PercentageSaved = manifest.Validation.PercentageSaved;
+        job.Status = manifest.Validation.Passed ? JobStatus.ReadyToFinalize : JobStatus.Failed;
+        if (!manifest.Validation.Passed) { job.FailureCategory = "ValidationFailed"; job.FailureMessage = string.Join("; ", manifest.Validation.Failures); job.CompletedUtc = DateTimeOffset.UtcNow; }
+        await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
+        Console.WriteLine(manifest.Validation.Passed ? $"Validation passed: saved {manifest.Validation.PercentageSaved:F1}%" : "Validation failed: " + string.Join("; ", manifest.Validation.Failures));
         return manifest.Validation.Passed ? (int)ExitCode.Success : (int)ExitCode.ValidationFailure;
     }
 
-    private static async Task<int> RunFinalizeAsync(IServiceProvider services, LoadedConfiguration configuration, string outputPath, CancellationToken cancellationToken)
+    private static async Task<int> RunFinalizeAsync(IServiceProvider services, LoadedConfiguration configuration, string jobId, CancellationToken cancellationToken)
     {
+        if (!Guid.TryParse(jobId, out var id)) { Console.Error.WriteLine("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
+        var repository = services.GetRequiredService<IJobRepository>();
+        var job = await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken);
+        if (job is null) { Console.Error.WriteLine("Job was not found."); return (int)ExitCode.ProcessingFailure; }
+        if (job.Status != JobStatus.ReadyToFinalize || job.OutputPath is null) { Console.Error.WriteLine("Job is not ready to finalize."); return (int)ExitCode.ValidationFailure; }
         var store = services.GetRequiredService<IOutputManifestStore>();
-        var manifest = await store.LoadAsync(Path.GetFullPath(outputPath), cancellationToken);
-        if (manifest.Validation?.Passed != true) { Console.Error.WriteLine("Run validate successfully before finalize."); return (int)ExitCode.ValidationFailure; }
+        var manifest = await store.LoadAsync(job.OutputPath, cancellationToken);
+        if (manifest.Validation?.Passed != true) { Console.Error.WriteLine("Job validation did not pass."); return (int)ExitCode.ValidationFailure; }
         if (!configuration.Settings.Original.Action.Equals("delete", StringComparison.OrdinalIgnoreCase)) { Console.Error.WriteLine("finalize currently requires original.action: delete."); return (int)ExitCode.InvalidConfiguration; }
-        if (await services.GetRequiredService<IFileFingerprintService>().CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint) { Console.Error.WriteLine("Source changed after encoding."); return (int)ExitCode.ProcessingFailure; }
-        await services.GetRequiredService<ISafeFileInstaller>().InstallAsync(manifest.SourcePath, manifest.OutputPath, cancellationToken);
-        Console.WriteLine("Finalization complete. Original deleted.");
-        return (int)ExitCode.Success;
+        job.Status = JobStatus.Finalizing;
+        await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
+        try
+        {
+            if (await services.GetRequiredService<IFileFingerprintService>().CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint) throw new InvalidOperationException("Source changed after encoding.");
+            await services.GetRequiredService<ISafeFileInstaller>().InstallAsync(manifest.SourcePath, manifest.OutputPath, cancellationToken);
+            job.Status = JobStatus.Completed;
+            job.CompletedUtc = DateTimeOffset.UtcNow;
+            await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
+            Console.WriteLine("Finalization complete. Original deleted.");
+            return (int)ExitCode.Success;
+        }
+        catch (Exception exception)
+        {
+            job.Status = JobStatus.Failed;
+            job.FailureCategory = "FinalizationFailed";
+            job.FailureMessage = exception.Message;
+            job.CompletedUtc = DateTimeOffset.UtcNow;
+            await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
+            Console.Error.WriteLine(exception.Message);
+            return (int)ExitCode.FinalisationFailure;
+        }
     }
 
     private const string Usage = """
@@ -459,9 +429,10 @@ Usage:
   video-optimiser doctor [--config <path>] [--json]
   video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--first] [--all] [--json]
   video-optimiser process <file> [--config <path>] [--force] [--dry-run]
-  video-optimiser encode <file> --crf <number> [--config <path>] [--dry-run]
-  video-optimiser validate <temporary-output> [--config <path>]
-  video-optimiser finalize <temporary-output> [--config <path>]
+  video-optimiser status [--config <path>] [--json]
+  video-optimiser history [--config <path>] [--json]
+  video-optimiser validate <job-id> [--config <path>]
+  video-optimiser finalize <job-id> [--config <path>]
 """;
 }
 
@@ -475,10 +446,13 @@ internal enum CliCommandKind
     Doctor,
     Scan,
     Process,
-    Encode, Validate, Finalize
+    Status,
+    History,
+    Validate,
+    Finalize
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, int? Crf = null, string? OutputPath = null)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -490,7 +464,6 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         string? scanPath = null;
         var force = false;
         var dryRun = false;
-        int? crf = null;
         var recursive = false;
         var first = false;
         var all = false;
@@ -528,12 +501,8 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                 case "--force":
                     force = true;
                     break;
-                case "--crf" when index + 1 < args.Length && int.TryParse(args[index + 1], out var parsedCrf):
-                    crf = parsedCrf;
-                    index++;
-                    break;
                 case "--crf":
-                    return Invalid("--crf requires an integer.");
+                    return Invalid("--crf is no longer supported. process selects CRF automatically.");
                 case "--help" or "-h" or "help":
                     return new CliCommand(CliCommandKind.Help, null, null, false, false, false, false, null);
                 default:
@@ -550,7 +519,8 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["doctor"] => CliCommandKind.Doctor,
             ["scan"] => CliCommandKind.Scan,
             ["process", _] => CliCommandKind.Process,
-            ["encode", _] => CliCommandKind.Encode,
+            ["status"] => CliCommandKind.Status,
+            ["history"] => CliCommandKind.History,
             ["validate", _] => CliCommandKind.Validate,
             ["finalize", _] => CliCommandKind.Finalize,
             _ => CliCommandKind.Invalid
@@ -561,9 +531,9 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("Unknown or incomplete command.");
         }
 
-        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.Scan))
+        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.Scan or CliCommandKind.Status or CliCommandKind.History))
         {
-            return Invalid("--json is only supported by doctor and scan.");
+            return Invalid("--json is only supported by doctor, scan, status, and history.");
         }
 
         if ((scanPath is not null || recursive || first || all) && kind != CliCommandKind.Scan)
@@ -581,10 +551,9 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("--force is only supported by process.");
         }
 
-        if (dryRun && kind is not (CliCommandKind.Process or CliCommandKind.Encode)) return Invalid("--dry-run is only supported by process and encode.");
-        if (crf is not null && kind != CliCommandKind.Encode) return Invalid("--crf is only supported by encode.");
+        if (dryRun && kind != CliCommandKind.Process) return Invalid("--dry-run is only supported by process.");
 
-        return new CliCommand(kind, configurationPath, scanPath, recursive, first, all, json, null, kind is CliCommandKind.Process or CliCommandKind.Encode ? remaining[1] : null, force, dryRun, crf, kind is CliCommandKind.Validate or CliCommandKind.Finalize ? remaining[1] : null);
+        return new CliCommand(kind, configurationPath, scanPath, recursive, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, kind is CliCommandKind.Validate or CliCommandKind.Finalize ? remaining[1] : null);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);

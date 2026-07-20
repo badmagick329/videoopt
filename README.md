@@ -2,7 +2,7 @@
 
 Windows CLI for converting H.264 videos to AV1 safely.
 
-Current status: scan files, find a CRF, encode a temporary AV1, validate it, then explicitly replace the original.
+Current status: process one source through CRF search, temporary AV1 encoding, and validation; then explicitly replace it.
 
 ## Requirements
 
@@ -33,31 +33,35 @@ dotnet run --project src/VideoOptimiser.Cli -- scan --first --config .\video-opt
 # List every eligible file. Add --all for diagnostic output.
 dotnet run --project src/VideoOptimiser.Cli -- scan --config .\video-optimiser.yaml
 
-# Find a quality CRF for one file. No full output file is created.
+# Process one file through CRF search, temporary encoding, and validation.
+# It stops before replacing the original and prints a job ID.
 dotnet run --project src/VideoOptimiser.Cli -- process "C:\Videos\movie.mp4" --config .\video-optimiser.yaml
 
-# Encode using the selected CRF. Original remains untouched.
-dotnet run --project src/VideoOptimiser.Cli -- encode "C:\Videos\movie.mp4" --crf 44 --config .\video-optimiser.yaml
+# List active jobs. Copy the full job ID for validate/finalize.
+dotnet run --project src/VideoOptimiser.Cli -- status --config .\video-optimiser.yaml
 
-# Check the temporary AV1 and its savings.
-dotnet run --project src/VideoOptimiser.Cli -- validate "C:\Videos\.video-optimiser\movie.encoding.mp4" --config .\video-optimiser.yaml
+# Re-run validation for a job if needed.
+dotnet run --project src/VideoOptimiser.Cli -- validate <job-id> --config .\video-optimiser.yaml
 
 # Explicitly replace the original only after validation passes.
-dotnet run --project src/VideoOptimiser.Cli -- finalize "C:\Videos\.video-optimiser\movie.encoding.mp4" --config .\video-optimiser.yaml
+dotnet run --project src/VideoOptimiser.Cli -- finalize <job-id> --config .\video-optimiser.yaml
+
+# Show completed, failed, and interrupted jobs.
+dotnet run --project src/VideoOptimiser.Cli -- history --config .\video-optimiser.yaml
 ```
 
-`encode` writes its output under:
+`process` writes temporary output and its manifest under:
 
 ```text
-<source folder>\.video-optimiser\<file>.encoding.<extension>
+<source folder>\.video-optimiser\<file>.<job-id>.encoding.<extension>
 ```
 
-Use `Ctrl+C` to stop `process` or `encode`.
+`status --json` and `history --json` emit machine-readable JSON. Use `Ctrl+C` to stop `process`; the job is recorded as `Interrupted` and both source and temporary files are retained.
 
 ## Safety
 
 - `scan` only reads files.
-- `process` only creates short temporary samples to calculate CRF.
-- `encode` creates a separate temporary AV1 file.
-- `validate` checks the temporary AV1 before replacement.
+- `process` creates a job, then CRF-searches, encodes, and validates a separate temporary AV1 file.
+- `validate` rechecks a job's temporary AV1 before replacement.
 - `finalize` is explicit: it renames the original to a rollback file, installs the AV1, then deletes the rollback file.
+- `finalize` currently requires `original.action: "delete"`.

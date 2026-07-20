@@ -11,7 +11,7 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
     public SqliteDatabaseInitializerTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
-    public async Task InitializeAsyncIsIdempotentAndRecordsBaselineMigration()
+    public async Task InitializeAsyncIsIdempotentAndRecordsJobMigration()
     {
         var databasePath = Path.Combine(_directory, "jobs.db");
         var initializer = new SqliteDatabaseInitializer();
@@ -22,9 +22,13 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version = 1;";
+        command.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version = 2;";
         var count = Convert.ToInt64(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
         count.Should().Be(1);
+
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'jobs';";
+        var jobsTableCount = Convert.ToInt64(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+        jobsTableCount.Should().Be(1);
     }
 
     public void Dispose()
