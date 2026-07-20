@@ -43,4 +43,13 @@ public sealed class AbAv1CrfSearchClientTests
 
         CrfSearchOutputParser.Parse(output).Should().Be(44);
     }
+
+    [Fact]
+    public void ParseReadsSuccessfulCrfWhenCombinedOutputContainsOtherCrfResults()
+    {
+        const string output = "crf 45 VMAF 96.87\n";
+        const string error = "[INFO ab_av1::command::crf_search] crf 44 successful";
+
+        CrfSearchOutputParser.Parse(output + Environment.NewLine + error).Should().Be(44);
+    }
 }

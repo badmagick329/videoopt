@@ -34,6 +34,29 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
             );
             """, cancellationToken, transaction);
         await ExecuteAsync(connection, "INSERT OR IGNORE INTO schema_migrations(version, applied_utc) VALUES (1, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS jobs (
+                id TEXT PRIMARY KEY,
+                source_path TEXT NOT NULL,
+                source_fingerprint TEXT NOT NULL,
+                status INTEGER NOT NULL,
+                crf INTEGER NULL,
+                output_path TEXT NULL,
+                manifest_path TEXT NULL,
+                validation_passed INTEGER NULL,
+                source_size_bytes INTEGER NULL,
+                output_size_bytes INTEGER NULL,
+                percentage_saved TEXT NULL,
+                failure_category TEXT NULL,
+                failure_message TEXT NULL,
+                created_utc TEXT NOT NULL,
+                updated_utc TEXT NOT NULL,
+                completed_utc TEXT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_jobs_source_active ON jobs(source_path, source_fingerprint, status);
+            CREATE INDEX IF NOT EXISTS ix_jobs_status_updated ON jobs(status, updated_utc DESC);
+            """, cancellationToken, transaction);
+        await ExecuteAsync(connection, "INSERT OR IGNORE INTO schema_migrations(version, applied_utc) VALUES (2, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         await transaction.CommitAsync(cancellationToken);
     }
 

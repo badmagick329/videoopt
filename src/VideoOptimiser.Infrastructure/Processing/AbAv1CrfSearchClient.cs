@@ -67,7 +67,7 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
             throw new InvalidOperationException($"ab-av1 crf-search failed with exit code {process.ExitCode}: {FirstLine(error)}");
         }
 
-        return new CrfSearchResult(CrfSearchOutputParser.Parse(output), output, error, started.Elapsed);
+        return new CrfSearchResult(CrfSearchOutputParser.Parse(output + Environment.NewLine + error), output, error, started.Elapsed);
     }
 
     private static string FirstLine(string value) => value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "No error output.";
