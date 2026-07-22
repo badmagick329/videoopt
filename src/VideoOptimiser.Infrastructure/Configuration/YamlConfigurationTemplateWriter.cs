@@ -25,93 +25,110 @@ public sealed class YamlConfigurationTemplateWriter(IConfigurationLoader configu
     }
 
     private const string Template = """
-# VideoOptimiser configuration (Phase 1 template)
-# Add at least one watch root and choose an archive directory before running doctor.
+# VideoOptimiser configuration
+# Edit watch.roots, then run doctor.
 version: 1
 
 tools:
+  # Command names or paths for the required media tools.
   abAv1Path: "ab-av1"
   ffmpegPath: "ffmpeg"
   ffprobePath: "ffprobe"
 
 database:
+  # SQLite job database. Relative paths are relative to this YAML file.
   path: "jobs.db"
 
 logging:
+  # Minimum log level written to the configured destinations.
   level: "Information"
+  # Directory for rolling structured log files.
   directory: "logs"
+  # Number of days to retain log files.
   retainDays: 30
+  # Print logs to the terminal.
   console: true
+  # Write JSON logs to the logging directory.
   structuredFile: true
 
 watch:
-  roots: []
-  reconciliationInterval: "10m"
-  stability:
-    pollInterval: "15s"
-    requiredStableChecks: 4
-    minimumAge: "2m"
-    timeout: "24h"
+  # Folders searched by queue discover. Add at least one.
+  roots:
+    # - path: "D:\\Videos"
+    #   recursive: true
 
 eligibility:
+  # File extensions considered during discovery.
   extensions: [".mkv", ".mp4", ".mov", ".m4v"]
-  requiredVideoCodecs: ["h264"]
+  # A file is queued when it matches any one rule. All criteria in a rule must match.
+  rules:
+    - codecs: ["h264"]
+      resolution: "4k+"
+      minimumVideoBitrate: "20Mbps"
+      minimumFileSize: "2GiB"
+    - codecs: ["h264"]
+      resolution: "1080p-1440p"
+      minimumVideoBitrate: "8Mbps"
+      minimumFileSize: "800MiB"
+  # Files with these extensions are always skipped.
   excludedExtensions: [".tmp", ".part", ".partial"]
+  # Filename patterns for temporary or tool-created files to skip.
   excludedNamePatterns: ["*.encoding.*", "*.crf-search.*", "*.video-optimiser.*"]
+  # Directory names to skip anywhere beneath a watch root.
   excludedDirectories: [".video-optimiser", "Archive"]
+  # Skip Windows hidden files.
   ignoreHiddenFiles: true
+  # Skip Windows system files.
   ignoreSystemFiles: true
 
-processing:
-  minimumFileSize: "2GiB"
-  maximumConcurrentJobs: 1
-  retryCount: 2
-  retryDelay: "10m"
-  resumeInterruptedJobs: true
-  preventSystemSleep: true
-
 quality:
+  # Minimum visual quality target used by CRF search.
   minimumVmaf: 95
+  # SVT-AV1 preset; lower is slower and generally more efficient.
   preset: 6
+  # AV1 encoder passed to ab-av1.
   encoder: "libsvtav1"
+  # Output pixel format.
   pixelFormat: "yuv420p10le"
   crfSearch:
+    # Whether CRF search runs before encoding.
     enabled: true
+    # Inclusive CRF search range.
     minCrf: 18
     maxCrf: 50
+    # Maximum samples; short videos automatically use fewer.
     sampleCount: 5
+    # Duration of each CRF-search sample.
     sampleDuration: "20s"
 
-output:
-  container: "preserve"
-  temporaryDirectory: ""
-  temporarySuffix: ".video-optimiser.encoding"
-  preserveTimestamps: true
-  preserveMetadata: true
-  preserveChapters: true
-  preserveAttachments: true
-  copySubtitles: true
-  copyAudio: true
-
 savings:
+  # Reject output that is not smaller than the source.
   requireSmallerOutput: true
+  # Minimum absolute saving required for validation.
   minimumBytesSaved: "100MiB"
+  # Minimum percentage saving required for validation.
   minimumPercentageSaved: 5
 
 original:
-  action: "archive"
-  archiveDirectory: ""
-  preserveRelativePath: true
-  collisionStrategy: "timestamp"
+  # The only currently supported finalisation policy.
+  action: "delete"
 
 validation:
+  # Probe source and output stream metadata with ffprobe.
   runFfprobe: true
+  # Decode samples with ffmpeg after encoding.
   decodeTest: true
+  # Decode test scope: none, sampled, or full.
   decodeTestMode: "sampled"
+  # Require an AV1 primary video stream.
   requireExpectedVideoCodec: true
+  # Require source/output durations to be within the tolerance.
   requireDurationTolerance: true
+  # Allowed source/output duration difference.
   durationToleranceSeconds: 1
+  # Require matching audio and subtitle stream counts.
   requireStreamParity: true
+  # Reject empty output files.
   requireNonZeroLength: true
 """;
 }

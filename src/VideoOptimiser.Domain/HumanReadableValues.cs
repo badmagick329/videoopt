@@ -11,6 +11,21 @@ public static partial class HumanReadableValues
     [GeneratedRegex("^(?<value>\\d+(?:\\.\\d+)?)\\s*(?<unit>ms|s|m|h|d)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DurationPattern();
 
+    [GeneratedRegex("^(?<value>\\d+(?:\\.\\d+)?)\\s*(?<unit>Kbps|Mbps|Gbps)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex BitratePattern();
+
+    public static bool TryParseBitrate(string? value, out long bitsPerSecond)
+    {
+        bitsPerSecond = 0;
+        var match = string.IsNullOrWhiteSpace(value) ? Match.Empty : BitratePattern().Match(value.Trim());
+        if (!match.Success || !decimal.TryParse(match.Groups["value"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var number) || number <= 0) return false;
+        var multiplier = match.Groups["unit"].Value.ToUpperInvariant() switch { "KBPS" => 1_000m, "MBPS" => 1_000_000m, "GBPS" => 1_000_000_000m, _ => 0m };
+        var result = number * multiplier;
+        if (result > long.MaxValue) return false;
+        bitsPerSecond = decimal.ToInt64(result);
+        return true;
+    }
+
     public static bool TryParseSize(string? value, out long bytes)
     {
         bytes = 0;

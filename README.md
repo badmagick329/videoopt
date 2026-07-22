@@ -1,8 +1,6 @@
 # VideoOptimiser
 
-Windows CLI for converting H.264 videos to AV1 safely.
-
-Current status: process one source through CRF search, temporary AV1 encoding, and validation; then explicitly replace it.
+Windows CLI for safely converting selected videos to AV1.
 
 ## Requirements
 
@@ -10,56 +8,94 @@ Current status: process one source through CRF search, temporary AV1 encoding, a
 - .NET SDK 9
 - `ab-av1`, `ffmpeg`, and `ffprobe` on `PATH` or configured explicitly
 
-## Setup
+## Quick start
+
+Create a config:
 
 ```powershell
 dotnet run --project src/VideoOptimiser.Cli -- config init --config .\video-optimiser.yaml
 ```
 
-Edit `watch.roots` to your video folder and set `original.action: "delete"`. Then check setup:
+Edit `watch.roots`. The generated eligibility rules and safe-delete policy are ready to use. Check the setup:
 
 ```powershell
 dotnet run --project src/VideoOptimiser.Cli -- doctor --config .\video-optimiser.yaml
 ```
 
-## Commands
+Then the normal workflow is:
+
+1. Find and queue eligible videos.
+2. Process the queue. Each video goes through CRF search, temporary encoding, and validation. Originals are untouched.
+3. Review ready jobs, then explicitly finalize them.
+
+```powershell
+# Queue every eligible video. Add --first to queue only one.
+dotnet run --project src/VideoOptimiser.Cli -- queue discover --config .\video-optimiser.yaml
+
+# Process all queued videos. This stops before replacing originals.
+dotnet run --project src/VideoOptimiser.Cli -- queue run --config .\video-optimiser.yaml
+
+# See what is ready, then replace every ready original after one confirmation.
+dotnet run --project src/VideoOptimiser.Cli -- status --config .\video-optimiser.yaml
+dotnet run --project src/VideoOptimiser.Cli -- finalize --ready --config .\video-optimiser.yaml
+```
+
+`queue run` can be stopped with `Ctrl+C`. The job becomes `Interrupted`; a later `queue run` resumes it safely. It never finalizes an original automatically.
+
+## Eligibility rules
+
+A file queues if it matches any rule. Every condition within one rule must match.
+
+```yaml
+eligibility:
+  rules:
+    - codecs: ["h264"]
+      resolution: "4k+"
+      minimumVideoBitrate: "20Mbps"
+      minimumFileSize: "2GiB"
+    - codecs: ["h264"]
+      resolution: "1080p-1440p"
+      minimumVideoBitrate: "8Mbps"
+      minimumFileSize: "800MiB"
+```
+
+Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate is the primary video-stream bitrate from `ffprobe`; files without it do not match.
+
+## Command reference
 
 Always run commands through `dotnet run` for now; `video-optimiser` is not installed as a system command.
 
 ```powershell
-# Queue every eligible file from configured watch roots.
+# Queue all eligible files, or only the first one.
 dotnet run --project src/VideoOptimiser.Cli -- queue discover --config .\video-optimiser.yaml
-
-# Queue only the next eligible file.
 dotnet run --project src/VideoOptimiser.Cli -- queue discover --first --config .\video-optimiser.yaml
 
-# Process queued jobs through CRF search, encoding, and validation.
+# Process queued jobs.
 dotnet run --project src/VideoOptimiser.Cli -- queue run --config .\video-optimiser.yaml
 
-# Process one file through CRF search, temporary encoding, and validation.
-# It stops before replacing the original and prints a job ID.
+# Process one file directly. --force ignores eligibility rules.
 dotnet run --project src/VideoOptimiser.Cli -- process "C:\Videos\movie.mp4" --config .\video-optimiser.yaml
 
-# List active jobs. Copy the full job ID for validate/finalize.
+# List active jobs, or cancel queued/interrupted jobs.
 dotnet run --project src/VideoOptimiser.Cli -- queue list --config .\video-optimiser.yaml
-
-# Cancel a queued or interrupted job. This does not delete files.
 dotnet run --project src/VideoOptimiser.Cli -- queue cancel <job-id> --config .\video-optimiser.yaml
-
-# Cancel every queued or interrupted job.
 dotnet run --project src/VideoOptimiser.Cli -- queue cancel --all --config .\video-optimiser.yaml
 
-# Re-run validation for a job if needed.
+# Revalidate or finalize one job.
 dotnet run --project src/VideoOptimiser.Cli -- validate <job-id> --config .\video-optimiser.yaml
-
-# Explicitly replace the original only after validation passes.
 dotnet run --project src/VideoOptimiser.Cli -- finalize <job-id> --config .\video-optimiser.yaml
 
-# Finalize all validated jobs after one confirmation prompt.
+# Finalize every validated job after one confirmation.
 dotnet run --project src/VideoOptimiser.Cli -- finalize --ready --config .\video-optimiser.yaml
 
-# Show completed, failed, and interrupted jobs.
+# Active jobs and terminal job history. Add --json for machine-readable output.
+dotnet run --project src/VideoOptimiser.Cli -- status --config .\video-optimiser.yaml
 dotnet run --project src/VideoOptimiser.Cli -- history --config .\video-optimiser.yaml
+
+# Configuration and dependency checks.
+dotnet run --project src/VideoOptimiser.Cli -- config show --config .\video-optimiser.yaml
+dotnet run --project src/VideoOptimiser.Cli -- config validate --config .\video-optimiser.yaml
+dotnet run --project src/VideoOptimiser.Cli -- doctor --config .\video-optimiser.yaml
 ```
 
 `process` writes temporary output and its manifest under:
@@ -67,8 +103,6 @@ dotnet run --project src/VideoOptimiser.Cli -- history --config .\video-optimise
 ```text
 <source folder>\.video-optimiser\<file>.<job-id>.<attempt>.encoding.<extension>
 ```
-
-`status --json` and `history --json` emit machine-readable JSON. Use `Ctrl+C` to stop `process`; the job is recorded as `Interrupted` and both source and temporary files are retained.
 
 ## Safety
 

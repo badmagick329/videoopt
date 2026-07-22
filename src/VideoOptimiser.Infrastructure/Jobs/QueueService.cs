@@ -10,7 +10,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
 {
     public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, CancellationToken cancellationToken = default)
     {
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings, useImmediateStabilityCheck: true, stopAfterFirstEligible: first, cancellationToken: cancellationToken);
+        var report = await scanner.ScanAsync(settings.Watch.Roots, settings, stopAfterFirstEligible: first, cancellationToken: cancellationToken);
         var queued = new List<string>();
         var existing = 0;
         var issues = report.Issues.Count;

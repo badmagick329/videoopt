@@ -100,7 +100,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<IDatabaseInitializer, SqliteDatabaseInitializer>();
         builder.Services.AddSingleton<IToolVerifier, ProcessToolVerifier>();
         builder.Services.AddSingleton<IDoctorService, DoctorService>();
-        builder.Services.AddSingleton<IFileStabilityService, FileStabilityService>();
+        builder.Services.AddSingleton<IFileReadinessService, FileReadinessService>();
         builder.Services.AddSingleton<Func<string, IMediaProbe>>(_ => ffprobePath => new FfprobeMediaProbe(ffprobePath));
         builder.Services.AddSingleton<IFileScanner, FileScanner>();
         builder.Services.AddSingleton<Func<string, ICrfSearchClient>>(_ => abAv1Path => new AbAv1CrfSearchClient(abAv1Path));
@@ -125,7 +125,7 @@ internal static class CliApplication
             {
                 var destination = await writer.WriteAsync(command.ConfigurationPath, cancellationToken);
                 Console.WriteLine($"Created editable configuration template: {destination}");
-                Console.WriteLine("Add watch.roots and original.archiveDirectory, then run 'video-optimiser config validate'.");
+                Console.WriteLine("Add watch.roots, then run 'video-optimiser config validate'.");
                 return (int)ExitCode.Success;
             }
             catch (InvalidOperationException exception)
