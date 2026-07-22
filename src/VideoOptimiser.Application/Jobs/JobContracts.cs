@@ -14,7 +14,8 @@ public enum JobStatus
     Finalizing,
     Completed,
     Failed,
-    Interrupted
+    Interrupted,
+    Cancelled
 }
 
 public sealed class JobRecord
@@ -38,7 +39,7 @@ public sealed class JobRecord
     public DateTimeOffset UpdatedUtc { get; set; }
     public DateTimeOffset? CompletedUtc { get; set; }
 
-    public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed;
+    public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled;
 }
 
 public sealed record JobProcessingResult(JobRecord Job, ExitCode ExitCode, string Message);
@@ -47,13 +48,13 @@ public static class JobStateTransitions
 {
     public static bool IsAllowed(JobStatus current, JobStatus next) => current == next || (current, next) switch
     {
-        (JobStatus.Queued, JobStatus.CrfSearching or JobStatus.Failed or JobStatus.Interrupted) => true,
+        (JobStatus.Queued, JobStatus.CrfSearching or JobStatus.Failed or JobStatus.Interrupted or JobStatus.Cancelled) => true,
         (JobStatus.CrfSearching, JobStatus.Encoding or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Encoding, JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Validating, JobStatus.ReadyToFinalize or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.ReadyToFinalize, JobStatus.Validating or JobStatus.Finalizing or JobStatus.Failed) => true,
         (JobStatus.Finalizing, JobStatus.Completed or JobStatus.Failed or JobStatus.Interrupted) => true,
-        (JobStatus.Interrupted, JobStatus.Queued or JobStatus.Failed) => true,
+        (JobStatus.Interrupted, JobStatus.Queued or JobStatus.Failed or JobStatus.Cancelled) => true,
         _ => false
     };
 }
@@ -85,12 +86,12 @@ public interface IJobProcessor
         CancellationToken cancellationToken = default);
 }
 
-public sealed record QueueDiscoveryResult(int Queued, int AlreadyQueued, int Issues);
+public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues);
 public sealed record QueueRunResult(int ReadyToFinalize, int Failed, ExitCode ExitCode);
 
 public interface IQueueService
 {
-    Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, CancellationToken cancellationToken = default);
+    Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, CancellationToken cancellationToken = default);
     Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
 }
 
