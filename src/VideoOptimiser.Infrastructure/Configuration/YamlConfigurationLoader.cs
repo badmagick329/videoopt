@@ -72,9 +72,6 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         settings.Tools.AbAv1Path = ResolveExecutablePath(settings.Tools.AbAv1Path, configurationDirectory);
         settings.Tools.FfmpegPath = ResolveExecutablePath(settings.Tools.FfmpegPath, configurationDirectory);
         settings.Tools.FfprobePath = ResolveExecutablePath(settings.Tools.FfprobePath, configurationDirectory);
-        settings.Original.ArchiveDirectory = ResolvePath(settings.Original.ArchiveDirectory, configurationDirectory);
-        settings.Output.TemporaryDirectory = ResolvePath(settings.Output.TemporaryDirectory, configurationDirectory);
-
         foreach (var root in settings.Watch.Roots)
         {
             root.Path = ResolvePath(root.Path, configurationDirectory);

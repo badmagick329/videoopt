@@ -37,7 +37,7 @@ public sealed class QueueServiceTests : IDisposable
 
     private sealed class FixedScanner(string path) : IFileScanner
     {
-        public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool useImmediateStabilityCheck = false, bool stopAfterFirstEligible = false, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new ScanReport([new ScanItem(path, ScanItemStatus.Eligible, "Eligible")], []));
+        public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool stopAfterFirstEligible = false, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new ScanReport([new ScanItem(path, ScanItemStatus.Eligible, "Eligible")], []));
     }
 
     private sealed class NoopProcessor : IJobProcessor

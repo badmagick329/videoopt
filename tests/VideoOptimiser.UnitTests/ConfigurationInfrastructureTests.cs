@@ -22,8 +22,6 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
             watch:
               roots:
                 - path: "videos"
-            original:
-              archiveDirectory: "archive"
             """);
 
         var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
@@ -31,7 +29,6 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         loaded.Settings.Database.Path.Should().Be(Path.Combine(_directory, "state", "jobs.db"));
         loaded.Settings.Logging.Directory.Should().Be(Path.Combine(_directory, "state", "logs"));
         loaded.Settings.Watch.Roots.Single().Path.Should().Be(Path.Combine(_directory, "videos"));
-        loaded.Settings.Original.ArchiveDirectory.Should().Be(Path.Combine(_directory, "archive"));
     }
 
     [Fact]
@@ -61,7 +58,7 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
 
         await writer.WriteAsync(destination);
         var contents = await File.ReadAllTextAsync(destination);
-        contents.Should().Contain("roots: []").And.Contain("archiveDirectory: \"\"");
+        contents.Should().Contain("roots:").And.Contain("# Folders searched by queue discover.").And.Contain("action: \"delete\"");
 
         var action = () => writer.WriteAsync(destination);
         await action.Should().ThrowAsync<InvalidOperationException>();

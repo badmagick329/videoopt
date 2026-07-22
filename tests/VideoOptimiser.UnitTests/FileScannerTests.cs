@@ -21,10 +21,10 @@ public sealed class FileScannerTests : IDisposable
         await File.WriteAllBytesAsync(hevc, [4, 5, 6]);
         await File.WriteAllBytesAsync(tooSmall, [7]);
 
-        var scanner = new FileScanner(new StableFileService(), _ => new CodecProbe());
+        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe());
         var settings = new AppSettings
         {
-            Processing = new ProcessingSettings { MinimumFileSize = "2B" },
+            Eligibility = Rules("2B"),
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] }
         };
 
@@ -32,7 +32,7 @@ public sealed class FileScannerTests : IDisposable
 
         report.Items.Should().ContainSingle(item => item.Path == h264 && item.Status == ScanItemStatus.Eligible);
         report.Items.Should().ContainSingle(item => item.Path == hevc && item.Status == ScanItemStatus.Ineligible && item.Reason.Contains("hevc"));
-        report.Items.Should().ContainSingle(item => item.Path == tooSmall && item.Status == ScanItemStatus.Ineligible && item.Reason.Contains("minimumFileSize"));
+        report.Items.Should().ContainSingle(item => item.Path == tooSmall && item.Status == ScanItemStatus.Ineligible && item.Reason.Contains("size is below 2B"));
         new FileInfo(h264).Length.Should().Be(3);
     }
 
@@ -43,10 +43,10 @@ public sealed class FileScannerTests : IDisposable
         Directory.CreateDirectory(excluded);
         var path = Path.Combine(excluded, "movie.mkv");
         await File.WriteAllBytesAsync(path, [1, 2, 3]);
-        var scanner = new FileScanner(new StableFileService(), _ => new CodecProbe());
+        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe());
         var settings = new AppSettings
         {
-            Processing = new ProcessingSettings { MinimumFileSize = "1B" },
+            Eligibility = Rules("1B"),
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory, Recursive = true }] }
         };
 
@@ -60,10 +60,10 @@ public sealed class FileScannerTests : IDisposable
     {
         await File.WriteAllBytesAsync(Path.Combine(_directory, "first.mkv"), [1, 2, 3]);
         await File.WriteAllBytesAsync(Path.Combine(_directory, "second.mkv"), [4, 5, 6]);
-        var scanner = new FileScanner(new StableFileService(), _ => new CodecProbe());
+        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe());
         var settings = new AppSettings
         {
-            Processing = new ProcessingSettings { MinimumFileSize = "1B" },
+            Eligibility = Rules("1B"),
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] }
         };
 
@@ -80,15 +80,20 @@ public sealed class FileScannerTests : IDisposable
         }
     }
 
-    private sealed class StableFileService : IFileStabilityService
+    private sealed class ReadableFileService : IFileReadinessService
     {
-        public Task<StabilityResult> WaitUntilStableAsync(string path, StabilitySettings settings, bool requireRepeatedObservations = true, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new StabilityResult(true, "Stable."));
+        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new FileReadinessResult(true, "Readable."));
     }
 
     private sealed class CodecProbe : IMediaProbe
     {
         public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new MediaInfo(path.EndsWith("hevc.mkv", StringComparison.Ordinal) ? "hevc" : "h264", 1, 0, 0, 0, null, null));
+            Task.FromResult(new MediaInfo(path.EndsWith("hevc.mkv", StringComparison.Ordinal) ? "hevc" : "h264", 1, 0, 0, 0, null, null, 1920, 1080, 10_000_000));
     }
+
+    private static EligibilitySettings Rules(string minimumFileSize) => new EligibilitySettings
+    {
+        Rules = new List<EligibilityRuleSettings> { new() { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "1Mbps", MinimumFileSize = minimumFileSize } }
+    };
 }

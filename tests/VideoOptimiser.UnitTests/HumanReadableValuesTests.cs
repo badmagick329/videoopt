@@ -25,6 +25,24 @@ public sealed class HumanReadableValuesTests
     }
 
     [Theory]
+    [InlineData("8Mbps", 8_000_000L)]
+    [InlineData("500 Kbps", 500_000L)]
+    [InlineData("1.5Gbps", 1_500_000_000L)]
+    public void TryParseBitrateParsesSupportedUnits(string value, long expected)
+    {
+        HumanReadableValues.TryParseBitrate(value, out var actual).Should().BeTrue();
+        actual.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("0Mbps")]
+    [InlineData("8MB/s")]
+    [InlineData("8bps")]
+    public void TryParseBitrateRejectsMalformedOrZeroValues(string value) =>
+        HumanReadableValues.TryParseBitrate(value, out _).Should().BeFalse();
+
+    [Theory]
     [InlineData("500ms", 500)]
     [InlineData("2m", 120000)]
     [InlineData("1d", 86400000)]

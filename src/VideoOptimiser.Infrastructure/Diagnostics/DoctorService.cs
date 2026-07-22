@@ -18,8 +18,6 @@ public sealed class DoctorService(
         }
 
         await CheckDirectoryAsync(configuration.Settings.Logging.Directory, "LogDirectory", true, diagnostics, cancellationToken);
-        await CheckDirectoryAsync(configuration.Settings.Original.ArchiveDirectory, "ArchiveDirectory", true, diagnostics, cancellationToken);
-        await CheckDirectoryAsync(configuration.Settings.Output.TemporaryDirectory, "TemporaryDirectory", true, diagnostics, cancellationToken);
 
         foreach (var root in configuration.Settings.Watch.Roots.Where(root => !string.IsNullOrWhiteSpace(root.Path)))
         {
@@ -103,8 +101,6 @@ public sealed class DoctorService(
     {
         var paths = settings.Watch.Roots.Select(root => root.Path)
             .Append(settings.Database.Path)
-            .Append(settings.Original.ArchiveDirectory)
-            .Append(settings.Output.TemporaryDirectory)
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase);
 

@@ -75,7 +75,10 @@ public static class FfprobeJsonParser
             streams.Count(stream => GetString(stream, "codec_type") == "subtitle"),
             streams.Count(stream => GetString(stream, "codec_type") == "attachment"),
             duration,
-            size);
+            size,
+            GetInt(primaryVideo, "width"),
+            GetInt(primaryVideo, "height"),
+            GetLong(primaryVideo, "bit_rate"));
     }
 
     private static bool IsDefaultStream(JsonElement stream) => stream.TryGetProperty("disposition", out var disposition) && disposition.TryGetProperty("default", out var value) && GetInt(value) == 1;
@@ -86,7 +89,14 @@ public static class FfprobeJsonParser
 
     private static int GetInt(JsonElement value) => value.ValueKind == JsonValueKind.Number ? value.GetInt32() : int.TryParse(value.GetString(), out var parsed) ? parsed : 0;
 
+    private static int? GetInt(JsonElement element, string property) => element.TryGetProperty(property, out var value) ? GetInt(value) : null;
+
     private static double? GetDouble(JsonElement element, string property) => element.TryGetProperty(property, out var value) && double.TryParse(value.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
 
-    private static long? GetLong(JsonElement element, string property) => element.TryGetProperty(property, out var value) && long.TryParse(value.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+    private static long? GetLong(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var numericValue)) return numericValue;
+        return long.TryParse(value.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+    }
 }

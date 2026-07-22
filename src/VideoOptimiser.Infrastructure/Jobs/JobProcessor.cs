@@ -8,7 +8,7 @@ namespace VideoOptimiser.Infrastructure.Jobs;
 
 public sealed class JobProcessor(
     IJobRepository jobs,
-    IFileStabilityService stability,
+    IFileReadinessService readiness,
     Func<string, IMediaProbe> mediaProbeFactory,
     Func<string, ICrfSearchClient> crfSearchFactory,
     Func<string, IVideoEncoder> encoderFactory,
@@ -53,12 +53,11 @@ public sealed class JobProcessor(
         {
             if (!force && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return await FailAsync(job, databasePath, "SourceOutsideWatchRoot", "Source file is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure, cancellationToken);
             var info = new FileInfo(path);
-            if (!force && (!HumanReadableValues.TryParseSize(settings.Processing.MinimumFileSize, out var minimumSize) || info.Length < minimumSize)) return await FailAsync(job, databasePath, "BelowMinimumFileSize", "Source file is below processing.minimumFileSize. Use --force to bypass this check.", ExitCode.NoEligibleFiles, cancellationToken);
-            var stable = await stability.WaitUntilStableAsync(path, settings.Watch.Stability, requireRepeatedObservations: false, cancellationToken);
-            if (!stable.IsStable) return await FailAsync(job, databasePath, "SourceNotReady", $"Source is not ready: {stable.Reason}", ExitCode.ProcessingFailure, cancellationToken);
+            var readinessResult = await readiness.CheckAsync(path, cancellationToken);
+            if (!readinessResult.IsReady) return await FailAsync(job, databasePath, "SourceNotReady", $"Source is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure, cancellationToken);
 
             var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
-            if (!force && !settings.Eligibility.RequiredVideoCodecs.Contains(media.PrimaryVideoCodec, StringComparer.OrdinalIgnoreCase)) return await FailAsync(job, databasePath, "UnsupportedCodec", $"Source codec is {media.PrimaryVideoCodec}; expected {string.Join(", ", settings.Eligibility.RequiredVideoCodecs)}. Use --force to bypass this check.", ExitCode.NoEligibleFiles, cancellationToken);
+            if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return await FailAsync(job, databasePath, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles, cancellationToken);
 
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.SampleCount);
             var quality = WithSampleCount(settings.Quality, sampleCount);

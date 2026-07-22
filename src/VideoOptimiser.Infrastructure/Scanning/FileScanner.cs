@@ -5,13 +5,12 @@ using VideoOptimiser.Application.Scanning;
 namespace VideoOptimiser.Infrastructure.Scanning;
 
 public sealed class FileScanner(
-    IFileStabilityService stabilityService,
+    IFileReadinessService readinessService,
     Func<string, IMediaProbe> mediaProbeFactory) : IFileScanner
 {
     public async Task<ScanReport> ScanAsync(
         IReadOnlyList<WatchRootSettings> roots,
         AppSettings settings,
-        bool useImmediateStabilityCheck = false,
         bool stopAfterFirstEligible = false,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
@@ -64,7 +63,7 @@ public sealed class FileScanner(
                         continue;
                     }
 
-                    var item = await EvaluateAsync(canonicalPath, settings, useImmediateStabilityCheck, progress, cancellationToken);
+                    var item = await EvaluateAsync(canonicalPath, settings, progress, cancellationToken);
                     items.Add(item);
                     if (stopAfterFirstEligible && item.Status == ScanItemStatus.Eligible)
                     {
@@ -81,7 +80,7 @@ public sealed class FileScanner(
         return new ScanReport(items, issues);
     }
 
-    private async Task<ScanItem> EvaluateAsync(string path, AppSettings settings, bool useImmediateStabilityCheck, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    private async Task<ScanItem> EvaluateAsync(string path, AppSettings settings, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileName(path);
         var extension = Path.GetExtension(path);
@@ -99,41 +98,32 @@ public sealed class FileScanner(
         var info = new FileInfo(path);
         if (!info.Exists)
         {
-            return new ScanItem(path, ScanItemStatus.WaitingForStability, "File no longer exists.");
-        }
-
-        if (info.Length < ParseMinimumFileSize(settings.Processing.MinimumFileSize))
-        {
-            return new ScanItem(path, ScanItemStatus.Ineligible, "File is below processing.minimumFileSize.", info.Length);
+            return new ScanItem(path, ScanItemStatus.Unavailable, "File no longer exists.");
         }
 
         progress?.Report(new ScanProgress(
             path,
-            "Stability",
-            useImmediateStabilityCheck
-                ? "Checking the file is readable and not newly written."
-                : $"Waiting for {settings.Watch.Stability.RequiredStableChecks} stable checks."));
-        var stability = await stabilityService.WaitUntilStableAsync(path, settings.Watch.Stability, !useImmediateStabilityCheck, cancellationToken);
-        if (!stability.IsStable)
+            "Readiness",
+            "Checking the file can be read."));
+        var readiness = await readinessService.CheckAsync(path, cancellationToken);
+        if (!readiness.IsReady)
         {
-            return new ScanItem(path, ScanItemStatus.WaitingForStability, stability.Reason, info.Length);
+            return new ScanItem(path, ScanItemStatus.Unavailable, readiness.Reason, info.Length);
         }
 
         try
         {
             progress?.Report(new ScanProgress(path, "Probing", "Running ffprobe."));
             var mediaInfo = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
-            return settings.Eligibility.RequiredVideoCodecs.Contains(mediaInfo.PrimaryVideoCodec, StringComparer.OrdinalIgnoreCase)
-                ? new ScanItem(path, ScanItemStatus.Eligible, "Primary video stream uses a required codec.", info.Length, mediaInfo)
-                : new ScanItem(path, ScanItemStatus.Ineligible, $"Primary video codec is {mediaInfo.PrimaryVideoCodec}, not an allowed codec.", info.Length, mediaInfo);
+            return EligibilityEvaluator.IsEligible(info, mediaInfo, settings.Eligibility, out var reason)
+                ? new ScanItem(path, ScanItemStatus.Eligible, reason, info.Length, mediaInfo)
+                : new ScanItem(path, ScanItemStatus.Ineligible, reason, info.Length, mediaInfo);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
             return new ScanItem(path, ScanItemStatus.ProbeFailed, exception.Message, info.Length);
         }
     }
-
-    private static long ParseMinimumFileSize(string value) => VideoOptimiser.Domain.HumanReadableValues.TryParseSize(value, out var bytes) ? bytes : long.MaxValue;
 
     private static bool IsMatch(string fileName, string globPattern) => Regex.IsMatch(fileName, "^" + Regex.Escape(globPattern).Replace("\\*", ".*").Replace("\\?", ".") + "$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 

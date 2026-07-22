@@ -6,7 +6,7 @@ public enum ScanItemStatus
 {
     Eligible,
     Ineligible,
-    WaitingForStability,
+    Unavailable,
     ProbeFailed
 }
 
@@ -17,9 +17,12 @@ public sealed record MediaInfo(
     int SubtitleStreamCount,
     int AttachmentCount,
     double? DurationSeconds,
-    long? SizeBytes);
+    long? SizeBytes,
+    int? PrimaryVideoWidth = null,
+    int? PrimaryVideoHeight = null,
+    long? PrimaryVideoBitrate = null);
 
-public sealed record StabilityResult(bool IsStable, string Reason);
+public sealed record FileReadinessResult(bool IsReady, string Reason);
 
 public sealed record ScanItem(
     string Path,
@@ -37,12 +40,10 @@ public sealed record ScanReport(IReadOnlyList<ScanItem> Items, IReadOnlyList<Sca
     public int EligibleCount => Items.Count(item => item.Status == ScanItemStatus.Eligible);
 }
 
-public interface IFileStabilityService
+public interface IFileReadinessService
 {
-    Task<StabilityResult> WaitUntilStableAsync(
+    Task<FileReadinessResult> CheckAsync(
         string path,
-        StabilitySettings settings,
-        bool requireRepeatedObservations = true,
         CancellationToken cancellationToken = default);
 }
 
@@ -56,7 +57,6 @@ public interface IFileScanner
     Task<ScanReport> ScanAsync(
         IReadOnlyList<WatchRootSettings> roots,
         AppSettings settings,
-        bool useImmediateStabilityCheck = false,
         bool stopAfterFirstEligible = false,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default);

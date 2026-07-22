@@ -1,4 +1,5 @@
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Infrastructure.Configuration;
@@ -24,28 +25,22 @@ public sealed class SettingsValidator : ISettingsValidator
             Add("WatchRootPathRequired", "Every watch.roots entry must include a path.");
         }
 
-        ValidateSize(settings.Processing.MinimumFileSize, "processing.minimumFileSize", diagnostics);
+        AddWhen(settings.Eligibility.Rules.Count == 0, "EligibilityRulesRequired", "At least one eligibility.rules entry is required.");
+        foreach (var rule in settings.Eligibility.Rules)
+        {
+            AddWhen(rule.Codecs.Count == 0, "EligibilityRuleCodecsRequired", "Every eligibility.rules entry requires codecs.");
+            AddWhen(!HumanReadableValues.TryParseSize(rule.MinimumFileSize, out _), "InvalidEligibilityRuleSize", "eligibility.rules.minimumFileSize must be a size.");
+            AddWhen(!HumanReadableValues.TryParseBitrate(rule.MinimumVideoBitrate, out _), "InvalidEligibilityRuleBitrate", "eligibility.rules.minimumVideoBitrate must be a positive bitrate.");
+            AddWhen(!EligibilityEvaluator.IsValidResolutionBand(rule.Resolution), "InvalidEligibilityRuleResolution", "eligibility.rules.resolution must be 1080p-1440p, 1440p-4k, or 4k+.");
+        }
         ValidateSize(settings.Savings.MinimumBytesSaved, "savings.minimumBytesSaved", diagnostics);
-        ValidateDuration(settings.Watch.ReconciliationInterval, "watch.reconciliationInterval", diagnostics);
-        ValidateDuration(settings.Watch.Stability.PollInterval, "watch.stability.pollInterval", diagnostics);
-        ValidateDuration(settings.Watch.Stability.MinimumAge, "watch.stability.minimumAge", diagnostics);
-        ValidateDuration(settings.Watch.Stability.Timeout, "watch.stability.timeout", diagnostics);
-        ValidateDuration(settings.Processing.RetryDelay, "processing.retryDelay", diagnostics);
-
-        AddWhen(settings.Processing.MaximumConcurrentJobs < 1, "InvalidConcurrency", "processing.maximumConcurrentJobs must be at least 1.");
-        AddWhen(settings.Watch.Stability.RequiredStableChecks < 1, "InvalidStableChecks", "watch.stability.requiredStableChecks must be at least 1.");
-        AddWhen(settings.Processing.RetryCount < 0, "InvalidRetryCount", "processing.retryCount cannot be negative.");
         AddWhen(settings.Quality.MinimumVmaf is < 0 or > 100, "InvalidVmaf", "quality.minimumVmaf must be between 0 and 100.");
         AddWhen(settings.Quality.Preset < 0, "InvalidPreset", "quality.preset cannot be negative.");
         AddWhen(settings.Quality.CrfSearch.MinCrf > settings.Quality.CrfSearch.MaxCrf, "InvalidCrfRange", "quality.crfSearch.minCrf cannot exceed maxCrf.");
         AddWhen(settings.Quality.CrfSearch.SampleCount < 1, "InvalidSampleCount", "quality.crfSearch.sampleCount must be at least 1.");
         ValidateDuration(settings.Quality.CrfSearch.SampleDuration, "quality.crfSearch.sampleDuration", diagnostics);
         AddWhen(string.IsNullOrWhiteSpace(settings.Quality.Encoder), "EncoderRequired", "quality.encoder is required.");
-        AddWhen(!IsOneOf(settings.Output.Container, "preserve", "mkv", "mp4"), "InvalidContainer", "output.container must be preserve, mkv, or mp4.");
-        AddWhen(string.IsNullOrWhiteSpace(settings.Output.TemporarySuffix), "TemporarySuffixRequired", "output.temporarySuffix is required.");
-        AddWhen(!IsOneOf(settings.Original.Action, "keep", "archive", "delete"), "InvalidOriginalAction", "original.action must be keep, archive, or delete.");
-        AddWhen(settings.Original.Action.Equals("archive", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(settings.Original.ArchiveDirectory), "ArchiveDirectoryRequired", "original.archiveDirectory is required when original.action is archive.");
-        AddWhen(!IsOneOf(settings.Original.CollisionStrategy, "fail", "overwrite", "timestamp", "increment", "hash"), "InvalidCollisionStrategy", "original.collisionStrategy must be fail, overwrite, timestamp, increment, or hash.");
+        AddWhen(!IsOneOf(settings.Original.Action, "delete"), "InvalidOriginalAction", "original.action must currently be delete.");
         AddWhen(settings.Original.Action.Equals("delete", StringComparison.OrdinalIgnoreCase) && !settings.Validation.RunFfprobe, "UnsafeDeleteValidation", "original.action delete requires validation.runFfprobe to be enabled.");
         AddWhen(!IsOneOf(settings.Validation.DecodeTestMode, "none", "sampled", "full"), "InvalidDecodeTestMode", "validation.decodeTestMode must be none, sampled, or full.");
         AddWhen(settings.Validation.DurationToleranceSeconds < 0, "InvalidDurationTolerance", "validation.durationToleranceSeconds cannot be negative.");

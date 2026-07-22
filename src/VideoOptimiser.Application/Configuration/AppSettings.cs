@@ -8,9 +8,7 @@ public sealed class AppSettings
     public LoggingSettings Logging { get; set; } = new();
     public WatchSettings Watch { get; set; } = new();
     public EligibilitySettings Eligibility { get; set; } = new();
-    public ProcessingSettings Processing { get; set; } = new();
     public QualitySettings Quality { get; set; } = new();
-    public OutputSettings Output { get; set; } = new();
     public SavingsSettings Savings { get; set; } = new();
     public OriginalSettings Original { get; set; } = new();
     public ValidationSettings Validation { get; set; } = new();
@@ -40,8 +38,6 @@ public sealed class LoggingSettings
 public sealed class WatchSettings
 {
     public List<WatchRootSettings> Roots { get; set; } = [];
-    public string ReconciliationInterval { get; set; } = "10m";
-    public StabilitySettings Stability { get; set; } = new();
 }
 
 public sealed class WatchRootSettings
@@ -50,18 +46,10 @@ public sealed class WatchRootSettings
     public bool Recursive { get; set; } = true;
 }
 
-public sealed class StabilitySettings
-{
-    public string PollInterval { get; set; } = "15s";
-    public int RequiredStableChecks { get; set; } = 4;
-    public string MinimumAge { get; set; } = "2m";
-    public string Timeout { get; set; } = "24h";
-}
-
 public sealed class EligibilitySettings
 {
     public List<string> Extensions { get; set; } = [".mkv", ".mp4", ".mov", ".m4v"];
-    public List<string> RequiredVideoCodecs { get; set; } = ["h264"];
+    public List<EligibilityRuleSettings> Rules { get; set; } = [];
     public List<string> ExcludedExtensions { get; set; } = [".tmp", ".part", ".partial"];
     public List<string> ExcludedNamePatterns { get; set; } = ["*.encoding.*", "*.crf-search.*", "*.video-optimiser.*"];
     public List<string> ExcludedDirectories { get; set; } = [".video-optimiser", "Archive"];
@@ -69,14 +57,12 @@ public sealed class EligibilitySettings
     public bool IgnoreSystemFiles { get; set; } = true;
 }
 
-public sealed class ProcessingSettings
+public sealed class EligibilityRuleSettings
 {
-    public string MinimumFileSize { get; set; } = "2GiB";
-    public int MaximumConcurrentJobs { get; set; } = 1;
-    public int RetryCount { get; set; } = 2;
-    public string RetryDelay { get; set; } = "10m";
-    public bool ResumeInterruptedJobs { get; set; } = true;
-    public bool PreventSystemSleep { get; set; } = true;
+    public List<string> Codecs { get; set; } = [];
+    public string Resolution { get; set; } = string.Empty;
+    public string MinimumVideoBitrate { get; set; } = string.Empty;
+    public string MinimumFileSize { get; set; } = string.Empty;
 }
 
 public sealed class QualitySettings
@@ -97,19 +83,6 @@ public sealed class CrfSearchSettings
     public string SampleDuration { get; set; } = "20s";
 }
 
-public sealed class OutputSettings
-{
-    public string Container { get; set; } = "preserve";
-    public string TemporaryDirectory { get; set; } = string.Empty;
-    public string TemporarySuffix { get; set; } = ".video-optimiser.encoding";
-    public bool PreserveTimestamps { get; set; } = true;
-    public bool PreserveMetadata { get; set; } = true;
-    public bool PreserveChapters { get; set; } = true;
-    public bool PreserveAttachments { get; set; } = true;
-    public bool CopySubtitles { get; set; } = true;
-    public bool CopyAudio { get; set; } = true;
-}
-
 public sealed class SavingsSettings
 {
     public bool RequireSmallerOutput { get; set; } = true;
@@ -119,10 +92,7 @@ public sealed class SavingsSettings
 
 public sealed class OriginalSettings
 {
-    public string Action { get; set; } = "archive";
-    public string ArchiveDirectory { get; set; } = string.Empty;
-    public bool PreserveRelativePath { get; set; } = true;
-    public string CollisionStrategy { get; set; } = "timestamp";
+    public string Action { get; set; } = "delete";
 }
 
 public sealed class ValidationSettings

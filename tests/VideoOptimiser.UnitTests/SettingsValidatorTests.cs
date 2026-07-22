@@ -11,7 +11,7 @@ public sealed class SettingsValidatorTests
     {
         var diagnostics = new SettingsValidator().Validate(new AppSettings());
 
-        diagnostics.Select(diagnostic => diagnostic.Code).Should().Contain(["WatchRootsRequired", "ArchiveDirectoryRequired"]);
+        diagnostics.Select(diagnostic => diagnostic.Code).Should().Contain("WatchRootsRequired");
     }
 
     [Fact]
@@ -35,6 +35,7 @@ public sealed class SettingsValidatorTests
     internal static AppSettings CreateValidSettings() => new()
     {
         Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = "C:\\Videos" }] },
-        Original = new OriginalSettings { Action = "archive", ArchiveDirectory = "C:\\Archive" }
+        Eligibility = new EligibilitySettings { Rules = [new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "8Mbps", MinimumFileSize = "800MiB" }] },
+        Original = new OriginalSettings { Action = "delete" }
     };
 }

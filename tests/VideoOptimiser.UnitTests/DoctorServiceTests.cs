@@ -44,7 +44,8 @@ public sealed class DoctorServiceTests : IDisposable
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
             Logging = new LoggingSettings { Directory = Path.Combine(_directory, "logs") },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = watchRoot }] },
-            Original = new OriginalSettings { Action = "archive", ArchiveDirectory = Path.Combine(_directory, "archive") }
+            Eligibility = new EligibilitySettings { Rules = [new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "8Mbps", MinimumFileSize = "800MiB" }] },
+            Original = new OriginalSettings { Action = "delete" }
         };
     }
 

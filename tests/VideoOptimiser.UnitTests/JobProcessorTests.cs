@@ -25,7 +25,7 @@ public sealed class JobProcessorTests : IDisposable
         var encoder = new FakeEncoder();
         var processor = new JobProcessor(
             repository,
-            new StableFiles(),
+            new ReadableFiles(),
             _ => new H264Probe(),
             _ => new FixedCrfSearch(),
             _ => encoder,
@@ -36,7 +36,7 @@ public sealed class JobProcessorTests : IDisposable
         {
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
-            Processing = new ProcessingSettings { MinimumFileSize = "1B" }
+            Eligibility = Rules()
         };
 
         var first = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
@@ -59,7 +59,7 @@ public sealed class JobProcessorTests : IDisposable
         var databasePath = Path.Combine(_directory, "cancelled.db");
         var processor = new JobProcessor(
             new SqliteJobRepository(new SqliteDatabaseInitializer()),
-            new StableFiles(),
+            new ReadableFiles(),
             _ => new H264Probe(),
             _ => new CancellingCrfSearch(),
             _ => new FakeEncoder(),
@@ -70,7 +70,7 @@ public sealed class JobProcessorTests : IDisposable
         {
             Database = new DatabaseSettings { Path = databasePath },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
-            Processing = new ProcessingSettings { MinimumFileSize = "1B" }
+            Eligibility = Rules()
         };
 
         var action = async () => await processor.ProcessAsync(databasePath, source, settings, force: false);
@@ -81,14 +81,14 @@ public sealed class JobProcessorTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private sealed class StableFiles : IFileStabilityService
+    private sealed class ReadableFiles : IFileReadinessService
     {
-        public Task<StabilityResult> WaitUntilStableAsync(string path, StabilitySettings settings, bool requireRepeatedObservations = true, CancellationToken cancellationToken = default) => Task.FromResult(new StabilityResult(true, "Stable."));
+        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
     }
 
     private sealed class H264Probe : IMediaProbe
     {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length));
+        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, 10_000_000));
     }
 
     private sealed class FixedCrfSearch : ICrfSearchClient
@@ -119,4 +119,9 @@ public sealed class JobProcessorTests : IDisposable
     {
         public Task<ValidationReport> ValidateAsync(OutputManifest manifest, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(new ValidationReport { Passed = true, SourceSizeBytes = 100, OutputSizeBytes = 50, PercentageSaved = 50, ValidatedUtc = DateTimeOffset.UtcNow });
     }
+
+    private static EligibilitySettings Rules() => new EligibilitySettings
+    {
+        Rules = new List<EligibilityRuleSettings> { new() { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "1Mbps", MinimumFileSize = "1B" } }
+    };
 }
