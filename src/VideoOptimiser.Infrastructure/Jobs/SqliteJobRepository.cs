@@ -15,13 +15,14 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
             SELECT * FROM jobs
             WHERE source_path = $sourcePath COLLATE NOCASE
               AND source_fingerprint = $sourceFingerprint
-              AND status NOT IN ($completed, $failed)
+              AND status NOT IN ($completed, $failed, $cancelled)
             ORDER BY created_utc DESC LIMIT 1;
             """;
         command.Parameters.AddWithValue("$sourcePath", sourcePath);
         command.Parameters.AddWithValue("$sourceFingerprint", sourceFingerprint);
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
+        command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
@@ -30,10 +31,11 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM jobs WHERE source_path = $sourcePath COLLATE NOCASE AND status NOT IN ($completed, $failed) ORDER BY created_utc DESC LIMIT 1;";
+        command.CommandText = "SELECT * FROM jobs WHERE source_path = $sourcePath COLLATE NOCASE AND status NOT IN ($completed, $failed, $cancelled) ORDER BY created_utc DESC LIMIT 1;";
         command.Parameters.AddWithValue("$sourcePath", sourcePath);
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
+        command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
@@ -72,10 +74,11 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = terminal
-            ? "SELECT * FROM jobs WHERE status IN ($completed, $failed) ORDER BY updated_utc DESC;"
-            : "SELECT * FROM jobs WHERE status NOT IN ($completed, $failed) ORDER BY updated_utc DESC;";
+            ? "SELECT * FROM jobs WHERE status IN ($completed, $failed, $cancelled) ORDER BY updated_utc DESC;"
+            : "SELECT * FROM jobs WHERE status NOT IN ($completed, $failed, $cancelled) ORDER BY updated_utc DESC;";
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
+        command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var jobs = new List<JobRecord>();
         while (await reader.ReadAsync(cancellationToken)) jobs.Add(Read(reader));

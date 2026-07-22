@@ -144,10 +144,11 @@ internal static class CliApplication
             CliCommandKind.ConfigShow => ShowConfiguration(configuration),
             CliCommandKind.ConfigValidate => ValidateConfiguration(services.GetRequiredService<ISettingsValidator>(), configuration),
             CliCommandKind.Doctor => await RunDoctorAsync(services.GetRequiredService<IDoctorService>(), configuration, command.Json, cancellationToken),
-            CliCommandKind.Scan => await RunScanAsync(services.GetRequiredService<IFileScanner>(), configuration, command, cancellationToken),
             CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
-            CliCommandKind.QueueDiscover => await RunQueueDiscoverAsync(services.GetRequiredService<IQueueService>(), configuration, cancellationToken),
+            CliCommandKind.QueueDiscover => await RunQueueDiscoverAsync(services.GetRequiredService<IQueueService>(), configuration, command.First, cancellationToken),
             CliCommandKind.QueueRun => await RunQueueRunAsync(services.GetRequiredService<IQueueService>(), configuration, cancellationToken),
+            CliCommandKind.QueueList => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
+            CliCommandKind.QueueCancel => await RunQueueCancelAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
             CliCommandKind.Status => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.History => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: true, command.Json, cancellationToken),
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
@@ -237,65 +238,6 @@ internal static class CliApplication
         return (int)report.ExitCode;
     }
 
-    private static async Task<int> RunScanAsync(IFileScanner scanner, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
-    {
-        var roots = string.IsNullOrWhiteSpace(command.ScanPath)
-            ? configuration.Settings.Watch.Roots
-            : [new WatchRootSettings { Path = Path.GetFullPath(command.ScanPath), Recursive = command.Recursive }];
-        if (string.IsNullOrWhiteSpace(command.ScanPath) && command.Recursive)
-        {
-            roots = roots.Select(root => new WatchRootSettings { Path = root.Path, Recursive = true }).ToList();
-        }
-
-        IProgress<ScanProgress>? progress = command.Json || !command.All
-            ? null
-            : new InlineProgress<ScanProgress>(update => Console.WriteLine($"{update.Stage,-20} {update.Path} — {update.Message}"));
-        var report = await scanner.ScanAsync(
-            roots,
-            configuration.Settings,
-            useImmediateStabilityCheck: true,
-            stopAfterFirstEligible: command.First,
-            progress: progress,
-            cancellationToken: cancellationToken);
-        if (command.Json)
-        {
-            Console.WriteLine(JsonSerializer.Serialize(new
-            {
-                eligibleCount = report.EligibleCount,
-                items = report.Items.Select(item => new
-                {
-                    path = item.Path,
-                    status = item.Status.ToString(),
-                    reason = item.Reason,
-                    sizeBytes = item.SizeBytes,
-                    primaryVideoCodec = item.MediaInfo?.PrimaryVideoCodec
-                }),
-                issues = report.Issues.Select(issue => new { path = issue.Path, message = issue.Message })
-            }, JsonOptions));
-        }
-        else
-        {
-            foreach (var item in report.Items.Where(item => command.All || item.Status == ScanItemStatus.Eligible))
-            {
-                Console.WriteLine($"{item.Status,-20} {item.Path} — {item.Reason}");
-            }
-
-            foreach (var issue in report.Issues.Where(_ => command.All))
-            {
-                Console.Error.WriteLine($"Issue                {issue.Path} — {issue.Message}");
-            }
-
-            Console.WriteLine($"Eligible files: {report.EligibleCount}");
-        }
-
-        if (report.Items.Any(item => item.Status == ScanItemStatus.ProbeFailed) || report.Issues.Count > 0)
-        {
-            return (int)ExitCode.GeneralFailure;
-        }
-
-        return report.EligibleCount > 0 ? (int)ExitCode.Success : (int)ExitCode.NoEligibleFiles;
-    }
-
     private static async Task<int> RunProcessAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
@@ -334,11 +276,31 @@ internal static class CliApplication
         return (int)result.ExitCode;
     }
 
-    private static async Task<int> RunQueueDiscoverAsync(IQueueService queue, LoadedConfiguration configuration, CancellationToken cancellationToken)
+    private static async Task<int> RunQueueDiscoverAsync(IQueueService queue, LoadedConfiguration configuration, bool first, CancellationToken cancellationToken)
     {
-        var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, cancellationToken);
-        Console.WriteLine($"Queued: {result.Queued}. Already queued: {result.AlreadyQueued}. Issues: {result.Issues}.");
+        var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, cancellationToken);
+        foreach (var path in result.QueuedPaths) Console.WriteLine($"Queued  {path}");
+        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Issues: {result.Issues}.");
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
+    }
+
+    private static async Task<int> RunQueueCancelAsync(IJobRepository repository, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
+    {
+        JobRecord[] jobs = command.All
+            ? (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Where(job => job.Status is JobStatus.Queued or JobStatus.Interrupted).ToArray()
+            : Guid.TryParse(command.JobId, out var id) ? (await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken) is { } foundJob ? [foundJob] : Array.Empty<JobRecord>()) : Array.Empty<JobRecord>();
+        if (jobs.Length == 0) { Console.WriteLine("No cancellable jobs found."); return (int)ExitCode.Success; }
+        foreach (var job in jobs)
+        {
+            if (job.Status is not (JobStatus.Queued or JobStatus.Interrupted)) { Console.Error.WriteLine($"{job.Id:N} is not cancellable."); continue; }
+            job.Status = JobStatus.Cancelled;
+            job.FailureCategory = "Cancelled";
+            job.FailureMessage = "Cancelled by user.";
+            job.CompletedUtc = DateTimeOffset.UtcNow;
+            await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
+            Console.WriteLine($"Cancelled  {job.Id:N}  {Path.GetFileName(job.SourcePath)}");
+        }
+        return (int)ExitCode.Success;
     }
 
     private static async Task<int> RunQueueRunAsync(IQueueService queue, LoadedConfiguration configuration, CancellationToken cancellationToken)
@@ -439,10 +401,12 @@ Usage:
   video-optimiser config show [--config <path>]
   video-optimiser config validate [--config <path>]
   video-optimiser doctor [--config <path>] [--json]
-  video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--first] [--all] [--json]
   video-optimiser process <file> [--config <path>] [--force] [--dry-run]
-  video-optimiser queue discover [--config <path>]
+  video-optimiser queue discover [--first] [--config <path>]
   video-optimiser queue run [--config <path>]
+  video-optimiser queue list [--config <path>] [--json]
+  video-optimiser queue cancel <job-id> [--config <path>]
+  video-optimiser queue cancel --all [--config <path>]
   video-optimiser status [--config <path>] [--json]
   video-optimiser history [--config <path>] [--json]
   video-optimiser validate <job-id> [--config <path>]
@@ -459,10 +423,11 @@ internal enum CliCommandKind
     ConfigShow,
     ConfigValidate,
     Doctor,
-    Scan,
     Process,
     QueueDiscover,
     QueueRun,
+    QueueList,
+    QueueCancel,
     Status,
     History,
     Validate,
@@ -478,10 +443,8 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
     {
         var remaining = new List<string>();
         string? configurationPath = null;
-        string? scanPath = null;
         var force = false;
         var dryRun = false;
-        var recursive = false;
         var first = false;
         var all = false;
         var json = false;
@@ -504,14 +467,6 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                     break;
                 case "--first":
                     first = true;
-                    break;
-                case "--path" when index + 1 < args.Length:
-                    scanPath = args[++index];
-                    break;
-                case "--path":
-                    return Invalid("--path requires a folder.");
-                case "--recursive":
-                    recursive = true;
                     break;
                 case "--dry-run":
                     dryRun = true;
@@ -538,10 +493,11 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["config", "show"] => CliCommandKind.ConfigShow,
             ["config", "validate"] => CliCommandKind.ConfigValidate,
             ["doctor"] => CliCommandKind.Doctor,
-            ["scan"] => CliCommandKind.Scan,
             ["process", _] => CliCommandKind.Process,
             ["queue", "discover"] => CliCommandKind.QueueDiscover,
             ["queue", "run"] => CliCommandKind.QueueRun,
+            ["queue", "list"] => CliCommandKind.QueueList,
+            ["queue", "cancel"] or ["queue", "cancel", _] => CliCommandKind.QueueCancel,
             ["status"] => CliCommandKind.Status,
             ["history"] => CliCommandKind.History,
             ["validate", _] => CliCommandKind.Validate,
@@ -554,20 +510,13 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("Unknown or incomplete command.");
         }
 
-        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.Scan or CliCommandKind.Status or CliCommandKind.History))
+        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.QueueList or CliCommandKind.Status or CliCommandKind.History))
         {
             return Invalid("--json is only supported by doctor, scan, status, and history.");
         }
 
-        if ((scanPath is not null || recursive || first || all) && kind != CliCommandKind.Scan)
-        {
-            return Invalid("--path, --recursive, --first, and --all are only supported by scan.");
-        }
-
-        if (first && all)
-        {
-            return Invalid("--first and --all cannot be used together.");
-        }
+        if (first && kind != CliCommandKind.QueueDiscover) return Invalid("--first is only supported by queue discover.");
+        if (all && kind != CliCommandKind.QueueCancel) return Invalid("--all is only supported by queue cancel.");
 
         if (force && kind != CliCommandKind.Process)
         {
@@ -577,8 +526,9 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         if (dryRun && kind != CliCommandKind.Process) return Invalid("--dry-run is only supported by process.");
         if (finalizeReady && kind != CliCommandKind.Finalize) return Invalid("--ready is only supported by finalize.");
         if (finalizeReady && remaining.Count != 1) return Invalid("finalize --ready does not take a job ID.");
+        if (kind == CliCommandKind.QueueCancel && !all && remaining.Count != 3) return Invalid("queue cancel requires a job ID or --all.");
 
-        return new CliCommand(kind, configurationPath, scanPath, recursive, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize) && remaining.Count > 1 ? remaining[1] : null, finalizeReady);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueCancel) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);

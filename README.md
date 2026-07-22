@@ -27,24 +27,27 @@ dotnet run --project src/VideoOptimiser.Cli -- doctor --config .\video-optimiser
 Always run commands through `dotnet run` for now; `video-optimiser` is not installed as a system command.
 
 ```powershell
-# Find the next eligible H.264 file, then stop. Read-only.
-dotnet run --project src/VideoOptimiser.Cli -- scan --first --config .\video-optimiser.yaml
-
 # Queue every eligible file from configured watch roots.
 dotnet run --project src/VideoOptimiser.Cli -- queue discover --config .\video-optimiser.yaml
 
+# Queue only the next eligible file.
+dotnet run --project src/VideoOptimiser.Cli -- queue discover --first --config .\video-optimiser.yaml
+
 # Process queued jobs through CRF search, encoding, and validation.
 dotnet run --project src/VideoOptimiser.Cli -- queue run --config .\video-optimiser.yaml
-
-# List every eligible file without queuing it. Add --all for diagnostic output.
-dotnet run --project src/VideoOptimiser.Cli -- scan --config .\video-optimiser.yaml
 
 # Process one file through CRF search, temporary encoding, and validation.
 # It stops before replacing the original and prints a job ID.
 dotnet run --project src/VideoOptimiser.Cli -- process "C:\Videos\movie.mp4" --config .\video-optimiser.yaml
 
 # List active jobs. Copy the full job ID for validate/finalize.
-dotnet run --project src/VideoOptimiser.Cli -- status --config .\video-optimiser.yaml
+dotnet run --project src/VideoOptimiser.Cli -- queue list --config .\video-optimiser.yaml
+
+# Cancel a queued or interrupted job. This does not delete files.
+dotnet run --project src/VideoOptimiser.Cli -- queue cancel <job-id> --config .\video-optimiser.yaml
+
+# Cancel every queued or interrupted job.
+dotnet run --project src/VideoOptimiser.Cli -- queue cancel --all --config .\video-optimiser.yaml
 
 # Re-run validation for a job if needed.
 dotnet run --project src/VideoOptimiser.Cli -- validate <job-id> --config .\video-optimiser.yaml
@@ -69,7 +72,7 @@ dotnet run --project src/VideoOptimiser.Cli -- history --config .\video-optimise
 
 ## Safety
 
-- `scan` only reads files.
+- `queue discover` scans configured roots and queues eligible files.
 - `process` creates a job, then CRF-searches, encodes, and validates a separate temporary AV1 file.
 - `queue run` resumes interrupted CRF searches, encodes, or validations from a safe stage.
 - `validate` rechecks a job's temporary AV1 before replacement.

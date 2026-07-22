@@ -8,10 +8,10 @@ namespace VideoOptimiser.Infrastructure.Jobs;
 
 public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFileFingerprintService fingerprints, IJobProcessor processor) : IQueueService
 {
-    public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, CancellationToken cancellationToken = default)
+    public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, CancellationToken cancellationToken = default)
     {
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings, useImmediateStabilityCheck: true, cancellationToken: cancellationToken);
-        var queued = 0;
+        var report = await scanner.ScanAsync(settings.Watch.Roots, settings, useImmediateStabilityCheck: true, stopAfterFirstEligible: first, cancellationToken: cancellationToken);
+        var queued = new List<string>();
         var existing = 0;
         var issues = report.Issues.Count;
         foreach (var item in report.Items.Where(item => item.Status == ScanItemStatus.Eligible))
@@ -31,7 +31,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
                     SourceFingerprint = await fingerprints.CreateAsync(item.Path, cancellationToken),
                     Status = JobStatus.Queued
                 }, cancellationToken);
-                queued++;
+                queued.Add(item.Path);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or FileNotFoundException)
             {

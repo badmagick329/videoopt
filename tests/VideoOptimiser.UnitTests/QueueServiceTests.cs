@@ -25,10 +25,10 @@ public sealed class QueueServiceTests : IDisposable
         var queue = new QueueService(new FixedScanner(source), repository, new FileFingerprintService(), new NoopProcessor());
         var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
 
-        var first = await queue.DiscoverAsync(settings.Database.Path, settings);
-        var second = await queue.DiscoverAsync(settings.Database.Path, settings);
+        var first = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
+        var second = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
 
-        first.Queued.Should().Be(1);
+        first.QueuedPaths.Should().ContainSingle();
         second.AlreadyQueued.Should().Be(1);
         (await repository.ListAsync(settings.Database.Path, terminal: false)).Should().ContainSingle(job => job.Status == JobStatus.Queued);
     }
