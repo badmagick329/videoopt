@@ -22,13 +22,32 @@ public sealed class JobProcessor(
         if (!File.Exists(path)) return FailureWithoutJob(ExitCode.ProcessingFailure, $"Source file does not exist: {path}");
 
         var fingerprint = await fingerprints.CreateAsync(path, cancellationToken);
-        var active = await jobs.FindActiveAsync(databasePath, path, fingerprint, cancellationToken);
-        if (active is not null)
+        var job = await jobs.FindOpenBySourceAsync(databasePath, path, cancellationToken);
+        var resumeStatus = job?.ResumeStatus;
+        if (job is null)
         {
-            return new JobProcessingResult(active, ExitCode.Success, $"Job {active.Id:N} is already {active.Status}.");
+            job = await jobs.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = path, SourceFingerprint = fingerprint, Status = JobStatus.Queued }, cancellationToken);
+        }
+        else if (job.Status == JobStatus.ReadyToFinalize)
+        {
+            return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is already ready to finalize.");
+        }
+        else if (job.Status == JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)
+        {
+            return await FailAsync(job, databasePath, "ManualInterventionRequired", "Finalisation was interrupted and requires manual review.", ExitCode.FinalisationFailure, cancellationToken);
+        }
+        else if (job.Status == JobStatus.Interrupted)
+        {
+            if (resumeStatus == JobStatus.CrfSearching) job.Crf = null;
+            if (resumeStatus == JobStatus.Encoding) { job.OutputPath = null; job.ManifestPath = null; }
+            job.Status = JobStatus.Queued;
+            job.ResumeStatus = null;
+            job.FailureCategory = null;
+            job.FailureMessage = null;
+            await jobs.UpdateAsync(databasePath, job, cancellationToken);
         }
 
-        var job = await jobs.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = path, SourceFingerprint = fingerprint, Status = JobStatus.Queued }, cancellationToken);
+        job.SourceFingerprint = fingerprint;
         var stage = "ProcessingFailed";
         try
         {
@@ -43,26 +62,42 @@ public sealed class JobProcessor(
 
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.SampleCount);
             var quality = WithSampleCount(settings.Quality, sampleCount);
-            stage = "CrfSearchFailed";
-            job.Status = JobStatus.CrfSearching;
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            var crfResult = await crfSearchFactory(settings.Tools.AbAv1Path).SearchAsync(path, quality, progress, cancellationToken);
-            job.Crf = crfResult.Crf;
+            if (job.Crf is null)
+            {
+                stage = "CrfSearchFailed";
+                job.Status = JobStatus.CrfSearching;
+                await jobs.UpdateAsync(databasePath, job, cancellationToken);
+                var crfResult = await crfSearchFactory(settings.Tools.AbAv1Path).SearchAsync(path, quality, progress, cancellationToken);
+                job.Crf = crfResult.Crf;
+            }
 
-            stage = "EncodeFailed";
-            job.Status = JobStatus.Encoding;
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            var outputDirectory = Path.Combine(Path.GetDirectoryName(path)!, ".video-optimiser");
-            var outputPath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(path)}.{job.Id:N}.encoding{Path.GetExtension(path)}");
-            Directory.CreateDirectory(outputDirectory);
-            var encodeResult = await encoderFactory(settings.Tools.AbAv1Path).EncodeAsync(path, outputPath, job.Crf.Value, quality, progress, cancellationToken);
-            var manifest = new OutputManifest { SourcePath = path, SourceFingerprint = fingerprint, OutputPath = encodeResult.OutputPath, Crf = job.Crf.Value, CreatedUtc = DateTimeOffset.UtcNow };
-            await manifests.SaveAsync(manifest, cancellationToken);
-            job.OutputPath = encodeResult.OutputPath;
-            job.ManifestPath = manifests.GetPath(encodeResult.OutputPath);
+            OutputManifest manifest;
+            var canReuseOutput = resumeStatus == JobStatus.Validating && job.OutputPath is not null && File.Exists(job.OutputPath) && File.Exists(manifests.GetPath(job.OutputPath));
+            if (canReuseOutput)
+            {
+                manifest = await manifests.LoadAsync(job.OutputPath!, cancellationToken);
+            }
+            else
+            {
+                stage = "EncodeFailed";
+                job.Status = JobStatus.Encoding;
+                job.Attempt++;
+                var outputDirectory = Path.Combine(Path.GetDirectoryName(path)!, ".video-optimiser");
+                var outputPath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(path)}.{job.Id:N}.{job.Attempt}.encoding{Path.GetExtension(path)}");
+                job.OutputPath = outputPath;
+                job.ManifestPath = manifests.GetPath(outputPath);
+                await jobs.UpdateAsync(databasePath, job, cancellationToken);
+                Directory.CreateDirectory(outputDirectory);
+                var encodeResult = await encoderFactory(settings.Tools.AbAv1Path).EncodeAsync(path, outputPath, job.Crf.Value, quality, progress, cancellationToken);
+                manifest = new OutputManifest { SourcePath = path, SourceFingerprint = fingerprint, OutputPath = encodeResult.OutputPath, Crf = job.Crf.Value, CreatedUtc = DateTimeOffset.UtcNow };
+                await manifests.SaveAsync(manifest, cancellationToken);
+                job.OutputPath = encodeResult.OutputPath;
+                job.ManifestPath = manifests.GetPath(encodeResult.OutputPath);
+            }
 
             stage = "ValidationFailed";
             job.Status = JobStatus.Validating;
+            job.ResumeStatus = null;
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
             manifest.Validation = await validator.ValidateAsync(manifest, settings, cancellationToken);
             await manifests.SaveAsync(manifest, cancellationToken);
@@ -81,10 +116,10 @@ public sealed class JobProcessor(
         }
         catch (OperationCanceledException)
         {
+            job.ResumeStatus = job.Status;
             job.Status = JobStatus.Interrupted;
             job.FailureCategory = "Interrupted";
             job.FailureMessage = "Processing was cancelled.";
-            job.CompletedUtc = DateTimeOffset.UtcNow;
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
             throw;
         }

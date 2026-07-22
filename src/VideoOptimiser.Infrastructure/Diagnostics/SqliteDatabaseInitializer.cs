@@ -57,6 +57,12 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
             CREATE INDEX IF NOT EXISTS ix_jobs_status_updated ON jobs(status, updated_utc DESC);
             """, cancellationToken, transaction);
         await ExecuteAsync(connection, "INSERT OR IGNORE INTO schema_migrations(version, applied_utc) VALUES (2, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        if (!await HasMigrationAsync(connection, 3, cancellationToken))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN resume_status INTEGER NULL;", cancellationToken, transaction);
+            await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0;", cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (3, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -71,5 +77,13 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
         }
 
         _ = await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<bool> HasMigrationAsync(SqliteConnection connection, int version, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $version);";
+        command.Parameters.AddWithValue("$version", version);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture) != 0;
     }
 }

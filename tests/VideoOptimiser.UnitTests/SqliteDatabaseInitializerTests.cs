@@ -22,7 +22,7 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version = 2;";
+        command.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version = 3;";
         var count = Convert.ToInt64(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
         count.Should().Be(1);
 
