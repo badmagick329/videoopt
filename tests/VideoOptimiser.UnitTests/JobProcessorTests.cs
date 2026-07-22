@@ -76,7 +76,7 @@ public sealed class JobProcessorTests : IDisposable
         var action = async () => await processor.ProcessAsync(databasePath, source, settings, force: false);
 
         await action.Should().ThrowAsync<OperationCanceledException>();
-        (await new SqliteJobRepository(new SqliteDatabaseInitializer()).ListAsync(databasePath, terminal: true)).Should().ContainSingle(job => job.Status == JobStatus.Interrupted);
+        (await new SqliteJobRepository(new SqliteDatabaseInitializer()).ListAsync(databasePath, terminal: false)).Should().ContainSingle(job => job.Status == JobStatus.Interrupted);
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);

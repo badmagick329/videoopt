@@ -110,6 +110,8 @@ internal static class CliApplication
         builder.Services.AddSingleton<IJobRepository, SqliteJobRepository>();
         builder.Services.AddSingleton<IOutputValidationService, OutputValidationService>();
         builder.Services.AddSingleton<IJobProcessor, JobProcessor>();
+        builder.Services.AddSingleton<IQueueService, QueueService>();
+        builder.Services.AddSingleton<IFinalizationService, FinalizationService>();
         builder.Services.AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
         return builder.Build();
     }
@@ -144,10 +146,12 @@ internal static class CliApplication
             CliCommandKind.Doctor => await RunDoctorAsync(services.GetRequiredService<IDoctorService>(), configuration, command.Json, cancellationToken),
             CliCommandKind.Scan => await RunScanAsync(services.GetRequiredService<IFileScanner>(), configuration, command, cancellationToken),
             CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.QueueDiscover => await RunQueueDiscoverAsync(services.GetRequiredService<IQueueService>(), configuration, cancellationToken),
+            CliCommandKind.QueueRun => await RunQueueRunAsync(services.GetRequiredService<IQueueService>(), configuration, cancellationToken),
             CliCommandKind.Status => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.History => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: true, command.Json, cancellationToken),
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
-            CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command.JobId!, cancellationToken),
+            CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -330,6 +334,22 @@ internal static class CliApplication
         return (int)result.ExitCode;
     }
 
+    private static async Task<int> RunQueueDiscoverAsync(IQueueService queue, LoadedConfiguration configuration, CancellationToken cancellationToken)
+    {
+        var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, cancellationToken);
+        Console.WriteLine($"Queued: {result.Queued}. Already queued: {result.AlreadyQueued}. Issues: {result.Issues}.");
+        return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
+    }
+
+    private static async Task<int> RunQueueRunAsync(IQueueService queue, LoadedConfiguration configuration, CancellationToken cancellationToken)
+    {
+        Console.WriteLine("Running queued jobs.");
+        var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
+        var result = await queue.RunAsync(configuration.Settings.Database.Path, configuration.Settings, progress, cancellationToken);
+        Console.WriteLine($"Ready to finalize: {result.ReadyToFinalize}. Failed: {result.Failed}.");
+        return (int)result.ExitCode;
+    }
+
     private static async Task<int> RunJobListAsync(IJobRepository repository, LoadedConfiguration configuration, bool terminal, bool json, CancellationToken cancellationToken)
     {
         var jobs = await repository.ListAsync(configuration.Settings.Database.Path, terminal, cancellationToken);
@@ -386,39 +406,31 @@ internal static class CliApplication
         return manifest.Validation.Passed ? (int)ExitCode.Success : (int)ExitCode.ValidationFailure;
     }
 
-    private static async Task<int> RunFinalizeAsync(IServiceProvider services, LoadedConfiguration configuration, string jobId, CancellationToken cancellationToken)
+    private static async Task<int> RunFinalizeAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
-        if (!Guid.TryParse(jobId, out var id)) { Console.Error.WriteLine("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
         var repository = services.GetRequiredService<IJobRepository>();
-        var job = await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken);
-        if (job is null) { Console.Error.WriteLine("Job was not found."); return (int)ExitCode.ProcessingFailure; }
-        if (job.Status != JobStatus.ReadyToFinalize || job.OutputPath is null) { Console.Error.WriteLine("Job is not ready to finalize."); return (int)ExitCode.ValidationFailure; }
-        var store = services.GetRequiredService<IOutputManifestStore>();
-        var manifest = await store.LoadAsync(job.OutputPath, cancellationToken);
-        if (manifest.Validation?.Passed != true) { Console.Error.WriteLine("Job validation did not pass."); return (int)ExitCode.ValidationFailure; }
-        if (!configuration.Settings.Original.Action.Equals("delete", StringComparison.OrdinalIgnoreCase)) { Console.Error.WriteLine("finalize currently requires original.action: delete."); return (int)ExitCode.InvalidConfiguration; }
-        job.Status = JobStatus.Finalizing;
-        await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
-        try
+        var finalizer = services.GetRequiredService<IFinalizationService>();
+        if (!command.FinalizeReady)
         {
-            if (await services.GetRequiredService<IFileFingerprintService>().CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint) throw new InvalidOperationException("Source changed after encoding.");
-            await services.GetRequiredService<ISafeFileInstaller>().InstallAsync(manifest.SourcePath, manifest.OutputPath, cancellationToken);
-            job.Status = JobStatus.Completed;
-            job.CompletedUtc = DateTimeOffset.UtcNow;
-            await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
-            Console.WriteLine("Finalization complete. Original deleted.");
-            return (int)ExitCode.Success;
+            if (!Guid.TryParse(command.JobId, out var id)) { Console.Error.WriteLine("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
+            var result = await finalizer.FinalizeAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
+            (result.ExitCode == ExitCode.Success ? Console.Out : Console.Error).WriteLine(result.Message);
+            return (int)result.ExitCode;
         }
-        catch (Exception exception)
+
+        var ready = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Where(job => job.Status == JobStatus.ReadyToFinalize).ToArray();
+        if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalize."); return (int)ExitCode.Success; }
+        foreach (var job in ready) Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
+        Console.Write("Finalize these jobs? [y/N] ");
+        if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalization cancelled."); return (int)ExitCode.Success; }
+        var failures = 0;
+        foreach (var job in ready)
         {
-            job.Status = JobStatus.Failed;
-            job.FailureCategory = "FinalizationFailed";
-            job.FailureMessage = exception.Message;
-            job.CompletedUtc = DateTimeOffset.UtcNow;
-            await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
-            Console.Error.WriteLine(exception.Message);
-            return (int)ExitCode.FinalisationFailure;
+            var result = await finalizer.FinalizeAsync(configuration.Settings.Database.Path, job.Id, configuration.Settings, cancellationToken);
+            (result.ExitCode == ExitCode.Success ? Console.Out : Console.Error).WriteLine($"{job.Id:N}: {result.Message}");
+            if (result.ExitCode != ExitCode.Success) failures++;
         }
+        return failures == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
     private const string Usage = """
@@ -429,10 +441,13 @@ Usage:
   video-optimiser doctor [--config <path>] [--json]
   video-optimiser scan [--config <path>] [--path <folder>] [--recursive] [--first] [--all] [--json]
   video-optimiser process <file> [--config <path>] [--force] [--dry-run]
+  video-optimiser queue discover [--config <path>]
+  video-optimiser queue run [--config <path>]
   video-optimiser status [--config <path>] [--json]
   video-optimiser history [--config <path>] [--json]
   video-optimiser validate <job-id> [--config <path>]
   video-optimiser finalize <job-id> [--config <path>]
+  video-optimiser finalize --ready [--config <path>]
 """;
 }
 
@@ -446,13 +461,15 @@ internal enum CliCommandKind
     Doctor,
     Scan,
     Process,
+    QueueDiscover,
+    QueueRun,
     Status,
     History,
     Validate,
     Finalize
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -468,6 +485,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         var first = false;
         var all = false;
         var json = false;
+        var finalizeReady = false;
 
         for (var index = 0; index < args.Length; index++)
         {
@@ -501,6 +519,9 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                 case "--force":
                     force = true;
                     break;
+                case "--ready":
+                    finalizeReady = true;
+                    break;
                 case "--crf":
                     return Invalid("--crf is no longer supported. process selects CRF automatically.");
                 case "--help" or "-h" or "help":
@@ -519,10 +540,12 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["doctor"] => CliCommandKind.Doctor,
             ["scan"] => CliCommandKind.Scan,
             ["process", _] => CliCommandKind.Process,
+            ["queue", "discover"] => CliCommandKind.QueueDiscover,
+            ["queue", "run"] => CliCommandKind.QueueRun,
             ["status"] => CliCommandKind.Status,
             ["history"] => CliCommandKind.History,
             ["validate", _] => CliCommandKind.Validate,
-            ["finalize", _] => CliCommandKind.Finalize,
+            ["finalize"] or ["finalize", _] => CliCommandKind.Finalize,
             _ => CliCommandKind.Invalid
         };
 
@@ -552,8 +575,10 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         }
 
         if (dryRun && kind != CliCommandKind.Process) return Invalid("--dry-run is only supported by process.");
+        if (finalizeReady && kind != CliCommandKind.Finalize) return Invalid("--ready is only supported by finalize.");
+        if (finalizeReady && remaining.Count != 1) return Invalid("finalize --ready does not take a job ID.");
 
-        return new CliCommand(kind, configurationPath, scanPath, recursive, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, kind is CliCommandKind.Validate or CliCommandKind.Finalize ? remaining[1] : null);
+        return new CliCommand(kind, configurationPath, scanPath, recursive, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize) && remaining.Count > 1 ? remaining[1] : null, finalizeReady);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);

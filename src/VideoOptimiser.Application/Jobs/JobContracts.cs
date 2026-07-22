@@ -23,6 +23,8 @@ public sealed class JobRecord
     public string SourcePath { get; set; } = string.Empty;
     public string SourceFingerprint { get; set; } = string.Empty;
     public JobStatus Status { get; set; }
+    public JobStatus? ResumeStatus { get; set; }
+    public int Attempt { get; set; }
     public int? Crf { get; set; }
     public string? OutputPath { get; set; }
     public string? ManifestPath { get; set; }
@@ -36,7 +38,7 @@ public sealed class JobRecord
     public DateTimeOffset UpdatedUtc { get; set; }
     public DateTimeOffset? CompletedUtc { get; set; }
 
-    public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Interrupted;
+    public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed;
 }
 
 public sealed record JobProcessingResult(JobRecord Job, ExitCode ExitCode, string Message);
@@ -51,6 +53,7 @@ public static class JobStateTransitions
         (JobStatus.Validating, JobStatus.ReadyToFinalize or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.ReadyToFinalize, JobStatus.Validating or JobStatus.Finalizing or JobStatus.Failed) => true,
         (JobStatus.Finalizing, JobStatus.Completed or JobStatus.Failed or JobStatus.Interrupted) => true,
+        (JobStatus.Interrupted, JobStatus.Queued or JobStatus.Failed) => true,
         _ => false
     };
 }
@@ -58,6 +61,7 @@ public static class JobStateTransitions
 public interface IJobRepository
 {
     Task<JobRecord?> FindActiveAsync(string databasePath, string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default);
+    Task<JobRecord?> FindOpenBySourceAsync(string databasePath, string sourcePath, CancellationToken cancellationToken = default);
     Task<JobRecord?> GetAsync(string databasePath, Guid id, CancellationToken cancellationToken = default);
     Task<JobRecord> CreateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
     Task UpdateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
@@ -79,4 +83,20 @@ public interface IJobProcessor
         bool force,
         IProgress<CrfSearchOutput>? progress = null,
         CancellationToken cancellationToken = default);
+}
+
+public sealed record QueueDiscoveryResult(int Queued, int AlreadyQueued, int Issues);
+public sealed record QueueRunResult(int ReadyToFinalize, int Failed, ExitCode ExitCode);
+
+public interface IQueueService
+{
+    Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, CancellationToken cancellationToken = default);
+    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
+}
+
+public sealed record FinalizationResult(JobRecord? Job, ExitCode ExitCode, string Message);
+
+public interface IFinalizationService
+{
+    Task<FinalizationResult> FinalizeAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default);
 }

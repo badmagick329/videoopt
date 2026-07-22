@@ -30,7 +30,13 @@ Always run commands through `dotnet run` for now; `video-optimiser` is not insta
 # Find the next eligible H.264 file, then stop. Read-only.
 dotnet run --project src/VideoOptimiser.Cli -- scan --first --config .\video-optimiser.yaml
 
-# List every eligible file. Add --all for diagnostic output.
+# Queue every eligible file from configured watch roots.
+dotnet run --project src/VideoOptimiser.Cli -- queue discover --config .\video-optimiser.yaml
+
+# Process queued jobs through CRF search, encoding, and validation.
+dotnet run --project src/VideoOptimiser.Cli -- queue run --config .\video-optimiser.yaml
+
+# List every eligible file without queuing it. Add --all for diagnostic output.
 dotnet run --project src/VideoOptimiser.Cli -- scan --config .\video-optimiser.yaml
 
 # Process one file through CRF search, temporary encoding, and validation.
@@ -46,6 +52,9 @@ dotnet run --project src/VideoOptimiser.Cli -- validate <job-id> --config .\vide
 # Explicitly replace the original only after validation passes.
 dotnet run --project src/VideoOptimiser.Cli -- finalize <job-id> --config .\video-optimiser.yaml
 
+# Finalize all validated jobs after one confirmation prompt.
+dotnet run --project src/VideoOptimiser.Cli -- finalize --ready --config .\video-optimiser.yaml
+
 # Show completed, failed, and interrupted jobs.
 dotnet run --project src/VideoOptimiser.Cli -- history --config .\video-optimiser.yaml
 ```
@@ -53,7 +62,7 @@ dotnet run --project src/VideoOptimiser.Cli -- history --config .\video-optimise
 `process` writes temporary output and its manifest under:
 
 ```text
-<source folder>\.video-optimiser\<file>.<job-id>.encoding.<extension>
+<source folder>\.video-optimiser\<file>.<job-id>.<attempt>.encoding.<extension>
 ```
 
 `status --json` and `history --json` emit machine-readable JSON. Use `Ctrl+C` to stop `process`; the job is recorded as `Interrupted` and both source and temporary files are retained.
@@ -62,6 +71,7 @@ dotnet run --project src/VideoOptimiser.Cli -- history --config .\video-optimise
 
 - `scan` only reads files.
 - `process` creates a job, then CRF-searches, encodes, and validates a separate temporary AV1 file.
+- `queue run` resumes interrupted CRF searches, encodes, or validations from a safe stage.
 - `validate` rechecks a job's temporary AV1 before replacement.
 - `finalize` is explicit: it renames the original to a rollback file, installs the AV1, then deletes the rollback file.
 - `finalize` currently requires `original.action: "delete"`.

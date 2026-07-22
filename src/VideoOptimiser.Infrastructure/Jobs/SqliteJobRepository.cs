@@ -15,14 +15,25 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
             SELECT * FROM jobs
             WHERE source_path = $sourcePath COLLATE NOCASE
               AND source_fingerprint = $sourceFingerprint
-              AND status NOT IN ($completed, $failed, $interrupted)
+              AND status NOT IN ($completed, $failed)
             ORDER BY created_utc DESC LIMIT 1;
             """;
         command.Parameters.AddWithValue("$sourcePath", sourcePath);
         command.Parameters.AddWithValue("$sourceFingerprint", sourceFingerprint);
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
-        command.Parameters.AddWithValue("$interrupted", (int)JobStatus.Interrupted);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
+    }
+
+    public async Task<JobRecord?> FindOpenBySourceAsync(string databasePath, string sourcePath, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(databasePath, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT * FROM jobs WHERE source_path = $sourcePath COLLATE NOCASE AND status NOT IN ($completed, $failed) ORDER BY created_utc DESC LIMIT 1;";
+        command.Parameters.AddWithValue("$sourcePath", sourcePath);
+        command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
+        command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
@@ -61,11 +72,10 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = terminal
-            ? "SELECT * FROM jobs WHERE status IN ($completed, $failed, $interrupted) ORDER BY updated_utc DESC;"
-            : "SELECT * FROM jobs WHERE status NOT IN ($completed, $failed, $interrupted) ORDER BY updated_utc DESC;";
+            ? "SELECT * FROM jobs WHERE status IN ($completed, $failed) ORDER BY updated_utc DESC;"
+            : "SELECT * FROM jobs WHERE status NOT IN ($completed, $failed) ORDER BY updated_utc DESC;";
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
-        command.Parameters.AddWithValue("$interrupted", (int)JobStatus.Interrupted);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var jobs = new List<JobRecord>();
         while (await reader.ReadAsync(cancellationToken)) jobs.Add(Read(reader));
@@ -78,13 +88,14 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE jobs
-            SET status = $interrupted, failure_category = 'Interrupted', failure_message = 'Application stopped before the job completed.', updated_utc = $updatedUtc, completed_utc = $updatedUtc
-            WHERE status NOT IN ($completed, $failed, $interrupted, $ready);
+            SET resume_status = status, status = $interrupted, failure_category = 'Interrupted', failure_message = 'Application stopped before the job completed.', updated_utc = $updatedUtc
+            WHERE status IN ($crfSearching, $encoding, $validating, $finalizing);
             """;
         command.Parameters.AddWithValue("$interrupted", (int)JobStatus.Interrupted);
-        command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
-        command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
-        command.Parameters.AddWithValue("$ready", (int)JobStatus.ReadyToFinalize);
+        command.Parameters.AddWithValue("$crfSearching", (int)JobStatus.CrfSearching);
+        command.Parameters.AddWithValue("$encoding", (int)JobStatus.Encoding);
+        command.Parameters.AddWithValue("$validating", (int)JobStatus.Validating);
+        command.Parameters.AddWithValue("$finalizing", (int)JobStatus.Finalizing);
         command.Parameters.AddWithValue("$updatedUtc", DateTimeOffset.UtcNow.ToString("O"));
         _ = await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -102,12 +113,14 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var command = connection.CreateCommand();
         command.CommandText = insert
-            ? """INSERT INTO jobs (id, source_path, source_fingerprint, status, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc) VALUES ($id, $sourcePath, $sourceFingerprint, $status, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc);"""
-            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc WHERE id = $id;""";
+            ? """INSERT INTO jobs (id, source_path, source_fingerprint, status, resume_status, attempt, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc) VALUES ($id, $sourcePath, $sourceFingerprint, $status, $resumeStatus, $attempt, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc);"""
+            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc WHERE id = $id;""";
         Add(command, "$id", job.Id.ToString("N"));
         Add(command, "$sourcePath", job.SourcePath);
         Add(command, "$sourceFingerprint", job.SourceFingerprint);
         Add(command, "$status", (int)job.Status);
+        Add(command, "$resumeStatus", job.ResumeStatus is null ? null : (int)job.ResumeStatus.Value);
+        Add(command, "$attempt", job.Attempt);
         Add(command, "$crf", job.Crf);
         Add(command, "$outputPath", job.OutputPath);
         Add(command, "$manifestPath", job.ManifestPath);
@@ -140,6 +153,8 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         SourcePath = reader.GetString(reader.GetOrdinal("source_path")),
         SourceFingerprint = reader.GetString(reader.GetOrdinal("source_fingerprint")),
         Status = (JobStatus)reader.GetInt32(reader.GetOrdinal("status")),
+        ResumeStatus = NullableInt(reader, "resume_status") is { } resumeStatus ? (JobStatus)resumeStatus : null,
+        Attempt = reader.GetInt32(reader.GetOrdinal("attempt")),
         Crf = NullableInt(reader, "crf"),
         OutputPath = NullableString(reader, "output_path"),
         ManifestPath = NullableString(reader, "manifest_path"),
