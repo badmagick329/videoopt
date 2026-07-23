@@ -22,5 +22,7 @@ jobs:
         run: |
           $config = Join-Path $env:RUNNER_TEMP 'video-optimiser.yaml'
           .\artifacts\ci\video-optimiser.exe config init --config $config
+          $PSNativeCommandUseErrorActionPreference = $false
           .\artifacts\ci\video-optimiser.exe config validate --config $config
-          if ($LASTEXITCODE -ne 3) { throw "Expected config validate to return 3; got $LASTEXITCODE." }
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 3) { throw "Expected config validate to return 3; got $exitCode." }
