@@ -39,18 +39,6 @@ database:
   # SQLite job database. Relative paths are relative to this YAML file.
   path: "jobs.db"
 
-logging:
-  # Minimum log level written to the configured destinations.
-  level: "Information"
-  # Directory for rolling structured log files.
-  directory: "logs"
-  # Number of days to retain log files.
-  retainDays: 30
-  # Print logs to the terminal.
-  console: true
-  # Write JSON logs to the logging directory.
-  structuredFile: true
-
 watch:
   # Folders searched by queue discover. Add at least one.
   roots:

@@ -2,6 +2,10 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>video-optimiser</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\VideoOptimiser.Domain\VideoOptimiser.Domain.csproj" />
@@ -10,9 +14,14 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
-    <PackageReference Include="Serilog.Extensions.Logging" Version="9.0.0" />
-    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
-    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
-    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(NuGetPackageRoot)sqlitepclraw.lib.e_sqlite3\2.1.12\runtimes\win-x64\native\e_sqlite3.dll" LogicalName="VideoOptimiser.Native.e_sqlite3.dll" />
+  </ItemGroup>
+  <Target Name="PrepareSingleFileAotPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishSymbols Include="$(PublishDir)*.pdb" />
+    </ItemGroup>
+    <Delete Files="$(PublishDir)e_sqlite3.dll;@(PublishSymbols)" />
+  </Target>
 </Project>

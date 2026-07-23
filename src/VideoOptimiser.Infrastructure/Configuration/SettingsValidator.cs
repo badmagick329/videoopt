@@ -15,8 +15,6 @@ public sealed class SettingsValidator : ISettingsValidator
         AddWhen(string.IsNullOrWhiteSpace(settings.Tools.FfmpegPath), "FfmpegPathRequired", "tools.ffmpegPath is required.");
         AddWhen(string.IsNullOrWhiteSpace(settings.Tools.FfprobePath), "FfprobePathRequired", "tools.ffprobePath is required.");
         AddWhen(string.IsNullOrWhiteSpace(settings.Database.Path), "DatabasePathRequired", "database.path is required.");
-        AddWhen(string.IsNullOrWhiteSpace(settings.Logging.Directory), "LogDirectoryRequired", "logging.directory is required.");
-        AddWhen(settings.Logging.RetainDays < 1, "InvalidLogRetention", "logging.retainDays must be at least 1.");
 
         AddWhen(settings.Watch.Roots.Count == 0, "WatchRootsRequired", "At least one watch.roots entry is required.");
         foreach (var root in settings.Watch.Roots.Where(root => string.IsNullOrWhiteSpace(root.Path)))

@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - run: dotnet test VideoOptimiser.sln -c Release
+      - run: >
+          dotnet publish src/VideoOptimiser.Cli -p:PublishProfile=win-x64-aot
+          -p:Version=0.0.0-ci -p:InformationalVersion=0.0.0-ci.${{ github.sha }}
+          -o artifacts/ci
+      - run: .\artifacts\ci\video-optimiser.exe --version
+      - shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'video-optimiser.yaml'
+          .\artifacts\ci\video-optimiser.exe config init --config $config
+          .\artifacts\ci\video-optimiser.exe config validate --config $config
+          if ($LASTEXITCODE -ne 3) { throw "Expected config validate to return 3; got $LASTEXITCODE." }

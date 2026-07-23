@@ -17,8 +17,6 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
             version: 1
             database:
               path: "state/jobs.db"
-            logging:
-              directory: "state/logs"
             watch:
               roots:
                 - path: "videos"
@@ -27,7 +25,6 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
 
         loaded.Settings.Database.Path.Should().Be(Path.Combine(_directory, "state", "jobs.db"));
-        loaded.Settings.Logging.Directory.Should().Be(Path.Combine(_directory, "state", "logs"));
         loaded.Settings.Watch.Roots.Single().Path.Should().Be(Path.Combine(_directory, "videos"));
     }
 

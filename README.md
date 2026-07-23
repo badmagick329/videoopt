@@ -5,8 +5,9 @@ Windows CLI for safely converting selected videos to AV1.
 ## Requirements
 
 - Windows 11
-- .NET SDK 9
 - `ab-av1`, `ffmpeg`, and `ffprobe` on `PATH` or configured explicitly
+
+For source builds, install the .NET SDK 9. The portable release is one self-contained EXE and still requires the three media tools above.
 
 ## Quick start
 
@@ -63,7 +64,7 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 
 ## Command reference
 
-Always run commands through `dotnet run` for now; `video-optimiser` is not installed as a system command.
+For a source build, prefix commands with `dotnet run --project src/VideoOptimiser.Cli --`. For the portable release, run `video-optimiser.exe` directly.
 
 ```powershell
 # Queue all eligible files, or only the first one.
@@ -96,6 +97,7 @@ dotnet run --project src/VideoOptimiser.Cli -- history --config .\video-optimise
 dotnet run --project src/VideoOptimiser.Cli -- config show --config .\video-optimiser.yaml
 dotnet run --project src/VideoOptimiser.Cli -- config validate --config .\video-optimiser.yaml
 dotnet run --project src/VideoOptimiser.Cli -- doctor --config .\video-optimiser.yaml
+dotnet run --project src/VideoOptimiser.Cli -- version
 ```
 
 `process` writes temporary output and its manifest under:
