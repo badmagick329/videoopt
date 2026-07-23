@@ -6,12 +6,11 @@ namespace VideoOptimiser.Infrastructure.Processing;
 
 public sealed class OutputManifestStore : IOutputManifestStore
 {
-    private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
     public string GetPath(string outputPath) => outputPath + ".manifest.json";
     public async Task SaveAsync(OutputManifest manifest, CancellationToken cancellationToken = default) =>
-        await File.WriteAllTextAsync(GetPath(manifest.OutputPath), JsonSerializer.Serialize(manifest, Options), cancellationToken);
+        await File.WriteAllTextAsync(GetPath(manifest.OutputPath), JsonSerializer.Serialize(manifest, VideoOptimiserJsonContext.Default.OutputManifest), cancellationToken);
     public async Task<OutputManifest> LoadAsync(string outputPath, CancellationToken cancellationToken = default) =>
-        JsonSerializer.Deserialize<OutputManifest>(await File.ReadAllTextAsync(GetPath(outputPath), cancellationToken), Options) ?? throw new InvalidDataException("Output manifest is invalid.");
+        JsonSerializer.Deserialize(await File.ReadAllTextAsync(GetPath(outputPath), cancellationToken), VideoOptimiserJsonContext.Default.OutputManifest) ?? throw new InvalidDataException("Output manifest is invalid.");
 }
 
 public sealed class FileFingerprintService : IFileFingerprintService

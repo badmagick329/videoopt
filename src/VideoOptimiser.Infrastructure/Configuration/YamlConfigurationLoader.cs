@@ -1,13 +1,13 @@
 using VideoOptimiser.Application.Configuration;
 using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace VideoOptimiser.Infrastructure.Configuration;
 
 public sealed class YamlConfigurationLoader : IConfigurationLoader
 {
-    private readonly IDeserializer _deserializer = new DeserializerBuilder()
-        .WithNamingConvention(CamelCaseNamingConvention.Instance)
+    private readonly IDeserializer _deserializer = new StaticDeserializerBuilder(new VideoOptimiserYamlContext())
+        .WithCaseInsensitivePropertyMatching()
+        .IgnoreUnmatchedProperties()
         .Build();
 
     public async Task<LoadedConfiguration> LoadAsync(string? explicitPath, CancellationToken cancellationToken = default)
@@ -16,6 +16,7 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         var yaml = await File.ReadAllTextAsync(path, cancellationToken);
         var settings = _deserializer.Deserialize<AppSettings>(yaml) ?? throw new InvalidDataException("The configuration file is empty.");
 
+        NormalizeDefaults(settings);
         ResolveRelativePaths(settings, Path.GetDirectoryName(path)!);
         return new LoadedConfiguration(settings, path, yaml);
     }
@@ -68,7 +69,6 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
     private static void ResolveRelativePaths(AppSettings settings, string configurationDirectory)
     {
         settings.Database.Path = ResolvePath(settings.Database.Path, configurationDirectory);
-        settings.Logging.Directory = ResolvePath(settings.Logging.Directory, configurationDirectory);
         settings.Tools.AbAv1Path = ResolveExecutablePath(settings.Tools.AbAv1Path, configurationDirectory);
         settings.Tools.FfmpegPath = ResolveExecutablePath(settings.Tools.FfmpegPath, configurationDirectory);
         settings.Tools.FfprobePath = ResolveExecutablePath(settings.Tools.FfprobePath, configurationDirectory);
@@ -76,6 +76,25 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         {
             root.Path = ResolvePath(root.Path, configurationDirectory);
         }
+    }
+
+    private static void NormalizeDefaults(AppSettings settings)
+    {
+        settings.Tools ??= new ToolSettings();
+        settings.Database ??= new DatabaseSettings();
+        settings.Watch ??= new WatchSettings();
+        settings.Eligibility ??= new EligibilitySettings();
+        settings.Quality ??= new QualitySettings();
+        settings.Savings ??= new SavingsSettings();
+        settings.Original ??= new OriginalSettings();
+        settings.Validation ??= new ValidationSettings();
+        settings.Watch.Roots ??= [];
+        settings.Eligibility.Extensions ??= [];
+        settings.Eligibility.Rules ??= [];
+        settings.Eligibility.ExcludedExtensions ??= [];
+        settings.Eligibility.ExcludedNamePatterns ??= [];
+        settings.Eligibility.ExcludedDirectories ??= [];
+        settings.Quality.CrfSearch ??= new CrfSearchSettings();
     }
 
     private static string ResolvePath(string path, string configurationDirectory)

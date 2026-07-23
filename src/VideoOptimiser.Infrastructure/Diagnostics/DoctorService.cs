@@ -17,7 +17,6 @@ public sealed class DoctorService(
             diagnostics.Add(new Diagnostic(DiagnosticCategory.Configuration, DiagnosticStatus.Pass, "ConfigurationValid", $"Configuration is valid: {configuration.Path}"));
         }
 
-        await CheckDirectoryAsync(configuration.Settings.Logging.Directory, "LogDirectory", true, diagnostics, cancellationToken);
 
         foreach (var root in configuration.Settings.Watch.Roots.Where(root => !string.IsNullOrWhiteSpace(root.Path)))
         {

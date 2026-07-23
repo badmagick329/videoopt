@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - name: Build and package
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $version = $tag.Substring(1)
+          $commit = '${{ github.sha }}'.Substring(0, 7)
+          dotnet publish src/VideoOptimiser.Cli -p:PublishProfile=win-x64-aot -p:Version=$version -p:AssemblyVersion=$version -p:FileVersion=$version.0 -p:InformationalVersion=$version+$commit -o artifacts/publish
+          if ($LASTEXITCODE -ne 0) { throw 'AOT publish failed.' }
+          $packageName = "video-optimiser-$tag-win-x64"
+          New-Item -ItemType Directory -Path "artifacts/$packageName" | Out-Null
+          Copy-Item artifacts/publish/video-optimiser.exe "artifacts/$packageName/"
+          Copy-Item README.md, LICENSE "artifacts/$packageName/"
+          Compress-Archive -Path "artifacts/$packageName/*" -DestinationPath "artifacts/$packageName.zip"
+          $hash = (Get-FileHash "artifacts/$packageName.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "artifacts/$packageName.zip.sha256" -Value "$hash  $packageName.zip" -NoNewline
+          $changelog = Get-Content CHANGELOG.md -Raw
+          $match = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($version))\][^\r\n]*\r?\n(?<notes>.*?)(?=^## |\z)")
+          if (-not $match.Success) { throw "No changelog entry found for $version." }
+          Set-Content -LiteralPath artifacts/release-notes.md -Value $match.Groups['notes'].Value.Trim() -NoNewline
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $packageName = "video-optimiser-$tag-win-x64"
+          gh release create $tag "artifacts/$packageName.zip" "artifacts/$packageName.zip.sha256" --title "VideoOptimiser $tag" --notes-file artifacts/release-notes.md

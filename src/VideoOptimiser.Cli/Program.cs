@@ -1,10 +1,7 @@
 using System.Text.Json;
-using System.Globalization;
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Serilog;
-using Serilog.Events;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
 using VideoOptimiser.Application.Jobs;
@@ -16,26 +13,27 @@ using VideoOptimiser.Infrastructure.Diagnostics;
 using VideoOptimiser.Infrastructure.Jobs;
 using VideoOptimiser.Infrastructure.Processing;
 using VideoOptimiser.Infrastructure.Scanning;
+using VideoOptimiser.Cli;
 
+NativeSqliteBootstrapper.Initialize();
 return await CliApplication.RunAsync(args);
 
 internal static class CliApplication
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-
     public static async Task<int> RunAsync(string[] args)
     {
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
-            .CreateLogger();
-
         try
         {
             var command = CliCommand.Parse(args);
             if (command.ShowHelp)
             {
                 Console.WriteLine(Usage);
+                return (int)ExitCode.Success;
+            }
+
+            if (command.Kind == CliCommandKind.Version)
+            {
+                Console.WriteLine($"video-optimiser {GetVersion()}");
                 return (int)ExitCode.Success;
             }
 
@@ -79,21 +77,14 @@ internal static class CliApplication
         }
         catch (Exception exception)
         {
-            Log.Fatal(exception, "Unhandled CLI failure");
-            Console.Error.WriteLine($"Unexpected failure: {exception.Message}");
+            Console.Error.WriteLine($"Unexpected failure: {exception.GetBaseException().Message}");
             return (int)ExitCode.GeneralFailure;
-        }
-        finally
-        {
-            await Log.CloseAndFlushAsync();
         }
     }
 
     private static IHost BuildHost()
     {
         var builder = Host.CreateApplicationBuilder();
-        builder.Logging.ClearProviders();
-        builder.Logging.AddSerilog(Log.Logger, dispose: false);
         builder.Services.AddSingleton<IConfigurationLoader, YamlConfigurationLoader>();
         builder.Services.AddSingleton<IConfigurationTemplateWriter, YamlConfigurationTemplateWriter>();
         builder.Services.AddSingleton<ISettingsValidator, SettingsValidator>();
@@ -137,8 +128,6 @@ internal static class CliApplication
 
         var configurationLoader = services.GetRequiredService<IConfigurationLoader>();
         var configuration = await configurationLoader.LoadAsync(command.ConfigurationPath, cancellationToken);
-        ConfigureLogging(configuration.Settings, configuration.Path);
-
         return command.Kind switch
         {
             CliCommandKind.ConfigShow => ShowConfiguration(configuration),
@@ -155,33 +144,6 @@ internal static class CliApplication
             CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
-    }
-
-    private static void ConfigureLogging(AppSettings settings, string configurationPath)
-    {
-        var level = Enum.TryParse<LogEventLevel>(settings.Logging.Level, ignoreCase: true, out var parsedLevel)
-            ? parsedLevel
-            : LogEventLevel.Information;
-        var loggerConfiguration = new LoggerConfiguration()
-            .MinimumLevel.Is(level)
-            .Enrich.WithProperty("ConfigurationPath", configurationPath);
-
-        if (settings.Logging.Console)
-        {
-            loggerConfiguration = loggerConfiguration.WriteTo.Console(formatProvider: CultureInfo.InvariantCulture);
-        }
-
-        if (settings.Logging.StructuredFile && !string.IsNullOrWhiteSpace(settings.Logging.Directory))
-        {
-            Directory.CreateDirectory(settings.Logging.Directory);
-            loggerConfiguration = loggerConfiguration.WriteTo.File(
-                path: Path.Combine(settings.Logging.Directory, "video-optimiser-.json"),
-                rollingInterval: RollingInterval.Day,
-                retainedFileCountLimit: settings.Logging.RetainDays,
-                formatter: new Serilog.Formatting.Compact.CompactJsonFormatter());
-        }
-
-        Log.Logger = loggerConfiguration.CreateLogger();
     }
 
     private static int ShowConfiguration(LoadedConfiguration configuration)
@@ -214,18 +176,11 @@ internal static class CliApplication
         var report = await doctorService.RunAsync(configuration, cancellationToken);
         if (json)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new
-            {
-                configurationPath = configuration.Path,
-                exitCode = (int)report.ExitCode,
-                diagnostics = report.Diagnostics.Select(diagnostic => new
-                {
-                    category = diagnostic.Category.ToString(),
-                    status = diagnostic.Status.ToString(),
-                    code = diagnostic.Code,
-                    message = diagnostic.Message
-                })
-            }, JsonOptions));
+            var output = new DoctorJsonOutput(
+                configuration.Path,
+                (int)report.ExitCode,
+                report.Diagnostics.Select(diagnostic => new DoctorJsonDiagnostic(diagnostic.Category.ToString(), diagnostic.Status.ToString(), diagnostic.Code, diagnostic.Message)).ToArray());
+            Console.WriteLine(JsonSerializer.Serialize(output, CliJsonContext.Default.DoctorJsonOutput));
         }
         else
         {
@@ -317,18 +272,8 @@ internal static class CliApplication
         var jobs = await repository.ListAsync(configuration.Settings.Database.Path, terminal, cancellationToken);
         if (json)
         {
-            Console.WriteLine(JsonSerializer.Serialize(jobs.Select(job => new
-            {
-                id = job.Id.ToString("N"),
-                status = job.Status.ToString(),
-                sourcePath = job.SourcePath,
-                crf = job.Crf,
-                outputPath = job.OutputPath,
-                percentageSaved = job.PercentageSaved,
-                failureCategory = job.FailureCategory,
-                failureMessage = job.FailureMessage,
-                updatedUtc = job.UpdatedUtc
-            }), JsonOptions));
+            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.SourcePath, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.UpdatedUtc)).ToArray();
+            Console.WriteLine(JsonSerializer.Serialize(output, CliJsonContext.Default.JobJsonOutputArray));
         }
         else if (jobs.Count == 0)
         {
@@ -398,6 +343,7 @@ internal static class CliApplication
     private const string Usage = """
 Usage:
   video-optimiser config init [--config <path>]
+  video-optimiser version
   video-optimiser config show [--config <path>]
   video-optimiser config validate [--config <path>]
   video-optimiser doctor [--config <path>] [--json]
@@ -413,12 +359,15 @@ Usage:
   video-optimiser finalize <job-id> [--config <path>]
   video-optimiser finalize --ready [--config <path>]
 """;
+
+    private static string GetVersion() => typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0-dev";
 }
 
 internal enum CliCommandKind
 {
     Invalid,
     Help,
+    Version,
     ConfigInit,
     ConfigShow,
     ConfigValidate,
@@ -481,6 +430,8 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                     return Invalid("--crf is no longer supported. process selects CRF automatically.");
                 case "--help" or "-h" or "help":
                     return new CliCommand(CliCommandKind.Help, null, null, false, false, false, false, null);
+                case "--version":
+                    return new CliCommand(CliCommandKind.Version, null, null, false, false, false, false, null);
                 default:
                     remaining.Add(args[index]);
                     break;
@@ -492,6 +443,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["config", "init"] => CliCommandKind.ConfigInit,
             ["config", "show"] => CliCommandKind.ConfigShow,
             ["config", "validate"] => CliCommandKind.ConfigValidate,
+            ["version"] => CliCommandKind.Version,
             ["doctor"] => CliCommandKind.Doctor,
             ["process", _] => CliCommandKind.Process,
             ["queue", "discover"] => CliCommandKind.QueueDiscover,
