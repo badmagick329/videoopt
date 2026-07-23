@@ -14,13 +14,13 @@ For source builds, install the .NET SDK 9. The portable release is one self-cont
 Create a config:
 
 ```powershell
-dotnet run --project src/VideoOptimiser.Cli -- config init --config .\video-optimiser.yaml
+.\video-optimiser.exe config init --config .\video-optimiser.yaml
 ```
 
 Edit `watch.roots`. The generated eligibility rules and safe-delete policy are ready to use. Check the setup:
 
 ```powershell
-dotnet run --project src/VideoOptimiser.Cli -- doctor --config .\video-optimiser.yaml
+.\video-optimiser.exe doctor --config .\video-optimiser.yaml
 ```
 
 Then the normal workflow is:
@@ -31,14 +31,14 @@ Then the normal workflow is:
 
 ```powershell
 # Queue every eligible video. Add --first to queue only one.
-dotnet run --project src/VideoOptimiser.Cli -- queue discover --config .\video-optimiser.yaml
+.\video-optimiser.exe queue discover --config .\video-optimiser.yaml
 
 # Process all queued videos. This stops before replacing originals.
-dotnet run --project src/VideoOptimiser.Cli -- queue run --config .\video-optimiser.yaml
+.\video-optimiser.exe queue run --config .\video-optimiser.yaml
 
 # See what is ready, then replace every ready original after one confirmation.
-dotnet run --project src/VideoOptimiser.Cli -- status --config .\video-optimiser.yaml
-dotnet run --project src/VideoOptimiser.Cli -- finalize --ready --config .\video-optimiser.yaml
+.\video-optimiser.exe status --config .\video-optimiser.yaml
+.\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
 ```
 
 `queue run` can be stopped with `Ctrl+C`. The job becomes `Interrupted`; a later `queue run` resumes it safely. It never finalizes an original automatically.
@@ -64,40 +64,38 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 
 ## Command reference
 
-For a source build, prefix commands with `dotnet run --project src/VideoOptimiser.Cli --`. For the portable release, run `video-optimiser.exe` directly.
-
 ```powershell
 # Queue all eligible files, or only the first one.
-dotnet run --project src/VideoOptimiser.Cli -- queue discover --config .\video-optimiser.yaml
-dotnet run --project src/VideoOptimiser.Cli -- queue discover --first --config .\video-optimiser.yaml
+.\video-optimiser.exe queue discover --config .\video-optimiser.yaml
+.\video-optimiser.exe queue discover --first --config .\video-optimiser.yaml
 
 # Process queued jobs.
-dotnet run --project src/VideoOptimiser.Cli -- queue run --config .\video-optimiser.yaml
+.\video-optimiser.exe queue run --config .\video-optimiser.yaml
 
 # Process one file directly. --force ignores eligibility rules.
-dotnet run --project src/VideoOptimiser.Cli -- process "C:\Videos\movie.mp4" --config .\video-optimiser.yaml
+.\video-optimiser.exe process "C:\Videos\movie.mp4" --config .\video-optimiser.yaml
 
 # List active jobs, or cancel queued/interrupted jobs.
-dotnet run --project src/VideoOptimiser.Cli -- queue list --config .\video-optimiser.yaml
-dotnet run --project src/VideoOptimiser.Cli -- queue cancel <job-id> --config .\video-optimiser.yaml
-dotnet run --project src/VideoOptimiser.Cli -- queue cancel --all --config .\video-optimiser.yaml
+.\video-optimiser.exe queue list --config .\video-optimiser.yaml
+.\video-optimiser.exe queue cancel <job-id> --config .\video-optimiser.yaml
+.\video-optimiser.exe queue cancel --all --config .\video-optimiser.yaml
 
 # Revalidate or finalize one job.
-dotnet run --project src/VideoOptimiser.Cli -- validate <job-id> --config .\video-optimiser.yaml
-dotnet run --project src/VideoOptimiser.Cli -- finalize <job-id> --config .\video-optimiser.yaml
+.\video-optimiser.exe validate <job-id> --config .\video-optimiser.yaml
+.\video-optimiser.exe finalize <job-id> --config .\video-optimiser.yaml
 
 # Finalize every validated job after one confirmation.
-dotnet run --project src/VideoOptimiser.Cli -- finalize --ready --config .\video-optimiser.yaml
+.\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
 
 # Active jobs and terminal job history. Add --json for machine-readable output.
-dotnet run --project src/VideoOptimiser.Cli -- status --config .\video-optimiser.yaml
-dotnet run --project src/VideoOptimiser.Cli -- history --config .\video-optimiser.yaml
+.\video-optimiser.exe status --config .\video-optimiser.yaml
+.\video-optimiser.exe history --config .\video-optimiser.yaml
 
 # Configuration and dependency checks.
-dotnet run --project src/VideoOptimiser.Cli -- config show --config .\video-optimiser.yaml
-dotnet run --project src/VideoOptimiser.Cli -- config validate --config .\video-optimiser.yaml
-dotnet run --project src/VideoOptimiser.Cli -- doctor --config .\video-optimiser.yaml
-dotnet run --project src/VideoOptimiser.Cli -- version
+.\video-optimiser.exe config show --config .\video-optimiser.yaml
+.\video-optimiser.exe config validate --config .\video-optimiser.yaml
+.\video-optimiser.exe doctor --config .\video-optimiser.yaml
+.\video-optimiser.exe version
 ```
 
 `process` writes temporary output and its manifest under:
@@ -114,3 +112,7 @@ dotnet run --project src/VideoOptimiser.Cli -- version
 - `validate` rechecks a job's temporary AV1 before replacement.
 - `finalize` is explicit: it renames the original to a rollback file, installs the AV1, then deletes the rollback file.
 - `finalize` currently requires `original.action: "delete"`.
+
+## Source builds
+
+When running from the repository instead of the published EXE, replace `.\video-optimiser.exe` with `dotnet run --project src/VideoOptimiser.Cli --`.
