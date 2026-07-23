@@ -26,3 +26,4 @@ jobs:
           .\artifacts\ci\video-optimiser.exe config validate --config $config
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 3) { throw "Expected config validate to return 3; got $exitCode." }
+          exit 0
