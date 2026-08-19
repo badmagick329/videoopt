@@ -35,10 +35,20 @@ public sealed record ScanIssue(string Path, string Message);
 
 public sealed record ScanProgress(string Path, string Stage, string Message);
 
-public sealed record ScanReport(IReadOnlyList<ScanItem> Items, IReadOnlyList<ScanIssue> Issues)
+public sealed record ScanReport(
+    IReadOnlyList<ScanItem> Items,
+    IReadOnlyList<ScanIssue> Issues,
+    int CacheHits = 0,
+    int RealProbes = 0)
 {
     public int EligibleCount => Items.Count(item => item.Status == ScanItemStatus.Eligible);
 }
+
+public sealed record MediaProbeCacheEntry(
+    string SourcePath,
+    long SourceSizeBytes,
+    long SourceLastWriteUtcTicks,
+    MediaInfo MediaInfo);
 
 public interface IFileReadinessService
 {
@@ -52,12 +62,28 @@ public interface IMediaProbe
     Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default);
 }
 
+public interface IMediaProbeCache
+{
+    Task<MediaInfo?> GetAsync(
+        string databasePath,
+        string sourcePath,
+        long sourceSizeBytes,
+        long sourceLastWriteUtcTicks,
+        CancellationToken cancellationToken = default);
+
+    Task StoreAsync(
+        string databasePath,
+        MediaProbeCacheEntry entry,
+        CancellationToken cancellationToken = default);
+}
+
 public interface IFileScanner
 {
     Task<ScanReport> ScanAsync(
         IReadOnlyList<WatchRootSettings> roots,
         AppSettings settings,
         bool stopAfterFirstEligible = false,
+        IReadOnlySet<string>? openSourcePaths = null,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }

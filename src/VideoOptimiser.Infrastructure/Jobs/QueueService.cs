@@ -8,19 +8,40 @@ namespace VideoOptimiser.Infrastructure.Jobs;
 
 public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFileFingerprintService fingerprints, IJobProcessor processor) : IQueueService
 {
-    public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, CancellationToken cancellationToken = default)
+    public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings, stopAfterFirstEligible: first, cancellationToken: cancellationToken);
+        var openSourcePaths = first
+            ? new HashSet<string>(
+                (await jobs.ListAsync(databasePath, terminal: false, cancellationToken)).Select(job => Path.GetFullPath(job.SourcePath)),
+                StringComparer.OrdinalIgnoreCase)
+            : null;
+        var report = await scanner.ScanAsync(
+            settings.Watch.Roots,
+            settings,
+            stopAfterFirstEligible: first,
+            openSourcePaths: openSourcePaths,
+            progress: progress,
+            cancellationToken: cancellationToken);
         var queued = new List<string>();
-        var existing = 0;
+        var existing = report.Items.Count(item =>
+            item.Status == ScanItemStatus.Eligible &&
+            openSourcePaths?.Contains(Path.GetFullPath(item.Path)) == true);
         var issues = report.Issues.Count;
         foreach (var item in report.Items.Where(item => item.Status == ScanItemStatus.Eligible))
         {
+            if (first && queued.Count > 0)
+            {
+                break;
+            }
+
             try
             {
                 if (await jobs.FindOpenBySourceAsync(databasePath, item.Path, cancellationToken) is not null)
                 {
-                    existing++;
+                    if (openSourcePaths is null || !openSourcePaths.Contains(Path.GetFullPath(item.Path)))
+                    {
+                        existing++;
+                    }
                     continue;
                 }
 
@@ -39,7 +60,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             }
         }
 
-        return new QueueDiscoveryResult(queued, existing, issues);
+        return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes);
     }
 
     public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)

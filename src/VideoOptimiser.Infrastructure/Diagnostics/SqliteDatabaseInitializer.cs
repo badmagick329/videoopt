@@ -63,6 +63,29 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
             await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0;", cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (3, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
+        if (!await HasMigrationAsync(connection, 5, cancellationToken))
+        {
+            await ExecuteAsync(connection, """
+                CREATE TABLE IF NOT EXISTS media_probe_cache (
+                    source_path TEXT COLLATE NOCASE PRIMARY KEY,
+                    source_size_bytes INTEGER NOT NULL,
+                    source_last_write_utc_ticks INTEGER NOT NULL,
+                    primary_video_codec TEXT NOT NULL,
+                    video_stream_count INTEGER NOT NULL,
+                    audio_stream_count INTEGER NOT NULL,
+                    subtitle_stream_count INTEGER NOT NULL,
+                    attachment_count INTEGER NOT NULL,
+                    duration_seconds REAL NULL,
+                    size_bytes INTEGER NULL,
+                    primary_video_width INTEGER NULL,
+                    primary_video_height INTEGER NULL,
+                    primary_video_bitrate INTEGER NULL,
+                    cache_schema_version INTEGER NOT NULL,
+                    updated_utc TEXT NOT NULL
+                );
+                """, cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (5, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 

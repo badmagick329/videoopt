@@ -1,5 +1,6 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Application.Jobs;
@@ -86,12 +87,12 @@ public interface IJobProcessor
         CancellationToken cancellationToken = default);
 }
 
-public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues);
+public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0);
 public sealed record QueueRunResult(int ReadyToFinalize, int Failed, ExitCode ExitCode);
 
 public interface IQueueService
 {
-    Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, CancellationToken cancellationToken = default);
+    Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
     Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
 }
 

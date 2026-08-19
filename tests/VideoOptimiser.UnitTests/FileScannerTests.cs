@@ -21,7 +21,7 @@ public sealed class FileScannerTests : IDisposable
         await File.WriteAllBytesAsync(hevc, [4, 5, 6]);
         await File.WriteAllBytesAsync(tooSmall, [7]);
 
-        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe());
+        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
         var settings = new AppSettings
         {
             Eligibility = Rules("2B"),
@@ -43,7 +43,7 @@ public sealed class FileScannerTests : IDisposable
         Directory.CreateDirectory(excluded);
         var path = Path.Combine(excluded, "movie.mkv");
         await File.WriteAllBytesAsync(path, [1, 2, 3]);
-        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe());
+        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
         var settings = new AppSettings
         {
             Eligibility = Rules("1B"),
@@ -60,7 +60,7 @@ public sealed class FileScannerTests : IDisposable
     {
         await File.WriteAllBytesAsync(Path.Combine(_directory, "first.mkv"), [1, 2, 3]);
         await File.WriteAllBytesAsync(Path.Combine(_directory, "second.mkv"), [4, 5, 6]);
-        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe());
+        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
         var settings = new AppSettings
         {
             Eligibility = Rules("1B"),
@@ -90,6 +90,12 @@ public sealed class FileScannerTests : IDisposable
     {
         public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
             Task.FromResult(new MediaInfo(path.EndsWith("hevc.mkv", StringComparison.Ordinal) ? "hevc" : "h264", 1, 0, 0, 0, null, null, 1920, 1080, 10_000_000));
+    }
+
+    private sealed class NoopProbeCache : IMediaProbeCache
+    {
+        public Task<MediaInfo?> GetAsync(string databasePath, string sourcePath, long sourceSizeBytes, long sourceLastWriteUtcTicks, CancellationToken cancellationToken = default) => Task.FromResult<MediaInfo?>(null);
+        public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private static EligibilitySettings Rules(string minimumFileSize) => new EligibilitySettings

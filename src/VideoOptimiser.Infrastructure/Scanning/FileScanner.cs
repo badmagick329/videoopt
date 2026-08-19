@@ -6,17 +6,21 @@ namespace VideoOptimiser.Infrastructure.Scanning;
 
 public sealed class FileScanner(
     IFileReadinessService readinessService,
-    Func<string, IMediaProbe> mediaProbeFactory) : IFileScanner
+    Func<string, IMediaProbe> mediaProbeFactory,
+    IMediaProbeCache mediaProbeCache) : IFileScanner
 {
     public async Task<ScanReport> ScanAsync(
         IReadOnlyList<WatchRootSettings> roots,
         AppSettings settings,
         bool stopAfterFirstEligible = false,
+        IReadOnlySet<string>? openSourcePaths = null,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         var items = new List<ScanItem>();
         var issues = new List<ScanIssue>();
+        var cacheHits = 0;
+        var realProbes = 0;
         var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var attributesToSkip = FileAttributes.ReparsePoint;
         if (settings.Eligibility.IgnoreHiddenFiles)
@@ -63,11 +67,15 @@ public sealed class FileScanner(
                         continue;
                     }
 
-                    var item = await EvaluateAsync(canonicalPath, settings, progress, cancellationToken);
-                    items.Add(item);
-                    if (stopAfterFirstEligible && item.Status == ScanItemStatus.Eligible)
+                    var evaluation = await EvaluateAsync(canonicalPath, settings, progress, cancellationToken);
+                    items.Add(evaluation.Item);
+                    cacheHits += evaluation.CacheHit ? 1 : 0;
+                    realProbes += evaluation.RealProbe ? 1 : 0;
+                    if (stopAfterFirstEligible &&
+                        evaluation.Item.Status == ScanItemStatus.Eligible &&
+                        (openSourcePaths is null || !openSourcePaths.Contains(canonicalPath)))
                     {
-                        return new ScanReport(items, issues);
+                        return new ScanReport(items, issues, cacheHits, realProbes);
                     }
                 }
             }
@@ -77,28 +85,28 @@ public sealed class FileScanner(
             }
         }
 
-        return new ScanReport(items, issues);
+        return new ScanReport(items, issues, cacheHits, realProbes);
     }
 
-    private async Task<ScanItem> EvaluateAsync(string path, AppSettings settings, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    private async Task<EvaluationResult> EvaluateAsync(string path, AppSettings settings, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileName(path);
         var extension = Path.GetExtension(path);
         if (!settings.Eligibility.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
         {
-            return new ScanItem(path, ScanItemStatus.Ineligible, "Extension is not allowed.");
+            return new EvaluationResult(new ScanItem(path, ScanItemStatus.Ineligible, "Extension is not allowed."));
         }
 
         if (settings.Eligibility.ExcludedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase) ||
             settings.Eligibility.ExcludedNamePatterns.Any(pattern => IsMatch(fileName, pattern)))
         {
-            return new ScanItem(path, ScanItemStatus.Ineligible, "File name is excluded by configuration.");
+            return new EvaluationResult(new ScanItem(path, ScanItemStatus.Ineligible, "File name is excluded by configuration."));
         }
 
         var info = new FileInfo(path);
         if (!info.Exists)
         {
-            return new ScanItem(path, ScanItemStatus.Unavailable, "File no longer exists.");
+            return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, "File no longer exists."));
         }
 
         progress?.Report(new ScanProgress(
@@ -108,22 +116,57 @@ public sealed class FileScanner(
         var readiness = await readinessService.CheckAsync(path, cancellationToken);
         if (!readiness.IsReady)
         {
-            return new ScanItem(path, ScanItemStatus.Unavailable, readiness.Reason, info.Length);
+            return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, readiness.Reason, info.Length));
         }
 
         try
         {
-            progress?.Report(new ScanProgress(path, "Probing", "Running ffprobe."));
-            var mediaInfo = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
-            return EligibilityEvaluator.IsEligible(info, mediaInfo, settings.Eligibility, out var reason)
-                ? new ScanItem(path, ScanItemStatus.Eligible, reason, info.Length, mediaInfo)
-                : new ScanItem(path, ScanItemStatus.Ineligible, reason, info.Length, mediaInfo);
+            info.Refresh();
+            if (!info.Exists)
+            {
+                return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, "File no longer exists."));
+            }
+
+            var sourceSizeBytes = info.Length;
+            var sourceLastWriteUtcTicks = info.LastWriteTimeUtc.Ticks;
+            var mediaInfo = await mediaProbeCache.GetAsync(
+                settings.Database.Path,
+                path,
+                sourceSizeBytes,
+                sourceLastWriteUtcTicks,
+                cancellationToken);
+            var cacheHit = mediaInfo is not null;
+            if (cacheHit)
+            {
+                progress?.Report(new ScanProgress(path, "Cache", "Reusing cached ffprobe metadata."));
+            }
+            else
+            {
+                progress?.Report(new ScanProgress(path, "Probing", "Running ffprobe."));
+                mediaInfo = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
+                info.Refresh();
+                if (!info.Exists || info.Length != sourceSizeBytes || info.LastWriteTimeUtc.Ticks != sourceLastWriteUtcTicks)
+                {
+                    return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, "Source changed while probing."), RealProbe: true);
+                }
+
+                await mediaProbeCache.StoreAsync(
+                    settings.Database.Path,
+                    new MediaProbeCacheEntry(path, sourceSizeBytes, sourceLastWriteUtcTicks, mediaInfo),
+                    cancellationToken);
+            }
+
+            return EligibilityEvaluator.IsEligible(info, mediaInfo!, settings.Eligibility, out var reason)
+                ? new EvaluationResult(new ScanItem(path, ScanItemStatus.Eligible, reason, sourceSizeBytes, mediaInfo), cacheHit, !cacheHit)
+                : new EvaluationResult(new ScanItem(path, ScanItemStatus.Ineligible, reason, sourceSizeBytes, mediaInfo), cacheHit, !cacheHit);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
-            return new ScanItem(path, ScanItemStatus.ProbeFailed, exception.Message, info.Length);
+            return new EvaluationResult(new ScanItem(path, ScanItemStatus.ProbeFailed, exception.Message, info.Length));
         }
     }
+
+    private sealed record EvaluationResult(ScanItem Item, bool CacheHit = false, bool RealProbe = false);
 
     private static bool IsMatch(string fileName, string globPattern) => Regex.IsMatch(fileName, "^" + Regex.Escape(globPattern).Replace("\\*", ".*").Replace("\\?", ".") + "$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 

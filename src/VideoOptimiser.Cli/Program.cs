@@ -93,6 +93,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<IDoctorService, DoctorService>();
         builder.Services.AddSingleton<IFileReadinessService, FileReadinessService>();
         builder.Services.AddSingleton<Func<string, IMediaProbe>>(_ => ffprobePath => new FfprobeMediaProbe(ffprobePath));
+        builder.Services.AddSingleton<IMediaProbeCache, SqliteMediaProbeCache>();
         builder.Services.AddSingleton<IFileScanner, FileScanner>();
         builder.Services.AddSingleton<Func<string, ICrfSearchClient>>(_ => abAv1Path => new AbAv1CrfSearchClient(abAv1Path));
         builder.Services.AddSingleton<Func<string, IVideoEncoder>>(_ => abAv1Path => new AbAv1VideoEncoder(abAv1Path));
@@ -233,9 +234,10 @@ internal static class CliApplication
 
     private static async Task<int> RunQueueDiscoverAsync(IQueueService queue, LoadedConfiguration configuration, bool first, CancellationToken cancellationToken)
     {
-        var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, cancellationToken);
+        var progress = new InlineProgress<ScanProgress>(update => Console.WriteLine($"{update.Stage}: {update.Path}"));
+        var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, progress, cancellationToken);
         foreach (var path in result.QueuedPaths) Console.WriteLine($"Queued  {path}");
-        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Issues: {result.Issues}.");
+        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
