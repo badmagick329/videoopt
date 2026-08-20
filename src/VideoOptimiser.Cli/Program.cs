@@ -268,7 +268,14 @@ internal static class CliApplication
 
     private static async Task<int> RunQueueDiscoverAsync(IQueueService queue, LoadedConfiguration configuration, bool first, CancellationToken cancellationToken)
     {
-        var progress = new InlineProgress<ScanProgress>(update => Console.WriteLine($"{update.Stage}: {update.Path}"));
+        var progress = new InlineProgress<ScanProgress>(update => Console.WriteLine(
+            update.Stage == "Issue"
+                ? string.IsNullOrWhiteSpace(update.Path)
+                    ? $"{update.Stage}: {update.Message}"
+                    : $"{update.Stage}: {update.Path} — {update.Message}"
+                : string.IsNullOrWhiteSpace(update.Path)
+                ? $"{update.Stage}: {update.Message}"
+                : $"{update.Stage}: {update.Path}"));
         var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, progress, cancellationToken);
         foreach (var path in result.QueuedPaths) Console.WriteLine($"Queued  {path}");
         Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");

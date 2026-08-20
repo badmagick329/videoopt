@@ -9,6 +9,8 @@ public sealed class FileScanner(
     Func<string, IMediaProbe> mediaProbeFactory,
     IMediaProbeCache mediaProbeCache) : IFileScanner
 {
+    private const int CacheProgressInterval = 100;
+
     public async Task<ScanReport> ScanAsync(
         IReadOnlyList<WatchRootSettings> roots,
         AppSettings settings,
@@ -46,6 +48,7 @@ public sealed class FileScanner(
             if (!Directory.Exists(root.Path))
             {
                 issues.Add(new ScanIssue(root.Path, "Watch root does not exist."));
+                progress?.Report(new ScanProgress(string.Empty, "Issue", $"Watch root does not exist: {root.Path}"));
                 continue;
             }
 
@@ -71,6 +74,13 @@ public sealed class FileScanner(
                     items.Add(evaluation.Item);
                     cacheHits += evaluation.CacheHit ? 1 : 0;
                     realProbes += evaluation.RealProbe ? 1 : 0;
+                    if (evaluation.CacheHit && cacheHits % CacheProgressInterval == 0)
+                    {
+                        progress?.Report(new ScanProgress(
+                            string.Empty,
+                            "Cache",
+                            $"Reused cached ffprobe metadata for {cacheHits} files."));
+                    }
                     if (stopAfterFirstEligible &&
                         evaluation.Item.Status == ScanItemStatus.Eligible &&
                         (openSourcePaths is null || !openSourcePaths.Contains(canonicalPath)))
@@ -82,6 +92,7 @@ public sealed class FileScanner(
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 issues.Add(new ScanIssue(root.Path, exception.Message));
+                progress?.Report(new ScanProgress(string.Empty, "Issue", $"Could not scan {root.Path}: {exception.Message}"));
             }
         }
 
@@ -109,13 +120,10 @@ public sealed class FileScanner(
             return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, "File no longer exists."));
         }
 
-        progress?.Report(new ScanProgress(
-            path,
-            "Readiness",
-            "Checking the file can be read."));
         var readiness = await readinessService.CheckAsync(path, cancellationToken);
         if (!readiness.IsReady)
         {
+            progress?.Report(new ScanProgress(path, "Issue", readiness.Reason));
             return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, readiness.Reason, info.Length));
         }
 
@@ -136,11 +144,7 @@ public sealed class FileScanner(
                 sourceLastWriteUtcTicks,
                 cancellationToken);
             var cacheHit = mediaInfo is not null;
-            if (cacheHit)
-            {
-                progress?.Report(new ScanProgress(path, "Cache", "Reusing cached ffprobe metadata."));
-            }
-            else
+            if (!cacheHit)
             {
                 progress?.Report(new ScanProgress(path, "Probing", "Running ffprobe."));
                 mediaInfo = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
@@ -162,6 +166,7 @@ public sealed class FileScanner(
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
+            progress?.Report(new ScanProgress(path, "Issue", exception.Message));
             return new EvaluationResult(new ScanItem(path, ScanItemStatus.ProbeFailed, exception.Message, info.Length));
         }
     }

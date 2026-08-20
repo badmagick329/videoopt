@@ -72,6 +72,44 @@ public sealed class FileScannerTests : IDisposable
         report.Items.Should().ContainSingle(item => item.Status == ScanItemStatus.Eligible);
     }
 
+    [Fact]
+    public async Task ScanAsyncReportsCacheMilestonesWithoutPerFileNoiseAndKeepsProbeFeedback()
+    {
+        var cachedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < 250; index++)
+        {
+            var path = Path.Combine(_directory, $"cached-{index:000}.mkv");
+            await File.WriteAllBytesAsync(path, [1, 2, 3]);
+            cachedPaths.Add(Path.GetFullPath(path));
+        }
+
+        var probedPath = Path.Combine(_directory, "probe.mkv");
+        await File.WriteAllBytesAsync(probedPath, [4, 5, 6]);
+        var progress = new RecordingProgress<ScanProgress>();
+        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new SelectiveProbeCache(cachedPaths));
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+            Eligibility = Rules("1B"),
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] }
+        };
+
+        var report = await scanner.ScanAsync(settings.Watch.Roots, settings, progress: progress);
+
+        report.Items.Should().HaveCount(251);
+        report.EligibleCount.Should().Be(251);
+        report.CacheHits.Should().Be(250);
+        report.RealProbes.Should().Be(1);
+        progress.Values.Should().NotContain(update => update.Stage == "Readiness");
+        var cacheUpdates = progress.Values.Where(update => update.Stage == "Cache").ToArray();
+        cacheUpdates.Should().HaveCount(2);
+        cacheUpdates.Should().OnlyContain(update => string.IsNullOrEmpty(update.Path));
+        cacheUpdates.Select(update => update.Message).Should().Equal(
+            "Reused cached ffprobe metadata for 100 files.",
+            "Reused cached ffprobe metadata for 200 files.");
+        progress.Values.Should().Contain(update => update.Stage == "Probing" && update.Path == Path.GetFullPath(probedPath));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))
@@ -96,6 +134,23 @@ public sealed class FileScannerTests : IDisposable
     {
         public Task<MediaInfo?> GetAsync(string databasePath, string sourcePath, long sourceSizeBytes, long sourceLastWriteUtcTicks, CancellationToken cancellationToken = default) => Task.FromResult<MediaInfo?>(null);
         public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class SelectiveProbeCache(IReadOnlySet<string> cachedPaths) : IMediaProbeCache
+    {
+        public Task<MediaInfo?> GetAsync(string databasePath, string sourcePath, long sourceSizeBytes, long sourceLastWriteUtcTicks, CancellationToken cancellationToken = default) =>
+            Task.FromResult<MediaInfo?>(cachedPaths.Contains(Path.GetFullPath(sourcePath))
+                ? new MediaInfo("h264", 1, 0, 0, 0, null, sourceSizeBytes, 1920, 1080, 10_000_000)
+                : null);
+
+        public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class RecordingProgress<T> : IProgress<T>
+    {
+        public List<T> Values { get; } = [];
+
+        public void Report(T value) => Values.Add(value);
     }
 
     private static EligibilitySettings Rules(string minimumFileSize) => new EligibilitySettings
