@@ -45,12 +45,17 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
                     continue;
                 }
 
+                var id = Guid.NewGuid();
+                var remote = string.Equals(settings.Processing.Mode, "remoteSsh", StringComparison.OrdinalIgnoreCase);
                 await jobs.CreateAsync(databasePath, new JobRecord
                 {
-                    Id = Guid.NewGuid(),
+                    Id = id,
                     SourcePath = Path.GetFullPath(item.Path),
                     SourceFingerprint = await fingerprints.CreateAsync(item.Path, cancellationToken),
-                    Status = JobStatus.Queued
+                    Status = JobStatus.Queued,
+                    ExecutionMode = remote ? "remoteSsh" : "local",
+                    RemoteHost = remote ? settings.Processing.RemoteSsh.Host : null,
+                    RemoteWorkspace = remote ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{id:N}" : null
                 }, cancellationToken);
                 queued.Add(item.Path);
             }

@@ -90,13 +90,17 @@ internal static class CliApplication
         builder.Services.AddSingleton<ISettingsValidator, SettingsValidator>();
         builder.Services.AddSingleton<IDatabaseInitializer, SqliteDatabaseInitializer>();
         builder.Services.AddSingleton<IToolVerifier, ProcessToolVerifier>();
+        builder.Services.AddSingleton<IRemoteEnvironmentVerifier, ProcessRemoteEnvironmentVerifier>();
         builder.Services.AddSingleton<IDoctorService, DoctorService>();
         builder.Services.AddSingleton<IFileReadinessService, FileReadinessService>();
         builder.Services.AddSingleton<Func<string, IMediaProbe>>(_ => ffprobePath => new FfprobeMediaProbe(ffprobePath));
+        builder.Services.AddSingleton<Func<string, IMediaTimelineProbe>>(_ => ffprobePath => new FfprobeMediaTimelineProbe(ffprobePath));
         builder.Services.AddSingleton<IMediaProbeCache, SqliteMediaProbeCache>();
         builder.Services.AddSingleton<IFileScanner, FileScanner>();
         builder.Services.AddSingleton<Func<string, ICrfSearchClient>>(_ => abAv1Path => new AbAv1CrfSearchClient(abAv1Path));
         builder.Services.AddSingleton<Func<string, IVideoEncoder>>(_ => abAv1Path => new AbAv1VideoEncoder(abAv1Path));
+        builder.Services.AddSingleton<IExternalProcessRunner, ExternalProcessRunner>();
+        builder.Services.AddSingleton<IProcessingSessionFactory, ProcessingSessionFactory>();
         builder.Services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
         builder.Services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
         builder.Services.AddSingleton<IJobRepository, SqliteJobRepository>();
@@ -266,6 +270,10 @@ internal static class CliApplication
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
         var result = await queue.RunAsync(configuration.Settings.Database.Path, configuration.Settings, progress, cancellationToken);
         Console.WriteLine($"Ready to finalize: {result.ReadyToFinalize}. Failed: {result.Failed}.");
+        if (configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("Remote server lifecycle is manual: after confirming all expected outputs are ready to finalize, delete the server; powering it off still bills.");
+        }
         return (int)result.ExitCode;
     }
 

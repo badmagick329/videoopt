@@ -48,6 +48,31 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsyncAppliesRemoteProcessingDefaultsAndResolvesSshToolPaths()
+    {
+        var configPath = Path.Combine(_directory, "config.yaml");
+        await File.WriteAllTextAsync(configPath, """
+            version: 1
+            tools:
+              sshPath: "tools/ssh.exe"
+              sftpPath: "tools/sftp.exe"
+            processing:
+              mode: "remoteSsh"
+              remoteSsh:
+                host: "video-worker"
+            """);
+
+        var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
+
+        loaded.Settings.Tools.SshPath.Should().Be(Path.Combine(_directory, "tools", "ssh.exe"));
+        loaded.Settings.Tools.SftpPath.Should().Be(Path.Combine(_directory, "tools", "sftp.exe"));
+        loaded.Settings.Processing.RemoteSsh.WorkingDirectory.Should().Be("/var/tmp/video-optimiser");
+        loaded.Settings.Processing.RemoteSsh.MinimumCpuCount.Should().Be(8);
+        loaded.Settings.Processing.RemoteSsh.MinimumAvailableMemory.Should().Be("14GiB");
+        loaded.Settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier.Should().Be(2.5);
+    }
+
+    [Fact]
     public async Task WriteAsyncCreatesEditableTemplateAndNeverOverwrites()
     {
         var destination = Path.Combine(_directory, "config.yaml");
@@ -56,6 +81,7 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         await writer.WriteAsync(destination);
         var contents = await File.ReadAllTextAsync(destination);
         contents.Should().Contain("roots:").And.Contain("# Folders searched by queue discover.").And.Contain("action: \"delete\"");
+        contents.Should().Contain("mode: \"local\"").And.Contain("workingDirectory: \"/var/tmp/video-optimiser\"").And.Contain("sshPath: \"ssh\"");
 
         var action = () => writer.WriteAsync(destination);
         await action.Should().ThrowAsync<InvalidOperationException>();

@@ -7,6 +7,7 @@ public sealed class AppSettings
 {
     [YamlMember(Alias = "version")] public int Version { get; set; } = 1;
     [YamlMember(Alias = "tools")] public ToolSettings Tools { get; set; } = new();
+    [YamlMember(Alias = "processing")] public ProcessingSettings Processing { get; set; } = new();
     [YamlMember(Alias = "database")] public DatabaseSettings Database { get; set; } = new();
     [YamlMember(Alias = "watch")] public WatchSettings Watch { get; set; } = new();
     [YamlMember(Alias = "eligibility")] public EligibilitySettings Eligibility { get; set; } = new();
@@ -22,6 +23,31 @@ public sealed class ToolSettings
     [YamlMember(Alias = "abAv1Path")] public string AbAv1Path { get; set; } = "ab-av1";
     [YamlMember(Alias = "ffmpegPath")] public string FfmpegPath { get; set; } = "ffmpeg";
     [YamlMember(Alias = "ffprobePath")] public string FfprobePath { get; set; } = "ffprobe";
+    [YamlMember(Alias = "sshPath")] public string SshPath { get; set; } = "ssh";
+    [YamlMember(Alias = "sftpPath")] public string SftpPath { get; set; } = "sftp";
+}
+
+[YamlSerializable]
+public sealed class ProcessingSettings
+{
+    [YamlMember(Alias = "mode")] public string Mode { get; set; } = ProcessingModes.Local;
+    [YamlMember(Alias = "remoteSsh")] public RemoteSshSettings RemoteSsh { get; set; } = new();
+}
+
+[YamlSerializable]
+public sealed class RemoteSshSettings
+{
+    [YamlMember(Alias = "host")] public string Host { get; set; } = string.Empty;
+    [YamlMember(Alias = "workingDirectory")] public string WorkingDirectory { get; set; } = "/var/tmp/video-optimiser";
+    [YamlMember(Alias = "minimumCpuCount")] public int MinimumCpuCount { get; set; } = 8;
+    [YamlMember(Alias = "minimumAvailableMemory")] public string MinimumAvailableMemory { get; set; } = "14GiB";
+    [YamlMember(Alias = "minimumFreeDiskMultiplier")] public double MinimumFreeDiskMultiplier { get; set; } = 2.5;
+}
+
+public static class ProcessingModes
+{
+    public const string Local = "local";
+    public const string RemoteSsh = "remoteSsh";
 }
 
 [YamlSerializable]

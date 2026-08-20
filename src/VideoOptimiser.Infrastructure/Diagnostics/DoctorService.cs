@@ -7,7 +7,8 @@ namespace VideoOptimiser.Infrastructure.Diagnostics;
 public sealed class DoctorService(
     ISettingsValidator settingsValidator,
     IDatabaseInitializer databaseInitializer,
-    IToolVerifier toolVerifier) : IDoctorService
+    IToolVerifier toolVerifier,
+    IRemoteEnvironmentVerifier remoteEnvironmentVerifier) : IDoctorService
 {
     public async Task<DoctorReport> RunAsync(LoadedConfiguration configuration, CancellationToken cancellationToken = default)
     {
@@ -26,19 +27,38 @@ public sealed class DoctorService(
         await CheckDatabaseAsync(configuration.Settings.Database.Path, diagnostics, cancellationToken);
         AddFreeSpaceDiagnostics(configuration.Settings, diagnostics);
 
-        var toolChecks = new[]
+        var isRemote = configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase);
+        var toolChecks = new List<Task<ToolVerificationResult>>
         {
-            toolVerifier.VerifyAsync("ab-av1", configuration.Settings.Tools.AbAv1Path, "--version", cancellationToken),
             toolVerifier.VerifyAsync("ffmpeg", configuration.Settings.Tools.FfmpegPath, "-version", cancellationToken),
             toolVerifier.VerifyAsync("ffprobe", configuration.Settings.Tools.FfprobePath, "-version", cancellationToken)
         };
-        foreach (var result in await Task.WhenAll(toolChecks))
+        if (isRemote)
+        {
+            toolChecks.Add(toolVerifier.VerifyAsync("ssh", configuration.Settings.Tools.SshPath, "-V", cancellationToken));
+            toolChecks.Add(toolVerifier.VerifyPresenceAsync("sftp", configuration.Settings.Tools.SftpPath, "-h", cancellationToken));
+        }
+        else
+        {
+            toolChecks.Add(toolVerifier.VerifyAsync("ab-av1", configuration.Settings.Tools.AbAv1Path, "--version", cancellationToken));
+        }
+
+        var toolResults = await Task.WhenAll(toolChecks);
+        foreach (var result in toolResults)
         {
             diagnostics.Add(new Diagnostic(
                 DiagnosticCategory.Dependency,
                 result.IsAvailable ? DiagnosticStatus.Pass : DiagnosticStatus.Fail,
                 result.IsAvailable ? "DependencyAvailable" : "DependencyUnavailable",
                 $"{result.Name}: {result.Detail}"));
+        }
+
+        if (isRemote && toolResults.First(result => result.Name == "ssh").IsAvailable && toolResults.First(result => result.Name == "sftp").IsAvailable)
+        {
+            diagnostics.AddRange(await remoteEnvironmentVerifier.VerifyAsync(
+                configuration.Settings.Tools.SshPath,
+                configuration.Settings.Processing.RemoteSsh,
+                cancellationToken));
         }
 
         return new DoctorReport(diagnostics);

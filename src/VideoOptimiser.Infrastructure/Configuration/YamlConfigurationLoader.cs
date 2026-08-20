@@ -72,6 +72,8 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         settings.Tools.AbAv1Path = ResolveExecutablePath(settings.Tools.AbAv1Path, configurationDirectory);
         settings.Tools.FfmpegPath = ResolveExecutablePath(settings.Tools.FfmpegPath, configurationDirectory);
         settings.Tools.FfprobePath = ResolveExecutablePath(settings.Tools.FfprobePath, configurationDirectory);
+        settings.Tools.SshPath = ResolveExecutablePath(settings.Tools.SshPath, configurationDirectory);
+        settings.Tools.SftpPath = ResolveExecutablePath(settings.Tools.SftpPath, configurationDirectory);
         foreach (var root in settings.Watch.Roots)
         {
             root.Path = ResolvePath(root.Path, configurationDirectory);
@@ -81,6 +83,8 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
     private static void NormalizeDefaults(AppSettings settings)
     {
         settings.Tools ??= new ToolSettings();
+        settings.Processing ??= new ProcessingSettings();
+        settings.Processing.RemoteSsh ??= new RemoteSshSettings();
         settings.Database ??= new DatabaseSettings();
         settings.Watch ??= new WatchSettings();
         settings.Eligibility ??= new EligibilitySettings();

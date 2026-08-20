@@ -22,6 +22,15 @@ public sealed record MediaInfo(
     int? PrimaryVideoHeight = null,
     long? PrimaryVideoBitrate = null);
 
+public sealed record MediaTimeline(
+    double FirstVideoTimestampSeconds,
+    double LastVideoEndTimestampSeconds,
+    long PrimaryVideoPacketCount,
+    double? FirstPrimaryAudioTimestampSeconds)
+{
+    public double PrimaryVideoDurationSeconds => LastVideoEndTimestampSeconds - FirstVideoTimestampSeconds;
+}
+
 public sealed record FileReadinessResult(bool IsReady, string Reason);
 
 public sealed record ScanItem(
@@ -60,6 +69,11 @@ public interface IFileReadinessService
 public interface IMediaProbe
 {
     Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default);
+}
+
+public interface IMediaTimelineProbe
+{
+    Task<MediaTimeline> ProbeAsync(string path, CancellationToken cancellationToken = default);
 }
 
 public interface IMediaProbeCache

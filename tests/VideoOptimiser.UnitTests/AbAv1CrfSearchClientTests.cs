@@ -34,7 +34,7 @@ public sealed class AbAv1CrfSearchClientTests
     }
 
     [Fact]
-    public void ParseReadsSuccessfulCrfFromAbAv1Version093Output()
+    public void ParseReadsSuccessfulCrfFromAbAv1Output()
     {
         const string output = """
             [2026-07-19T04:03:40Z INFO  ab_av1::command::crf_search] crf 44 successful

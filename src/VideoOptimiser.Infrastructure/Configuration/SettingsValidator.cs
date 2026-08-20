@@ -9,11 +9,24 @@ public sealed class SettingsValidator : ISettingsValidator
     public IReadOnlyList<Diagnostic> Validate(AppSettings settings)
     {
         var diagnostics = new List<Diagnostic>();
+        var remoteMode = settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase);
 
         AddWhen(settings.Version != 1, "UnsupportedVersion", "Configuration version must be 1.");
-        AddWhen(string.IsNullOrWhiteSpace(settings.Tools.AbAv1Path), "AbAv1PathRequired", "tools.abAv1Path is required.");
+        AddWhen(!IsOneOf(settings.Processing.Mode, ProcessingModes.Local, ProcessingModes.RemoteSsh), "InvalidProcessingMode", "processing.mode must be local or remoteSsh.");
+        AddWhen(!remoteMode && string.IsNullOrWhiteSpace(settings.Tools.AbAv1Path), "AbAv1PathRequired", "tools.abAv1Path is required in local mode.");
         AddWhen(string.IsNullOrWhiteSpace(settings.Tools.FfmpegPath), "FfmpegPathRequired", "tools.ffmpegPath is required.");
         AddWhen(string.IsNullOrWhiteSpace(settings.Tools.FfprobePath), "FfprobePathRequired", "tools.ffprobePath is required.");
+        if (remoteMode)
+        {
+            AddWhen(string.IsNullOrWhiteSpace(settings.Tools.SshPath), "SshPathRequired", "tools.sshPath is required in remoteSsh mode.");
+            AddWhen(string.IsNullOrWhiteSpace(settings.Tools.SftpPath), "SftpPathRequired", "tools.sftpPath is required in remoteSsh mode.");
+            AddWhen(string.IsNullOrWhiteSpace(settings.Processing.RemoteSsh.Host), "RemoteHostRequired", "processing.remoteSsh.host is required in remoteSsh mode.");
+            AddWhen(!IsValidRemoteHost(settings.Processing.RemoteSsh.Host), "InvalidRemoteHost", "processing.remoteSsh.host must be a single SSH host or config alias and cannot begin with '-'.");
+            AddWhen(!IsAbsolutePosixPath(settings.Processing.RemoteSsh.WorkingDirectory), "InvalidRemoteWorkingDirectory", "processing.remoteSsh.workingDirectory must be an absolute POSIX path without line breaks.");
+            AddWhen(settings.Processing.RemoteSsh.MinimumCpuCount < 1, "InvalidRemoteMinimumCpuCount", "processing.remoteSsh.minimumCpuCount must be at least 1.");
+            AddWhen(!HumanReadableValues.TryParseSize(settings.Processing.RemoteSsh.MinimumAvailableMemory, out var minimumMemory) || minimumMemory < 1, "InvalidRemoteMinimumMemory", "processing.remoteSsh.minimumAvailableMemory must be a positive size such as 14GiB.");
+            AddWhen(!double.IsFinite(settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier) || settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier <= 0, "InvalidRemoteDiskMultiplier", "processing.remoteSsh.minimumFreeDiskMultiplier must be greater than zero.");
+        }
         AddWhen(string.IsNullOrWhiteSpace(settings.Database.Path), "DatabasePathRequired", "database.path is required.");
 
         AddWhen(settings.Watch.Roots.Count == 0, "WatchRootsRequired", "At least one watch.roots entry is required.");
@@ -74,4 +87,19 @@ public sealed class SettingsValidator : ISettingsValidator
 
     private static bool IsOneOf(string? value, params string[] permitted) =>
         !string.IsNullOrWhiteSpace(value) && permitted.Contains(value, StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsValidRemoteHost(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        !value.StartsWith('-') &&
+        !value.Any(char.IsWhiteSpace) &&
+        !value.Contains('\0');
+
+    private static bool IsAbsolutePosixPath(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.StartsWith('/') &&
+        !value.Contains('\0') &&
+        !value.Contains('\r') &&
+        !value.Contains('\n') &&
+        value.Split('/', StringSplitOptions.RemoveEmptyEntries).Length > 0 &&
+        !value.Split('/', StringSplitOptions.RemoveEmptyEntries).Any(segment => segment is "." or "..");
 }

@@ -7,7 +7,7 @@ Windows CLI for safely converting selected videos to AV1.
 - Windows 11
 - `ab-av1`, `ffmpeg`, and `ffprobe` on `PATH` or configured explicitly
 
-For source builds, install the .NET SDK 9. The portable release is one self-contained EXE and still requires the three media tools above.
+For source builds, install the .NET SDK 9 and run `scripts\build.ps1`. It creates a self-contained Native AOT executable at `artifacts\local\video-optimiser.exe`. The portable release is one self-contained EXE and still requires the three media tools above.
 
 ## Quick start
 
@@ -42,6 +42,10 @@ Then the normal workflow is:
 ```
 
 `queue run` can be stopped with `Ctrl+C`. The job becomes `Interrupted`; a later `queue run` resumes it safely. It never finalizes an original automatically.
+
+## Remote SSH processing
+
+CRF search and encoding can run on a manually created Ubuntu server while validation and finalization stay local. Follow the [remote SSH setup and operator workflow](docs/remote-ssh.md): create and bootstrap the server, configure its SSH alias, run `doctor`, process the queue, confirm all outputs are `ReadyToFinalize`, **delete the server** (powering it off still bills), then finalize locally.
 
 ## Eligibility rules
 
@@ -115,4 +119,12 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 
 ## Source builds
 
-When running from the repository instead of the published EXE, replace `.\video-optimiser.exe` with `dotnet run --project src/VideoOptimiser.Cli --`.
+Build and smoke-test the self-contained Windows executable:
+
+```powershell
+.\scripts\build.ps1
+```
+
+The output is `artifacts\local\video-optimiser.exe`. When following commands in this README from a source checkout, replace `.\video-optimiser.exe` with `.\artifacts\local\video-optimiser.exe`.
+
+For a faster development run without publishing, use `dotnet run --project src/VideoOptimiser.Cli -- <arguments>`.

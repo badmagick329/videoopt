@@ -63,6 +63,13 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
             await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0;", cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (3, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
+        if (!await HasMigrationAsync(connection, 4, cancellationToken))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'local';", cancellationToken, transaction);
+            await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN remote_host TEXT NULL;", cancellationToken, transaction);
+            await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN remote_workspace TEXT NULL;", cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (4, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
         if (!await HasMigrationAsync(connection, 5, cancellationToken))
         {
             await ExecuteAsync(connection, """

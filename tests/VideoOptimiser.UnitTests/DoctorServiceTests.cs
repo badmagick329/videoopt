@@ -33,7 +33,39 @@ public sealed class DoctorServiceTests : IDisposable
         report.Diagnostics.Should().Contain(diagnostic => diagnostic.Category == DiagnosticCategory.Dependency && diagnostic.Status == DiagnosticStatus.Fail);
     }
 
-    private static DoctorService CreateDoctor(IToolVerifier verifier) => new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier);
+    [Fact]
+    public async Task RunAsyncInRemoteModeChecksSshAndSftpAndSkipsLocalAbAv1()
+    {
+        var settings = CreateSettings();
+        settings.Processing.Mode = ProcessingModes.RemoteSsh;
+        settings.Processing.RemoteSsh.Host = "video-worker";
+        var tools = new FakeToolVerifier(true);
+        var remote = new FakeRemoteEnvironmentVerifier();
+
+        var report = await CreateDoctor(tools, remote).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.Success);
+        tools.VerifiedNames.Should().BeEquivalentTo(["ffmpeg", "ffprobe", "ssh", "sftp"]);
+        remote.WasCalled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunAsyncDoesNotConnectRemotelyWhenLocalOpenSshIsUnavailable()
+    {
+        var settings = CreateSettings();
+        settings.Processing.Mode = ProcessingModes.RemoteSsh;
+        settings.Processing.RemoteSsh.Host = "video-worker";
+        var tools = new FakeToolVerifier(true, unavailableName: "ssh");
+        var remote = new FakeRemoteEnvironmentVerifier();
+
+        var report = await CreateDoctor(tools, remote).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        remote.WasCalled.Should().BeFalse();
+    }
+
+    private static DoctorService CreateDoctor(IToolVerifier verifier, IRemoteEnvironmentVerifier? remote = null) =>
+        new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier());
 
     private AppSettings CreateSettings()
     {
@@ -56,9 +88,36 @@ public sealed class DoctorServiceTests : IDisposable
         }
     }
 
-    private sealed class FakeToolVerifier(bool isAvailable) : IToolVerifier
+    private sealed class FakeToolVerifier(bool isAvailable, string? unavailableName = null) : IToolVerifier
     {
+        public List<string> VerifiedNames { get; } = [];
+
         public Task<ToolVerificationResult> VerifyAsync(string name, string executable, string versionArgument, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ToolVerificationResult(name, isAvailable, isAvailable ? "version 1" : "not found"));
+            VerifyCore(name);
+
+        public Task<ToolVerificationResult> VerifyPresenceAsync(string name, string executable, string availabilityArgument, CancellationToken cancellationToken = default) =>
+            VerifyCore(name);
+
+        private Task<ToolVerificationResult> VerifyCore(string name)
+        {
+            VerifiedNames.Add(name);
+            var available = isAvailable && !string.Equals(name, unavailableName, StringComparison.Ordinal);
+            return Task.FromResult(new ToolVerificationResult(name, available, available ? "version 1" : "not found"));
+        }
+    }
+
+    private sealed class FakeRemoteEnvironmentVerifier : IRemoteEnvironmentVerifier
+    {
+        public bool WasCalled { get; private set; }
+
+        public Task<IReadOnlyList<Diagnostic>> VerifyAsync(string sshPath, RemoteSshSettings settings, CancellationToken cancellationToken = default)
+        {
+            WasCalled = true;
+            IReadOnlyList<Diagnostic> diagnostics =
+            [
+                new(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "RemoteSshAvailable", "SSH succeeded.")
+            ];
+            return Task.FromResult(diagnostics);
+        }
     }
 }

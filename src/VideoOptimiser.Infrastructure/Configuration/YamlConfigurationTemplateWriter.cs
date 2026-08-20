@@ -34,6 +34,20 @@ tools:
   abAv1Path: "ab-av1"
   ffmpegPath: "ffmpeg"
   ffprobePath: "ffprobe"
+  sshPath: "ssh"
+  sftpPath: "sftp"
+
+processing:
+  # Run CRF search and encoding locally or on a manually managed SSH host.
+  mode: "local"
+  remoteSsh:
+    # OpenSSH config alias. SSH keys remain outside this file.
+    host: ""
+    workingDirectory: "/var/tmp/video-optimiser"
+    minimumCpuCount: 8
+    minimumAvailableMemory: "14GiB"
+    # Remote free space must be at least this multiple of each source file.
+    minimumFreeDiskMultiplier: 2.5
 
 database:
   # SQLite job database. Relative paths are relative to this YAML file.

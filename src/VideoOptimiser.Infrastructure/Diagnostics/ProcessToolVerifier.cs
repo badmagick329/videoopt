@@ -8,6 +8,21 @@ public sealed class ProcessToolVerifier : IToolVerifier
 {
     public async Task<ToolVerificationResult> VerifyAsync(string name, string executable, string versionArgument, CancellationToken cancellationToken = default)
     {
+        return await RunAsync(name, executable, versionArgument, requireSuccessfulExit: true, cancellationToken);
+    }
+
+    public async Task<ToolVerificationResult> VerifyPresenceAsync(string name, string executable, string availabilityArgument, CancellationToken cancellationToken = default)
+    {
+        return await RunAsync(name, executable, availabilityArgument, requireSuccessfulExit: false, cancellationToken);
+    }
+
+    private static async Task<ToolVerificationResult> RunAsync(
+        string name,
+        string executable,
+        string argument,
+        bool requireSuccessfulExit,
+        CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(executable))
         {
             return new ToolVerificationResult(name, false, "No executable was configured.");
@@ -21,7 +36,7 @@ public sealed class ProcessToolVerifier : IToolVerifier
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        startInfo.ArgumentList.Add(versionArgument);
+        startInfo.ArgumentList.Add(argument);
 
         try
         {
@@ -37,12 +52,13 @@ public sealed class ProcessToolVerifier : IToolVerifier
             var output = (await standardOutputTask).Trim();
             var error = (await standardErrorTask).Trim();
 
-            if (process.ExitCode != 0)
+            if (requireSuccessfulExit && process.ExitCode != 0)
             {
-                return new ToolVerificationResult(name, false, $"'{executable} {versionArgument}' exited with {process.ExitCode}: {FirstLine(error)}");
+                return new ToolVerificationResult(name, false, $"'{executable} {argument}' exited with {process.ExitCode}: {FirstLine(error)}");
             }
 
-            return new ToolVerificationResult(name, true, FirstLine(string.IsNullOrWhiteSpace(output) ? error : output));
+            var detail = FirstLine(string.IsNullOrWhiteSpace(output) ? error : output);
+            return new ToolVerificationResult(name, true, requireSuccessfulExit ? detail : $"Executable started successfully. {detail}");
         }
         catch (Win32Exception exception)
         {

@@ -8,6 +8,15 @@ public sealed record ToolVerificationResult(string Name, bool IsAvailable, strin
 public interface IToolVerifier
 {
     Task<ToolVerificationResult> VerifyAsync(string name, string executable, string versionArgument, CancellationToken cancellationToken = default);
+    Task<ToolVerificationResult> VerifyPresenceAsync(string name, string executable, string availabilityArgument, CancellationToken cancellationToken = default);
+}
+
+public interface IRemoteEnvironmentVerifier
+{
+    Task<IReadOnlyList<Diagnostic>> VerifyAsync(
+        string sshPath,
+        RemoteSshSettings settings,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IDatabaseInitializer

@@ -52,6 +52,22 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         await action.Should().ThrowAsync<InvalidOperationException>();
     }
 
+    [Fact]
+    public async Task PersistsRemoteExecutionIdentity()
+    {
+        var job = NewJob(JobStatus.Queued);
+        job.ExecutionMode = "remoteSsh";
+        job.RemoteHost = "video-worker";
+        job.RemoteWorkspace = $"/var/tmp/video-optimiser/{job.Id:N}";
+
+        await _repository.CreateAsync(_databasePath, job);
+
+        var stored = await _repository.GetAsync(_databasePath, job.Id);
+        stored!.ExecutionMode.Should().Be("remoteSsh");
+        stored.RemoteHost.Should().Be("video-worker");
+        stored.RemoteWorkspace.Should().Be(job.RemoteWorkspace);
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private static JobRecord NewJob(JobStatus status) => new()

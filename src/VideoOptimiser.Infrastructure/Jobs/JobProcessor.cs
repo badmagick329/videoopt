@@ -10,8 +10,7 @@ public sealed class JobProcessor(
     IJobRepository jobs,
     IFileReadinessService readiness,
     Func<string, IMediaProbe> mediaProbeFactory,
-    Func<string, ICrfSearchClient> crfSearchFactory,
-    Func<string, IVideoEncoder> encoderFactory,
+    IProcessingSessionFactory sessions,
     IFileFingerprintService fingerprints,
     IOutputManifestStore manifests,
     IOutputValidationService validator) : IJobProcessor
@@ -26,7 +25,18 @@ public sealed class JobProcessor(
         var resumeStatus = job?.ResumeStatus;
         if (job is null)
         {
-            job = await jobs.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = path, SourceFingerprint = fingerprint, Status = JobStatus.Queued }, cancellationToken);
+            var id = Guid.NewGuid();
+            var remote = string.Equals(settings.Processing.Mode, "remoteSsh", StringComparison.OrdinalIgnoreCase);
+            job = await jobs.CreateAsync(databasePath, new JobRecord
+            {
+                Id = id,
+                SourcePath = path,
+                SourceFingerprint = fingerprint,
+                Status = JobStatus.Queued,
+                ExecutionMode = remote ? "remoteSsh" : "local",
+                RemoteHost = remote ? settings.Processing.RemoteSsh.Host : null,
+                RemoteWorkspace = remote ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{id:N}" : null
+            }, cancellationToken);
         }
         else if (job.Status == JobStatus.ReadyToFinalize)
         {
@@ -38,8 +48,11 @@ public sealed class JobProcessor(
         }
         else if (job.Status == JobStatus.Interrupted)
         {
-            if (resumeStatus == JobStatus.CrfSearching) job.Crf = null;
-            if (resumeStatus == JobStatus.Encoding) { job.OutputPath = null; job.ManifestPath = null; }
+            if (!string.Equals(job.ExecutionMode, "remoteSsh", StringComparison.OrdinalIgnoreCase))
+            {
+                if (resumeStatus == JobStatus.CrfSearching) job.Crf = null;
+                if (resumeStatus == JobStatus.Encoding) { job.OutputPath = null; job.ManifestPath = null; }
+            }
             job.Status = JobStatus.Queued;
             job.ResumeStatus = null;
             job.FailureCategory = null;
@@ -47,8 +60,19 @@ public sealed class JobProcessor(
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
         }
 
+        var activeMode = string.Equals(settings.Processing.Mode, "remoteSsh", StringComparison.OrdinalIgnoreCase) ? "remoteSsh" : "local";
+        var activeHost = activeMode == "remoteSsh" ? settings.Processing.RemoteSsh.Host : null;
+        var activeWorkspace = activeMode == "remoteSsh" ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{job.Id:N}" : null;
+        if (!string.Equals(job.ExecutionMode, activeMode, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(job.RemoteHost, activeHost, StringComparison.Ordinal) ||
+            !string.Equals(job.RemoteWorkspace, activeWorkspace, StringComparison.Ordinal))
+        {
+            return await FailAsync(job, databasePath, "RemoteConfigurationChanged", "The processing mode, remote host, or remote workspace differs from the configuration captured for this job.", ExitCode.InvalidConfiguration, cancellationToken);
+        }
+
         job.SourceFingerprint = fingerprint;
         var stage = "ProcessingFailed";
+        await using var session = sessions.Create(job, settings);
         try
         {
             if (!force && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return await FailAsync(job, databasePath, "SourceOutsideWatchRoot", "Source file is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure, cancellationToken);
@@ -61,13 +85,26 @@ public sealed class JobProcessor(
 
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.SampleCount);
             var quality = WithSampleCount(settings.Quality, sampleCount);
+            if (session.IsRemote)
+            {
+                stage = "StagingFailed";
+                job.Status = JobStatus.Staging;
+                await jobs.UpdateAsync(databasePath, job, cancellationToken);
+                await session.StageAsync(path, fingerprint, cancellationToken);
+                if (!string.Equals(await fingerprints.CreateAsync(path, cancellationToken), fingerprint, StringComparison.Ordinal))
+                {
+                    await session.CleanupAsync(cancellationToken);
+                    return await FailAsync(job, databasePath, "SourceChanged", "Source file changed while it was being uploaded.", ExitCode.ProcessingFailure, cancellationToken);
+                }
+            }
             if (job.Crf is null)
             {
                 stage = "CrfSearchFailed";
                 job.Status = JobStatus.CrfSearching;
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                var crfResult = await crfSearchFactory(settings.Tools.AbAv1Path).SearchAsync(path, quality, progress, cancellationToken);
+                var crfResult = await session.SearchCrfAsync(path, quality, progress, cancellationToken);
                 job.Crf = crfResult.Crf;
+                await jobs.UpdateAsync(databasePath, job, cancellationToken);
             }
 
             OutputManifest manifest;
@@ -80,14 +117,22 @@ public sealed class JobProcessor(
             {
                 stage = "EncodeFailed";
                 job.Status = JobStatus.Encoding;
-                job.Attempt++;
+                var reattachAttempt = session.IsRemote && resumeStatus is JobStatus.Encoding or JobStatus.Downloading && job.Attempt > 0;
+                if (!reattachAttempt) job.Attempt++;
                 var outputDirectory = Path.Combine(Path.GetDirectoryName(path)!, ".video-optimiser");
                 var outputPath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(path)}.{job.Id:N}.{job.Attempt}.encoding{Path.GetExtension(path)}");
                 job.OutputPath = outputPath;
                 job.ManifestPath = manifests.GetPath(outputPath);
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
                 Directory.CreateDirectory(outputDirectory);
-                var encodeResult = await encoderFactory(settings.Tools.AbAv1Path).EncodeAsync(path, outputPath, job.Crf.Value, quality, progress, cancellationToken);
+                var encodeResult = await session.EncodeAsync(path, outputPath, job.Crf.Value, quality, job.Attempt, progress, cancellationToken);
+                if (session.IsRemote)
+                {
+                    stage = "DownloadFailed";
+                    job.Status = JobStatus.Downloading;
+                    await jobs.UpdateAsync(databasePath, job, cancellationToken);
+                    await session.RetrieveOutputAsync(outputPath, job.Attempt, cancellationToken);
+                }
                 manifest = new OutputManifest { SourcePath = path, SourceFingerprint = fingerprint, OutputPath = encodeResult.OutputPath, Crf = job.Crf.Value, CreatedUtc = DateTimeOffset.UtcNow };
                 await manifests.SaveAsync(manifest, cancellationToken);
                 job.OutputPath = encodeResult.OutputPath;
@@ -104,6 +149,7 @@ public sealed class JobProcessor(
             job.SourceSizeBytes = manifest.Validation.SourceSizeBytes;
             job.OutputSizeBytes = manifest.Validation.OutputSizeBytes;
             job.PercentageSaved = manifest.Validation.PercentageSaved;
+            if (session.IsRemote) await session.CleanupAsync(cancellationToken);
             if (!manifest.Validation.Passed)
             {
                 return await FailAsync(job, databasePath, "ValidationFailed", string.Join("; ", manifest.Validation.Failures), ExitCode.ValidationFailure, cancellationToken);
@@ -115,12 +161,22 @@ public sealed class JobProcessor(
         }
         catch (OperationCanceledException)
         {
-            job.ResumeStatus = job.Status;
+            if (session.IsRemote) await session.CancelAsync(CancellationToken.None);
+            job.ResumeStatus = session.IsRemote && job.Status == JobStatus.Encoding ? JobStatus.Queued : job.Status;
             job.Status = JobStatus.Interrupted;
             job.FailureCategory = "Interrupted";
             job.FailureMessage = "Processing was cancelled.";
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
             throw;
+        }
+        catch (RemoteConnectionException exception)
+        {
+            job.ResumeStatus = job.Status;
+            job.Status = JobStatus.Interrupted;
+            job.FailureCategory = "RemoteUnavailable";
+            job.FailureMessage = exception.Message;
+            await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
+            return new JobProcessingResult(job, ExitCode.ProcessingFailure, exception.Message);
         }
         catch (Exception exception)
         {

@@ -7,16 +7,18 @@ namespace VideoOptimiser.Application.Jobs;
 
 public enum JobStatus
 {
-    Queued,
-    CrfSearching,
-    Encoding,
-    Validating,
-    ReadyToFinalize,
-    Finalizing,
-    Completed,
-    Failed,
-    Interrupted,
-    Cancelled
+    Queued = 0,
+    CrfSearching = 1,
+    Encoding = 2,
+    Validating = 3,
+    ReadyToFinalize = 4,
+    Finalizing = 5,
+    Completed = 6,
+    Failed = 7,
+    Interrupted = 8,
+    Cancelled = 9,
+    Staging = 10,
+    Downloading = 11
 }
 
 public sealed class JobRecord
@@ -39,6 +41,9 @@ public sealed class JobRecord
     public DateTimeOffset CreatedUtc { get; set; }
     public DateTimeOffset UpdatedUtc { get; set; }
     public DateTimeOffset? CompletedUtc { get; set; }
+    public string ExecutionMode { get; set; } = "local";
+    public string? RemoteHost { get; set; }
+    public string? RemoteWorkspace { get; set; }
 
     public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled;
 }
@@ -49,13 +54,15 @@ public static class JobStateTransitions
 {
     public static bool IsAllowed(JobStatus current, JobStatus next) => current == next || (current, next) switch
     {
-        (JobStatus.Queued, JobStatus.CrfSearching or JobStatus.Failed or JobStatus.Interrupted or JobStatus.Cancelled) => true,
+        (JobStatus.Queued, JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Failed or JobStatus.Interrupted or JobStatus.Cancelled) => true,
+        (JobStatus.Staging, JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.CrfSearching, JobStatus.Encoding or JobStatus.Failed or JobStatus.Interrupted) => true,
-        (JobStatus.Encoding, JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
+        (JobStatus.Encoding, JobStatus.Downloading or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
+        (JobStatus.Downloading, JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Validating, JobStatus.ReadyToFinalize or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.ReadyToFinalize, JobStatus.Validating or JobStatus.Finalizing or JobStatus.Failed) => true,
         (JobStatus.Finalizing, JobStatus.Completed or JobStatus.Failed or JobStatus.Interrupted) => true,
-        (JobStatus.Interrupted, JobStatus.Queued or JobStatus.Failed or JobStatus.Cancelled) => true,
+        (JobStatus.Interrupted, JobStatus.Queued or JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Downloading or JobStatus.Validating or JobStatus.Failed or JobStatus.Cancelled) => true,
         _ => false
     };
 }

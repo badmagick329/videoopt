@@ -92,11 +92,13 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         command.CommandText = """
             UPDATE jobs
             SET resume_status = status, status = $interrupted, failure_category = 'Interrupted', failure_message = 'Application stopped before the job completed.', updated_utc = $updatedUtc
-            WHERE status IN ($crfSearching, $encoding, $validating, $finalizing);
+            WHERE status IN ($staging, $crfSearching, $encoding, $downloading, $validating, $finalizing);
             """;
         command.Parameters.AddWithValue("$interrupted", (int)JobStatus.Interrupted);
         command.Parameters.AddWithValue("$crfSearching", (int)JobStatus.CrfSearching);
+        command.Parameters.AddWithValue("$staging", (int)JobStatus.Staging);
         command.Parameters.AddWithValue("$encoding", (int)JobStatus.Encoding);
+        command.Parameters.AddWithValue("$downloading", (int)JobStatus.Downloading);
         command.Parameters.AddWithValue("$validating", (int)JobStatus.Validating);
         command.Parameters.AddWithValue("$finalizing", (int)JobStatus.Finalizing);
         command.Parameters.AddWithValue("$updatedUtc", DateTimeOffset.UtcNow.ToString("O"));
@@ -116,8 +118,8 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var command = connection.CreateCommand();
         command.CommandText = insert
-            ? """INSERT INTO jobs (id, source_path, source_fingerprint, status, resume_status, attempt, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc) VALUES ($id, $sourcePath, $sourceFingerprint, $status, $resumeStatus, $attempt, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc);"""
-            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc WHERE id = $id;""";
+            ? """INSERT INTO jobs (id, source_path, source_fingerprint, status, resume_status, attempt, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc, execution_mode, remote_host, remote_workspace) VALUES ($id, $sourcePath, $sourceFingerprint, $status, $resumeStatus, $attempt, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc, $executionMode, $remoteHost, $remoteWorkspace);"""
+            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc, execution_mode = $executionMode, remote_host = $remoteHost, remote_workspace = $remoteWorkspace WHERE id = $id;""";
         Add(command, "$id", job.Id.ToString("N"));
         Add(command, "$sourcePath", job.SourcePath);
         Add(command, "$sourceFingerprint", job.SourceFingerprint);
@@ -136,6 +138,9 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         Add(command, "$createdUtc", job.CreatedUtc.ToString("O"));
         Add(command, "$updatedUtc", job.UpdatedUtc.ToString("O"));
         Add(command, "$completedUtc", job.CompletedUtc?.ToString("O"));
+        Add(command, "$executionMode", job.ExecutionMode);
+        Add(command, "$remoteHost", job.RemoteHost);
+        Add(command, "$remoteWorkspace", job.RemoteWorkspace);
         _ = await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -169,7 +174,10 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         FailureMessage = NullableString(reader, "failure_message"),
         CreatedUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("created_utc")), CultureInfo.InvariantCulture),
         UpdatedUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("updated_utc")), CultureInfo.InvariantCulture),
-        CompletedUtc = NullableString(reader, "completed_utc") is { } completed ? DateTimeOffset.Parse(completed, CultureInfo.InvariantCulture) : null
+        CompletedUtc = NullableString(reader, "completed_utc") is { } completed ? DateTimeOffset.Parse(completed, CultureInfo.InvariantCulture) : null,
+        ExecutionMode = NullableString(reader, "execution_mode") ?? "local",
+        RemoteHost = NullableString(reader, "remote_host"),
+        RemoteWorkspace = NullableString(reader, "remote_workspace")
     };
 
     private static string? NullableString(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetString(reader.GetOrdinal(column));
