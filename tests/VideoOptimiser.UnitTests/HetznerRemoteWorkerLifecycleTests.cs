@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Infrastructure.Processing;
 
 namespace VideoOptimiser.UnitTests;
@@ -74,10 +75,16 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         fixture.Handler.LocationAvailability["fsn1"] = (true, false);
         fixture.Handler.LocationAvailability["nbg1"] = (true, true);
         using var lifecycle = fixture.CreateLifecycle();
+        var messages = new List<string>();
 
-        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
 
         fixture.Handler.CreateLocations.Should().ContainSingle().Which.Should().Be("fsn1");
+        messages.Should().Contain("Checking Hetzner cx43 capacity in hel1, fsn1, or nbg1.");
+        messages.Should().Contain("Hetzner cx43 capacity available in fsn1 or nbg1; trying configured order.");
+        messages.Should().Contain("Creating Hetzner server in fsn1.");
+        messages.Should().NotContain(message => message.Contains("recommended", StringComparison.OrdinalIgnoreCase));
+        messages.Should().NotContain(message => message.Contains("available=False", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -125,8 +132,10 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
 
-        await action.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*hel1*hel capacity*fsn1*fsn capacity*");
+        var exception = await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
+        exception.Which.Message.Should().Be("No CX43 capacity is currently available in hel1 or fsn1. No server was created. Try again later.");
+        exception.Which.AttemptedFailures.Should().HaveCount(2)
+            .And.ContainInOrder("hel1 (HTTP 412 PreconditionFailed (resource_unavailable): hel capacity)", "fsn1 (HTTP 412 PreconditionFailed (resource_unavailable): fsn capacity)");
         fixture.Handler.CreateCount.Should().Be(2);
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
     }
@@ -156,7 +165,9 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
 
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*no server creation was attempted*hel1*fsn1*");
+        var exception = await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
+        exception.Which.Message.Should().Be("No CX43 capacity is currently available in hel1 or fsn1. No server was created. Try again later.");
+        exception.Which.Locations.Should().Equal("hel1", "fsn1");
         fixture.Handler.CreateCount.Should().Be(0);
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
     }

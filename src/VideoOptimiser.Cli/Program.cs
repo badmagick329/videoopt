@@ -75,6 +75,11 @@ internal static class CliApplication
             Console.Error.WriteLine($"Configuration could not be read: {exception.Message}");
             return (int)ExitCode.InvalidConfiguration;
         }
+        catch (RemoteWorkerCapacityUnavailableException exception)
+        {
+            Console.Error.WriteLine(exception.Message);
+            return (int)ExitCode.ProcessingFailure;
+        }
         catch (Exception exception)
         {
             Console.Error.WriteLine($"Unexpected failure: {exception.GetBaseException().Message}");

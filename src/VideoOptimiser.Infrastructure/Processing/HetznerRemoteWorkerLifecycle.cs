@@ -199,7 +199,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
         {
             var candidate = candidates[candidateIndex];
-            progress?.Report($"Attempting Hetzner server creation in {candidate.Name} (preflight available; recommended={candidate.Recommended}).");
+            progress?.Report($"Creating Hetzner server in {candidate.Name}.");
             JsonDocument document;
             try
             {
@@ -255,7 +255,11 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             }
         }
 
-        throw new InvalidOperationException($"Hetzner server creation exhausted all candidate locations: {string.Join("; ", failures)}.", lastPlacementFailure);
+        throw new RemoteWorkerCapacityUnavailableException(
+            hetzner.ServerType,
+            candidates.Select(candidate => candidate.Name).ToArray(),
+            failures,
+            lastPlacementFailure);
     }
 
     private async Task<IReadOnlyList<LocationCandidate>> PreflightLocationsAsync(
@@ -264,7 +268,10 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         IProgress<string>? progress,
         CancellationToken cancellationToken)
     {
-        progress?.Report($"Checking Hetzner {hetzner.ServerType} location availability before creation.");
+        var configuredLocations = hetzner.Locations
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        progress?.Report($"Checking Hetzner {hetzner.ServerType} capacity in {FormatLocationList(configuredLocations)}.");
         JsonDocument document;
         try
         {
@@ -318,7 +325,6 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                     location.TryGetProperty("recommended", out var recommended) && recommended.GetBoolean())))
                 throw PreflightFailure(hetzner.ServerType, $"the locations array contained duplicate location '{locationName}'");
         }
-        var statuses = new List<string>();
         var candidates = new List<LocationCandidate>();
         var seenConfiguredLocations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var configuredLocation in hetzner.Locations)
@@ -326,13 +332,9 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             if (!seenConfiguredLocations.Add(configuredLocation)) continue;
             if (!locations.TryGetValue(configuredLocation, out var status))
             {
-                statuses.Add($"{configuredLocation}=unsupported");
-                progress?.Report($"Hetzner location {configuredLocation}: unsupported for {hetzner.ServerType}.");
                 continue;
             }
 
-            statuses.Add($"{configuredLocation}=available:{status.Available},recommended:{status.Recommended}");
-            progress?.Report($"Hetzner location {configuredLocation}: available={status.Available}, recommended={status.Recommended}.");
             if (status.Available)
             {
                 // Configuration order is the explicit preference. Recommendations are advisory and are
@@ -342,11 +344,22 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         }
 
         if (candidates.Count == 0)
-            throw new InvalidOperationException($"No configured Hetzner locations are currently indicated available for {hetzner.ServerType}; no server creation was attempted. Status: {string.Join(", ", statuses)}.");
+            throw new RemoteWorkerCapacityUnavailableException(hetzner.ServerType, seenConfiguredLocations.ToArray());
 
-        progress?.Report($"Hetzner location preflight selected candidates in configured order: {string.Join(", ", candidates.Select(candidate => candidate.Name))}.");
+        var candidateNames = candidates.Select(candidate => candidate.Name).ToArray();
+        progress?.Report(candidateNames.Length == 1
+            ? $"Hetzner {hetzner.ServerType} capacity available in {candidateNames[0]}; trying it."
+            : $"Hetzner {hetzner.ServerType} capacity available in {FormatLocationList(candidateNames)}; trying configured order.");
         return candidates;
     }
+
+    private static string FormatLocationList(string[] locations) => locations.Length switch
+    {
+        0 => "the configured locations",
+        1 => locations[0],
+        2 => $"{locations[0]} or {locations[1]}",
+        _ => $"{string.Join(", ", locations.Take(locations.Length - 1))}, or {locations[^1]}"
+    };
 
     private static InvalidOperationException PreflightFailure(string serverType, string reason, Exception? innerException = null) =>
         new($"Hetzner {serverType} location preflight failed: {reason}; no server creation was attempted.", innerException);
@@ -392,7 +405,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         exception.Code?.Replace('-', '_') is "resource_unavailable" or "placement_unavailable";
 
     private static string DescribeApiFailure(HetznerApiException exception) =>
-        $"HTTP {(int)exception.StatusCode} {exception.StatusCode} ({exception.Code ?? "unknown"}): {exception.Message}";
+        $"HTTP {(int)exception.StatusCode} {exception.StatusCode} ({exception.Code ?? "unknown"}): {exception.ProviderMessage}";
 
     private async Task CleanupFailedCreateAsync(string token, string statePath, WorkerState state, CancellationToken cancellationToken)
     {
@@ -873,6 +886,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     {
         public HttpStatusCode StatusCode { get; } = statusCode;
         public string? Code { get; } = code;
+        public string ProviderMessage { get; } = message;
     }
     private sealed class HetznerActionException(string? code, string message) : InvalidOperationException(message)
     {
