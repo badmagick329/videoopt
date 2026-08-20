@@ -60,7 +60,8 @@ processing:
       apiTokenFile: ".env"
       serverType: "cx43"
       image: "ubuntu-24.04"
-      location: "hel1"
+      # Candidates are tried in this order after the availability preflight.
+      locations: ["hel1", "fsn1", "nbg1"]
       sshKeyName: ""
       serverNamePrefix: "video-optimiser"
       bootstrapScriptPath: "scripts/bootstrap-remote-worker.sh"

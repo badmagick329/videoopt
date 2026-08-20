@@ -35,7 +35,11 @@ public sealed class SettingsValidator : ISettingsValidator
                 AddWhen(!string.IsNullOrWhiteSpace(hetzner.ApiTokenFile) && Directory.Exists(hetzner.ApiTokenFile), "InvalidHetznerTokenFile", "processing.remoteSsh.hetzner.apiTokenFile must be a file path, not a directory.");
                 AddWhen(string.IsNullOrWhiteSpace(hetzner.ServerType), "HetznerServerTypeRequired", "processing.remoteSsh.hetzner.serverType is required.");
                 AddWhen(string.IsNullOrWhiteSpace(hetzner.Image), "HetznerImageRequired", "processing.remoteSsh.hetzner.image is required.");
-                AddWhen(string.IsNullOrWhiteSpace(hetzner.Location), "HetznerLocationRequired", "processing.remoteSsh.hetzner.location is required.");
+                AddWhen(hetzner.Locations is null || hetzner.Locations.Count == 0, "HetznerLocationsRequired", "processing.remoteSsh.hetzner.locations must contain at least one location.");
+                if (hetzner.Locations is not null)
+                {
+                    AddWhen(hetzner.Locations.Any(location => string.IsNullOrWhiteSpace(location) || location.Any(char.IsWhiteSpace)), "InvalidHetznerLocations", "processing.remoteSsh.hetzner.locations must contain non-empty location names without whitespace.");
+                }
                 AddWhen(string.IsNullOrWhiteSpace(hetzner.SshKeyName), "HetznerSshKeyRequired", "processing.remoteSsh.hetzner.sshKeyName is required.");
                 AddWhen(string.IsNullOrWhiteSpace(settings.Processing.RemoteSsh.IdentityFile), "RemoteIdentityFileRequired", "processing.remoteSsh.identityFile is required with Hetzner lifecycle.");
                 AddWhen(!string.IsNullOrWhiteSpace(settings.Processing.RemoteSsh.IdentityFile) && !File.Exists(settings.Processing.RemoteSsh.IdentityFile), "RemoteIdentityFileMissing", "processing.remoteSsh.identityFile does not exist.");

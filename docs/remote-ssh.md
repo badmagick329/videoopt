@@ -95,7 +95,9 @@ processing:
       apiTokenFile: ".env"
       serverType: "cx43"
       image: "ubuntu-24.04"
-      location: "hel1"
+      # Tried in this order after the CX43 availability preflight. A placement
+      # failure automatically advances to the next candidate.
+      locations: ["hel1", "fsn1", "nbg1"]
       sshKeyName: "video-optimiser-hetzner-cx43"
       serverNamePrefix: "video-optimiser"
       bootstrapScriptPath: "scripts/bootstrap-remote-worker.sh"
@@ -104,6 +106,8 @@ processing:
 ```
 
 Use the real path to the private key. The image must be Ubuntu 24.04 x86-64; the bootstrap intentionally rejects Ubuntu 26.04. The controller enables public IPv4, disables IPv6, marks the Primary IPv4 for automatic deletion, and applies ownership labels before it will reuse or delete a server.
+
+Before creating a worker, VideoOptimiser queries the selected server type and skips configured locations that Hetzner currently reports as unavailable. The availability result is only an indicator, so a placement can still return HTTP 412; when the error is `resource_unavailable` or `placement_unavailable`, the next configured location is tried. Locations remain in the order listed in YAML; Hetzner's `recommended` flag is advisory and does not override that explicit order. The default candidates (`hel1`, `fsn1`, and `nbg1`) are all in the `eu-central` network zone.
 
 Validate the local settings without creating a server:
 

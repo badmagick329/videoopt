@@ -66,6 +66,128 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     [Fact]
+    public async Task EnsurePrefiltersUnavailableLocationsAndPreservesConfiguredOrder()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1", "nbg1"];
+        fixture.Handler.LocationAvailability["hel1"] = (false, true);
+        fixture.Handler.LocationAvailability["fsn1"] = (true, false);
+        fixture.Handler.LocationAvailability["nbg1"] = (true, true);
+        using var lifecycle = fixture.CreateLifecycle();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        fixture.Handler.CreateLocations.Should().ContainSingle().Which.Should().Be("fsn1");
+    }
+
+    [Fact]
+    public async Task EnsureFallsBackWhenAvailabilityPreflightIsStale()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "error during placement"));
+        using var lifecycle = fixture.CreateLifecycle();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        fixture.Handler.CreateLocations.Should().Equal("hel1", "fsn1");
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("resource_unavailable")]
+    [InlineData("placement_unavailable")]
+    public async Task EnsureCleansUpAllocatedWorkerWhenProvisioningPlacementFails(string actionCode)
+    {
+        using var fixture = new Fixture { AutoDeletePrimaryIpWithServer = false };
+        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
+        fixture.Handler.ActionFailures.Enqueue((actionCode, "error during placement"));
+        using var lifecycle = fixture.CreateLifecycle();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        fixture.Handler.CreateLocations.Should().Equal("hel1", "fsn1");
+        fixture.Handler.SecondCreateObservedCleanResources.Should().BeTrue();
+        fixture.Handler.ServerExists.Should().BeTrue();
+        fixture.Handler.PrimaryIpExists.Should().BeTrue();
+        fixture.Handler.PrimaryIpDeleted.Should().BeTrue();
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EnsureReportsAllPlacementFailuresWhenCandidatesAreExhausted()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "hel capacity"));
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "fsn capacity"));
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        await action.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*hel1*hel capacity*fsn1*fsn capacity*");
+        fixture.Handler.CreateCount.Should().Be(2);
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EnsureDoesNotRetryNonPlacementApiErrors()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.BadRequest, "invalid_input", "bad request"));
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*400*bad request*");
+        fixture.Handler.CreateCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task EnsureDoesNotCreateWhenPreflightReportsNoConfiguredAvailability()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
+        fixture.Handler.LocationAvailability["hel1"] = (false, false);
+        fixture.Handler.LocationAvailability["fsn1"] = (false, false);
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*no server creation was attempted*hel1*fsn1*");
+        fixture.Handler.CreateCount.Should().Be(0);
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EnsureDoesNotCreateWhenServerTypePreflightResponseIsMissingServerTypes()
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.ServerTypePreflightResponse = "{}";
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*did not contain a server_types array*no server creation was attempted*");
+        fixture.Handler.CreateCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task EnsureDoesNotCreateWhenServerTypeLocationPreflightIsMalformed()
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.ServerTypePreflightResponse = "{\"server_types\":[{\"name\":\"cx43\",\"locations\":[{\"name\":\"hel1\"}]}]}";
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*did not contain a boolean available field*no server creation was attempted*");
+        fixture.Handler.CreateCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task EnsureReportsBootstrapStageAndPercentageFromRemoteProgressFile()
     {
         using var fixture = new Fixture();
@@ -321,8 +443,20 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         public bool AutoDeleteUpdated { get; private set; }
         public bool AutoDeletePrimaryIpWithServer { get; set; } = true;
         public bool ReturnWrongOwnership { get; set; }
+        public string? ServerTypePreflightResponse { get; set; }
+        public Queue<(string Code, string Message)> ActionFailures { get; } = new();
+        public bool SecondCreateObservedCleanResources { get; private set; }
+        private (string Code, string Message)? _pendingActionFailure;
         public JsonDocument? CreatePayload { get; set; }
         public int CreateCount { get; private set; }
+        public Dictionary<string, (bool Available, bool Recommended)> LocationAvailability { get; } = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["hel1"] = (true, false),
+            ["fsn1"] = (true, false),
+            ["nbg1"] = (true, false)
+        };
+        public Queue<(HttpStatusCode Status, string Code, string Message)> CreateFailures { get; } = new();
+        public List<string> CreateLocations { get; } = [];
 
         public void DeleteServerOutOfBand() => ServerExists = false;
 
@@ -331,6 +465,12 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             request.Headers.Authorization!.Scheme.Should().Be("Bearer");
             request.Headers.Authorization.Parameter.Should().Be("secret-test-token");
             var path = request.RequestUri!.PathAndQuery;
+            if (request.Method == HttpMethod.Get && path.StartsWith("/v1/server_types?name=", StringComparison.Ordinal))
+            {
+                if (ServerTypePreflightResponse is not null) return Json(ServerTypePreflightResponse);
+                var locations = string.Join(",", LocationAvailability.Select(item => $"{{\"name\":\"{item.Key}\",\"available\":{item.Value.Available.ToString().ToLowerInvariant()},\"recommended\":{item.Value.Recommended.ToString().ToLowerInvariant()}}}"));
+                return Json($"{{\"server_types\":[{{\"name\":\"cx43\",\"locations\":[{locations}]}}]}}");
+            }
             if (request.Method == HttpMethod.Get && path.StartsWith("/v1/servers?", StringComparison.Ordinal))
             {
                 var servers = ReturnWrongOwnership ? $"[{ServerJson(wrongOwnership: true)}]" : ServerExists ? $"[{ServerJson()}]" : "[]";
@@ -341,9 +481,18 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             if (request.Method == HttpMethod.Post && path == "/v1/servers")
             {
                 CreatePayload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                if (CreateCount == 1) SecondCreateObservedCleanResources = !ServerExists && !PrimaryIpExists;
                 CreateCount++;
+                CreateLocations.Add(CreatePayload.RootElement.GetProperty("location").GetString()!);
+                if (CreateFailures.TryDequeue(out var failure))
+                    return Error(failure.Status, failure.Code, failure.Message);
                 ServerExists = true;
                 PrimaryIpExists = true;
+                if (ActionFailures.TryDequeue(out var actionFailure))
+                {
+                    _pendingActionFailure = actionFailure;
+                    return Json($"{{\"server\":{ServerJson()},\"action\":{{\"id\":12}}}}");
+                }
                 return Json($"{{\"server\":{ServerJson()},\"action\":{{\"id\":10}}}}");
             }
             if (request.Method == HttpMethod.Put && path == "/v1/primary_ips/99")
@@ -351,6 +500,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                 AutoDeleteUpdated = true;
                 return Json("{\"primary_ip\":{\"id\":99}}");
             }
+            if (request.Method == HttpMethod.Get && path == "/v1/actions/12" && _pendingActionFailure is { } pendingFailure)
+                return Json($"{{\"action\":{{\"status\":\"error\",\"error\":{{\"code\":\"{pendingFailure.Code}\",\"message\":\"{pendingFailure.Message}\"}}}}}}");
             if (request.Method == HttpMethod.Get && path is "/v1/actions/10" or "/v1/actions/11")
                 return Json("{\"action\":{\"status\":\"success\"}}");
             if (request.Method == HttpMethod.Get && path == "/v1/servers/42")
@@ -384,6 +535,11 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         private static HttpResponseMessage Json(string json) => new(HttpStatusCode.OK)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+
+        private static HttpResponseMessage Error(HttpStatusCode status, string code, string message) => new(status)
+        {
+            Content = new StringContent($"{{\"error\":{{\"code\":\"{code}\",\"message\":\"{message}\"}}}}", Encoding.UTF8, "application/json")
         };
     }
 }

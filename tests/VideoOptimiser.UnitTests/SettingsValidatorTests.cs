@@ -128,6 +128,37 @@ public sealed class SettingsValidatorTests
     }
 
     [Fact]
+    public void ValidateManagedHetznerRejectsEmptyLocationList()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "video-optimiser-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var identity = Path.Combine(directory, "worker-key");
+            var bootstrap = Path.Combine(directory, "bootstrap.sh");
+            File.WriteAllText(identity, "key");
+            File.WriteAllText(bootstrap, "#!/bin/bash");
+            var settings = CreateValidSettings();
+            settings.Processing = new ProcessingSettings
+            {
+                Mode = ProcessingModes.RemoteSsh,
+                RemoteSsh = new RemoteSshSettings
+                {
+                    Lifecycle = RemoteLifecycleModes.Hetzner,
+                    IdentityFile = identity,
+                    Hetzner = new HetznerSettings { Locations = [], SshKeyName = "video-optimiser-hetzner-cx43", BootstrapScriptPath = bootstrap }
+                }
+            };
+
+            new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("HetznerLocationsRequired");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ValidateRejectsUnknownProcessingMode()
     {
         var settings = CreateValidSettings();

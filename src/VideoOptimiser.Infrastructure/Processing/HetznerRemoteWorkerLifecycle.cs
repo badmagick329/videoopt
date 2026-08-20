@@ -173,6 +173,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             servers[0].PrimaryIpv4Id,
             servers[0].Name,
             servers[0].Address,
+            string.Empty,
             KnownHostsPath(databasePath: Path.GetFullPath(statePath[..^".hetzner-worker.json".Length]), servers[0].Id),
             controller,
             servers[0].CreatedUtc);
@@ -192,6 +193,166 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         var hetzner = settings.Processing.RemoteSsh.Hetzner;
         if (Encoding.UTF8.GetByteCount(bootstrapScript) > 32 * 1024) throw new InvalidOperationException("The Hetzner bootstrap script exceeds the 32 KiB user-data limit.");
         var name = $"{hetzner.ServerNamePrefix}-{controller[..12]}".ToLowerInvariant();
+        var candidates = await PreflightLocationsAsync(token, hetzner, progress, cancellationToken);
+        var failures = new List<string>();
+        Exception? lastPlacementFailure = null;
+        for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
+        {
+            var candidate = candidates[candidateIndex];
+            progress?.Report($"Attempting Hetzner server creation in {candidate.Name} (preflight available; recommended={candidate.Recommended}).");
+            JsonDocument document;
+            try
+            {
+                document = await SendJsonAsync(token, HttpMethod.Post, "servers", CreateServerPayload(name, hetzner, candidate.Name, controller, bootstrapScript), cancellationToken);
+            }
+            catch (HetznerApiException exception) when (IsPlacementUnavailable(exception))
+            {
+                lastPlacementFailure = exception;
+                var reason = DescribeApiFailure(exception);
+                failures.Add($"{candidate.Name} ({reason})");
+                if (candidateIndex + 1 < candidates.Count)
+                {
+                    progress?.Report($"Hetzner location {candidate.Name} placement unavailable ({reason}); falling back to {candidates[candidateIndex + 1].Name}.");
+                    continue;
+                }
+                break;
+            }
+
+            using (document)
+            {
+                var serverElement = document.RootElement.GetProperty("server");
+                var server = ParseServer(serverElement);
+                var knownHostsFile = KnownHostsPath(statePath[..^".hetzner-worker.json".Length], server.Id);
+                var state = new WorkerState(server.Id, server.PrimaryIpv4Id, server.Name, server.Address, candidate.Name, knownHostsFile, controller, server.CreatedUtc);
+
+                // A failed POST never reaches this point, so no local state is left for a failed placement attempt.
+                await WriteStateAsync(statePath, state, cancellationToken);
+
+                try
+                {
+                    if (server.PrimaryIpv4Id > 0) await SetPrimaryIpAutoDeleteAsync(token, server.PrimaryIpv4Id, controller, cancellationToken);
+                    if (document.RootElement.TryGetProperty("action", out var action) && action.TryGetProperty("id", out var actionId))
+                    {
+                        progress?.Report($"Hetzner server {server.Id} allocated in {candidate.Name}; waiting for server provisioning to finish.");
+                        await WaitForActionAsync(token, actionId.GetInt64(), cancellationToken);
+                    }
+                }
+                catch (HetznerActionException exception) when (IsPlacementUnavailable(exception))
+                {
+                    var reason = $"Hetzner action failed ({exception.Code ?? "unknown"}): {exception.Message}";
+                    failures.Add($"{candidate.Name} ({reason})");
+                    lastPlacementFailure = exception;
+                    progress?.Report($"Hetzner location {candidate.Name} provisioning failed ({reason}); cleaning up before fallback.");
+                    await CleanupFailedCreateAsync(token, statePath, state, cancellationToken);
+                    if (candidateIndex + 1 < candidates.Count)
+                    {
+                        progress?.Report($"Hetzner location {candidate.Name} cleaned up; falling back to {candidates[candidateIndex + 1].Name}.");
+                        continue;
+                    }
+                    break;
+                }
+                return state;
+            }
+        }
+
+        throw new InvalidOperationException($"Hetzner server creation exhausted all candidate locations: {string.Join("; ", failures)}.", lastPlacementFailure);
+    }
+
+    private async Task<IReadOnlyList<LocationCandidate>> PreflightLocationsAsync(
+        string token,
+        HetznerSettings hetzner,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        progress?.Report($"Checking Hetzner {hetzner.ServerType} location availability before creation.");
+        JsonDocument document;
+        try
+        {
+            document = await SendJsonAsync(token, HttpMethod.Get, $"server_types?name={Uri.EscapeDataString(hetzner.ServerType)}", null, cancellationToken);
+        }
+        catch (JsonException exception)
+        {
+            throw PreflightFailure(hetzner.ServerType, $"the response was not valid JSON: {exception.Message}", exception);
+        }
+        using (document)
+        {
+            return ParsePreflightLocations(document, hetzner, progress);
+        }
+    }
+
+    private static List<LocationCandidate> ParsePreflightLocations(
+        JsonDocument document,
+        HetznerSettings hetzner,
+        IProgress<string>? progress)
+    {
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("server_types", out var serverTypes) || serverTypes.ValueKind != JsonValueKind.Array)
+            throw PreflightFailure(hetzner.ServerType, "the response did not contain a server_types array");
+
+        var matches = new List<JsonElement>();
+        foreach (var serverType in serverTypes.EnumerateArray())
+        {
+            if (serverType.ValueKind != JsonValueKind.Object || !serverType.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String)
+                throw PreflightFailure(hetzner.ServerType, "the server_types array contained an entry without a string name");
+            if (string.Equals(name.GetString(), hetzner.ServerType, StringComparison.OrdinalIgnoreCase)) matches.Add(serverType);
+        }
+        if (matches.Count == 0) throw new InvalidOperationException($"Hetzner server type '{hetzner.ServerType}' was not found during location preflight; no server creation was attempted.");
+        if (matches.Count > 1) throw new InvalidOperationException($"Hetzner server type lookup for '{hetzner.ServerType}' returned multiple matches during location preflight; no server creation was attempted.");
+
+        if (!matches[0].TryGetProperty("locations", out var locationArray) || locationArray.ValueKind != JsonValueKind.Array)
+            throw PreflightFailure(hetzner.ServerType, "the matching server type did not contain a locations array");
+
+        var locations = new Dictionary<string, LocationStatus>(StringComparer.OrdinalIgnoreCase);
+        foreach (var location in locationArray.EnumerateArray())
+        {
+            if (location.ValueKind != JsonValueKind.Object ||
+                !location.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(name.GetString()))
+                throw PreflightFailure(hetzner.ServerType, "the locations array contained an entry without a non-empty string name");
+            if (!location.TryGetProperty("available", out var available) || available.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw PreflightFailure(hetzner.ServerType, $"location '{name.GetString()}' did not contain a boolean available field");
+            if (location.TryGetProperty("recommended", out var recommendedField) && recommendedField.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw PreflightFailure(hetzner.ServerType, $"location '{name.GetString()}' did not contain a boolean recommended field");
+            var locationName = name.GetString()!;
+            if (!locations.TryAdd(locationName, new LocationStatus(
+                    available.GetBoolean(),
+                    location.TryGetProperty("recommended", out var recommended) && recommended.GetBoolean())))
+                throw PreflightFailure(hetzner.ServerType, $"the locations array contained duplicate location '{locationName}'");
+        }
+        var statuses = new List<string>();
+        var candidates = new List<LocationCandidate>();
+        var seenConfiguredLocations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var configuredLocation in hetzner.Locations)
+        {
+            if (!seenConfiguredLocations.Add(configuredLocation)) continue;
+            if (!locations.TryGetValue(configuredLocation, out var status))
+            {
+                statuses.Add($"{configuredLocation}=unsupported");
+                progress?.Report($"Hetzner location {configuredLocation}: unsupported for {hetzner.ServerType}.");
+                continue;
+            }
+
+            statuses.Add($"{configuredLocation}=available:{status.Available},recommended:{status.Recommended}");
+            progress?.Report($"Hetzner location {configuredLocation}: available={status.Available}, recommended={status.Recommended}.");
+            if (status.Available)
+            {
+                // Configuration order is the explicit preference. Recommendations are advisory and are
+                // reported, but never reorder an explicitly ordered locations list.
+                candidates.Add(new LocationCandidate(configuredLocation, status.Recommended));
+            }
+        }
+
+        if (candidates.Count == 0)
+            throw new InvalidOperationException($"No configured Hetzner locations are currently indicated available for {hetzner.ServerType}; no server creation was attempted. Status: {string.Join(", ", statuses)}.");
+
+        progress?.Report($"Hetzner location preflight selected candidates in configured order: {string.Join(", ", candidates.Select(candidate => candidate.Name))}.");
+        return candidates;
+    }
+
+    private static InvalidOperationException PreflightFailure(string serverType, string reason, Exception? innerException = null) =>
+        new($"Hetzner {serverType} location preflight failed: {reason}; no server creation was attempted.", innerException);
+
+    private static byte[] CreateServerPayload(string name, HetznerSettings hetzner, string location, string controller, string bootstrapScript)
+    {
         using var payload = new MemoryStream();
         using (var writer = new Utf8JsonWriter(payload))
         {
@@ -199,7 +360,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             writer.WriteString("name", name);
             writer.WriteString("server_type", hetzner.ServerType);
             writer.WriteString("image", hetzner.Image);
-            writer.WriteString("location", hetzner.Location);
+            writer.WriteString("location", location);
             writer.WritePropertyName("ssh_keys");
             writer.WriteStartArray();
             writer.WriteStringValue(hetzner.SshKeyName);
@@ -217,21 +378,37 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
+        return payload.ToArray();
+    }
 
-        using var document = await SendJsonAsync(token, HttpMethod.Post, "servers", payload.ToArray(), cancellationToken);
-        var serverElement = document.RootElement.GetProperty("server");
-        var server = ParseServer(serverElement);
-        var knownHostsFile = KnownHostsPath(statePath[..^".hetzner-worker.json".Length], server.Id);
-        var state = new WorkerState(server.Id, server.PrimaryIpv4Id, server.Name, server.Address, knownHostsFile, controller, server.CreatedUtc);
-        await WriteStateAsync(statePath, state, cancellationToken);
+    private static bool IsPlacementUnavailable(HetznerApiException exception)
+    {
+        if (exception.StatusCode != HttpStatusCode.PreconditionFailed) return false;
+        var code = exception.Code?.Replace('-', '_');
+        return code is "resource_unavailable" or "placement_unavailable";
+    }
 
-        if (server.PrimaryIpv4Id > 0) await SetPrimaryIpAutoDeleteAsync(token, server.PrimaryIpv4Id, controller, cancellationToken);
-        if (document.RootElement.TryGetProperty("action", out var action) && action.TryGetProperty("id", out var actionId))
+    private static bool IsPlacementUnavailable(HetznerActionException exception) =>
+        exception.Code?.Replace('-', '_') is "resource_unavailable" or "placement_unavailable";
+
+    private static string DescribeApiFailure(HetznerApiException exception) =>
+        $"HTTP {(int)exception.StatusCode} {exception.StatusCode} ({exception.Code ?? "unknown"}): {exception.Message}";
+
+    private async Task CleanupFailedCreateAsync(string token, string statePath, WorkerState state, CancellationToken cancellationToken)
+    {
+        // A failed placement action can race with Hetzner removing the server. Check first so
+        // cleanup remains safe when the server has already disappeared.
+        var server = await GetServerAsync(token, state.ServerId, cancellationToken);
+        if (server is not null)
         {
-            progress?.Report($"Hetzner server {server.Id} allocated; waiting for server provisioning to finish.");
-            await WaitForActionAsync(token, actionId.GetInt64(), cancellationToken);
+            VerifyOwnership(server.Value, state.Controller);
+            var actionId = await DeleteServerAsync(token, state.ServerId, cancellationToken);
+            if (actionId is not null) await WaitForActionAsync(token, actionId.Value, cancellationToken);
+            await WaitForServerDeletionAsync(token, state.ServerId, cancellationToken);
         }
-        return state;
+        if (state.PrimaryIpv4Id > 0 && await PrimaryIpExistsAsync(token, state.PrimaryIpv4Id, cancellationToken))
+            await DeletePrimaryIpAsync(token, state.PrimaryIpv4Id, cancellationToken);
+        DeleteLocalState(statePath, state.KnownHostsFile);
     }
 
     private async Task WaitUntilReadyAsync(AppSettings settings, WorkerState state, IProgress<string>? progress, CancellationToken cancellationToken)
@@ -452,8 +629,14 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             if (status == "success") return;
             if (status == "error")
             {
-                var error = action.TryGetProperty("error", out var errorElement) ? errorElement.GetProperty("message").GetString() : "unknown action error";
-                throw new InvalidOperationException($"Hetzner action {actionId} failed: {error}");
+                var error = action.TryGetProperty("error", out var errorElement) ? errorElement : default;
+                var message = error.ValueKind == JsonValueKind.Object && error.TryGetProperty("message", out var messageElement)
+                    ? messageElement.GetString() ?? "unknown action error"
+                    : "unknown action error";
+                var code = error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var codeElement)
+                    ? codeElement.GetString()
+                    : null;
+                throw new HetznerActionException(code, message);
             }
             await _delay(TimeSpan.FromSeconds(2), cancellationToken);
         }
@@ -535,17 +718,22 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
     }
 
-    private static async Task<Exception> ApiExceptionAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private static async Task<HetznerApiException> ApiExceptionAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         var message = body;
+        string? code = null;
         try
         {
             using var document = JsonDocument.Parse(body);
-            if (document.RootElement.TryGetProperty("error", out var error) && error.TryGetProperty("message", out var value)) message = value.GetString() ?? body;
+            if (document.RootElement.TryGetProperty("error", out var error))
+            {
+                if (error.TryGetProperty("code", out var codeElement)) code = codeElement.GetString();
+                if (error.TryGetProperty("message", out var value)) message = value.GetString() ?? body;
+            }
         }
         catch (JsonException) { }
-        return new InvalidOperationException($"Hetzner API returned {(int)response.StatusCode} ({response.StatusCode}): {message}");
+        return new HetznerApiException(response.StatusCode, code, message);
     }
 
     private static ServerSnapshot ParseServer(JsonElement server)
@@ -634,6 +822,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             root.GetProperty("primaryIpv4Id").GetInt64(),
             root.GetProperty("name").GetString() ?? string.Empty,
             root.GetProperty("address").GetString() ?? string.Empty,
+            root.TryGetProperty("location", out var location) ? location.GetString() ?? string.Empty : string.Empty,
             root.GetProperty("knownHostsFile").GetString() ?? string.Empty,
             root.GetProperty("controller").GetString() ?? string.Empty,
             root.TryGetProperty("createdUtc", out var created) && DateTimeOffset.TryParse(created.GetString(), out var parsed) ? parsed : null);
@@ -651,6 +840,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             writer.WriteNumber("primaryIpv4Id", state.PrimaryIpv4Id);
             writer.WriteString("name", state.Name);
             writer.WriteString("address", state.Address);
+            if (!string.IsNullOrWhiteSpace(state.Location)) writer.WriteString("location", state.Location);
             writer.WriteString("knownHostsFile", state.KnownHostsFile);
             writer.WriteString("controller", state.Controller);
             if (state.CreatedUtc is not null) writer.WriteString("createdUtc", state.CreatedUtc.Value);
@@ -677,7 +867,18 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     }
 
     private readonly record struct ServerSnapshot(long Id, string Name, string Status, string Address, long PrimaryIpv4Id, IReadOnlyDictionary<string, string> Labels, DateTimeOffset? CreatedUtc);
-    private sealed record WorkerState(long ServerId, long PrimaryIpv4Id, string Name, string Address, string KnownHostsFile, string Controller, DateTimeOffset? CreatedUtc)
+    private readonly record struct LocationStatus(bool Available, bool Recommended);
+    private readonly record struct LocationCandidate(string Name, bool Recommended);
+    private sealed class HetznerApiException(HttpStatusCode statusCode, string? code, string message) : InvalidOperationException($"Hetzner API returned {(int)statusCode} ({statusCode}): {message}")
+    {
+        public HttpStatusCode StatusCode { get; } = statusCode;
+        public string? Code { get; } = code;
+    }
+    private sealed class HetznerActionException(string? code, string message) : InvalidOperationException(message)
+    {
+        public string? Code { get; } = code;
+    }
+    private sealed record WorkerState(long ServerId, long PrimaryIpv4Id, string Name, string Address, string Location, string KnownHostsFile, string Controller, DateTimeOffset? CreatedUtc)
     {
         public RemoteWorkerInfo ToInfo(string status) => new(ServerId, Name, Address, status, CreatedUtc);
     }

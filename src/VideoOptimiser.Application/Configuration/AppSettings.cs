@@ -56,7 +56,7 @@ public sealed class HetznerSettings
     [YamlMember(Alias = "apiTokenFile")] public string ApiTokenFile { get; set; } = ".env";
     [YamlMember(Alias = "serverType")] public string ServerType { get; set; } = "cx43";
     [YamlMember(Alias = "image")] public string Image { get; set; } = "ubuntu-24.04";
-    [YamlMember(Alias = "location")] public string Location { get; set; } = "hel1";
+    [YamlMember(Alias = "locations")] public List<string> Locations { get; set; } = ["hel1", "fsn1", "nbg1"];
     [YamlMember(Alias = "sshKeyName")] public string SshKeyName { get; set; } = string.Empty;
     [YamlMember(Alias = "serverNamePrefix")] public string ServerNamePrefix { get; set; } = "video-optimiser";
     [YamlMember(Alias = "bootstrapScriptPath")] public string BootstrapScriptPath { get; set; } = "scripts/bootstrap-remote-worker.sh";
@@ -74,8 +74,18 @@ public static class RemoteExecutionIdentity
 {
     public static string Host(RemoteSshSettings settings) =>
         settings.Lifecycle.Equals(RemoteLifecycleModes.Hetzner, StringComparison.OrdinalIgnoreCase)
-            ? $"hetzner:{settings.Hetzner.ServerType}:{settings.Hetzner.Location}"
+            ? $"hetzner:{settings.Hetzner.ServerType}:{string.Join(',', CanonicalLocations(settings.Hetzner.Locations))}"
             : settings.Host;
+
+    private static IEnumerable<string> CanonicalLocations(IEnumerable<string>? locations)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var location in locations ?? [])
+        {
+            var canonical = location?.Trim().ToLowerInvariant() ?? string.Empty;
+            if (canonical.Length > 0 && seen.Add(canonical)) yield return canonical;
+        }
+    }
 }
 
 public static class ProcessingModes
