@@ -100,6 +100,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<Func<string, ICrfSearchClient>>(_ => abAv1Path => new AbAv1CrfSearchClient(abAv1Path));
         builder.Services.AddSingleton<Func<string, IVideoEncoder>>(_ => abAv1Path => new AbAv1VideoEncoder(abAv1Path));
         builder.Services.AddSingleton<IExternalProcessRunner, ExternalProcessRunner>();
+        builder.Services.AddSingleton<IRemoteWorkerLifecycle, HetznerRemoteWorkerLifecycle>();
         builder.Services.AddSingleton<IProcessingSessionFactory, ProcessingSessionFactory>();
         builder.Services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
         builder.Services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
@@ -133,14 +134,22 @@ internal static class CliApplication
 
         var configurationLoader = services.GetRequiredService<IConfigurationLoader>();
         var configuration = await configurationLoader.LoadAsync(command.ConfigurationPath, cancellationToken);
+        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
+        if (command.Kind == CliCommandKind.Doctor && lifecycle.IsManaged(configuration.Settings))
+        {
+            _ = await lifecycle.GetAsync(configuration.Settings, configuration.Settings.Database.Path, cancellationToken);
+        }
         return command.Kind switch
         {
             CliCommandKind.ConfigShow => ShowConfiguration(configuration),
             CliCommandKind.ConfigValidate => ValidateConfiguration(services.GetRequiredService<ISettingsValidator>(), configuration),
             CliCommandKind.Doctor => await RunDoctorAsync(services.GetRequiredService<IDoctorService>(), configuration, command.Json, cancellationToken),
+            CliCommandKind.WorkerCreate => await RunWorkerCreateAsync(services, configuration, cancellationToken),
+            CliCommandKind.WorkerStatus => await RunWorkerStatusAsync(services, configuration, cancellationToken),
+            CliCommandKind.WorkerDelete => await RunWorkerDeleteAsync(services, configuration, cancellationToken),
             CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
             CliCommandKind.QueueDiscover => await RunQueueDiscoverAsync(services.GetRequiredService<IQueueService>(), configuration, command.First, cancellationToken),
-            CliCommandKind.QueueRun => await RunQueueRunAsync(services.GetRequiredService<IQueueService>(), configuration, cancellationToken),
+            CliCommandKind.QueueRun => await RunQueueRunAsync(services, configuration, cancellationToken),
             CliCommandKind.QueueList => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.QueueCancel => await RunQueueCancelAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
             CliCommandKind.Status => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
@@ -212,6 +221,11 @@ internal static class CliApplication
         }
 
         var sourcePath = Path.GetFullPath(command.ProcessPath!);
+        if (!File.Exists(sourcePath))
+        {
+            Console.Error.WriteLine($"Source file does not exist: {sourcePath}");
+            return (int)ExitCode.ProcessingFailure;
+        }
         if (command.DryRun)
         {
             Console.WriteLine($"Would create a job for: {sourcePath}");
@@ -220,6 +234,13 @@ internal static class CliApplication
         }
 
         var repository = services.GetRequiredService<IJobRepository>();
+        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
+        var existingJob = await repository.FindOpenBySourceAsync(configuration.Settings.Database.Path, sourcePath, cancellationToken);
+        var managedWork = lifecycle.IsManaged(configuration.Settings) && existingJob?.Status != JobStatus.ReadyToFinalize;
+        if (managedWork)
+        {
+            await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
+        }
         await repository.MarkActiveJobsInterruptedAsync(configuration.Settings.Database.Path, cancellationToken);
         Console.WriteLine($"Processing: {sourcePath}");
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
@@ -231,6 +252,15 @@ internal static class CliApplication
         else
         {
             Console.Error.WriteLine(result.Message);
+        }
+
+        if (managedWork && configuration.Settings.Processing.RemoteSsh.Hetzner.DeleteAfterRun && result.Job.Status != JobStatus.Interrupted)
+        {
+            await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
+        }
+        else if (managedWork && result.Job.Status == JobStatus.Interrupted)
+        {
+            Console.WriteLine("Managed Hetzner worker retained so the interrupted job can resume.");
         }
 
         return (int)result.ExitCode;
@@ -264,17 +294,68 @@ internal static class CliApplication
         return (int)ExitCode.Success;
     }
 
-    private static async Task<int> RunQueueRunAsync(IQueueService queue, LoadedConfiguration configuration, CancellationToken cancellationToken)
+    private static async Task<int> RunQueueRunAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
+        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
+        if (diagnostics.Count > 0) { foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}"); return (int)ExitCode.InvalidConfiguration; }
+        var queue = services.GetRequiredService<IQueueService>();
+        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
+        var hasWork = (await services.GetRequiredService<IJobRepository>().ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken))
+            .Any(job => job.Status != JobStatus.ReadyToFinalize);
+        if (lifecycle.IsManaged(configuration.Settings) && hasWork)
+        {
+            await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
+        }
         Console.WriteLine("Running queued jobs.");
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
         var result = await queue.RunAsync(configuration.Settings.Database.Path, configuration.Settings, progress, cancellationToken);
         Console.WriteLine($"Ready to finalize: {result.ReadyToFinalize}. Failed: {result.Failed}.");
-        if (configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
+        if (lifecycle.IsManaged(configuration.Settings) && hasWork)
+        {
+            var interrupted = (await services.GetRequiredService<IJobRepository>().ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Any(job => job.Status == JobStatus.Interrupted);
+            if (configuration.Settings.Processing.RemoteSsh.Hetzner.DeleteAfterRun && !interrupted)
+            {
+                await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
+            }
+            else if (interrupted)
+            {
+                Console.WriteLine("Managed Hetzner worker retained so interrupted jobs can resume.");
+            }
+        }
+        else if (!lifecycle.IsManaged(configuration.Settings) && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine("Remote server lifecycle is manual: after confirming all expected outputs are ready to finalize, delete the server; powering it off still bills.");
         }
         return (int)result.ExitCode;
+    }
+
+    private static async Task<int> RunWorkerCreateAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
+    {
+        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
+        if (!lifecycle.IsManaged(configuration.Settings)) { Console.Error.WriteLine("Configure processing.remoteSsh.lifecycle as hetzner first."); return (int)ExitCode.InvalidConfiguration; }
+        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
+        if (diagnostics.Count > 0) { foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}"); return (int)ExitCode.InvalidConfiguration; }
+        var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
+        Console.WriteLine($"Worker ready: {worker.Name} ({worker.ServerId}) {worker.Address}");
+        return (int)ExitCode.Success;
+    }
+
+    private static async Task<int> RunWorkerStatusAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
+    {
+        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
+        if (!lifecycle.IsManaged(configuration.Settings)) { Console.WriteLine("Managed Hetzner lifecycle is not enabled."); return (int)ExitCode.Success; }
+        var worker = await lifecycle.GetAsync(configuration.Settings, configuration.Settings.Database.Path, cancellationToken);
+        Console.WriteLine(worker is null ? "No managed Hetzner worker exists." : $"{worker.Name}  server {worker.ServerId}  {worker.Status}  {worker.Address}");
+        return (int)ExitCode.Success;
+    }
+
+    private static async Task<int> RunWorkerDeleteAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
+    {
+        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
+        if (!lifecycle.IsManaged(configuration.Settings)) { Console.Error.WriteLine("Managed Hetzner lifecycle is not enabled."); return (int)ExitCode.InvalidConfiguration; }
+        var deleted = await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
+        if (!deleted) Console.WriteLine("No managed Hetzner worker exists.");
+        return (int)ExitCode.Success;
     }
 
     private static async Task<int> RunJobListAsync(IJobRepository repository, LoadedConfiguration configuration, bool terminal, bool json, CancellationToken cancellationToken)
@@ -357,6 +438,9 @@ Usage:
   video-optimiser config show [--config <path>]
   video-optimiser config validate [--config <path>]
   video-optimiser doctor [--config <path>] [--json]
+  video-optimiser worker create [--config <path>]
+  video-optimiser worker status [--config <path>]
+  video-optimiser worker delete [--config <path>]
   video-optimiser process <file> [--config <path>] [--force] [--dry-run]
   video-optimiser queue discover [--first] [--config <path>]
   video-optimiser queue run [--config <path>]
@@ -382,6 +466,9 @@ internal enum CliCommandKind
     ConfigShow,
     ConfigValidate,
     Doctor,
+    WorkerCreate,
+    WorkerStatus,
+    WorkerDelete,
     Process,
     QueueDiscover,
     QueueRun,
@@ -455,6 +542,9 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["config", "validate"] => CliCommandKind.ConfigValidate,
             ["version"] => CliCommandKind.Version,
             ["doctor"] => CliCommandKind.Doctor,
+            ["worker", "create"] => CliCommandKind.WorkerCreate,
+            ["worker", "status"] => CliCommandKind.WorkerStatus,
+            ["worker", "delete"] => CliCommandKind.WorkerDelete,
             ["process", _] => CliCommandKind.Process,
             ["queue", "discover"] => CliCommandKind.QueueDiscover,
             ["queue", "run"] => CliCommandKind.QueueRun,

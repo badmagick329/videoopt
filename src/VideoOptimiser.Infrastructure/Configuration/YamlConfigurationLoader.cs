@@ -74,6 +74,10 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         settings.Tools.FfprobePath = ResolveExecutablePath(settings.Tools.FfprobePath, configurationDirectory);
         settings.Tools.SshPath = ResolveExecutablePath(settings.Tools.SshPath, configurationDirectory);
         settings.Tools.SftpPath = ResolveExecutablePath(settings.Tools.SftpPath, configurationDirectory);
+        settings.Processing.RemoteSsh.IdentityFile = ResolveOptionalPath(settings.Processing.RemoteSsh.IdentityFile, configurationDirectory);
+        settings.Processing.RemoteSsh.KnownHostsFile = ResolveOptionalPath(settings.Processing.RemoteSsh.KnownHostsFile, configurationDirectory);
+        settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath = ResolvePath(settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, configurationDirectory);
+        settings.Processing.RemoteSsh.Hetzner.ApiTokenFile = ResolveOptionalPath(settings.Processing.RemoteSsh.Hetzner.ApiTokenFile, configurationDirectory);
         foreach (var root in settings.Watch.Roots)
         {
             root.Path = ResolvePath(root.Path, configurationDirectory);
@@ -85,6 +89,7 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         settings.Tools ??= new ToolSettings();
         settings.Processing ??= new ProcessingSettings();
         settings.Processing.RemoteSsh ??= new RemoteSshSettings();
+        settings.Processing.RemoteSsh.Hetzner ??= new HetznerSettings();
         settings.Database ??= new DatabaseSettings();
         settings.Watch ??= new WatchSettings();
         settings.Eligibility ??= new EligibilitySettings();
@@ -122,4 +127,7 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
 
         return ResolvePath(path, configurationDirectory);
     }
+
+    private static string ResolveOptionalPath(string path, string configurationDirectory) =>
+        string.IsNullOrWhiteSpace(path) ? string.Empty : ResolvePath(path, configurationDirectory);
 }

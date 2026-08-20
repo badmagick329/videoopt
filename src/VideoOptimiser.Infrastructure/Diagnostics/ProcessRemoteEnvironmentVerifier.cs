@@ -4,6 +4,7 @@ using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
 using VideoOptimiser.Domain;
+using VideoOptimiser.Infrastructure.Processing;
 
 namespace VideoOptimiser.Infrastructure.Diagnostics;
 
@@ -78,7 +79,11 @@ public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifie
     internal static IReadOnlyList<string> BuildArguments(RemoteSshSettings settings)
     {
         var remoteCommand = $"bash -lc {PosixQuote(BuildProbeScript(settings.WorkingDirectory))}";
-        return ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", settings.Host, remoteCommand];
+        var arguments = OpenSshConnectionArguments.Build(settings, connectTimeoutSeconds: 10);
+        arguments.Add("--");
+        arguments.Add(settings.Host);
+        arguments.Add(remoteCommand);
+        return arguments;
     }
 
     internal static IReadOnlyList<Diagnostic> ParseProbeOutput(string output, RemoteSshSettings settings, long minimumMemoryBytes)

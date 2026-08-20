@@ -13,9 +13,13 @@ public interface IProcessingSession : IAsyncDisposable
     string? RemoteWorkspace { get; }
 
     Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default);
+    Task StageAsync(string sourcePath, string sourceFingerprint, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken = default)
+        => StageAsync(sourcePath, sourceFingerprint, cancellationToken);
     Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
     Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
     Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default);
+    Task RetrieveOutputAsync(string outputPath, int attempt, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken = default)
+        => RetrieveOutputAsync(outputPath, attempt, cancellationToken);
     Task CancelAsync(CancellationToken cancellationToken = default);
     Task CleanupAsync(CancellationToken cancellationToken = default);
 }

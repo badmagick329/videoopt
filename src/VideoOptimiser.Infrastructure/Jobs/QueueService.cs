@@ -54,7 +54,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
                     SourceFingerprint = await fingerprints.CreateAsync(item.Path, cancellationToken),
                     Status = JobStatus.Queued,
                     ExecutionMode = remote ? "remoteSsh" : "local",
-                    RemoteHost = remote ? settings.Processing.RemoteSsh.Host : null,
+                    RemoteHost = remote ? RemoteExecutionIdentity.Host(settings.Processing.RemoteSsh) : null,
                     RemoteWorkspace = remote ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{id:N}" : null
                 }, cancellationToken);
                 queued.Add(item.Path);

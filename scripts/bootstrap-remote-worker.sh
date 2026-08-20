@@ -10,6 +10,20 @@ readonly SVT_AV1_VERSION="3.1.0"
 readonly FFMPEG_VERSION="8.0"
 readonly AB_AV1_VERSION="0.10.4"
 readonly AUTHORIZED_KEYS_SOURCE="${VIDEOOPT_AUTHORIZED_KEYS_FILE:-/root/.ssh/authorized_keys}"
+readonly PROGRESS_FILE="${PREFIX}/.bootstrap-progress"
+
+write_progress() {
+    local percent="$1"
+    local stage="$2"
+    local temporary="${PROGRESS_FILE}.tmp"
+
+    install -d -m 0755 "${PREFIX}"
+    {
+        printf 'percent=%s\n' "${percent}"
+        printf 'stage=%s\n' "${stage}"
+    } > "${temporary}"
+    mv -f -- "${temporary}" "${PROGRESS_FILE}"
+}
 
 die() {
     printf 'bootstrap error: %s\n' "$*" >&2
@@ -19,6 +33,9 @@ die() {
 if [[ "${EUID}" -ne 0 ]]; then
     die "run this script as root"
 fi
+
+install -d -m 0755 "${PREFIX}"
+write_progress 0 "Starting"
 
 if [[ "$(uname -m)" != "x86_64" ]]; then
     die "Ubuntu 24.04 x86-64 is required"
@@ -38,7 +55,9 @@ if [[ -L "${WORK_ROOT}" || ( -e "${WORK_ROOT}" && ! -d "${WORK_ROOT}" ) ]]; then
     die "${WORK_ROOT} must be a real directory, not a file or symbolic link"
 fi
 
+write_progress 2 "Validating worker image"
 export DEBIAN_FRONTEND=noninteractive
+write_progress 5 "Installing system dependencies"
 apt-get update
 apt-get install --yes --no-install-recommends \
     autoconf \
@@ -64,7 +83,7 @@ apt-get install --yes --no-install-recommends \
     yasm \
     zstd
 
-install -d -m 0755 "${PREFIX}" "${PREFIX}/bin" "${PREFIX}/lib" "${PREFIX}/include" "${PREFIX}/share"
+install -d -m 0755 "${PREFIX}/bin" "${PREFIX}/lib" "${PREFIX}/include" "${PREFIX}/share"
 install -d -m 0755 "${PREFIX}/.versions"
 
 build_dir="$(mktemp -d /var/tmp/video-optimiser-bootstrap.XXXXXX)"
@@ -80,6 +99,7 @@ export PATH="${PREFIX}/bin:${PATH}"
 
 if [[ ! -f "${PREFIX}/.versions/libvmaf-${VMAF_VERSION}" ]] || \
    [[ "$(pkg-config --modversion libvmaf 2>/dev/null || true)" != "${VMAF_VERSION}" ]]; then
+    write_progress 15 "Building libvmaf"
     git clone --depth 1 --branch "v${VMAF_VERSION}" --single-branch \
         https://github.com/Netflix/vmaf.git "${build_dir}/vmaf"
     meson setup "${build_dir}/vmaf/libvmaf/build" "${build_dir}/vmaf/libvmaf" \
@@ -94,6 +114,7 @@ fi
 
 if [[ ! -f "${PREFIX}/.versions/svt-av1-${SVT_AV1_VERSION}" ]] || \
    [[ "$(pkg-config --modversion SvtAv1Enc 2>/dev/null || true)" != "${SVT_AV1_VERSION}" ]]; then
+    write_progress 35 "Building SVT-AV1"
     git clone --depth 1 --branch "v${SVT_AV1_VERSION}" --single-branch \
         https://gitlab.com/AOMediaCodec/SVT-AV1.git "${build_dir}/svt-av1"
     cmake -S "${build_dir}/svt-av1" -B "${build_dir}/svt-av1-build" \
@@ -119,6 +140,7 @@ fi
 if [[ ! -f "${PREFIX}/.versions/ffmpeg-${FFMPEG_VERSION}" ]] || \
    [[ ! "${ffmpeg_version}" =~ ^ffmpeg\ version\ ${FFMPEG_VERSION}([[:space:]]|$) ]] || \
    [[ "${ffmpeg_has_libdav1d}" != true ]]; then
+    write_progress 60 "Building FFmpeg"
     curl --fail --location --retry 5 --proto '=https' --tlsv1.2 \
         "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
         --output "${build_dir}/ffmpeg.tar.xz"
@@ -142,6 +164,7 @@ fi
 
 if [[ ! -f "${PREFIX}/.versions/ab-av1-${AB_AV1_VERSION}" ]] || \
    [[ "$("${PREFIX}/bin/ab-av1" --version 2>/dev/null || true)" != "ab-av1 ${AB_AV1_VERSION}" ]]; then
+    write_progress 90 "Installing ab-av1"
     curl --fail --location --retry 5 --proto '=https' --tlsv1.2 \
         "https://github.com/alexheretic/ab-av1/releases/download/v${AB_AV1_VERSION}/ab-av1-v${AB_AV1_VERSION}-x86_64-unknown-linux-musl.tar.zst" \
         --output "${build_dir}/ab-av1.tar.zst"
@@ -154,6 +177,7 @@ ln -sfn "${PREFIX}/bin/ab-av1" /usr/local/bin/ab-av1
 ln -sfn "${PREFIX}/bin/ffmpeg" /usr/local/bin/ffmpeg
 ln -sfn "${PREFIX}/bin/ffprobe" /usr/local/bin/ffprobe
 
+write_progress 94 "Configuring worker account and SSH"
 if ! id "${WORKER_USER}" >/dev/null 2>&1; then
     useradd --create-home --home-dir "${WORKER_HOME}" --shell /bin/bash --user-group "${WORKER_USER}"
 elif [[ "$(getent passwd "${WORKER_USER}" | cut -d: -f6)" != "${WORKER_HOME}" ]] || \
@@ -198,6 +222,7 @@ grep -Fx 'passwordauthentication no' <<<"${effective_sshd_config}" >/dev/null \
     || die "password SSH authentication is still enabled for ${WORKER_USER}"
 systemctl reload ssh
 
+write_progress 98 "Verifying installed codecs"
 "${PREFIX}/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep 'libsvtav1' >/dev/null \
     || die "FFmpeg does not expose the libsvtav1 encoder"
 "${PREFIX}/bin/ffmpeg" -hide_banner -decoders 2>/dev/null \
@@ -208,6 +233,9 @@ systemctl reload ssh
 "${PREFIX}/bin/ffmpeg" -hide_banner -pix_fmts 2>/dev/null | grep 'yuv420p10le' >/dev/null \
     || die "FFmpeg does not expose the yuv420p10le pixel format"
 
+touch "${PREFIX}/.bootstrap-complete"
+write_progress 100 "Ready"
+
 printf '\nRemote worker ready.\n'
 "${PREFIX}/bin/ab-av1" --version
 "${PREFIX}/bin/ffmpeg" -version | sed -n '1p'
@@ -215,4 +243,4 @@ printf 'SVT-AV1 %s; libvmaf %s\n' \
     "$(pkg-config --modversion SvtAv1Enc)" \
     "$(pkg-config --modversion libvmaf)"
 printf 'SSH user: %s\nWorking directory: %s\n' "${WORKER_USER}" "${WORK_ROOT}"
-printf 'Server lifecycle is manual: DELETE the cloud server after verified downloads; powering it off still bills.\n'
+printf 'Worker bootstrap complete. The controller may now begin processing.\n'

@@ -44,11 +44,15 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     internal string CrfDirectory => $"{RemoteWorkspace}/crf";
     internal string EncodeDirectory(int attempt) => $"{RemoteWorkspace}/encode-{attempt.ToString(CultureInfo.InvariantCulture)}";
 
-    public async Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default)
+    public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default) =>
+        StageAsync(sourcePath, sourceFingerprint, null, cancellationToken);
+
+    public async Task StageAsync(string sourcePath, string sourceFingerprint, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken = default)
     {
         var source = new FileInfo(sourcePath);
         var requiredDisk = CalculateRequiredDisk(source.Length, _settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier);
         var minimumMemory = HumanReadableValues.TryParseSize(_settings.Processing.RemoteSsh.MinimumAvailableMemory, out var parsedMemory) ? parsedMemory : 0;
+        progress?.Report(new CrfSearchOutput("staging", "Staging: checking remote CPU, memory, and disk capacity."));
         var preflight = await SshAsync($"mkdir -p -- {Quote(RemoteWorkspace!)} && printf '%s %s %s' \"$(nproc)\" \"$(awk '/MemAvailable:/ {{printf \"%.0f\", $2 * 1024}}' /proc/meminfo)\" \"$(df -B1 --output=avail {Quote(RemoteWorkspace!)} | tail -n 1)\"", cancellationToken: cancellationToken);
         var values = preflight.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (values.Length != 3 || !int.TryParse(values[0], CultureInfo.InvariantCulture, out var cpus) || !long.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var memory) || !long.TryParse(values[2], CultureInfo.InvariantCulture, out var disk))
@@ -56,10 +60,15 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         if (cpus < _settings.Processing.RemoteSsh.MinimumCpuCount) throw new InvalidOperationException($"Remote host has {cpus} CPUs; {_settings.Processing.RemoteSsh.MinimumCpuCount} are required.");
         if (memory < minimumMemory) throw new InvalidOperationException($"Remote host has {memory} available bytes; {minimumMemory} are required.");
 
-        var localHash = await HashFileAsync(sourcePath, cancellationToken);
+        var localHash = await HashFileAsync(sourcePath, cancellationToken, progress, "Staging: hashing local source");
+        progress?.Report(new CrfSearchOutput("staging", "Staging: checking for an existing or resumable remote upload."));
         var existing = await SshAsync($"if test -f {Quote(RemoteSourcePath)}; then stat -c '%s' {Quote(RemoteSourcePath)}; sha256sum {Quote(RemoteSourcePath)} | cut -d' ' -f1; fi", cancellationToken: cancellationToken);
         var existingParts = existing.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (existingParts.Length == 2 && existingParts[0] == source.Length.ToString(CultureInfo.InvariantCulture) && string.Equals(existingParts[1], localHash, StringComparison.OrdinalIgnoreCase)) return;
+        if (existingParts.Length == 2 && existingParts[0] == source.Length.ToString(CultureInfo.InvariantCulture) && string.Equals(existingParts[1], localHash, StringComparison.OrdinalIgnoreCase))
+        {
+            progress?.Report(new CrfSearchOutput("staging", "Staging: remote source already matches; reusing it."));
+            return;
+        }
         if (disk < requiredDisk) throw new InvalidOperationException($"Remote host has {disk} free bytes; {requiredDisk} are required for this source.");
 
         var partial = RemoteSourcePath + ".partial";
@@ -68,7 +77,8 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var partialParts = partialState.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (partialParts.Length == 2 && long.TryParse(partialParts[0], CultureInfo.InvariantCulture, out var partialLength) && partialLength > 0 && partialLength <= source.Length)
         {
-            var localPrefixHash = await HashFilePrefixAsync(sourcePath, partialLength, cancellationToken);
+            progress?.Report(new CrfSearchOutput("staging", $"Staging: validating resumable upload prefix ({FormatBytes(partialLength)} of {FormatBytes(source.Length)})."));
+            var localPrefixHash = await HashFilePrefixAsync(sourcePath, partialLength, cancellationToken, progress, "Staging: validating resumable upload prefix");
             if (string.Equals(localPrefixHash, partialParts[1], StringComparison.OrdinalIgnoreCase))
                 verifiedPartialLength = partialLength;
             else
@@ -81,10 +91,19 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         if (verifiedPartialLength < source.Length)
         {
             var transferCommand = verifiedPartialLength > 0 ? "reput" : "put";
-            await SftpAsync($"{transferCommand} {SftpQuote(sourcePath)} {SftpQuote(partial)}\n", cancellationToken);
+            var transferStart = verifiedPartialLength;
+            var transferLabel = transferStart > 0
+                ? $"Staging: resuming source upload ({FormatBytes(transferStart)} of {FormatBytes(source.Length)})"
+                : $"Staging: uploading source (0% of {FormatBytes(source.Length)})";
+            progress?.Report(new CrfSearchOutput("staging", transferLabel));
+            await SftpAsync($"{transferCommand} {SftpQuote(sourcePath)} {SftpQuote(partial)}\n", cancellationToken,
+                new TransferMonitor(source.Length, transferStart, progress, "Staging: uploading source", async token => await RemoteFileSizeAsync(partial, token)));
+            progress?.Report(new CrfSearchOutput("staging", $"Staging: source upload complete (100% of {FormatBytes(source.Length)})."));
         }
+        progress?.Report(new CrfSearchOutput("staging", "Staging: verifying the remote source checksum."));
         var verify = await SshAsync($"test \"$(stat -c '%s' {Quote(partial)})\" = {source.Length.ToString(CultureInfo.InvariantCulture)} && test \"$(sha256sum {Quote(partial)} | cut -d' ' -f1)\" = {Quote(localHash.ToLowerInvariant())} && mv -f -- {Quote(partial)} {Quote(RemoteSourcePath)}", cancellationToken: cancellationToken);
         EnsureSuccess(verify, "Remote source verification");
+        progress?.Report(new CrfSearchOutput("staging", "Staging: remote source checksum verified."));
     }
 
     public async Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
@@ -109,24 +128,49 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         return new ProcessingStageResult(outputPath, elapsed.Elapsed);
     }
 
-    public async Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default)
+    public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) =>
+        RetrieveOutputAsync(outputPath, attempt, null, cancellationToken);
+
+    public async Task RetrieveOutputAsync(string outputPath, int attempt, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken = default)
     {
         var remoteOutput = $"{EncodeDirectory(attempt)}/output{Path.GetExtension(outputPath).ToLowerInvariant()}";
-        var hashResult = await SshAsync($"sha256sum {Quote(remoteOutput)} | cut -d' ' -f1", cancellationToken: cancellationToken);
+        progress?.Report(new CrfSearchOutput("downloading", "Downloading: obtaining the remote output checksum."));
+        var hashResult = await SshAsync($"stat -c '%s' {Quote(remoteOutput)}; sha256sum {Quote(remoteOutput)} | cut -d' ' -f1", cancellationToken: cancellationToken);
         EnsureSuccess(hashResult, "Remote output checksum");
-        var expectedHash = hashResult.StandardOutput.Trim();
+        var hashParts = hashResult.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (hashParts.Length == 0) throw new InvalidDataException("Remote output checksum was missing.");
+        var outputLength = hashParts.Length > 1 && long.TryParse(hashParts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedOutputLength) ? parsedOutputLength : 0;
+        var expectedHash = hashParts[^1];
         if (!HashPattern().IsMatch(expectedHash)) throw new InvalidDataException("Remote output checksum was invalid.");
 
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         var partial = outputPath + ".partial";
-        if (File.Exists(outputPath) && string.Equals(await HashFileAsync(outputPath, cancellationToken), expectedHash, StringComparison.OrdinalIgnoreCase)) return;
-        await SftpAsync($"reget {SftpQuote(remoteOutput)} {SftpQuote(partial)}\n", cancellationToken);
-        var actualHash = await HashFileAsync(partial, cancellationToken);
+        if (File.Exists(outputPath))
+        {
+            progress?.Report(new CrfSearchOutput("downloading", "Downloading: checking the existing local output."));
+            if (string.Equals(await HashFileAsync(outputPath, cancellationToken, progress, "Downloading: checking existing local output"), expectedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                progress?.Report(new CrfSearchOutput("downloading", "Downloading: local output already matches; reusing it."));
+                return;
+            }
+        }
+        var partialStart = File.Exists(partial) && outputLength > 0
+            ? Math.Min(new FileInfo(partial).Length, outputLength)
+            : 0;
+        var transferLabel = partialStart > 0
+            ? $"Downloading: resuming remote output ({FormatBytes(partialStart)} of {FormatBytes(outputLength)})"
+            : $"Downloading: receiving remote output (0% of {FormatBytes(outputLength)})";
+        progress?.Report(new CrfSearchOutput("downloading", transferLabel));
+        await SftpAsync($"reget {SftpQuote(remoteOutput)} {SftpQuote(partial)}\n", cancellationToken,
+            new TransferMonitor(outputLength, partialStart, progress, "Downloading: receiving remote output", async _ => File.Exists(partial) ? new FileInfo(partial).Length : 0));
+        var actualHash = await HashFileAsync(partial, cancellationToken, progress, "Downloading: verifying downloaded output");
         if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
         {
+            progress?.Report(new CrfSearchOutput("downloading", "Downloading: checksum mismatch; retrying the transfer cleanly."));
             File.Delete(partial);
-            await SftpAsync($"reget {SftpQuote(remoteOutput)} {SftpQuote(partial)}\n", cancellationToken);
-            actualHash = await HashFileAsync(partial, cancellationToken);
+            await SftpAsync($"reget {SftpQuote(remoteOutput)} {SftpQuote(partial)}\n", cancellationToken,
+                new TransferMonitor(outputLength, 0, progress, "Downloading: retrying remote output", async _ => File.Exists(partial) ? new FileInfo(partial).Length : 0));
+            actualHash = await HashFileAsync(partial, cancellationToken, progress, "Downloading: verifying retried output");
             if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
             {
                 File.Delete(partial);
@@ -134,6 +178,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             }
         }
         File.Move(partial, outputPath, overwrite: true);
+        progress?.Report(new CrfSearchOutput("downloading", $"Downloading: output verified (100% of {FormatBytes(outputLength)})."));
     }
 
     public async Task CancelAsync(CancellationToken cancellationToken = default)
@@ -230,7 +275,10 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             ExternalProcessResult result;
             try
             {
-                result = await _processes.RunAsync(new ExternalProcessRequest(_settings.Tools.SshPath, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", RemoteHost!, "bash -lc " + Quote(command)], standardInput), cancellationToken);
+                var arguments = OpenSshConnectionArguments.Build(_settings.Processing.RemoteSsh);
+                arguments.Add(RemoteHost!);
+                arguments.Add("bash -lc " + Quote(command));
+                result = await _processes.RunAsync(new ExternalProcessRequest(_settings.Tools.SshPath, arguments, standardInput), cancellationToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException && attempt >= attempts)
             {
@@ -247,14 +295,49 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         }
     }
 
-    private async Task SftpAsync(string batch, CancellationToken cancellationToken)
+    private async Task SftpAsync(string batch, CancellationToken cancellationToken, TransferMonitor? monitor = null)
+    {
+        if (monitor is null)
+        {
+            await SftpCoreAsync(batch, cancellationToken);
+            return;
+        }
+
+        var transfer = SftpCoreAsync(batch, cancellationToken);
+        try
+        {
+            while (!transfer.IsCompleted)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+                if (transfer.IsCompleted) break;
+                await monitor.ReportAsync(cancellationToken);
+            }
+
+            await transfer;
+            monitor.ReportCompleted();
+        }
+        catch
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                try { await transfer; } catch { }
+            }
+            throw;
+        }
+    }
+
+    private async Task SftpCoreAsync(string batch, CancellationToken cancellationToken)
     {
         for (var attempt = 1; attempt <= 3; attempt++)
         {
             ExternalProcessResult result;
             try
             {
-                result = await _processes.RunAsync(new ExternalProcessRequest(_settings.Tools.SftpPath, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-b", "-", RemoteHost!], batch), cancellationToken);
+                var arguments = OpenSshConnectionArguments.Build(_settings.Processing.RemoteSsh);
+                arguments.Add("-b");
+                arguments.Add("-");
+                arguments.Add(RemoteHost!);
+                result = await _processes.RunAsync(new ExternalProcessRequest(_settings.Tools.SftpPath, arguments, batch), cancellationToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException && attempt == 3)
             {
@@ -283,27 +366,134 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
 
     private static string FirstLine(string value) => value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "No error output.";
 
-    private static async Task<string> HashFileAsync(string path, CancellationToken cancellationToken)
+    private async Task<long> RemoteFileSizeAsync(string path, CancellationToken cancellationToken)
     {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
-        return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
+        var result = await SshAsync($"if test -f {Quote(path)}; then stat -c '%s' {Quote(path)}; else printf '0'; fi", cancellationToken: cancellationToken);
+        EnsureSuccess(result, "Remote file size check");
+        return long.TryParse(result.StandardOutput.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var length) && length >= 0 ? length : 0;
     }
 
-    private static async Task<string> HashFilePrefixAsync(string path, long length, CancellationToken cancellationToken)
+    private static async Task<string> HashFileAsync(string path, CancellationToken cancellationToken, IProgress<CrfSearchOutput>? progress = null, string? label = null)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[1024 * 1024];
+        var total = stream.Length;
+        var processed = 0L;
+        var reporter = new ByteProgressReporter(progress, label, total);
+        reporter.Report(0);
+        while (true)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(), cancellationToken);
+            if (read == 0) break;
+            hash.AppendData(buffer, 0, read);
+            processed += read;
+            reporter.Report(processed);
+        }
+        reporter.ReportCompleted();
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static async Task<string> HashFilePrefixAsync(string path, long length, CancellationToken cancellationToken, IProgress<CrfSearchOutput>? progress = null, string? label = null)
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var buffer = new byte[1024 * 1024];
         var remaining = length;
+        var processed = 0L;
+        var reporter = new ByteProgressReporter(progress, label, length);
+        reporter.Report(0);
         while (remaining > 0)
         {
             var read = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)), cancellationToken);
             if (read == 0) throw new EndOfStreamException("Source became shorter while validating the resumable upload.");
             hash.AppendData(buffer, 0, read);
             remaining -= read;
+            processed += read;
+            reporter.Report(processed);
         }
+        reporter.ReportCompleted();
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
+
+    private static string FormatBytes(long bytes)
+    {
+        const double kilobyte = 1024;
+        const double megabyte = kilobyte * 1024;
+        const double gigabyte = megabyte * 1024;
+        return bytes switch
+        {
+            < 1024 => $"{bytes} B",
+            < (long)megabyte => $"{bytes / kilobyte:0.0} KiB",
+            < (long)gigabyte => $"{bytes / megabyte:0.0} MiB",
+            _ => $"{bytes / gigabyte:0.0} GiB"
+        };
+    }
+
+    private sealed class TransferMonitor(long totalBytes, long initialBytes, IProgress<CrfSearchOutput>? progress, string label, Func<CancellationToken, Task<long>> currentBytes)
+    {
+        private readonly ByteProgressReporter _reporter = new(progress, label, totalBytes);
+        private readonly Func<CancellationToken, Task<long>> _currentBytes = currentBytes;
+        private readonly long _initialBytes = initialBytes;
+
+        public async Task ReportAsync(CancellationToken cancellationToken)
+        {
+            using var pollTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            pollTimeout.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                var bytes = await _currentBytes(pollTimeout.Token);
+                _reporter.Report(Math.Max(_initialBytes, bytes));
+            }
+            catch (OperationCanceledException)
+            {
+                if (cancellationToken.IsCancellationRequested) throw;
+                // A monitor-only timeout must not interrupt the transfer itself.
+            }
+            catch
+            {
+                // Size polling is advisory. A failed SSH probe must not abort a healthy transfer.
+            }
+        }
+
+        public void ReportCompleted() => _reporter.ReportCompleted();
+    }
+
+    private sealed class ByteProgressReporter(IProgress<CrfSearchOutput>? progress, string? label, long totalBytes)
+    {
+        private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
+        private readonly Stopwatch _elapsed = Stopwatch.StartNew();
+        private readonly Stopwatch _sinceReport = Stopwatch.StartNew();
+        private int _lastPercent = -1;
+        private long _lastBytes = -1;
+
+        public void Report(long bytes, bool force = false)
+        {
+            if (progress is null) return;
+            bytes = Math.Max(0, Math.Min(bytes, totalBytes));
+            var percent = totalBytes > 0 ? (int)Math.Min(100, bytes * 100L / totalBytes) : 100;
+            var heartbeat = _sinceReport.Elapsed >= HeartbeatInterval;
+            if (!force && !heartbeat && percent == _lastPercent && bytes != totalBytes) return;
+            if (!force && !heartbeat && _lastPercent >= 0 && percent < 100 && percent < _lastPercent + 5) return;
+            if (!force && !heartbeat && bytes == _lastBytes) return;
+            _lastPercent = percent;
+            _lastBytes = bytes;
+            progress.Report(new CrfSearchOutput("progress", $"{label ?? "Progress"} ({percent}% of {FormatBytes(totalBytes)}; {FormatBytes(bytes)}; elapsed {FormatDuration(_elapsed.Elapsed)})."));
+            _sinceReport.Restart();
+        }
+
+        public void ReportCompleted()
+        {
+            if (progress is null) return;
+            Report(totalBytes, force: true);
+        }
+    }
+
+    private static string FormatDuration(TimeSpan duration) => duration.TotalHours >= 1
+        ? $"{(int)duration.TotalHours}h {duration.Minutes:00}m"
+        : duration.TotalMinutes >= 1
+            ? $"{duration.Minutes}m {duration.Seconds:00}s"
+            : $"{duration.Seconds}s";
 
     [GeneratedRegex(@"^/.+?/[0-9a-f]{32}$", RegexOptions.CultureInvariant)]
     private static partial Regex GuidWorkspacePattern();

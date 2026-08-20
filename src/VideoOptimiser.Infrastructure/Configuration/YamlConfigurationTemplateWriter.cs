@@ -38,16 +38,35 @@ tools:
   sftpPath: "sftp"
 
 processing:
-  # Run CRF search and encoding locally or on a manually managed SSH host.
+  # Run CRF search and encoding locally or over SSH.
   mode: "local"
   remoteSsh:
-    # OpenSSH config alias. SSH keys remain outside this file.
+    # manual uses this OpenSSH host/config alias. hetzner fills it at runtime.
+    lifecycle: "manual"
     host: ""
+    # Leave these empty when the manual SSH alias already supplies them.
+    user: ""
+    identityFile: ""
+    knownHostsFile: ""
     workingDirectory: "/var/tmp/video-optimiser"
     minimumCpuCount: 8
     minimumAvailableMemory: "14GiB"
     # Remote free space must be at least this multiple of each source file.
     minimumFreeDiskMultiplier: 2.5
+    hetzner:
+      # Used only when lifecycle is hetzner. An existing environment variable takes precedence.
+      apiTokenEnvironmentVariable: "VIDEO_OPTIMISER_HETZNER_TOKEN"
+      # Loaded automatically when the environment variable is not set. Keep this file ignored.
+      apiTokenFile: ".env"
+      serverType: "cx43"
+      image: "ubuntu-24.04"
+      location: "hel1"
+      sshKeyName: ""
+      serverNamePrefix: "video-optimiser"
+      bootstrapScriptPath: "scripts/bootstrap-remote-worker.sh"
+      bootstrapTimeout: "90m"
+      # Delete after a clean process/queue run. Interrupted or unreachable work is retained.
+      deleteAfterRun: true
 
 database:
   # SQLite job database. Relative paths are relative to this YAML file.

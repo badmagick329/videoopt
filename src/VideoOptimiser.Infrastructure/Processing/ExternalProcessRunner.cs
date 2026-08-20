@@ -41,7 +41,15 @@ public sealed class ExternalProcessRunner : IExternalProcessRunner
         }
         catch (OperationCanceledException)
         {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            try
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                _ = exception;
+            }
             throw;
         }
 

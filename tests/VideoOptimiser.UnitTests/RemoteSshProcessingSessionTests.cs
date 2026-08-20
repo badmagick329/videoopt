@@ -11,6 +11,21 @@ namespace VideoOptimiser.UnitTests;
 public sealed class RemoteSshProcessingSessionTests
 {
     [Fact]
+    public void ManagedConnectionOptionsAreValidForBothSshAndSftp()
+    {
+        var arguments = OpenSshConnectionArguments.Build(new RemoteSshSettings
+        {
+            User = "videoopt",
+            IdentityFile = "C:\\keys\\worker",
+            KnownHostsFile = "C:\\state\\known_hosts"
+        });
+
+        arguments.Should().ContainInOrder("-o", "User=videoopt", "-i", "C:\\keys\\worker", "-o", "IdentitiesOnly=yes");
+        arguments.Should().NotContain("-l");
+        arguments.Should().Contain("StrictHostKeyChecking=yes");
+    }
+
+    [Fact]
     public void UsesDeterministicGuidWorkspaceAndAttemptPaths()
     {
         var id = Guid.Parse("11111111-2222-3333-4444-555555555555");
@@ -135,6 +150,47 @@ public sealed class RemoteSshProcessingSessionTests
     }
 
     [Fact]
+    public async Task StageReportsHashUploadAndVerificationProgress()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllBytesAsync(source, new byte[100]);
+        var runner = new QueueRunner([
+            new ExternalProcessResult(0, "8 20000000000 100000000000", string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty)
+        ]);
+        var progress = new CaptureProgress();
+        var session = CreateSession(Guid.NewGuid(), runner);
+
+        await session.StageAsync(source, "fingerprint", progress);
+
+        progress.Messages.Should().Contain(message => message.Contains("hashing local source", StringComparison.Ordinal) && message.Contains("0%", StringComparison.Ordinal));
+        progress.Messages.Should().Contain(message => message.Contains("hashing local source", StringComparison.Ordinal) && message.Contains("100%", StringComparison.Ordinal));
+        progress.Messages.Should().Contain(message => message.Contains("uploading source", StringComparison.Ordinal));
+        progress.Messages.Should().Contain("Staging: verifying the remote source checksum.");
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
+    public async Task FailedUploadSizePollDoesNotAbortSuccessfulSftpTransfer()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllBytesAsync(source, new byte[100]);
+        var runner = new FailingSizePollRunner();
+        var session = CreateSession(Guid.NewGuid(), runner);
+
+        await session.StageAsync(source, "fingerprint");
+
+        runner.SftpCompleted.Should().BeTrue();
+        runner.VerificationObserved.Should().BeTrue();
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
     public async Task ReattachesToACompletedCrfStageWithoutLaunchingAnotherScript()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Remote.{Guid.NewGuid():N}");
@@ -251,6 +307,33 @@ public sealed class RemoteSshProcessingSessionTests
         transfers.Should().Be(2);
         File.ReadAllBytes(output).Should().Equal(good);
         File.Exists(output + ".partial").Should().BeFalse();
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
+    public async Task DownloadReportsRemoteSizeAndResumesExistingPartial()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        var output = Path.Combine(directory, "output.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var good = Encoding.UTF8.GetBytes("verified-output");
+        await File.WriteAllBytesAsync(output + ".partial", good[..5]);
+        var expectedHash = Convert.ToHexString(SHA256.HashData(good)).ToLowerInvariant();
+        var runner = new CallbackRunner(request =>
+        {
+            if (request.FileName == "ssh") return new ExternalProcessResult(0, $"{good.Length}\n{expectedHash}", string.Empty);
+            File.WriteAllBytes(output + ".partial", good);
+            return new ExternalProcessResult(0, string.Empty, string.Empty);
+        });
+        var progress = new CaptureProgress();
+        var session = CreateSession(Guid.NewGuid(), runner, source);
+
+        await session.RetrieveOutputAsync(output, 1, progress);
+
+        progress.Messages.Should().Contain(message => message.Contains("resuming remote output", StringComparison.Ordinal) && message.Contains("5 B", StringComparison.Ordinal));
+        progress.Messages.Should().Contain(message => message.Contains("output verified", StringComparison.Ordinal) && message.Contains("100%", StringComparison.Ordinal));
+        File.ReadAllBytes(output).Should().Equal(good);
         Directory.Delete(directory, true);
     }
 
@@ -377,5 +460,44 @@ public sealed class RemoteSshProcessingSessionTests
     private sealed class CallbackRunner(Func<ExternalProcessRequest, ExternalProcessResult> callback) : IExternalProcessRunner
     {
         public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default) => Task.FromResult(callback(request));
+    }
+
+    private sealed class FailingSizePollRunner : IExternalProcessRunner
+    {
+        private readonly TaskCompletionSource<ExternalProcessResult> _sftp = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool SftpCompleted => _sftp.Task.IsCompletedSuccessfully;
+        public bool VerificationObserved { get; private set; }
+
+        public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request.FileName == "sftp") return _sftp.Task;
+
+            var command = request.Arguments[^1];
+            if (command.Contains("nproc", StringComparison.Ordinal)) return Task.FromResult(new ExternalProcessResult(0, "8 20000000000 100000000000", string.Empty));
+            if (command.Contains("mv -f", StringComparison.Ordinal))
+            {
+                VerificationObserved = true;
+                return Task.FromResult(new ExternalProcessResult(0, string.Empty, string.Empty));
+            }
+            if (command.Contains("source.mkv.partial", StringComparison.Ordinal))
+            {
+                if (command.Contains("sha256sum", StringComparison.Ordinal)) return Task.FromResult(new ExternalProcessResult(0, string.Empty, string.Empty));
+                if (command.Contains("stat -c", StringComparison.Ordinal))
+                {
+                    _sftp.TrySetResult(new ExternalProcessResult(0, string.Empty, string.Empty));
+                    return Task.FromResult(new ExternalProcessResult(1, string.Empty, "size poll failed"));
+                }
+                return Task.FromResult(new ExternalProcessResult(0, string.Empty, string.Empty));
+            }
+            return Task.FromResult(new ExternalProcessResult(0, string.Empty, string.Empty));
+        }
+    }
+
+    private sealed class CaptureProgress : IProgress<CrfSearchOutput>
+    {
+        public List<string> Messages { get; } = [];
+
+        public void Report(CrfSearchOutput value) => Messages.Add(value.Text);
     }
 }

@@ -1,7 +1,13 @@
 notes/*
 video-optimiser.yaml
+.env
+.env.local
 jobs.db
 jobs.db-*
+*.hetzner-worker.json
+*.hetzner-worker.json.partial
+*.hetzner-worker.lock
+*.hetzner-*.known_hosts
 logs/
 .ab-av1-*/
 **/bin/

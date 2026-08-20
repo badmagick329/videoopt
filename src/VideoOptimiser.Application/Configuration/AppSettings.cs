@@ -38,10 +38,44 @@ public sealed class ProcessingSettings
 public sealed class RemoteSshSettings
 {
     [YamlMember(Alias = "host")] public string Host { get; set; } = string.Empty;
+    [YamlMember(Alias = "user")] public string User { get; set; } = string.Empty;
+    [YamlMember(Alias = "identityFile")] public string IdentityFile { get; set; } = string.Empty;
+    [YamlMember(Alias = "knownHostsFile")] public string KnownHostsFile { get; set; } = string.Empty;
+    [YamlMember(Alias = "lifecycle")] public string Lifecycle { get; set; } = RemoteLifecycleModes.Manual;
     [YamlMember(Alias = "workingDirectory")] public string WorkingDirectory { get; set; } = "/var/tmp/video-optimiser";
     [YamlMember(Alias = "minimumCpuCount")] public int MinimumCpuCount { get; set; } = 8;
     [YamlMember(Alias = "minimumAvailableMemory")] public string MinimumAvailableMemory { get; set; } = "14GiB";
     [YamlMember(Alias = "minimumFreeDiskMultiplier")] public double MinimumFreeDiskMultiplier { get; set; } = 2.5;
+    [YamlMember(Alias = "hetzner")] public HetznerSettings Hetzner { get; set; } = new();
+}
+
+[YamlSerializable]
+public sealed class HetznerSettings
+{
+    [YamlMember(Alias = "apiTokenEnvironmentVariable")] public string ApiTokenEnvironmentVariable { get; set; } = "VIDEO_OPTIMISER_HETZNER_TOKEN";
+    [YamlMember(Alias = "apiTokenFile")] public string ApiTokenFile { get; set; } = ".env";
+    [YamlMember(Alias = "serverType")] public string ServerType { get; set; } = "cx43";
+    [YamlMember(Alias = "image")] public string Image { get; set; } = "ubuntu-24.04";
+    [YamlMember(Alias = "location")] public string Location { get; set; } = "hel1";
+    [YamlMember(Alias = "sshKeyName")] public string SshKeyName { get; set; } = string.Empty;
+    [YamlMember(Alias = "serverNamePrefix")] public string ServerNamePrefix { get; set; } = "video-optimiser";
+    [YamlMember(Alias = "bootstrapScriptPath")] public string BootstrapScriptPath { get; set; } = "scripts/bootstrap-remote-worker.sh";
+    [YamlMember(Alias = "bootstrapTimeout")] public string BootstrapTimeout { get; set; } = "90m";
+    [YamlMember(Alias = "deleteAfterRun")] public bool DeleteAfterRun { get; set; } = true;
+}
+
+public static class RemoteLifecycleModes
+{
+    public const string Manual = "manual";
+    public const string Hetzner = "hetzner";
+}
+
+public static class RemoteExecutionIdentity
+{
+    public static string Host(RemoteSshSettings settings) =>
+        settings.Lifecycle.Equals(RemoteLifecycleModes.Hetzner, StringComparison.OrdinalIgnoreCase)
+            ? $"hetzner:{settings.Hetzner.ServerType}:{settings.Hetzner.Location}"
+            : settings.Host;
 }
 
 public static class ProcessingModes

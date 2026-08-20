@@ -10,6 +10,7 @@ public sealed class SettingsValidator : ISettingsValidator
     {
         var diagnostics = new List<Diagnostic>();
         var remoteMode = settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase);
+        var managedHetzner = remoteMode && settings.Processing.RemoteSsh.Lifecycle.Equals(RemoteLifecycleModes.Hetzner, StringComparison.OrdinalIgnoreCase);
 
         AddWhen(settings.Version != 1, "UnsupportedVersion", "Configuration version must be 1.");
         AddWhen(!IsOneOf(settings.Processing.Mode, ProcessingModes.Local, ProcessingModes.RemoteSsh), "InvalidProcessingMode", "processing.mode must be local or remoteSsh.");
@@ -20,12 +21,27 @@ public sealed class SettingsValidator : ISettingsValidator
         {
             AddWhen(string.IsNullOrWhiteSpace(settings.Tools.SshPath), "SshPathRequired", "tools.sshPath is required in remoteSsh mode.");
             AddWhen(string.IsNullOrWhiteSpace(settings.Tools.SftpPath), "SftpPathRequired", "tools.sftpPath is required in remoteSsh mode.");
-            AddWhen(string.IsNullOrWhiteSpace(settings.Processing.RemoteSsh.Host), "RemoteHostRequired", "processing.remoteSsh.host is required in remoteSsh mode.");
-            AddWhen(!IsValidRemoteHost(settings.Processing.RemoteSsh.Host), "InvalidRemoteHost", "processing.remoteSsh.host must be a single SSH host or config alias and cannot begin with '-'.");
+            AddWhen(!IsOneOf(settings.Processing.RemoteSsh.Lifecycle, RemoteLifecycleModes.Manual, RemoteLifecycleModes.Hetzner), "InvalidRemoteLifecycle", "processing.remoteSsh.lifecycle must be manual or hetzner.");
+            AddWhen(!managedHetzner && string.IsNullOrWhiteSpace(settings.Processing.RemoteSsh.Host), "RemoteHostRequired", "processing.remoteSsh.host is required with manual lifecycle.");
+            AddWhen(!managedHetzner && !IsValidRemoteHost(settings.Processing.RemoteSsh.Host), "InvalidRemoteHost", "processing.remoteSsh.host must be a single SSH host or config alias and cannot begin with '-'.");
             AddWhen(!IsAbsolutePosixPath(settings.Processing.RemoteSsh.WorkingDirectory), "InvalidRemoteWorkingDirectory", "processing.remoteSsh.workingDirectory must be an absolute POSIX path without line breaks.");
             AddWhen(settings.Processing.RemoteSsh.MinimumCpuCount < 1, "InvalidRemoteMinimumCpuCount", "processing.remoteSsh.minimumCpuCount must be at least 1.");
             AddWhen(!HumanReadableValues.TryParseSize(settings.Processing.RemoteSsh.MinimumAvailableMemory, out var minimumMemory) || minimumMemory < 1, "InvalidRemoteMinimumMemory", "processing.remoteSsh.minimumAvailableMemory must be a positive size such as 14GiB.");
             AddWhen(!double.IsFinite(settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier) || settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier <= 0, "InvalidRemoteDiskMultiplier", "processing.remoteSsh.minimumFreeDiskMultiplier must be greater than zero.");
+            if (managedHetzner)
+            {
+                var hetzner = settings.Processing.RemoteSsh.Hetzner;
+                AddWhen(string.IsNullOrWhiteSpace(hetzner.ApiTokenEnvironmentVariable) || hetzner.ApiTokenEnvironmentVariable.Any(char.IsWhiteSpace), "InvalidHetznerTokenVariable", "processing.remoteSsh.hetzner.apiTokenEnvironmentVariable must name one environment variable.");
+                AddWhen(!string.IsNullOrWhiteSpace(hetzner.ApiTokenFile) && Directory.Exists(hetzner.ApiTokenFile), "InvalidHetznerTokenFile", "processing.remoteSsh.hetzner.apiTokenFile must be a file path, not a directory.");
+                AddWhen(string.IsNullOrWhiteSpace(hetzner.ServerType), "HetznerServerTypeRequired", "processing.remoteSsh.hetzner.serverType is required.");
+                AddWhen(string.IsNullOrWhiteSpace(hetzner.Image), "HetznerImageRequired", "processing.remoteSsh.hetzner.image is required.");
+                AddWhen(string.IsNullOrWhiteSpace(hetzner.Location), "HetznerLocationRequired", "processing.remoteSsh.hetzner.location is required.");
+                AddWhen(string.IsNullOrWhiteSpace(hetzner.SshKeyName), "HetznerSshKeyRequired", "processing.remoteSsh.hetzner.sshKeyName is required.");
+                AddWhen(string.IsNullOrWhiteSpace(settings.Processing.RemoteSsh.IdentityFile), "RemoteIdentityFileRequired", "processing.remoteSsh.identityFile is required with Hetzner lifecycle.");
+                AddWhen(!string.IsNullOrWhiteSpace(settings.Processing.RemoteSsh.IdentityFile) && !File.Exists(settings.Processing.RemoteSsh.IdentityFile), "RemoteIdentityFileMissing", "processing.remoteSsh.identityFile does not exist.");
+                AddWhen(string.IsNullOrWhiteSpace(hetzner.BootstrapScriptPath) || !File.Exists(hetzner.BootstrapScriptPath), "HetznerBootstrapMissing", "processing.remoteSsh.hetzner.bootstrapScriptPath does not exist.");
+                AddWhen(!HumanReadableValues.TryParseDuration(hetzner.BootstrapTimeout, out var bootstrapTimeout) || bootstrapTimeout <= TimeSpan.Zero, "InvalidHetznerBootstrapTimeout", "processing.remoteSsh.hetzner.bootstrapTimeout must be a positive duration such as 90m.");
+            }
         }
         AddWhen(string.IsNullOrWhiteSpace(settings.Database.Path), "DatabasePathRequired", "database.path is required.");
 

@@ -45,7 +45,7 @@ Then the normal workflow is:
 
 ## Remote SSH processing
 
-CRF search and encoding can run on a manually created Ubuntu server while validation and finalization stay local. Follow the [remote SSH setup and operator workflow](docs/remote-ssh.md): create and bootstrap the server, configure its SSH alias, run `doctor`, process the queue, confirm all outputs are `ReadyToFinalize`, **delete the server** (powering it off still bills), then finalize locally.
+CRF search and encoding can run on Ubuntu while validation and finalization stay local. The recommended [remote SSH workflow](docs/remote-ssh.md) creates, bootstraps, reuses, and safely deletes a Hetzner CX43 and its Primary IPv4 automatically. A manual SSH lifecycle remains available.
 
 ## Eligibility rules
 

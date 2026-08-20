@@ -34,7 +34,7 @@ public sealed class JobProcessor(
                 SourceFingerprint = fingerprint,
                 Status = JobStatus.Queued,
                 ExecutionMode = remote ? "remoteSsh" : "local",
-                RemoteHost = remote ? settings.Processing.RemoteSsh.Host : null,
+                RemoteHost = remote ? RemoteExecutionIdentity.Host(settings.Processing.RemoteSsh) : null,
                 RemoteWorkspace = remote ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{id:N}" : null
             }, cancellationToken);
         }
@@ -61,7 +61,7 @@ public sealed class JobProcessor(
         }
 
         var activeMode = string.Equals(settings.Processing.Mode, "remoteSsh", StringComparison.OrdinalIgnoreCase) ? "remoteSsh" : "local";
-        var activeHost = activeMode == "remoteSsh" ? settings.Processing.RemoteSsh.Host : null;
+        var activeHost = activeMode == "remoteSsh" ? RemoteExecutionIdentity.Host(settings.Processing.RemoteSsh) : null;
         var activeWorkspace = activeMode == "remoteSsh" ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{job.Id:N}" : null;
         if (!string.Equals(job.ExecutionMode, activeMode, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(job.RemoteHost, activeHost, StringComparison.Ordinal) ||
@@ -90,12 +90,15 @@ public sealed class JobProcessor(
                 stage = "StagingFailed";
                 job.Status = JobStatus.Staging;
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                await session.StageAsync(path, fingerprint, cancellationToken);
+                progress?.Report(new CrfSearchOutput("staging", $"Staging: preparing {Path.GetFileName(path)} for remote processing."));
+                await session.StageAsync(path, fingerprint, progress, cancellationToken);
+                progress?.Report(new CrfSearchOutput("staging", "Staging: confirming the local source did not change during upload."));
                 if (!string.Equals(await fingerprints.CreateAsync(path, cancellationToken), fingerprint, StringComparison.Ordinal))
                 {
                     await session.CleanupAsync(cancellationToken);
                     return await FailAsync(job, databasePath, "SourceChanged", "Source file changed while it was being uploaded.", ExitCode.ProcessingFailure, cancellationToken);
                 }
+                progress?.Report(new CrfSearchOutput("staging", "Staging: source is ready on the remote worker."));
             }
             if (job.Crf is null)
             {
@@ -131,7 +134,9 @@ public sealed class JobProcessor(
                     stage = "DownloadFailed";
                     job.Status = JobStatus.Downloading;
                     await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                    await session.RetrieveOutputAsync(outputPath, job.Attempt, cancellationToken);
+                    progress?.Report(new CrfSearchOutput("downloading", $"Downloading: retrieving {Path.GetFileName(outputPath)} from the remote worker."));
+                    await session.RetrieveOutputAsync(outputPath, job.Attempt, progress, cancellationToken);
+                    progress?.Report(new CrfSearchOutput("downloading", "Downloading: output retrieved and verified."));
                 }
                 manifest = new OutputManifest { SourcePath = path, SourceFingerprint = fingerprint, OutputPath = encodeResult.OutputPath, Crf = job.Crf.Value, CreatedUtc = DateTimeOffset.UtcNow };
                 await manifests.SaveAsync(manifest, cancellationToken);

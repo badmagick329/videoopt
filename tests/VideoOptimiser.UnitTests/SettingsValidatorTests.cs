@@ -75,6 +75,59 @@ public sealed class SettingsValidatorTests
     }
 
     [Fact]
+    public void ValidateManagedHetznerAllowsRuntimeHostAndRequiresProvisioningInputs()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "video-optimiser-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var identity = Path.Combine(directory, "worker-key");
+            var bootstrap = Path.Combine(directory, "bootstrap.sh");
+            File.WriteAllText(identity, "key");
+            File.WriteAllText(bootstrap, "#!/bin/bash");
+            var settings = CreateValidSettings();
+            settings.Processing = new ProcessingSettings
+            {
+                Mode = ProcessingModes.RemoteSsh,
+                RemoteSsh = new RemoteSshSettings
+                {
+                    Lifecycle = RemoteLifecycleModes.Hetzner,
+                    Host = string.Empty,
+                    IdentityFile = identity,
+                    Hetzner = new HetznerSettings { SshKeyName = "video-optimiser-hetzner-cx43", BootstrapScriptPath = bootstrap }
+                }
+            };
+
+            new SettingsValidator().Validate(settings).Should().BeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ValidateManagedHetznerRejectsMissingKeyAndBootstrap()
+    {
+        var settings = CreateValidSettings();
+        settings.Processing = new ProcessingSettings
+        {
+            Mode = ProcessingModes.RemoteSsh,
+            RemoteSsh = new RemoteSshSettings
+            {
+                Lifecycle = RemoteLifecycleModes.Hetzner,
+                Hetzner = new HetznerSettings { SshKeyName = string.Empty, BootstrapScriptPath = "missing-bootstrap.sh", BootstrapTimeout = "never" }
+            }
+        };
+
+        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain([
+            "HetznerSshKeyRequired",
+            "RemoteIdentityFileRequired",
+            "HetznerBootstrapMissing",
+            "InvalidHetznerBootstrapTimeout"]);
+    }
+
+    [Fact]
     public void ValidateRejectsUnknownProcessingMode()
     {
         var settings = CreateValidSettings();
