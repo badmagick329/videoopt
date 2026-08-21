@@ -113,8 +113,11 @@ internal static class CliApplication
         builder.Services.AddSingleton<IOutputValidationService, OutputValidationService>();
         builder.Services.AddSingleton<IJobProcessor, JobProcessor>();
         builder.Services.AddSingleton<IQueueService, QueueService>();
+        builder.Services.AddSingleton<IJobRetryService, JobRetryService>();
         builder.Services.AddSingleton<IFinalizationService, FinalizationService>();
         builder.Services.AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
+        builder.Services.AddSingleton<IInteractiveConfirmation, ConsoleInteractiveConfirmation>();
+        builder.Services.AddSingleton<IManagedWorkerCleanupOrchestrator, ManagedWorkerCleanupOrchestrator>();
         return builder.Build();
     }
 
@@ -157,6 +160,7 @@ internal static class CliApplication
             CliCommandKind.QueueRun => await RunQueueRunAsync(services, configuration, cancellationToken),
             CliCommandKind.QueueList => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.QueueCancel => await RunQueueCancelAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
+            CliCommandKind.QueueRetry => await RunQueueRetryAsync(services.GetRequiredService<IJobRetryService>(), configuration, command.JobId!, cancellationToken),
             CliCommandKind.Status => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.History => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: true, command.Json, cancellationToken),
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
@@ -240,16 +244,38 @@ internal static class CliApplication
 
         var repository = services.GetRequiredService<IJobRepository>();
         var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
+        await repository.MarkActiveJobsInterruptedAsync(configuration.Settings.Database.Path, cancellationToken);
         var existingJob = await repository.FindOpenBySourceAsync(configuration.Settings.Database.Path, sourcePath, cancellationToken);
-        var managedWork = lifecycle.IsManaged(configuration.Settings) && existingJob?.Status != JobStatus.ReadyToFinalize;
+        var compatibility = existingJob is null ? null : JobCompatibility.Evaluate(existingJob, configuration.Settings);
+        if (compatibility?.Status == JobCompatibilityStatus.Adopted)
+        {
+            JobCompatibility.Apply(existingJob!, compatibility.ExpectedBinding);
+            await repository.UpdateAsync(configuration.Settings.Database.Path, existingJob!, cancellationToken);
+        }
+        var canRunExistingJob = existingJob is null ||
+            existingJob.Status is JobStatus.Queued or JobStatus.Interrupted && compatibility!.CanRun;
+        var managedWork = lifecycle.IsManaged(configuration.Settings) && canRunExistingJob;
         if (managedWork)
         {
             await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
         }
-        await repository.MarkActiveJobsInterruptedAsync(configuration.Settings.Database.Path, cancellationToken);
         Console.WriteLine($"Processing: {sourcePath}");
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
-        var result = await services.GetRequiredService<IJobProcessor>().ProcessAsync(configuration.Settings.Database.Path, sourcePath, configuration.Settings, command.Force, progress, cancellationToken);
+        JobProcessingResult result;
+        try
+        {
+            result = await services.GetRequiredService<IJobProcessor>().ProcessAsync(configuration.Settings.Database.Path, sourcePath, configuration.Settings, command.Force, progress, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, [], interrupted: true, unexpectedFailure: false, processRoute: true, cancellationToken);
+            throw;
+        }
+        catch
+        {
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, [], interrupted: false, unexpectedFailure: true, processRoute: true, cancellationToken);
+            throw;
+        }
         if (result.ExitCode == ExitCode.Success)
         {
             Console.WriteLine(result.Message);
@@ -259,14 +285,16 @@ internal static class CliApplication
             Console.Error.WriteLine(result.Message);
         }
 
-        if (managedWork && configuration.Settings.Processing.RemoteSsh.Hetzner.DeleteAfterRun && result.Job.Status != JobStatus.Interrupted)
-        {
-            await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
-        }
-        else if (managedWork && result.Job.Status == JobStatus.Interrupted)
-        {
-            Console.WriteLine("Managed Hetzner worker retained so the interrupted job can resume.");
-        }
+        if (result.ExitCode != ExitCode.Success) PrintFailedJobs([ToFailedQueueJob(result.Job, result.Message)]);
+        await ApplyManagedWorkerDeletionPolicyAsync(
+            services,
+            configuration,
+            managedWork,
+            result.ExitCode == ExitCode.Success ? [] : [ToFailedQueueJob(result.Job, result.Message)],
+            result.Job.Status == JobStatus.Interrupted,
+            unexpectedFailure: false,
+            processRoute: true,
+            cancellationToken);
 
         return (int)result.ExitCode;
     }
@@ -306,39 +334,114 @@ internal static class CliApplication
         return (int)ExitCode.Success;
     }
 
+    private static async Task<int> RunQueueRetryAsync(IJobRetryService retryService, LoadedConfiguration configuration, string jobId, CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(jobId, out var id))
+        {
+            Console.Error.WriteLine("Job ID is invalid.");
+            return (int)ExitCode.InvalidArguments;
+        }
+        var result = await retryService.RetryRemoteConfigurationChangedAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
+        if (!result.Succeeded)
+        {
+            Console.Error.WriteLine(result.Error);
+            return (int)ExitCode.InvalidArguments;
+        }
+
+        Console.WriteLine($"Created fresh queued job {result.Replacement!.Id:N}. Run 'queue run' to process it.");
+        return (int)ExitCode.Success;
+    }
+
     private static async Task<int> RunQueueRunAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
         var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
         if (diagnostics.Count > 0) { foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}"); return (int)ExitCode.InvalidConfiguration; }
         var queue = services.GetRequiredService<IQueueService>();
         var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        var hasWork = (await services.GetRequiredService<IJobRepository>().ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken))
-            .Any(job => job.Status != JobStatus.ReadyToFinalize);
-        if (lifecycle.IsManaged(configuration.Settings) && hasWork)
+        var preparation = await queue.PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, cancellationToken);
+        if (preparation.RunnableJobs.Count == 0)
+        {
+            Console.WriteLine("Ready to finalize: 0. Failed: {0}.", preparation.FailedJobs.Count);
+            PrintFailedJobs(preparation.FailedJobs);
+            return (int)QueueExitCode.Calculate(0, preparation.FailedJobs.Count);
+        }
+
+        var managedWork = lifecycle.IsManaged(configuration.Settings);
+        if (managedWork)
         {
             await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
         }
         Console.WriteLine("Running queued jobs.");
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
-        var result = await queue.RunAsync(configuration.Settings.Database.Path, configuration.Settings, progress, cancellationToken);
-        Console.WriteLine($"Ready to finalize: {result.ReadyToFinalize}. Failed: {result.Failed}.");
-        if (lifecycle.IsManaged(configuration.Settings) && hasWork)
+        QueueRunResult result;
+        try
         {
-            var interrupted = (await services.GetRequiredService<IJobRepository>().ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Any(job => job.Status == JobStatus.Interrupted);
-            if (configuration.Settings.Processing.RemoteSsh.Hetzner.DeleteAfterRun && !interrupted)
-            {
-                await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
-            }
-            else if (interrupted)
-            {
-                Console.WriteLine("Managed Hetzner worker retained so interrupted jobs can resume.");
-            }
+            result = await queue.RunAsync(configuration.Settings.Database.Path, configuration.Settings, preparation.RunnableJobs, progress, cancellationToken);
         }
-        else if (!lifecycle.IsManaged(configuration.Settings) && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
+        catch (OperationCanceledException)
+        {
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, [], interrupted: true, unexpectedFailure: false, processRoute: false, cancellationToken);
+            throw;
+        }
+        catch
+        {
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, [], interrupted: false, unexpectedFailure: true, processRoute: false, cancellationToken);
+            throw;
+        }
+
+        var failures = preparation.FailedJobs.Concat(result.FailedJobs).ToArray();
+        Console.WriteLine($"Ready to finalize: {result.ReadyToFinalize}. Failed: {failures.Length}.");
+        PrintFailedJobs(failures);
+        await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, failures, result.Interrupted, unexpectedFailure: false, processRoute: false, cancellationToken);
+        if (!managedWork && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine("Remote server lifecycle is manual: after confirming all expected outputs are ready to finalize, delete the server; powering it off still bills.");
         }
-        return (int)result.ExitCode;
+        return (int)QueueExitCode.Calculate(result.ReadyToFinalize, failures.Length);
+    }
+
+    private static FailedQueueJob ToFailedQueueJob(JobRecord job, string message) => new(job.Id, job.SourcePath, job.FailureCategory ?? "ProcessingFailed", job.FailureMessage ?? message);
+
+    private static void PrintFailedJobs(IReadOnlyCollection<FailedQueueJob> failedJobs)
+    {
+        if (failedJobs.Count == 0) return;
+        Console.WriteLine();
+        Console.WriteLine("Failed jobs:");
+        foreach (var job in failedJobs)
+        {
+            Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
+            Console.WriteLine($"{job.FailureCategory}: {job.FailureMessage}");
+        }
+    }
+
+    private static async Task ApplyManagedWorkerDeletionPolicyAsync(IServiceProvider services, LoadedConfiguration configuration, bool workerWasUsed, FailedQueueJob[] failedJobs, bool interrupted, bool unexpectedFailure, bool processRoute, CancellationToken cancellationToken)
+    {
+        var decision = ManagedWorkerDeletionPolicy.Decide(workerWasUsed, configuration.Settings.Processing.RemoteSsh.Hetzner.DeleteAfterRun, failedJobs.Length > 0, interrupted, unexpectedFailure);
+        if (decision == ManagedWorkerDeletionDecision.RetainInterrupted)
+        {
+            Console.WriteLine("Managed Hetzner worker retained so interrupted jobs can resume.");
+        }
+        else if (decision == ManagedWorkerDeletionDecision.RetainAfterUnexpectedFailure)
+        {
+            Console.WriteLine("Managed Hetzner worker retained after an unexpected processing error.");
+        }
+        else if (decision == ManagedWorkerDeletionDecision.RetainAfterFailure)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Managed Hetzner worker retained so the failed job can be inspected or retried.");
+            Console.WriteLine("Delete it manually when finished:");
+            Console.WriteLine(@".\artifacts\local\video-optimiser.exe worker delete --config .\video-optimiser.yaml");
+        }
+        var cleanup = services.GetRequiredService<IManagedWorkerCleanupOrchestrator>();
+        var progress = new InlineProgress<string>(Console.WriteLine);
+        if (processRoute)
+        {
+            _ = await cleanup.CleanUpAfterProcessAsync(configuration.Settings, configuration.Settings.Database.Path, workerWasUsed, failedJobs.Length > 0, interrupted, unexpectedFailure, progress, cancellationToken);
+        }
+        else
+        {
+            _ = await cleanup.CleanUpAfterQueueRunAsync(configuration.Settings, configuration.Settings.Database.Path, workerWasUsed, failedJobs.Length > 0, interrupted, unexpectedFailure, progress, cancellationToken);
+        }
     }
 
     private static async Task<int> RunWorkerCreateAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
@@ -459,6 +562,7 @@ Usage:
   video-optimiser queue list [--config <path>] [--json]
   video-optimiser queue cancel <job-id> [--config <path>]
   video-optimiser queue cancel --all [--config <path>]
+  video-optimiser queue retry <job-id> [--config <path>]
   video-optimiser status [--config <path>] [--json]
   video-optimiser history [--config <path>] [--json]
   video-optimiser validate <job-id> [--config <path>]
@@ -486,6 +590,7 @@ internal enum CliCommandKind
     QueueRun,
     QueueList,
     QueueCancel,
+    QueueRetry,
     Status,
     History,
     Validate,
@@ -562,6 +667,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["queue", "run"] => CliCommandKind.QueueRun,
             ["queue", "list"] => CliCommandKind.QueueList,
             ["queue", "cancel"] or ["queue", "cancel", _] => CliCommandKind.QueueCancel,
+            ["queue", "retry", _] => CliCommandKind.QueueRetry,
             ["status"] => CliCommandKind.Status,
             ["history"] => CliCommandKind.History,
             ["validate", _] => CliCommandKind.Validate,
@@ -591,8 +697,9 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         if (finalizeReady && kind != CliCommandKind.Finalize) return Invalid("--ready is only supported by finalize.");
         if (finalizeReady && remaining.Count != 1) return Invalid("finalize --ready does not take a job ID.");
         if (kind == CliCommandKind.QueueCancel && !all && remaining.Count != 3) return Invalid("queue cancel requires a job ID or --all.");
+        if (kind == CliCommandKind.QueueRetry && remaining.Count != 3) return Invalid("queue retry requires a job ID.");
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueCancel) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueCancel or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);
@@ -601,4 +708,31 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
 internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
 {
     public void Report(T value) => report(value);
+}
+
+internal sealed class ConsoleInteractiveConfirmation : IInteractiveConfirmation
+{
+    public bool IsAvailable
+    {
+        get
+        {
+            try { return !Console.IsInputRedirected; }
+            catch (IOException) { return false; }
+        }
+    }
+
+    public bool Confirm(string prompt)
+    {
+        if (!IsAvailable) return false;
+        Console.Write(prompt);
+        try
+        {
+            var response = Console.ReadLine();
+            return ManagedWorkerDeletionPolicy.IsAffirmative(response);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
 }

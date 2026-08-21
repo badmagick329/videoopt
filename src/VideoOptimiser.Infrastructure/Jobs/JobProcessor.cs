@@ -46,7 +46,18 @@ public sealed class JobProcessor(
         {
             return await FailAsync(job, databasePath, "ManualInterventionRequired", "Finalisation was interrupted and requires manual review.", ExitCode.FinalisationFailure, cancellationToken);
         }
-        else if (job.Status == JobStatus.Interrupted)
+        var compatibility = JobCompatibility.Evaluate(job, settings);
+        if (compatibility.Status == JobCompatibilityStatus.Incompatible)
+        {
+            return await FailAsync(job, databasePath, JobCompatibility.RemoteConfigurationChangedCategory, compatibility.Message!, ExitCode.InvalidConfiguration, cancellationToken);
+        }
+        if (compatibility.Status == JobCompatibilityStatus.Adopted)
+        {
+            JobCompatibility.Apply(job, compatibility.ExpectedBinding);
+            await jobs.UpdateAsync(databasePath, job, cancellationToken);
+        }
+
+        if (job.Status == JobStatus.Interrupted)
         {
             if (!string.Equals(job.ExecutionMode, "remoteSsh", StringComparison.OrdinalIgnoreCase))
             {
@@ -58,16 +69,6 @@ public sealed class JobProcessor(
             job.FailureCategory = null;
             job.FailureMessage = null;
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
-        }
-
-        var activeMode = string.Equals(settings.Processing.Mode, "remoteSsh", StringComparison.OrdinalIgnoreCase) ? "remoteSsh" : "local";
-        var activeHost = activeMode == "remoteSsh" ? RemoteExecutionIdentity.Host(settings.Processing.RemoteSsh) : null;
-        var activeWorkspace = activeMode == "remoteSsh" ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{job.Id:N}" : null;
-        if (!string.Equals(job.ExecutionMode, activeMode, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(job.RemoteHost, activeHost, StringComparison.Ordinal) ||
-            !string.Equals(job.RemoteWorkspace, activeWorkspace, StringComparison.Ordinal))
-        {
-            return await FailAsync(job, databasePath, "RemoteConfigurationChanged", "The processing mode, remote host, or remote workspace differs from the configuration captured for this job.", ExitCode.InvalidConfiguration, cancellationToken);
         }
 
         job.SourceFingerprint = fingerprint;

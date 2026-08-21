@@ -174,6 +174,18 @@ Inspect or remove a retained worker with:
 
 The delete command verifies the exact server ID and ownership labels. It refuses ambiguous or unowned resources.
 
+## Failed jobs and retained workers
+
+Before creating a managed worker, `queue run` checks each queued or resumable job against the current processing mode, remote identity, and deterministic workspace. A never-started queued job adopts the current configuration. A partially processed or interrupted job with a different configuration fails before provisioning.
+
+When `deleteAfterRun` is enabled, the worker is deleted only if every attempted job completes cleanly. Failures and interruptions retain the worker. Failed interactive runs offer an explicit deletion prompt. Redirected or unavailable standard input retains the worker without prompting.
+
+To retry a job that failed because its remote configuration changed, create a new queued job. The failed job stays in history, and the new job does not reuse its previous remote output or workspace:
+
+```powershell
+.\artifacts\local\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
+```
+
 ## 7. Finalize locally
 
 Finalization remains local and can happen after the server has been deleted:

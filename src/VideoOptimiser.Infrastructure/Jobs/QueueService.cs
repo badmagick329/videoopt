@@ -68,23 +68,68 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes);
     }
 
-    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, CancellationToken cancellationToken = default)
     {
         await jobs.MarkActiveJobsInterruptedAsync(databasePath, cancellationToken);
         var candidates = (await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
             .Where(job => job.Status is JobStatus.Queued or JobStatus.Interrupted)
             .OrderBy(job => job.CreatedUtc)
             .ToArray();
-        var ready = 0;
-        var failed = 0;
+        var runnable = new List<JobRecord>();
+        var failed = new List<FailedQueueJob>();
         foreach (var job in candidates)
+        {
+            if (job.Status == JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)
+            {
+                job.Status = JobStatus.Failed;
+                job.FailureCategory = "ManualInterventionRequired";
+                job.FailureMessage = "Finalisation was interrupted and requires manual review.";
+                job.CompletedUtc = DateTimeOffset.UtcNow;
+                await jobs.UpdateAsync(databasePath, job, cancellationToken);
+                failed.Add(new FailedQueueJob(job.Id, job.SourcePath, job.FailureCategory, job.FailureMessage));
+                continue;
+            }
+
+            var compatibility = JobCompatibility.Evaluate(job, settings);
+            if (compatibility.Status == JobCompatibilityStatus.Adopted)
+            {
+                JobCompatibility.Apply(job, compatibility.ExpectedBinding);
+                await jobs.UpdateAsync(databasePath, job, cancellationToken);
+            }
+            else if (compatibility.Status == JobCompatibilityStatus.Incompatible)
+            {
+                job.Status = JobStatus.Failed;
+                job.FailureCategory = JobCompatibility.RemoteConfigurationChangedCategory;
+                job.FailureMessage = compatibility.Message!;
+                job.CompletedUtc = DateTimeOffset.UtcNow;
+                await jobs.UpdateAsync(databasePath, job, cancellationToken);
+                failed.Add(new FailedQueueJob(job.Id, job.SourcePath, job.FailureCategory, job.FailureMessage));
+                continue;
+            }
+
+            runnable.Add(job);
+        }
+
+        return new QueuePreparationResult(runnable, failed);
+    }
+
+    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+    {
+        var ready = 0;
+        var failed = new List<FailedQueueJob>();
+        var interrupted = false;
+        foreach (var job in jobs)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var result = await processor.ProcessAsync(databasePath, job.SourcePath, settings, force: false, progress, cancellationToken);
             if (result.Job.Status == JobStatus.ReadyToFinalize) ready++;
-            else if (result.ExitCode != ExitCode.Success) failed++;
+            else if (result.ExitCode != ExitCode.Success)
+            {
+                failed.Add(new FailedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureCategory ?? "ProcessingFailed", result.Job.FailureMessage ?? result.Message));
+                interrupted |= result.Job.Status == JobStatus.Interrupted;
+            }
         }
 
-        return new QueueRunResult(ready, failed, failed == 0 ? ExitCode.Success : ready > 0 ? ExitCode.PartialSuccess : ExitCode.ProcessingFailure);
+        return new QueueRunResult(ready, failed, interrupted, QueueExitCode.Calculate(ready, failed.Count));
     }
 }

@@ -84,6 +84,10 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 .\video-optimiser.exe queue cancel <job-id> --config .\video-optimiser.yaml
 .\video-optimiser.exe queue cancel --all --config .\video-optimiser.yaml
 
+# Create a new queued job for a failure caused by a changed remote configuration.
+# The failed job remains in history; the new job uses a fresh workspace and state.
+.\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
+
 # Revalidate or finalize one job.
 .\video-optimiser.exe validate <job-id> --config .\video-optimiser.yaml
 .\video-optimiser.exe finalize <job-id> --config .\video-optimiser.yaml
@@ -116,6 +120,8 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 - `validate` rechecks a job's temporary AV1 before replacement.
 - `finalize` is explicit: it renames the original to a rollback file, installs the AV1, then deletes the rollback file.
 - `finalize` currently requires `original.action: "delete"`.
+- A never-started queued job adopts a changed processing configuration. A job that has started keeps its captured mode, remote identity, and workspace. If they differ, it fails before a managed worker is created.
+- With a managed Hetzner worker, `deleteAfterRun: true` deletes the worker only after a clean run. Failed or interrupted jobs retain it. On an interactive console, failed runs offer one explicit deletion confirmation; redirected input never prompts.
 
 ## Source builds
 

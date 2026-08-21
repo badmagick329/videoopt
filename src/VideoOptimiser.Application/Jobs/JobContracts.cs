@@ -95,12 +95,37 @@ public interface IJobProcessor
 }
 
 public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0);
-public sealed record QueueRunResult(int ReadyToFinalize, int Failed, ExitCode ExitCode);
+public sealed record FailedQueueJob(Guid Id, string SourcePath, string FailureCategory, string FailureMessage);
+
+public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs);
+
+public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, bool Interrupted, ExitCode ExitCode)
+{
+    public int Failed => FailedJobs.Count;
+}
+
+public static class QueueExitCode
+{
+    public static ExitCode Calculate(int readyToFinalize, int failures) => failures == 0
+        ? ExitCode.Success
+        : readyToFinalize > 0 ? ExitCode.PartialSuccess : ExitCode.ProcessingFailure;
+}
+
+public sealed record JobRetryResult(JobRecord? Replacement, string? Error)
+{
+    public bool Succeeded => Replacement is not null;
+}
 
 public interface IQueueService
 {
     Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
-    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
+    Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, CancellationToken cancellationToken = default);
+    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
+}
+
+public interface IJobRetryService
+{
+    Task<JobRetryResult> RetryRemoteConfigurationChangedAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default);
 }
 
 public sealed record FinalizationResult(JobRecord? Job, ExitCode ExitCode, string Message);
