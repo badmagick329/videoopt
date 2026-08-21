@@ -20,13 +20,8 @@ public sealed class FileScannerTests : IDisposable
         await File.WriteAllBytesAsync(h264, [1, 2, 3]);
         await File.WriteAllBytesAsync(hevc, [4, 5, 6]);
         await File.WriteAllBytesAsync(tooSmall, [7]);
-
         var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
-        var settings = new AppSettings
-        {
-            Eligibility = Rules("2B"),
-            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] }
-        };
+        var settings = Settings("2B");
 
         var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
 
@@ -44,11 +39,7 @@ public sealed class FileScannerTests : IDisposable
         var path = Path.Combine(excluded, "movie.mkv");
         await File.WriteAllBytesAsync(path, [1, 2, 3]);
         var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
-        var settings = new AppSettings
-        {
-            Eligibility = Rules("1B"),
-            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory, Recursive = true }] }
-        };
+        var settings = Settings("1B", recursive: true);
 
         var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
 
@@ -61,19 +52,14 @@ public sealed class FileScannerTests : IDisposable
         await File.WriteAllBytesAsync(Path.Combine(_directory, "first.mkv"), [1, 2, 3]);
         await File.WriteAllBytesAsync(Path.Combine(_directory, "second.mkv"), [4, 5, 6]);
         var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
-        var settings = new AppSettings
-        {
-            Eligibility = Rules("1B"),
-            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] }
-        };
 
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings, stopAfterFirstEligible: true);
+        var report = await scanner.ScanAsync(Settings("1B").Watch.Roots, Settings("1B"), stopAfterFirstEligible: true);
 
         report.Items.Should().ContainSingle(item => item.Status == ScanItemStatus.Eligible);
     }
 
     [Fact]
-    public async Task ScanAsyncReportsCacheMilestonesWithoutPerFileNoiseAndKeepsProbeFeedback()
+    public async Task ScanAsyncLoadsCachedEntriesOnceWithoutReadinessOrProbeCalls()
     {
         var cachedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var index = 0; index < 250; index++)
@@ -83,78 +69,119 @@ public sealed class FileScannerTests : IDisposable
             cachedPaths.Add(Path.GetFullPath(path));
         }
 
-        var probedPath = Path.Combine(_directory, "probe.mkv");
-        await File.WriteAllBytesAsync(probedPath, [4, 5, 6]);
         var progress = new RecordingProgress<ScanProgress>();
-        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new SelectiveProbeCache(cachedPaths));
-        var settings = new AppSettings
-        {
-            Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
-            Eligibility = Rules("1B"),
-            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] }
-        };
+        var readiness = new CountingReadiness();
+        var probe = new CountingProbe();
+        var cache = new SelectiveProbeCache(cachedPaths);
+        var scanner = new FileScanner(readiness, _ => probe, cache);
 
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings, progress: progress);
+        var report = await scanner.ScanAsync(Settings("1B").Watch.Roots, Settings("1B"), progress: progress);
 
-        report.Items.Should().HaveCount(251);
-        report.EligibleCount.Should().Be(251);
+        report.Items.Should().HaveCount(250);
+        report.EligibleCount.Should().Be(250);
         report.CacheHits.Should().Be(250);
-        report.RealProbes.Should().Be(1);
-        progress.Values.Should().NotContain(update => update.Stage == "Readiness");
-        var cacheUpdates = progress.Values.Where(update => update.Stage == "Cache").ToArray();
-        cacheUpdates.Should().HaveCount(2);
-        cacheUpdates.Should().OnlyContain(update => string.IsNullOrEmpty(update.Path));
-        cacheUpdates.Select(update => update.Message).Should().Equal(
-            "Reused cached ffprobe metadata for 100 files.",
-            "Reused cached ffprobe metadata for 200 files.");
-        progress.Values.Should().Contain(update => update.Stage == "Probing" && update.Path == Path.GetFullPath(probedPath));
+        report.RealProbes.Should().Be(0);
+        cache.LoadCalls.Should().Be(1);
+        readiness.Calls.Should().Be(0);
+        probe.Calls.Should().Be(0);
+        progress.Values.Should().NotContain(update => update.Stage == "Cache");
     }
 
-    public void Dispose()
+    [Fact]
+    public async Task ScanAsyncReprobesWhenCachedSizeOrTimestampDoesNotMatch()
     {
-        if (Directory.Exists(_directory))
-        {
-            Directory.Delete(_directory, recursive: true);
-        }
+        var path = Path.Combine(_directory, "changed.mkv");
+        await File.WriteAllBytesAsync(path, [1, 2, 3]);
+        var info = new FileInfo(path);
+        var cache = new SelectiveProbeCache(new HashSet<string>(), new MediaProbeCacheEntry(path, info.Length + 1, info.LastWriteTimeUtc.Ticks - 1, Media()));
+        var readiness = new CountingReadiness();
+        var probe = new CountingProbe();
+        var scanner = new FileScanner(readiness, _ => probe, cache);
+
+        var report = await scanner.ScanAsync(Settings("1B").Watch.Roots, Settings("1B"));
+
+        report.RealProbes.Should().Be(1);
+        readiness.Calls.Should().Be(1);
+        probe.Calls.Should().Be(1);
+        cache.Stored.Should().ContainSingle(entry => entry.SourcePath == path && entry.SourceSizeBytes == info.Length && entry.SourceLastWriteUtcTicks == info.LastWriteTimeUtc.Ticks);
     }
+
+    public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    private AppSettings Settings(string minimumFileSize, bool recursive = false) => new()
+    {
+        Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+        Eligibility = new EligibilitySettings
+        {
+            Rules = [new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "1Mbps", MinimumFileSize = minimumFileSize }]
+        },
+        Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory, Recursive = recursive }] }
+    };
 
     private sealed class ReadableFileService : IFileReadinessService
     {
-        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new FileReadinessResult(true, "Readable."));
+        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
+    }
+
+    private sealed class CountingReadiness : IFileReadinessService
+    {
+        public int Calls { get; private set; }
+        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(new FileReadinessResult(true, "Readable."));
+        }
     }
 
     private sealed class CodecProbe : IMediaProbe
     {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new MediaInfo(path.EndsWith("hevc.mkv", StringComparison.Ordinal) ? "hevc" : "h264", 1, 0, 0, 0, null, null, 1920, 1080, 10_000_000));
+        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(path.EndsWith("hevc.mkv", StringComparison.Ordinal) ? Media("hevc") : Media());
+    }
+
+    private sealed class CountingProbe : IMediaProbe
+    {
+        public int Calls { get; private set; }
+        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(Media());
+        }
     }
 
     private sealed class NoopProbeCache : IMediaProbeCache
     {
-        public Task<MediaInfo?> GetAsync(string databasePath, string sourcePath, long sourceSizeBytes, long sourceLastWriteUtcTicks, CancellationToken cancellationToken = default) => Task.FromResult<MediaInfo?>(null);
+        public Task<IReadOnlyList<MediaProbeCacheEntry>> LoadAllAsync(string databasePath, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MediaProbeCacheEntry>>([]);
         public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
-    private sealed class SelectiveProbeCache(IReadOnlySet<string> cachedPaths) : IMediaProbeCache
+    private sealed class SelectiveProbeCache(IReadOnlySet<string> cachedPaths, params MediaProbeCacheEntry[] entries) : IMediaProbeCache
     {
-        public Task<MediaInfo?> GetAsync(string databasePath, string sourcePath, long sourceSizeBytes, long sourceLastWriteUtcTicks, CancellationToken cancellationToken = default) =>
-            Task.FromResult<MediaInfo?>(cachedPaths.Contains(Path.GetFullPath(sourcePath))
-                ? new MediaInfo("h264", 1, 0, 0, 0, null, sourceSizeBytes, 1920, 1080, 10_000_000)
-                : null);
+        public int LoadCalls { get; private set; }
+        public List<MediaProbeCacheEntry> Stored { get; } = [];
 
-        public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<MediaProbeCacheEntry>> LoadAllAsync(string databasePath, CancellationToken cancellationToken = default)
+        {
+            LoadCalls++;
+            var cached = cachedPaths.Select(path =>
+            {
+                var info = new FileInfo(path);
+                return new MediaProbeCacheEntry(path, info.Length, info.LastWriteTimeUtc.Ticks, Media());
+            }).Concat(entries).ToArray();
+            return Task.FromResult<IReadOnlyList<MediaProbeCacheEntry>>(cached);
+        }
+
+        public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default)
+        {
+            Stored.Add(entry);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingProgress<T> : IProgress<T>
     {
         public List<T> Values { get; } = [];
-
         public void Report(T value) => Values.Add(value);
     }
 
-    private static EligibilitySettings Rules(string minimumFileSize) => new EligibilitySettings
-    {
-        Rules = new List<EligibilityRuleSettings> { new() { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "1Mbps", MinimumFileSize = minimumFileSize } }
-    };
+    private static MediaInfo Media(string codec = "h264") => new(codec, 1, 0, 0, 0, null, null, 1920, 1080, 10_000_000);
 }

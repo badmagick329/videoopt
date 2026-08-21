@@ -13,7 +13,7 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
     public SqliteMediaProbeCacheTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
-    public async Task StoreAsyncRoundTripsEveryMediaInfoFieldAndMatchesPathsWithoutCaseSensitivity()
+    public async Task LoadAllAsyncReturnsStoredEntriesWithEveryMetadataField()
     {
         var cache = Cache();
         var path = Path.Combine(_directory, "Movie.mkv");
@@ -21,9 +21,12 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
 
         await cache.StoreAsync(DatabasePath, new MediaProbeCacheEntry(path, 42, 99, media));
 
-        var entry = await cache.GetAsync(DatabasePath, path.ToUpperInvariant(), 42, 99);
+        var entry = (await cache.LoadAllAsync(DatabasePath)).Should().ContainSingle().Subject;
 
-        entry.Should().Be(media);
+        entry.SourcePath.Should().Be(path);
+        entry.SourceSizeBytes.Should().Be(42);
+        entry.SourceLastWriteUtcTicks.Should().Be(99);
+        entry.MediaInfo.Should().Be(media);
     }
 
     [Fact]
@@ -60,7 +63,8 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
 
         second.RealProbes.Should().Be(1);
         probe.Calls.Should().Be(2);
-        (await Cache().GetAsync(DatabasePath, path, info.Length, info.LastWriteTimeUtc.Ticks)).Should().NotBeNull();
+        (await Cache().LoadAllAsync(DatabasePath)).Should().ContainSingle(entry =>
+            entry.SourcePath == path && entry.SourceSizeBytes == info.Length && entry.SourceLastWriteUtcTicks == info.LastWriteTimeUtc.Ticks);
     }
 
     [Fact]
@@ -94,8 +98,10 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
 
         var failedInfo = new FileInfo(failedPath);
         var notReadyInfo = new FileInfo(notReadyPath);
-        (await Cache().GetAsync(DatabasePath, failedPath, failedInfo.Length, failedInfo.LastWriteTimeUtc.Ticks)).Should().BeNull();
-        (await Cache().GetAsync(DatabasePath, notReadyPath, notReadyInfo.Length, notReadyInfo.LastWriteTimeUtc.Ticks)).Should().BeNull();
+        (await Cache().LoadAllAsync(DatabasePath)).Should().NotContain(entry =>
+            entry.SourcePath == failedPath && entry.SourceSizeBytes == failedInfo.Length && entry.SourceLastWriteUtcTicks == failedInfo.LastWriteTimeUtc.Ticks);
+        (await Cache().LoadAllAsync(DatabasePath)).Should().NotContain(entry =>
+            entry.SourcePath == notReadyPath && entry.SourceSizeBytes == notReadyInfo.Length && entry.SourceLastWriteUtcTicks == notReadyInfo.LastWriteTimeUtc.Ticks);
     }
 
     [Fact]
@@ -109,7 +115,8 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
         var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
 
         report.Items.Should().ContainSingle(item => item.Path == path && item.Status == ScanItemStatus.Unavailable && item.Reason == "Source changed while probing.");
-        (await Cache().GetAsync(DatabasePath, path, original.Length, original.LastWriteTimeUtc.Ticks)).Should().BeNull();
+        (await Cache().LoadAllAsync(DatabasePath)).Should().NotContain(entry =>
+            entry.SourcePath == path && entry.SourceSizeBytes == original.Length && entry.SourceLastWriteUtcTicks == original.LastWriteTimeUtc.Ticks);
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);

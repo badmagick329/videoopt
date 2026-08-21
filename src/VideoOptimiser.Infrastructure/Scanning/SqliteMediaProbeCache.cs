@@ -8,46 +8,42 @@ public sealed class SqliteMediaProbeCache(IDatabaseInitializer databaseInitializ
 {
     public const int CacheSchemaVersion = 1;
 
-    public async Task<MediaInfo?> GetAsync(
+    public async Task<IReadOnlyList<MediaProbeCacheEntry>> LoadAllAsync(
         string databasePath,
-        string sourcePath,
-        long sourceSizeBytes,
-        long sourceLastWriteUtcTicks,
         CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT primary_video_codec, video_stream_count, audio_stream_count, subtitle_stream_count, attachment_count,
+            SELECT source_path, source_size_bytes, source_last_write_utc_ticks,
+                   primary_video_codec, video_stream_count, audio_stream_count, subtitle_stream_count, attachment_count,
                    duration_seconds, size_bytes, primary_video_width, primary_video_height, primary_video_bitrate
             FROM media_probe_cache
-            WHERE source_path = $sourcePath COLLATE NOCASE
-              AND source_size_bytes = $sourceSizeBytes
-              AND source_last_write_utc_ticks = $sourceLastWriteUtcTicks
-              AND cache_schema_version = $cacheSchemaVersion;
+            WHERE cache_schema_version = $cacheSchemaVersion;
             """;
-        command.Parameters.AddWithValue("$sourcePath", sourcePath);
-        command.Parameters.AddWithValue("$sourceSizeBytes", sourceSizeBytes);
-        command.Parameters.AddWithValue("$sourceLastWriteUtcTicks", sourceLastWriteUtcTicks);
         command.Parameters.AddWithValue("$cacheSchemaVersion", CacheSchemaVersion);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
+        var entries = new List<MediaProbeCacheEntry>();
+        while (await reader.ReadAsync(cancellationToken))
         {
-            return null;
+            entries.Add(new MediaProbeCacheEntry(
+                reader.GetString(0),
+                reader.GetInt64(1),
+                reader.GetInt64(2),
+                new MediaInfo(
+                    reader.GetString(3),
+                    reader.GetInt32(4),
+                    reader.GetInt32(5),
+                    reader.GetInt32(6),
+                    reader.GetInt32(7),
+                    NullableDouble(reader, 8),
+                    NullableLong(reader, 9),
+                    NullableInt(reader, 10),
+                    NullableInt(reader, 11),
+                    NullableLong(reader, 12))));
         }
-
-        return new MediaInfo(
-            reader.GetString(0),
-            reader.GetInt32(1),
-            reader.GetInt32(2),
-            reader.GetInt32(3),
-            reader.GetInt32(4),
-            NullableDouble(reader, 5),
-            NullableLong(reader, 6),
-            NullableInt(reader, 7),
-            NullableInt(reader, 8),
-            NullableLong(reader, 9));
+        return entries;
     }
 
     public async Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default)

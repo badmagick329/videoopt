@@ -78,11 +78,8 @@ public interface IMediaTimelineProbe
 
 public interface IMediaProbeCache
 {
-    Task<MediaInfo?> GetAsync(
+    Task<IReadOnlyList<MediaProbeCacheEntry>> LoadAllAsync(
         string databasePath,
-        string sourcePath,
-        long sourceSizeBytes,
-        long sourceLastWriteUtcTicks,
         CancellationToken cancellationToken = default);
 
     Task StoreAsync(
