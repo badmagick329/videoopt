@@ -8,7 +8,15 @@ namespace VideoOptimiser.Infrastructure.Processing;
 public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
 {
     public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) =>
-    ["encode", "--input", inputPath, "--output", outputPath, "--encoder", settings.Encoder, "--pix-format", settings.PixelFormat, "--preset", settings.Preset.ToString(CultureInfo.InvariantCulture), "--crf", crf.ToString(CultureInfo.InvariantCulture)];
+    [
+        "encode", "--input", inputPath, "--output", outputPath,
+        "--encoder", settings.Encoder,
+        "--pix-format", settings.PixelFormat,
+        "--preset", settings.Preset.ToString(CultureInfo.InvariantCulture),
+        "--crf", crf.ToString(CultureInfo.InvariantCulture),
+        // Container-specific data streams such as timecode tracks are not generally portable to the output container.
+        "--enc", "map=-0:d"
+    ];
 
     public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
     {
