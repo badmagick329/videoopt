@@ -78,6 +78,7 @@ internal static class CliApplication
         catch (RemoteWorkerCapacityUnavailableException exception)
         {
             Console.Error.WriteLine(exception.Message);
+            Console.Error.WriteLine("Check server type and location availability in Hetzner Console: https://console.hetzner.com/");
             return (int)ExitCode.ProcessingFailure;
         }
         catch (Exception exception)
