@@ -1,4 +1,4 @@
-notes/*
+.ignore/
 video-optimiser.yaml
 .env
 .env.local
