@@ -78,6 +78,101 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task ResumingAnInterruptedLocalEncodeDeletesItsPartialOutputAndStartsANewAttempt()
+    {
+        var source = Path.Combine(_directory, "resumed.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var databasePath = Path.Combine(_directory, "resumed.db");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var id = Guid.NewGuid();
+        // ab-av1 encodes under its own temporary name and renames only on success, so that is what a crash leaves.
+        var partial = Path.Combine(_directory, ".video-optimiser", $".tmp.ab-av1-encoding.resumed.{id:N}.1.encoding.mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(partial)!);
+        await File.WriteAllTextAsync(partial, "partial av1");
+        await repository.CreateAsync(databasePath, new JobRecord
+        {
+            Id = id,
+            SourcePath = source,
+            SourceFingerprint = "stale",
+            Status = JobStatus.Interrupted,
+            ResumeStatus = JobStatus.Encoding,
+            Attempt = 1,
+            Crf = 42,
+            OutputPath = Path.Combine(_directory, ".video-optimiser", $"resumed.{id:N}.1.encoding.mp4")
+        });
+        var processor = new JobProcessor(
+            repository,
+            new ReadableFiles(),
+            _ => new H264Probe(),
+            new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
+            new FileFingerprintService(),
+            new OutputManifestStore(),
+            new PassingValidator());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = databasePath },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules()
+        };
+        var messages = new List<string>();
+
+        var result = await processor.ProcessAsync(databasePath, source, settings, force: false, new SynchronousProgress(update => messages.Add(update.Text)));
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
+        result.Job.Attempt.Should().Be(2);
+        File.Exists(partial).Should().BeFalse();
+        messages.Should().Contain(message => message.Contains("deleted the partial output of interrupted attempt 1"));
+    }
+
+    [Fact]
+    public async Task ResumingAnInterruptedLocalValidationReusesTheOutputWithoutEncoding()
+    {
+        var source = Path.Combine(_directory, "revalidated.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var databasePath = Path.Combine(_directory, "revalidated.db");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var manifests = new OutputManifestStore();
+        var id = Guid.NewGuid();
+        var output = Path.Combine(_directory, ".video-optimiser", $"revalidated.{id:N}.1.encoding.mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        await File.WriteAllTextAsync(output, "av1");
+        await manifests.SaveAsync(new OutputManifest { SourcePath = source, SourceFingerprint = "stale", OutputPath = output, Crf = 42, CreatedUtc = DateTimeOffset.UtcNow });
+        await repository.CreateAsync(databasePath, new JobRecord
+        {
+            Id = id,
+            SourcePath = source,
+            SourceFingerprint = "stale",
+            Status = JobStatus.Interrupted,
+            ResumeStatus = JobStatus.Validating,
+            Attempt = 1,
+            Crf = 42,
+            OutputPath = output,
+            ManifestPath = manifests.GetPath(output)
+        });
+        var encoder = new FakeEncoder();
+        var processor = new JobProcessor(
+            repository,
+            new ReadableFiles(),
+            _ => new H264Probe(),
+            new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => encoder, new UnexpectedExternalProcessRunner()),
+            new FileFingerprintService(),
+            manifests,
+            new PassingValidator());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = databasePath },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules()
+        };
+
+        var result = await processor.ProcessAsync(databasePath, source, settings, force: false);
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
+        result.Job.OutputPath.Should().Be(output);
+        encoder.CallCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task RemoteConnectionFailureLeavesTheJobInterruptibleAndBoundToItsWorkspace()
     {
         var source = Path.Combine(_directory, "remote.mp4");
@@ -146,6 +241,11 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    private sealed class SynchronousProgress(Action<CrfSearchOutput> report) : IProgress<CrfSearchOutput>
+    {
+        public void Report(CrfSearchOutput value) => report(value);
+    }
 
     private sealed class ReadableFiles : IFileReadinessService
     {

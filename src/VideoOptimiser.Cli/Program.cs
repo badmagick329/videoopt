@@ -116,6 +116,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<IJobProcessor, JobProcessor>();
         builder.Services.AddSingleton<IQueueService, QueueService>();
         builder.Services.AddSingleton<IJobRetryService, JobRetryService>();
+        builder.Services.AddSingleton<ITemporaryOutputCleanupService, TemporaryOutputCleanupService>();
         builder.Services.AddSingleton<IFinalizationService, FinalizationService>();
         builder.Services.AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
         builder.Services.AddSingleton<IInteractiveConfirmation, ConsoleInteractiveConfirmation>();
@@ -162,6 +163,7 @@ internal static class CliApplication
             CliCommandKind.History => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: true, command.Json, cancellationToken),
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
             CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.Cleanup => await RunCleanupAsync(services.GetRequiredService<ITemporaryOutputCleanupService>(), configuration, command.DryRun, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -488,7 +490,8 @@ internal static class CliApplication
             {
                 var suffix = job.FailureMessage is null ? string.Empty : $" — {job.FailureCategory}: {job.FailureMessage}";
                 var savings = job.PercentageSaved is null ? string.Empty : $" {job.PercentageSaved:F1}% saved";
-                Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}");
+                var resume = TemporaryOutputClassifier.DescribeResume(job) is { } behaviour ? $" ({behaviour})" : string.Empty;
+                Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}{resume}");
             }
         }
 
@@ -543,6 +546,23 @@ internal static class CliApplication
         return failures == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
+    private static async Task<int> RunCleanupAsync(ITemporaryOutputCleanupService cleanup, LoadedConfiguration configuration, bool dryRun, CancellationToken cancellationToken)
+    {
+        var plan = await cleanup.FindAsync(configuration.Settings.Database.Path, cancellationToken);
+        foreach (var path in plan.UnknownJobFiles) Console.WriteLine($"Skipped  {path} (its job is not in this database)");
+        if (plan.Abandoned.Count == 0) { Console.WriteLine("No abandoned temporary outputs found."); return (int)ExitCode.Success; }
+        foreach (var file in plan.Abandoned) Console.WriteLine($"{HumanReadableValues.FormatSize(file.SizeBytes),10}  {file.Path} ({file.Reason})");
+        Console.WriteLine($"Abandoned temporary outputs: {plan.Abandoned.Count}, {HumanReadableValues.FormatSize(plan.TotalBytes)}.");
+        if (dryRun) return (int)ExitCode.Success;
+
+        Console.Write("Delete these files? [y/N] ");
+        if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Cleanup cancelled."); return (int)ExitCode.Success; }
+        var result = cleanup.Delete(plan);
+        foreach (var failure in result.Failures) Console.Error.WriteLine($"Could not delete {failure}");
+        Console.WriteLine($"Deleted {result.Deleted} files, {HumanReadableValues.FormatSize(result.DeletedBytes)}.");
+        return result.Failures.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
+    }
+
     private const string Usage = """
 Usage:
   video-optimiser config init [--config <path>]
@@ -565,6 +585,7 @@ Usage:
   video-optimiser validate <job-id> [--config <path>]
   video-optimiser finalize <job-id> [--config <path>]
   video-optimiser finalize --ready [--config <path>]
+  video-optimiser cleanup [--dry-run] [--config <path>]
 """;
 
     private static string GetVersion() => typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0-dev";
@@ -591,7 +612,8 @@ internal enum CliCommandKind
     Status,
     History,
     Validate,
-    Finalize
+    Finalize,
+    Cleanup
 }
 
 internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false)
@@ -669,6 +691,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["history"] => CliCommandKind.History,
             ["validate", _] => CliCommandKind.Validate,
             ["finalize"] or ["finalize", _] => CliCommandKind.Finalize,
+            ["cleanup"] => CliCommandKind.Cleanup,
             _ => CliCommandKind.Invalid
         };
 
@@ -690,7 +713,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("--force is only supported by process.");
         }
 
-        if (dryRun && kind != CliCommandKind.Process) return Invalid("--dry-run is only supported by process.");
+        if (dryRun && kind is not (CliCommandKind.Process or CliCommandKind.Cleanup)) return Invalid("--dry-run is only supported by process and cleanup.");
         if (finalizeReady && kind != CliCommandKind.Finalize) return Invalid("--ready is only supported by finalize.");
         if (finalizeReady && remaining.Count != 1) return Invalid("finalize --ready does not take a job ID.");
         if (kind == CliCommandKind.QueueCancel && !all && remaining.Count != 3) return Invalid("queue cancel requires a job ID or --all.");

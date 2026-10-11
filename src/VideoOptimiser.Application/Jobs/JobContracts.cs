@@ -54,7 +54,8 @@ public static class JobStateTransitions
 {
     public static bool IsAllowed(JobStatus current, JobStatus next) => current == next || (current, next) switch
     {
-        (JobStatus.Queued, JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Failed or JobStatus.Interrupted or JobStatus.Cancelled) => true,
+        // A resumed local job skips the stages it already finished: encoding when its CRF is known, validation when its output is.
+        (JobStatus.Queued, JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted or JobStatus.Cancelled) => true,
         (JobStatus.Staging, JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.CrfSearching, JobStatus.Encoding or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Encoding, JobStatus.Downloading or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,

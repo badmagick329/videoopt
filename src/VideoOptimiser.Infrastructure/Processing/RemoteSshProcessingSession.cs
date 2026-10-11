@@ -77,7 +77,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var partialParts = partialState.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (partialParts.Length == 2 && long.TryParse(partialParts[0], CultureInfo.InvariantCulture, out var partialLength) && partialLength > 0 && partialLength <= source.Length)
         {
-            progress?.Report(new CrfSearchOutput("staging", $"Staging: validating resumable upload prefix ({FormatBytes(partialLength)} of {FormatBytes(source.Length)})."));
+            progress?.Report(new CrfSearchOutput("staging", $"Staging: validating resumable upload prefix ({HumanReadableValues.FormatSize(partialLength)} of {HumanReadableValues.FormatSize(source.Length)})."));
             var localPrefixHash = await HashFilePrefixAsync(sourcePath, partialLength, cancellationToken, progress, "Staging: validating resumable upload prefix");
             if (string.Equals(localPrefixHash, partialParts[1], StringComparison.OrdinalIgnoreCase))
                 verifiedPartialLength = partialLength;
@@ -93,12 +93,12 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             var transferCommand = verifiedPartialLength > 0 ? "reput" : "put";
             var transferStart = verifiedPartialLength;
             var transferLabel = transferStart > 0
-                ? $"Staging: resuming original upload ({FormatBytes(transferStart)} of {FormatBytes(source.Length)})"
-                : $"Staging: uploading original (0% of {FormatBytes(source.Length)})";
+                ? $"Staging: resuming original upload ({HumanReadableValues.FormatSize(transferStart)} of {HumanReadableValues.FormatSize(source.Length)})"
+                : $"Staging: uploading original (0% of {HumanReadableValues.FormatSize(source.Length)})";
             progress?.Report(new CrfSearchOutput("staging", transferLabel));
             await SftpAsync($"{transferCommand} {SftpQuote(sourcePath)} {SftpQuote(partial)}\n", cancellationToken,
                 new TransferMonitor(source.Length, transferStart, progress, "Staging: uploading original", async token => await RemoteFileSizeAsync(partial, token)));
-            progress?.Report(new CrfSearchOutput("staging", $"Staging: original upload complete (100% of {FormatBytes(source.Length)})."));
+            progress?.Report(new CrfSearchOutput("staging", $"Staging: original upload complete (100% of {HumanReadableValues.FormatSize(source.Length)})."));
         }
         progress?.Report(new CrfSearchOutput("staging", "Staging: verifying the remote original checksum."));
         var verify = await SshAsync($"test \"$(stat -c '%s' {Quote(partial)})\" = {source.Length.ToString(CultureInfo.InvariantCulture)} && test \"$(sha256sum {Quote(partial)} | cut -d' ' -f1)\" = {Quote(localHash.ToLowerInvariant())} && mv -f -- {Quote(partial)} {Quote(RemoteSourcePath)}", cancellationToken: cancellationToken);
@@ -158,8 +158,8 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             ? Math.Min(new FileInfo(partial).Length, outputLength)
             : 0;
         var transferLabel = partialStart > 0
-            ? $"Downloading: resuming remote output ({FormatBytes(partialStart)} of {FormatBytes(outputLength)})"
-            : $"Downloading: receiving remote output (0% of {FormatBytes(outputLength)})";
+            ? $"Downloading: resuming remote output ({HumanReadableValues.FormatSize(partialStart)} of {HumanReadableValues.FormatSize(outputLength)})"
+            : $"Downloading: receiving remote output (0% of {HumanReadableValues.FormatSize(outputLength)})";
         progress?.Report(new CrfSearchOutput("downloading", transferLabel));
         await SftpAsync($"reget {SftpQuote(remoteOutput)} {SftpQuote(partial)}\n", cancellationToken,
             new TransferMonitor(outputLength, partialStart, progress, "Downloading: receiving remote output", async _ => File.Exists(partial) ? new FileInfo(partial).Length : 0));
@@ -178,7 +178,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             }
         }
         File.Move(partial, outputPath, overwrite: true);
-        progress?.Report(new CrfSearchOutput("downloading", $"Downloading: output verified (100% of {FormatBytes(outputLength)})."));
+        progress?.Report(new CrfSearchOutput("downloading", $"Downloading: output verified (100% of {HumanReadableValues.FormatSize(outputLength)})."));
     }
 
     public async Task CancelAsync(CancellationToken cancellationToken = default)
@@ -416,20 +416,6 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
-    private static string FormatBytes(long bytes)
-    {
-        const double kilobyte = 1024;
-        const double megabyte = kilobyte * 1024;
-        const double gigabyte = megabyte * 1024;
-        return bytes switch
-        {
-            < 1024 => $"{bytes} B",
-            < (long)megabyte => $"{bytes / kilobyte:0.0} KiB",
-            < (long)gigabyte => $"{bytes / megabyte:0.0} MiB",
-            _ => $"{bytes / gigabyte:0.0} GiB"
-        };
-    }
-
     private sealed class TransferMonitor(long totalBytes, long initialBytes, IProgress<CrfSearchOutput>? progress, string label, Func<CancellationToken, Task<long>> currentBytes)
     {
         private readonly ByteProgressReporter _reporter = new(progress, label, totalBytes);
@@ -478,7 +464,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             if (!force && !heartbeat && bytes == _lastBytes) return;
             _lastPercent = percent;
             _lastBytes = bytes;
-            progress.Report(new CrfSearchOutput("progress", $"{label ?? "Progress"} ({percent}% of {FormatBytes(totalBytes)}; {FormatBytes(bytes)}; elapsed {FormatDuration(_elapsed.Elapsed)})."));
+            progress.Report(new CrfSearchOutput("progress", $"{label ?? "Progress"} ({percent}% of {HumanReadableValues.FormatSize(totalBytes)}; {HumanReadableValues.FormatSize(bytes)}; elapsed {FormatDuration(_elapsed.Elapsed)})."));
             _sinceReport.Restart();
         }
 

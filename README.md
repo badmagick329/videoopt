@@ -95,6 +95,10 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 # Finalise every validated job after one confirmation.
 .\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
 
+# List temporary outputs no job will use again, then delete them after one confirmation.
+.\video-optimiser.exe cleanup --dry-run --config .\video-optimiser.yaml
+.\video-optimiser.exe cleanup --config .\video-optimiser.yaml
+
 # Active jobs and terminal job history. Add --json for machine-readable output.
 .\video-optimiser.exe status --config .\video-optimiser.yaml
 .\video-optimiser.exe history --config .\video-optimiser.yaml
@@ -112,11 +116,13 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 <original folder>\.video-optimiser\<file>.<job-id>.<attempt>.encoding.<extension>
 ```
 
+`cleanup` deletes the files there that belong to a completed, failed, or cancelled job, to an earlier attempt, or to an interrupted local encode. It keeps the current output of every other job, everything after a failed or interrupted finalisation, and any file whose job is not in the configured database. Revalidate a failed job's output with `validate` before running `cleanup` if you want to keep it.
+
 ## Safety
 
 - `queue discover` scans configured roots and queues eligible files.
 - `process` creates a job, then CRF-searches, encodes, and validates a separate temporary AV1 file.
-- `queue run` resumes interrupted CRF searches, encodes, or validations from a safe stage.
+- `queue run` resumes interrupted CRF searches, encodes, or validations from a safe stage. A local encode cannot continue a partial file, so its resume deletes that file and starts a new attempt; `status` says which jobs this applies to.
 - `validate` rechecks a job's temporary AV1 before replacement.
 - `finalize` is explicit: it renames the original to a rollback file, installs the AV1, then deletes the rollback file.
 - `finalize` currently requires `original.action: "delete"`.

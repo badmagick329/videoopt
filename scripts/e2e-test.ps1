@@ -4,7 +4,7 @@ param(
     [string] $Executable
 )
 
-# Runs discover -> queue run -> validate -> finalise against real ab-av1, ffmpeg and ffprobe, which must be on PATH
+# Runs discover -> queue run -> validate -> finalise -> cleanup against real ab-av1, ffmpeg and ffprobe, which must be on PATH
 # (ab-av1 itself calls ffmpeg from PATH). Unit tests fake every tool, so this is the only check of their real output.
 
 $ErrorActionPreference = 'Stop'
@@ -141,6 +141,15 @@ validation:
 
     $decodeErrors = (& ffmpeg -hide_banner -nostdin -v error -xerror -i $jobA.sourcePath -f null - 2>&1 | Out-String).Trim()
     Assert ($LASTEXITCODE -eq 0 -and -not $decodeErrors) "the finalised file should decode cleanly: $decodeErrors"
+
+    # Left behind: clip a's manifest (completed) and clip b's output and manifest (failed).
+    $outputFolder = Join-Path $watchRoot '.video-optimiser'
+    $preview = Invoke-Cli 0 @('cleanup', '--dry-run')
+    Assert ($preview -match 'Abandoned temporary outputs: 3,') "cleanup --dry-run should list 3 abandoned files: $preview"
+    Assert (@(Get-ChildItem -LiteralPath $outputFolder -File).Count -eq 3) 'cleanup --dry-run must not delete anything.'
+    Invoke-Cli 0 @('cleanup') -InputText 'y' | Out-Null
+    Assert (@(Get-ChildItem -LiteralPath $outputFolder -File).Count -eq 0) 'cleanup should delete every abandoned file.'
+    Assert ((Get-VideoCodec $jobB.sourcePath) -eq 'h264') 'cleanup must leave the original of a failed job untouched.'
 
     $global:LASTEXITCODE = 0
 }

@@ -14,6 +14,20 @@ public static partial class HumanReadableValues
     [GeneratedRegex("^(?<value>\\d+(?:\\.\\d+)?)\\s*(?<unit>Kbps|Mbps|Gbps)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BitratePattern();
 
+    public static string FormatSize(long bytes)
+    {
+        const double kilobyte = 1024;
+        const double megabyte = kilobyte * 1024;
+        const double gigabyte = megabyte * 1024;
+        return bytes switch
+        {
+            < 1024 => $"{bytes} B",
+            < (long)megabyte => $"{bytes / kilobyte:0.0} KiB",
+            < (long)gigabyte => $"{bytes / megabyte:0.0} MiB",
+            _ => $"{bytes / gigabyte:0.0} GiB"
+        };
+    }
+
     public static bool TryParseBitrate(string? value, out long bitsPerSecond)
     {
         bitsPerSecond = 0;

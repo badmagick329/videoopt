@@ -59,10 +59,15 @@ public sealed class JobProcessor(
 
         if (job.Status == JobStatus.Interrupted)
         {
-            if (!string.Equals(job.ExecutionMode, "remoteSsh", StringComparison.OrdinalIgnoreCase))
+            if (TemporaryOutputClassifier.RestartsEncode(job))
             {
-                if (resumeStatus == JobStatus.CrfSearching) job.Crf = null;
-                if (resumeStatus == JobStatus.Encoding) { job.OutputPath = null; job.ManifestPath = null; }
+                DeletePartialOutput(job, progress);
+                job.OutputPath = null;
+                job.ManifestPath = null;
+            }
+            else if (resumeStatus == JobStatus.CrfSearching && !string.Equals(job.ExecutionMode, "remoteSsh", StringComparison.OrdinalIgnoreCase))
+            {
+                job.Crf = null;
             }
             job.Status = JobStatus.Queued;
             job.ResumeStatus = null;
@@ -123,7 +128,7 @@ public sealed class JobProcessor(
                 job.Status = JobStatus.Encoding;
                 var reattachAttempt = session.IsRemote && resumeStatus is JobStatus.Encoding or JobStatus.Downloading && job.Attempt > 0;
                 if (!reattachAttempt) job.Attempt++;
-                var outputDirectory = Path.Combine(Path.GetDirectoryName(path)!, ".video-optimiser");
+                var outputDirectory = Path.Combine(Path.GetDirectoryName(path)!, TemporaryOutputClassifier.FolderName);
                 var outputPath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(path)}.{job.Id:N}.{job.Attempt}.encoding{Path.GetExtension(path)}");
                 job.OutputPath = outputPath;
                 job.ManifestPath = manifests.GetPath(outputPath);
@@ -187,6 +192,31 @@ public sealed class JobProcessor(
         catch (Exception exception)
         {
             return await FailAsync(job, databasePath, stage, exception.Message, ExitCode.ProcessingFailure, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Matches by job ID and attempt rather than by <see cref="JobRecord.OutputPath"/>, because ab-av1 writes the encode
+    /// under a temporary name of its own and renames it only on success. A failed delete is reported, not fatal: the new
+    /// attempt writes a different file, and <c>cleanup</c> can remove this one later, for example once an ab-av1 orphaned
+    /// by a crash releases it.
+    /// </summary>
+    private static void DeletePartialOutput(JobRecord job, IProgress<CrfSearchOutput>? progress)
+    {
+        var folder = Path.Combine(Path.GetDirectoryName(job.SourcePath)!, TemporaryOutputClassifier.FolderName);
+        if (!Directory.Exists(folder)) return;
+        foreach (var file in Directory.EnumerateFiles(folder))
+        {
+            if (!TemporaryOutputClassifier.TryParse(Path.GetFileName(file), out var jobId, out var attempt) || jobId != job.Id || attempt != job.Attempt) continue;
+            try
+            {
+                File.Delete(file);
+                progress?.Report(new CrfSearchOutput("resuming", $"Resuming: deleted the partial output of interrupted attempt {job.Attempt}: {file}"));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                progress?.Report(new CrfSearchOutput("resuming", $"Resuming: could not delete the partial output of attempt {job.Attempt} ({exception.Message}). Run 'cleanup' later to remove it: {file}"));
+            }
         }
     }
 
