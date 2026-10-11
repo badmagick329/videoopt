@@ -124,7 +124,7 @@ quality:
     sampleDuration: "20s"
 
 savings:
-  # Reject output that is not smaller than the source.
+  # Reject output that is not smaller than the original.
   requireSmallerOutput: true
   # Minimum absolute saving required for validation.
   minimumBytesSaved: "100MiB"
@@ -136,21 +136,11 @@ original:
   action: "delete"
 
 validation:
-  # Probe source and output stream metadata with ffprobe.
-  runFfprobe: true
-  # Decode samples with ffmpeg after encoding.
-  decodeTest: true
-  # Decode test scope: none, sampled, or full.
-  decodeTestMode: "sampled"
-  # Require an AV1 primary video stream.
-  requireExpectedVideoCodec: true
-  # Require source/output durations to be within the tolerance.
-  requireDurationTolerance: true
-  # Allowed source/output duration difference.
+  # Codec, duration, stream-count and savings checks always run.
+  # Decode the output with ffmpeg before it can replace the original:
+  # sampled (start, middle and end), full, or none.
+  decodeTest: "sampled"
+  # Allowed original/output duration difference.
   durationToleranceSeconds: 1
-  # Require matching audio and subtitle stream counts.
-  requireStreamParity: true
-  # Reject empty output files.
-  requireNonZeroLength: true
 """;
 }

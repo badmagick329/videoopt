@@ -72,8 +72,7 @@ public sealed class SettingsValidator : ISettingsValidator
         ValidateDuration(settings.Quality.CrfSearch.SampleDuration, "quality.crfSearch.sampleDuration", diagnostics);
         AddWhen(string.IsNullOrWhiteSpace(settings.Quality.Encoder), "EncoderRequired", "quality.encoder is required.");
         AddWhen(!IsOneOf(settings.Original.Action, "delete"), "InvalidOriginalAction", "original.action must currently be delete.");
-        AddWhen(settings.Original.Action.Equals("delete", StringComparison.OrdinalIgnoreCase) && !settings.Validation.RunFfprobe, "UnsafeDeleteValidation", "original.action delete requires validation.runFfprobe to be enabled.");
-        AddWhen(!IsOneOf(settings.Validation.DecodeTestMode, "none", "sampled", "full"), "InvalidDecodeTestMode", "validation.decodeTestMode must be none, sampled, or full.");
+        AddWhen(!IsOneOf(settings.Validation.DecodeTest, DecodeTestModes.None, DecodeTestModes.Sampled, DecodeTestModes.Full), "InvalidDecodeTest", "validation.decodeTest must be none, sampled, or full.");
         AddWhen(settings.Validation.DurationToleranceSeconds < 0, "InvalidDurationTolerance", "validation.durationToleranceSeconds cannot be negative.");
 
         return diagnostics;

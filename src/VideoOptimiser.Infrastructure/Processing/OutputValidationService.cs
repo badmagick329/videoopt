@@ -2,13 +2,17 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Infrastructure.Processing;
 
 public sealed class OutputValidationService(
     Func<string, IMediaProbe> mediaProbeFactory,
-    Func<string, IMediaTimelineProbe> mediaTimelineProbeFactory) : IOutputValidationService
+    Func<string, IMediaTimelineProbe> mediaTimelineProbeFactory,
+    Func<string, IMediaDecodeTester> decodeTesterFactory) : IOutputValidationService
 {
+    private const double DecodeSampleSeconds = 10;
+
     public async Task<ValidationReport> ValidateAsync(OutputManifest manifest, AppSettings settings, CancellationToken cancellationToken = default)
     {
         var failures = new List<string>();
@@ -18,17 +22,74 @@ public sealed class OutputValidationService(
             return new ValidationReport { Passed = false, Failures = failures, ValidatedUtc = DateTimeOffset.UtcNow };
         }
 
+        var sourceSize = new FileInfo(manifest.SourcePath).Length;
+        var outputSize = new FileInfo(manifest.OutputPath).Length;
+        if (outputSize == 0)
+        {
+            failures.Add("Output is empty.");
+            return new ValidationReport { Passed = false, Failures = failures, SourceSizeBytes = sourceSize, OutputSizeBytes = outputSize, ValidatedUtc = DateTimeOffset.UtcNow };
+        }
+
         var source = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(manifest.SourcePath, cancellationToken);
         var output = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(manifest.OutputPath, cancellationToken);
         if (!output.PrimaryVideoCodec.Equals("av1", StringComparison.OrdinalIgnoreCase)) failures.Add("Output video is not AV1.");
         await ValidateMediaTimelineAsync(manifest, settings, source, output, failures, cancellationToken);
         if (source.AudioStreamCount != output.AudioStreamCount || source.SubtitleStreamCount != output.SubtitleStreamCount) failures.Add("Output stream counts differ from the original.");
 
-        var sourceSize = new FileInfo(manifest.SourcePath).Length;
-        var outputSize = new FileInfo(manifest.OutputPath).Length;
         var saved = (decimal)(sourceSize - outputSize) / sourceSize * 100;
-        if ((settings.Savings.RequireSmallerOutput && outputSize >= sourceSize) || saved < settings.Savings.MinimumPercentageSaved) failures.Add("Output does not meet savings policy.");
+        if (settings.Savings.RequireSmallerOutput && outputSize >= sourceSize) failures.Add("Output is not smaller than the original.");
+        if (saved < settings.Savings.MinimumPercentageSaved) failures.Add($"Output saves less than {settings.Savings.MinimumPercentageSaved}%.");
+        if (!HumanReadableValues.TryParseSize(settings.Savings.MinimumBytesSaved, out var minimumBytesSaved))
+        {
+            throw new InvalidOperationException("savings.minimumBytesSaved must be validated before output validation.");
+        }
+        if (sourceSize - outputSize < minimumBytesSaved) failures.Add($"Output saves less than {settings.Savings.MinimumBytesSaved}.");
+
+        // A full decode can take minutes, so it runs only for an output that would otherwise pass.
+        if (failures.Count == 0) await ValidateDecodingAsync(manifest.OutputPath, settings, output.DurationSeconds, failures, cancellationToken);
         return new ValidationReport { Passed = failures.Count == 0, Failures = failures, SourceSizeBytes = sourceSize, OutputSizeBytes = outputSize, PercentageSaved = saved, ValidatedUtc = DateTimeOffset.UtcNow };
+    }
+
+    /// <summary>
+    /// Sampled mode decodes the start, middle and end: ffprobe reads only container metadata, and a damaged
+    /// encode or transfer most often loses the tail. Videos too short to sample, or of unknown length, decode whole.
+    /// </summary>
+    internal static IReadOnlyList<DecodeWindow> SelectDecodeWindows(string mode, double? durationSeconds)
+    {
+        if (mode.Equals(DecodeTestModes.None, StringComparison.OrdinalIgnoreCase)) return [];
+        if (mode.Equals(DecodeTestModes.Full, StringComparison.OrdinalIgnoreCase) || durationSeconds is not { } duration || duration <= DecodeSampleSeconds * 3)
+        {
+            return [DecodeWindow.Whole];
+        }
+
+        return
+        [
+            new DecodeWindow(0, DecodeSampleSeconds),
+            new DecodeWindow((duration - DecodeSampleSeconds) / 2, DecodeSampleSeconds),
+            new DecodeWindow(duration - DecodeSampleSeconds, null)
+        ];
+    }
+
+    private async Task ValidateDecodingAsync(string outputPath, AppSettings settings, double? durationSeconds, List<string> failures, CancellationToken cancellationToken)
+    {
+        var tester = decodeTesterFactory(settings.Tools.FfmpegPath);
+        foreach (var window in SelectDecodeWindows(settings.Validation.DecodeTest, durationSeconds))
+        {
+            try
+            {
+                var result = await tester.DecodeAsync(outputPath, window, cancellationToken);
+                if (!result.Passed)
+                {
+                    failures.Add($"Output failed the decode test: {result.Error}");
+                    return;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or InvalidOperationException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+            {
+                failures.Add($"Output decode test could not run: {exception.Message}");
+                return;
+            }
+        }
     }
 
     private async Task ValidateMediaTimelineAsync(

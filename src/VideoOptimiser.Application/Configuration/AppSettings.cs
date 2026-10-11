@@ -171,12 +171,13 @@ public sealed class OriginalSettings
 [YamlSerializable]
 public sealed class ValidationSettings
 {
-    [YamlMember(Alias = "runFfprobe")] public bool RunFfprobe { get; set; } = true;
-    [YamlMember(Alias = "decodeTest")] public bool DecodeTest { get; set; } = true;
-    [YamlMember(Alias = "decodeTestMode")] public string DecodeTestMode { get; set; } = "sampled";
-    [YamlMember(Alias = "requireExpectedVideoCodec")] public bool RequireExpectedVideoCodec { get; set; } = true;
-    [YamlMember(Alias = "requireDurationTolerance")] public bool RequireDurationTolerance { get; set; } = true;
+    [YamlMember(Alias = "decodeTest")] public string DecodeTest { get; set; } = DecodeTestModes.Sampled;
     [YamlMember(Alias = "durationToleranceSeconds")] public double DurationToleranceSeconds { get; set; } = 1;
-    [YamlMember(Alias = "requireStreamParity")] public bool RequireStreamParity { get; set; } = true;
-    [YamlMember(Alias = "requireNonZeroLength")] public bool RequireNonZeroLength { get; set; } = true;
+}
+
+public static class DecodeTestModes
+{
+    public const string None = "none";
+    public const string Sampled = "sampled";
+    public const string Full = "full";
 }

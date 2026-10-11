@@ -23,13 +23,12 @@ public sealed class SettingsValidatorTests
     }
 
     [Fact]
-    public void ValidateDeleteWithoutProbeRejectsUnsafeConfiguration()
+    public void ValidateRejectsDecodeTestOutsideKnownModes()
     {
         var settings = CreateValidSettings();
-        settings.Original.Action = "delete";
-        settings.Validation.RunFfprobe = false;
+        settings.Validation.DecodeTest = "true";
 
-        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("UnsafeDeleteValidation");
+        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("InvalidDecodeTest");
     }
 
     [Fact]

@@ -111,6 +111,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
         builder.Services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
         builder.Services.AddSingleton<IJobRepository, SqliteJobRepository>();
+        builder.Services.AddSingleton<Func<string, IMediaDecodeTester>>(services => ffmpegPath => new FfmpegDecodeTester(ffmpegPath, services.GetRequiredService<IExternalProcessRunner>()));
         builder.Services.AddSingleton<IOutputValidationService, OutputValidationService>();
         builder.Services.AddSingleton<IJobProcessor, JobProcessor>();
         builder.Services.AddSingleton<IQueueService, QueueService>();
