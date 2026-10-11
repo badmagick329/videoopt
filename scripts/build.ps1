@@ -17,13 +17,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $executable = Join-Path $publishDirectory 'video-optimiser.exe'
-if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
-    throw "Publish completed without producing '$executable'."
-}
-
-& $executable --version
-if ($LASTEXITCODE -ne 0) {
-    throw "The published executable failed its version check with exit code $LASTEXITCODE."
-}
+& (Join-Path $PSScriptRoot 'smoke-test.ps1') -Executable $executable -ExpectedVersion '0.0.0-local'
 
 Write-Host "Built executable: $executable"

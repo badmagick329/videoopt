@@ -17,13 +17,5 @@ jobs:
           dotnet publish src/VideoOptimiser.Cli -p:PublishProfile=win-x64-aot
           -p:Version=0.0.0-ci -p:InformationalVersion=0.0.0-ci.${{ github.sha }}
           -o artifacts/ci
-      - run: .\artifacts\ci\video-optimiser.exe --version
       - shell: pwsh
-        run: |
-          $config = Join-Path $env:RUNNER_TEMP 'video-optimiser.yaml'
-          .\artifacts\ci\video-optimiser.exe config init --config $config
-          $PSNativeCommandUseErrorActionPreference = $false
-          .\artifacts\ci\video-optimiser.exe config validate --config $config
-          $exitCode = $LASTEXITCODE
-          if ($exitCode -ne 3) { throw "Expected config validate to return 3; got $exitCode." }
-          exit 0
+        run: ./scripts/smoke-test.ps1 -Executable artifacts/ci/video-optimiser.exe -ExpectedVersion 0.0.0-ci.${{ github.sha }}

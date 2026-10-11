@@ -54,16 +54,7 @@ Invoke-Checked dotnet @(
     "-p:InformationalVersion=$Version+$((git rev-parse --short HEAD).Trim())",
     '-o', $publishDirectory)
 
-$executable = Join-Path $publishDirectory 'video-optimiser.exe'
-Invoke-Checked $executable @('--version')
-
-$smokeConfig = Join-Path $publishDirectory 'smoke-config.yaml'
-Invoke-Checked $executable @('config', 'init', '--config', $smokeConfig)
-& $executable config validate --config $smokeConfig
-if ($LASTEXITCODE -ne 3) {
-    throw "A fresh template should return exit code 3 from config validate; got $LASTEXITCODE."
-}
-Remove-Item -LiteralPath $smokeConfig -Force
+& (Join-Path $PSScriptRoot 'smoke-test.ps1') -Executable (Join-Path $publishDirectory 'video-optimiser.exe') -ExpectedVersion $Version
 
 if ($PSCmdlet.ShouldProcess($tag, 'Commit, tag, and push release')) {
     Invoke-Checked git @('add', 'CHANGELOG.md')

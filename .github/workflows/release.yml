@@ -15,6 +15,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
+      # A tag pushed by hand skips release.ps1, so the release gates on the same checks itself.
+      - name: Test
+        run: dotnet test VideoOptimiser.sln -c Release
       - name: Build and package
         shell: pwsh
         run: |
@@ -23,6 +26,7 @@ jobs:
           $commit = '${{ github.sha }}'.Substring(0, 7)
           dotnet publish src/VideoOptimiser.Cli -p:PublishProfile=win-x64-aot -p:Version=$version -p:AssemblyVersion=$version -p:FileVersion=$version.0 -p:InformationalVersion=$version+$commit -o artifacts/publish
           if ($LASTEXITCODE -ne 0) { throw 'AOT publish failed.' }
+          ./scripts/smoke-test.ps1 -Executable artifacts/publish/video-optimiser.exe -ExpectedVersion $version
           $packageName = "video-optimiser-$tag-win-x64"
           New-Item -ItemType Directory -Path "artifacts/$packageName" | Out-Null
           Copy-Item artifacts/publish/video-optimiser.exe "artifacts/$packageName/"
