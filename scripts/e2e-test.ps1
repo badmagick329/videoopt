@@ -71,10 +71,6 @@ processing:
   mode: "local"
 database:
   path: "$(& $yamlPath (Join-Path $workDirectory 'jobs.db'))"
-logging:
-  level: "Information"
-  directory: "$(& $yamlPath (Join-Path $workDirectory 'logs'))"
-  console: false
 watch:
   roots:
     - path: "$(& $yamlPath $watchRoot)"

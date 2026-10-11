@@ -95,6 +95,67 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsyncRejectsUnknownKeyAndNamesItsFullPath()
+    {
+        var configPath = Path.Combine(_directory, "typo.yaml");
+        await File.WriteAllTextAsync(configPath, """
+            version: 1
+            processing:
+              remoteSsh:
+                hetzner:
+                  serverType: "cx43"
+                  ocations: ["hel1"]
+            """);
+
+        var load = () => new YamlConfigurationLoader().LoadAsync(configPath);
+
+        (await load.Should().ThrowAsync<InvalidDataException>())
+            .WithMessage("Unknown setting 'processing.remoteSsh.hetzner.ocations' at line 6, column 7.*");
+    }
+
+    [Fact]
+    public async Task LoadAsyncRejectsSettingRemovedInVersion020()
+    {
+        var configPath = Path.Combine(_directory, "removed.yaml");
+        await File.WriteAllTextAsync(configPath, """
+            version: 1
+            validation:
+              decodeTestMode: "full"
+            """);
+
+        var load = () => new YamlConfigurationLoader().LoadAsync(configPath);
+
+        (await load.Should().ThrowAsync<InvalidDataException>()).WithMessage("Unknown setting 'validation.decodeTestMode'*");
+    }
+
+    [Fact]
+    public async Task LoadAsyncNamesTheSettingWhoseValueHasTheWrongType()
+    {
+        var configPath = Path.Combine(_directory, "type.yaml");
+        await File.WriteAllTextAsync(configPath, """
+            version: 1
+            quality:
+              crfSearch:
+                minCrf: "low"
+            """);
+
+        var load = () => new YamlConfigurationLoader().LoadAsync(configPath);
+
+        (await load.Should().ThrowAsync<InvalidDataException>()).WithMessage("Invalid value for 'quality.crfSearch.minCrf' at line 4, column 13:*");
+    }
+
+    [Fact]
+    public async Task LoadAsyncAcceptsTheConfigInitTemplate()
+    {
+        var configPath = Path.Combine(_directory, "template.yaml");
+        await new YamlConfigurationTemplateWriter(new YamlConfigurationLoader()).WriteAsync(configPath);
+
+        var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
+
+        loaded.Settings.Processing.RemoteSsh.Hetzner.Locations.Should().Equal("hel1", "fsn1", "nbg1");
+    }
+
+    [Fact]
     public void RemoteExecutionIdentityCanonicalizesEffectiveHetznerLocations()
     {
         var settings = new RemoteSshSettings

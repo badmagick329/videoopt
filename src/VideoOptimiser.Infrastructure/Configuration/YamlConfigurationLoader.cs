@@ -1,20 +1,31 @@
 using VideoOptimiser.Application.Configuration;
+using YamlDotNet.Core;
 using YamlDotNet.Serialization;
 
 namespace VideoOptimiser.Infrastructure.Configuration;
 
 public sealed class YamlConfigurationLoader : IConfigurationLoader
 {
+    // Unknown keys are errors: a misspelled or removed setting would otherwise fall back to its default unnoticed.
     private readonly IDeserializer _deserializer = new StaticDeserializerBuilder(new VideoOptimiserYamlContext())
         .WithCaseInsensitivePropertyMatching()
-        .IgnoreUnmatchedProperties()
         .Build();
 
     public async Task<LoadedConfiguration> LoadAsync(string? explicitPath, CancellationToken cancellationToken = default)
     {
         var path = ResolveConfigurationPath(explicitPath);
         var yaml = await File.ReadAllTextAsync(path, cancellationToken);
-        var settings = _deserializer.Deserialize<AppSettings>(yaml) ?? throw new InvalidDataException("The configuration file is empty.");
+        AppSettings? settings;
+        try
+        {
+            settings = _deserializer.Deserialize<AppSettings>(yaml);
+        }
+        catch (YamlException exception)
+        {
+            throw new InvalidDataException(YamlErrorDescriber.Describe(yaml, exception), exception);
+        }
+
+        if (settings is null) throw new InvalidDataException("The configuration file is empty.");
 
         NormalizeDefaults(settings);
         ResolveRelativePaths(settings, Path.GetDirectoryName(path)!);
