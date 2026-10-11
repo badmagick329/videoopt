@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      nuget-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Microsoft.Extensions.* and Microsoft.Data.Sqlite majors track the .NET runtime; bump them with the target framework.
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: Microsoft.Data.Sqlite
+        update-types: ["version-update:semver-major"]
+      # FluentAssertions 8 moved to a commercial licence.
+      - dependency-name: FluentAssertions
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]
