@@ -14,7 +14,7 @@ public sealed class OutputValidationService(
         var failures = new List<string>();
         if (!File.Exists(manifest.SourcePath) || !File.Exists(manifest.OutputPath))
         {
-            failures.Add("Source or temporary output is missing.");
+            failures.Add("Original or temporary output is missing.");
             return new ValidationReport { Passed = false, Failures = failures, ValidatedUtc = DateTimeOffset.UtcNow };
         }
 
@@ -22,7 +22,7 @@ public sealed class OutputValidationService(
         var output = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(manifest.OutputPath, cancellationToken);
         if (!output.PrimaryVideoCodec.Equals("av1", StringComparison.OrdinalIgnoreCase)) failures.Add("Output video is not AV1.");
         await ValidateMediaTimelineAsync(manifest, settings, source, output, failures, cancellationToken);
-        if (source.AudioStreamCount != output.AudioStreamCount || source.SubtitleStreamCount != output.SubtitleStreamCount) failures.Add("Output stream counts differ from source.");
+        if (source.AudioStreamCount != output.AudioStreamCount || source.SubtitleStreamCount != output.SubtitleStreamCount) failures.Add("Output stream counts differ from the original.");
 
         var sourceSize = new FileInfo(manifest.SourcePath).Length;
         var outputSize = new FileInfo(manifest.OutputPath).Length;
@@ -47,7 +47,7 @@ public sealed class OutputValidationService(
             var tolerance = Math.Max(0.001d, settings.Validation.DurationToleranceSeconds);
             if (Math.Abs(sourceTimeline.PrimaryVideoDurationSeconds - outputTimeline.PrimaryVideoDurationSeconds) > tolerance)
             {
-                failures.Add("Output duration differs from source.");
+                failures.Add("Output duration differs from the original.");
             }
 
             if (!HasMaterialPacketCountDifference(sourceTimeline, outputTimeline, tolerance, out var packetCountsAreReliable))
@@ -59,7 +59,7 @@ public sealed class OutputValidationService(
             }
             else
             {
-                failures.Add("Output video packet count differs from source.");
+                failures.Add("Output video packet count differs from the original.");
             }
 
             if (source.AudioStreamCount > 0 &&
@@ -67,7 +67,7 @@ public sealed class OutputValidationService(
                  Math.Abs((sourceTimeline.FirstPrimaryAudioTimestampSeconds.Value - sourceTimeline.FirstVideoTimestampSeconds) -
                           (outputTimeline.FirstPrimaryAudioTimestampSeconds.Value - outputTimeline.FirstVideoTimestampSeconds)) > tolerance))
             {
-                failures.Add("Output audio timing differs from source.");
+                failures.Add("Output audio timing differs from the original.");
             }
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException)

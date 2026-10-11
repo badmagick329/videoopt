@@ -60,16 +60,16 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         if (cpus < _settings.Processing.RemoteSsh.MinimumCpuCount) throw new InvalidOperationException($"Remote host has {cpus} CPUs; {_settings.Processing.RemoteSsh.MinimumCpuCount} are required.");
         if (memory < minimumMemory) throw new InvalidOperationException($"Remote host has {memory} available bytes; {minimumMemory} are required.");
 
-        var localHash = await HashFileAsync(sourcePath, cancellationToken, progress, "Staging: hashing local source");
+        var localHash = await HashFileAsync(sourcePath, cancellationToken, progress, "Staging: hashing local original");
         progress?.Report(new CrfSearchOutput("staging", "Staging: checking for an existing or resumable remote upload."));
         var existing = await SshAsync($"if test -f {Quote(RemoteSourcePath)}; then stat -c '%s' {Quote(RemoteSourcePath)}; sha256sum {Quote(RemoteSourcePath)} | cut -d' ' -f1; fi", cancellationToken: cancellationToken);
         var existingParts = existing.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (existingParts.Length == 2 && existingParts[0] == source.Length.ToString(CultureInfo.InvariantCulture) && string.Equals(existingParts[1], localHash, StringComparison.OrdinalIgnoreCase))
         {
-            progress?.Report(new CrfSearchOutput("staging", "Staging: remote source already matches; reusing it."));
+            progress?.Report(new CrfSearchOutput("staging", "Staging: remote original already matches; reusing it."));
             return;
         }
-        if (disk < requiredDisk) throw new InvalidOperationException($"Remote host has {disk} free bytes; {requiredDisk} are required for this source.");
+        if (disk < requiredDisk) throw new InvalidOperationException($"Remote host has {disk} free bytes; {requiredDisk} are required for this original.");
 
         var partial = RemoteSourcePath + ".partial";
         var verifiedPartialLength = 0L;
@@ -93,17 +93,17 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             var transferCommand = verifiedPartialLength > 0 ? "reput" : "put";
             var transferStart = verifiedPartialLength;
             var transferLabel = transferStart > 0
-                ? $"Staging: resuming source upload ({FormatBytes(transferStart)} of {FormatBytes(source.Length)})"
-                : $"Staging: uploading source (0% of {FormatBytes(source.Length)})";
+                ? $"Staging: resuming original upload ({FormatBytes(transferStart)} of {FormatBytes(source.Length)})"
+                : $"Staging: uploading original (0% of {FormatBytes(source.Length)})";
             progress?.Report(new CrfSearchOutput("staging", transferLabel));
             await SftpAsync($"{transferCommand} {SftpQuote(sourcePath)} {SftpQuote(partial)}\n", cancellationToken,
-                new TransferMonitor(source.Length, transferStart, progress, "Staging: uploading source", async token => await RemoteFileSizeAsync(partial, token)));
-            progress?.Report(new CrfSearchOutput("staging", $"Staging: source upload complete (100% of {FormatBytes(source.Length)})."));
+                new TransferMonitor(source.Length, transferStart, progress, "Staging: uploading original", async token => await RemoteFileSizeAsync(partial, token)));
+            progress?.Report(new CrfSearchOutput("staging", $"Staging: original upload complete (100% of {FormatBytes(source.Length)})."));
         }
-        progress?.Report(new CrfSearchOutput("staging", "Staging: verifying the remote source checksum."));
+        progress?.Report(new CrfSearchOutput("staging", "Staging: verifying the remote original checksum."));
         var verify = await SshAsync($"test \"$(stat -c '%s' {Quote(partial)})\" = {source.Length.ToString(CultureInfo.InvariantCulture)} && test \"$(sha256sum {Quote(partial)} | cut -d' ' -f1)\" = {Quote(localHash.ToLowerInvariant())} && mv -f -- {Quote(partial)} {Quote(RemoteSourcePath)}", cancellationToken: cancellationToken);
-        EnsureSuccess(verify, "Remote source verification");
-        progress?.Report(new CrfSearchOutput("staging", "Staging: remote source checksum verified."));
+        EnsureSuccess(verify, "Remote original verification");
+        progress?.Report(new CrfSearchOutput("staging", "Staging: remote original checksum verified."));
     }
 
     public async Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
@@ -406,7 +406,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         while (remaining > 0)
         {
             var read = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)), cancellationToken);
-            if (read == 0) throw new EndOfStreamException("Source became shorter while validating the resumable upload.");
+            if (read == 0) throw new EndOfStreamException("Original became shorter while validating the resumable upload.");
             hash.AppendData(buffer, 0, read);
             remaining -= read;
             processed += read;

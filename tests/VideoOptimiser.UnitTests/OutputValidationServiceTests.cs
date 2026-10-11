@@ -34,7 +34,7 @@ public sealed class OutputValidationServiceTests : IDisposable
             new MediaTimeline(0, 149.069, 3_577, 2.251),
             new MediaTimeline(0, 145, 3_577, 2.251));
 
-        result.Failures.Should().Contain("Output duration differs from source.");
+        result.Failures.Should().Contain("Output duration differs from the original.");
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public sealed class OutputValidationServiceTests : IDisposable
             new MediaTimeline(1.881, 149.069, 3_577, 4.132),
             new MediaTimeline(0, 147.188, 3_577, 3));
 
-        result.Failures.Should().Contain("Output audio timing differs from source.");
+        result.Failures.Should().Contain("Output audio timing differs from the original.");
     }
 
     [Fact]
@@ -70,7 +70,7 @@ public sealed class OutputValidationServiceTests : IDisposable
             new MediaTimeline(0, 149.069, 3_577, 2.251),
             new MediaTimeline(0, 149.069, 3_570, 2.251));
 
-        result.Failures.Should().Contain("Output video packet count differs from source.");
+        result.Failures.Should().Contain("Output video packet count differs from the original.");
     }
 
     [Fact]

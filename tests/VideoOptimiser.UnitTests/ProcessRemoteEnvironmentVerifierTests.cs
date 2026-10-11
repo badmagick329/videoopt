@@ -59,7 +59,7 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
         diagnostics.Should().ContainSingle(diagnostic =>
             diagnostic.Code == "RemoteAv1DecoderUnavailable" &&
             diagnostic.Status == DiagnosticStatus.Fail &&
-            diagnostic.Message == "Remote FFmpeg does not expose the required libdav1d software AV1 decoder; AV1 source decoding and CRF search cannot run remotely.");
+            diagnostic.Message == "Remote FFmpeg does not expose the required libdav1d software AV1 decoder; AV1 decoding of originals and CRF search cannot run remotely.");
     }
 
     [Fact]

@@ -27,7 +27,7 @@ Then the normal workflow is:
 
 1. Find and queue eligible videos.
 2. Process the queue. Each video goes through CRF search, temporary encoding, and validation. Originals are untouched.
-3. Review ready jobs, then explicitly finalize them.
+3. Review ready jobs, then explicitly finalise them.
 
 ```powershell
 # Queue every eligible video. Add --first to queue only one.
@@ -41,11 +41,11 @@ Then the normal workflow is:
 .\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
 ```
 
-`queue run` can be stopped with `Ctrl+C`. The job becomes `Interrupted`; a later `queue run` resumes it safely. It never finalizes an original automatically.
+`queue run` can be stopped with `Ctrl+C`. The job becomes `Interrupted`; a later `queue run` resumes it safely. It never finalises an original automatically.
 
 ## Remote SSH processing
 
-CRF search and encoding can run on Ubuntu while validation and finalization stay local. The recommended [remote SSH workflow](docs/remote-ssh.md) creates, bootstraps, reuses, and safely deletes a Hetzner CX43 and its Primary IPv4 automatically. A manual SSH lifecycle remains available.
+CRF search and encoding can run on Ubuntu while validation and finalisation stay local. The recommended [remote SSH workflow](docs/remote-ssh.md) creates, bootstraps, reuses, and safely deletes a Hetzner CX43 and its Primary IPv4 automatically. A manual SSH lifecycle remains available.
 
 ## Eligibility rules
 
@@ -88,11 +88,11 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 # The failed job remains in history; the new job uses a fresh workspace and state.
 .\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
 
-# Revalidate or finalize one job.
+# Revalidate or finalise one job.
 .\video-optimiser.exe validate <job-id> --config .\video-optimiser.yaml
 .\video-optimiser.exe finalize <job-id> --config .\video-optimiser.yaml
 
-# Finalize every validated job after one confirmation.
+# Finalise every validated job after one confirmation.
 .\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
 
 # Active jobs and terminal job history. Add --json for machine-readable output.
@@ -109,7 +109,7 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 `process` writes temporary output and its manifest under:
 
 ```text
-<source folder>\.video-optimiser\<file>.<job-id>.<attempt>.encoding.<extension>
+<original folder>\.video-optimiser\<file>.<job-id>.<attempt>.encoding.<extension>
 ```
 
 ## Safety

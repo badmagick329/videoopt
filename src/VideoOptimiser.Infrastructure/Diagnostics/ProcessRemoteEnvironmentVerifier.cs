@@ -121,7 +121,7 @@ public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifie
         var av1DecoderAvailable = values.GetValueOrDefault("ffmpeg_libdav1d") == "1";
         diagnostics.Add(av1DecoderAvailable
             ? Pass("RemoteAv1DecoderAvailable", "Remote FFmpeg exposes the required libdav1d software AV1 decoder.")
-            : Failure("RemoteAv1DecoderUnavailable", "Remote FFmpeg does not expose the required libdav1d software AV1 decoder; AV1 source decoding and CRF search cannot run remotely."));
+            : Failure("RemoteAv1DecoderUnavailable", "Remote FFmpeg does not expose the required libdav1d software AV1 decoder; AV1 decoding of originals and CRF search cannot run remotely."));
 
         if (TryReadLong(values, "cpu_count", out var cpuCount))
         {

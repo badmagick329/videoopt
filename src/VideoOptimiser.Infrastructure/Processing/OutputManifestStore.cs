@@ -18,7 +18,7 @@ public sealed class FileFingerprintService : IFileFingerprintService
     public async Task<string> CreateAsync(string path, CancellationToken cancellationToken = default)
     {
         var info = new FileInfo(path);
-        if (!info.Exists) throw new FileNotFoundException("Source file does not exist.", path);
+        if (!info.Exists) throw new FileNotFoundException("Original does not exist.", path);
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         var edgeSize = (int)Math.Min(1_048_576, stream.Length);
         var first = new byte[edgeSize];

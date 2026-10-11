@@ -114,7 +114,7 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
 
         var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
 
-        report.Items.Should().ContainSingle(item => item.Path == path && item.Status == ScanItemStatus.Unavailable && item.Reason == "Source changed while probing.");
+        report.Items.Should().ContainSingle(item => item.Path == path && item.Status == ScanItemStatus.Unavailable && item.Reason == "Original changed while probing.");
         (await Cache().LoadAllAsync(DatabasePath)).Should().NotContain(entry =>
             entry.SourcePath == path && entry.SourceSizeBytes == original.Length && entry.SourceLastWriteUtcTicks == original.LastWriteTimeUtc.Ticks);
     }

@@ -1,12 +1,12 @@
 # Remote SSH processing
 
-Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux server performs CRF search and AV1 encoding. Validation, review, and finalization remain local. The recommended Hetzner lifecycle creates a CX43 when work starts and deletes it after every required output is safely downloaded.
+Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a CX43 when work starts and deletes it after every required output is safely downloaded.
 
 The managed workflow has only two one-time manual prerequisites: store the dedicated SSH public key in the Hetzner project and create an API token. Do **not** create a server in the Hetzner console; VideoOptimiser creates it through the API.
 
 ## 1. Confirm the dedicated SSH key
 
-This is a one-time setup per Hetzner project, not something repeated for each server. If the project already shows an SSH key named `video-optimiser-hetzner-cx43` and the matching private key still exists at `%USERPROFILE%\.ssh\video-optimiser-hetzner-cx43-ed25519`, skip to step 2.
+This is a one-time setup per Hetzner project, not something repeated for each worker. If the project already shows an SSH key named `video-optimiser-hetzner-cx43` and the matching private key still exists at `%USERPROFILE%\.ssh\video-optimiser-hetzner-cx43-ed25519`, skip to step 2.
 
 To check Hetzner, open the project that the API token will control, then go to **Security > SSH Keys**. The key must be in this same project because the creation request refers to it by the configured `sshKeyName`.
 
@@ -57,7 +57,7 @@ Install the .NET 9 SDK, then run this from the repository root:
 .\scripts\build.ps1
 ```
 
-This creates and smoke-tests the Windows Native AOT executable at `artifacts\local\video-optimiser.exe`. The Windows executable is not copied to the server; cloud-init runs `scripts/bootstrap-remote-worker.sh` there instead.
+This creates and smoke-tests the Windows Native AOT executable at `artifacts\local\video-optimiser.exe`. The Windows executable is not copied to the worker; cloud-init runs `scripts/bootstrap-remote-worker.sh` there instead.
 
 The bootstrap installs this pinned stack under `/opt/video-optimiser`:
 
@@ -161,9 +161,9 @@ For an initial test with an empty queue, discover only one eligible video:
 
 With `deleteAfterRun: true`, a clean `process` or `queue run` deletes the server after outputs have been downloaded, checksum-verified, and validated locally. It then confirms that the separately billable Primary IPv4 was also deleted. The original video remains untouched in `ReadyToFinalize` state.
 
-While a source is staged, the command reports local hashing, remote capacity checks, resumable upload bytes/percentage, and checksum verification. Downloads report the same resumable bytes/percentage and verification phases. Slow transfers print an elapsed-time heartbeat every 30 seconds, so `Staging` or `Downloading` does not remain silent.
+While an original is staged, the command reports local hashing, remote capacity checks, resumable upload bytes/percentage, and checksum verification. Downloads report the same resumable bytes/percentage and verification phases. Slow transfers print an elapsed-time heartbeat every 30 seconds, so `Staging` or `Downloading` does not remain silent.
 
-If the application crashes, the network becomes unreachable, bootstrap times out, or a job is marked `Interrupted`, the worker is retained. Run the same command again to reconnect, resume the remote stage or transfer, and delete the worker after the clean completion. A small recovery file and a server-specific known-hosts file are stored beside the configured SQLite database; neither contains credentials.
+If the application crashes, the network becomes unreachable, bootstrap times out, or a job is marked `Interrupted`, the worker is retained. Run the same command again to reconnect, resume the remote stage or transfer, and delete the worker after the clean completion. A small recovery file and a worker-specific known-hosts file are stored beside the configured SQLite database; neither contains credentials.
 
 Inspect or remove a retained worker with:
 
@@ -186,19 +186,19 @@ To retry a job that failed because its remote configuration changed, create a ne
 .\artifacts\local\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
 ```
 
-## 7. Finalize locally
+## 7. Finalise locally
 
-Finalization remains local and can happen after the server has been deleted:
+Finalisation remains local and can happen after the server has been deleted:
 
 ```powershell
 .\artifacts\local\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
 ```
 
-The original videos remain untouched until finalization succeeds.
+The original videos remain untouched until finalisation succeeds.
 
 ## Manual SSH lifecycle
 
-To keep managing a pre-existing server yourself, use `lifecycle: "manual"` and an OpenSSH config alias:
+To keep managing a pre-existing worker yourself, use `lifecycle: "manual"` and an OpenSSH config alias:
 
 ```yaml
 processing:

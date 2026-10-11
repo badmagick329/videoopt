@@ -18,7 +18,7 @@ public sealed class JobProcessor(
     public async Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
     {
         var path = Path.GetFullPath(sourcePath);
-        if (!File.Exists(path)) return FailureWithoutJob(ExitCode.ProcessingFailure, $"Source file does not exist: {path}");
+        if (!File.Exists(path)) return FailureWithoutJob(ExitCode.ProcessingFailure, $"Original does not exist: {path}");
 
         var fingerprint = await fingerprints.CreateAsync(path, cancellationToken);
         var job = await jobs.FindOpenBySourceAsync(databasePath, path, cancellationToken);
@@ -40,7 +40,7 @@ public sealed class JobProcessor(
         }
         else if (job.Status == JobStatus.ReadyToFinalize)
         {
-            return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is already ready to finalize.");
+            return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is already ready to finalise.");
         }
         else if (job.Status == JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)
         {
@@ -76,10 +76,10 @@ public sealed class JobProcessor(
         await using var session = sessions.Create(job, settings);
         try
         {
-            if (!force && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return await FailAsync(job, databasePath, "SourceOutsideWatchRoot", "Source file is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure, cancellationToken);
+            if (!force && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return await FailAsync(job, databasePath, "SourceOutsideWatchRoot", "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure, cancellationToken);
             var info = new FileInfo(path);
             var readinessResult = await readiness.CheckAsync(path, cancellationToken);
-            if (!readinessResult.IsReady) return await FailAsync(job, databasePath, "SourceNotReady", $"Source is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure, cancellationToken);
+            if (!readinessResult.IsReady) return await FailAsync(job, databasePath, "SourceNotReady", $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure, cancellationToken);
 
             var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
             if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return await FailAsync(job, databasePath, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles, cancellationToken);
@@ -93,13 +93,13 @@ public sealed class JobProcessor(
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
                 progress?.Report(new CrfSearchOutput("staging", $"Staging: preparing {Path.GetFileName(path)} for remote processing."));
                 await session.StageAsync(path, fingerprint, progress, cancellationToken);
-                progress?.Report(new CrfSearchOutput("staging", "Staging: confirming the local source did not change during upload."));
+                progress?.Report(new CrfSearchOutput("staging", "Staging: confirming the local original did not change during upload."));
                 if (!string.Equals(await fingerprints.CreateAsync(path, cancellationToken), fingerprint, StringComparison.Ordinal))
                 {
                     await session.CleanupAsync(cancellationToken);
-                    return await FailAsync(job, databasePath, "SourceChanged", "Source file changed while it was being uploaded.", ExitCode.ProcessingFailure, cancellationToken);
+                    return await FailAsync(job, databasePath, "SourceChanged", "Original changed while it was being uploaded.", ExitCode.ProcessingFailure, cancellationToken);
                 }
-                progress?.Report(new CrfSearchOutput("staging", "Staging: source is ready on the remote worker."));
+                progress?.Report(new CrfSearchOutput("staging", "Staging: original is ready on the remote worker."));
             }
             if (job.Crf is null)
             {
@@ -163,7 +163,7 @@ public sealed class JobProcessor(
 
             job.Status = JobStatus.ReadyToFinalize;
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is ready to finalize.");
+            return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is ready to finalise.");
         }
         catch (OperationCanceledException)
         {

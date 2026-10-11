@@ -149,7 +149,7 @@ public sealed class FileScanner(
             info.Refresh();
             if (!info.Exists || info.Length != sourceSizeBytes || info.LastWriteTimeUtc.Ticks != sourceLastWriteUtcTicks)
             {
-                return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, "Source changed while probing."), RealProbe: true);
+                return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, "Original changed while probing."), RealProbe: true);
             }
 
             await mediaProbeCache.StoreAsync(

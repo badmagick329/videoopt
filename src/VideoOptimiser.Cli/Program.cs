@@ -233,13 +233,13 @@ internal static class CliApplication
         var sourcePath = Path.GetFullPath(command.ProcessPath!);
         if (!File.Exists(sourcePath))
         {
-            Console.Error.WriteLine($"Source file does not exist: {sourcePath}");
+            Console.Error.WriteLine($"Original does not exist: {sourcePath}");
             return (int)ExitCode.ProcessingFailure;
         }
         if (command.DryRun)
         {
             Console.WriteLine($"Would create a job for: {sourcePath}");
-            Console.WriteLine("Would run CRF search, encode a temporary AV1, then validate it. No source file would be changed.");
+            Console.WriteLine("Would run CRF search, encode a temporary AV1, then validate it. The original would not be changed.");
             return (int)ExitCode.Success;
         }
 
@@ -362,7 +362,7 @@ internal static class CliApplication
         var preparation = await queue.PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, cancellationToken);
         if (preparation.RunnableJobs.Count == 0)
         {
-            Console.WriteLine("Ready to finalize: 0. Failed: {0}.", preparation.FailedJobs.Count);
+            Console.WriteLine("Ready to finalise: 0. Failed: {0}.", preparation.FailedJobs.Count);
             PrintFailedJobs(preparation.FailedJobs);
             return (int)QueueExitCode.Calculate(0, preparation.FailedJobs.Count);
         }
@@ -391,12 +391,12 @@ internal static class CliApplication
         }
 
         var failures = preparation.FailedJobs.Concat(result.FailedJobs).ToArray();
-        Console.WriteLine($"Ready to finalize: {result.ReadyToFinalize}. Failed: {failures.Length}.");
+        Console.WriteLine($"Ready to finalise: {result.ReadyToFinalize}. Failed: {failures.Length}.");
         PrintFailedJobs(failures);
         await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, failures, result.Interrupted, unexpectedFailure: false, processRoute: false, cancellationToken);
         if (!managedWork && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine("Remote server lifecycle is manual: after confirming all expected outputs are ready to finalize, delete the server; powering it off still bills.");
+            Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the server; powering it off still bills.");
         }
         return (int)QueueExitCode.Calculate(result.ReadyToFinalize, failures.Length);
     }
@@ -533,10 +533,10 @@ internal static class CliApplication
         }
 
         var ready = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Where(job => job.Status == JobStatus.ReadyToFinalize).ToArray();
-        if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalize."); return (int)ExitCode.Success; }
+        if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
         foreach (var job in ready) Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
-        Console.Write("Finalize these jobs? [y/N] ");
-        if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalization cancelled."); return (int)ExitCode.Success; }
+        Console.Write("Finalise these jobs? [y/N] ");
+        if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
         var failures = 0;
         foreach (var job in ready)
         {

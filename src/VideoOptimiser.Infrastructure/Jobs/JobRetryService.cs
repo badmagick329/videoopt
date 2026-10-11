@@ -16,7 +16,7 @@ public sealed class JobRetryService(IJobRepository jobs) : IJobRetryService
         var openJob = await jobs.FindOpenBySourceAsync(databasePath, original.SourcePath, cancellationToken);
         if (openJob is not null)
         {
-            return new JobRetryResult(null, $"An open job already exists for this source: {openJob.Id:N} ({openJob.Status}).");
+            return new JobRetryResult(null, $"An open job already exists for this original: {openJob.Id:N} ({openJob.Status}).");
         }
 
         var replacement = new JobRecord

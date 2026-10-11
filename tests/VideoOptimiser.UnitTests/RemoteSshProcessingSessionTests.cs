@@ -167,10 +167,10 @@ public sealed class RemoteSshProcessingSessionTests
 
         await session.StageAsync(source, "fingerprint", progress);
 
-        progress.Messages.Should().Contain(message => message.Contains("hashing local source", StringComparison.Ordinal) && message.Contains("0%", StringComparison.Ordinal));
-        progress.Messages.Should().Contain(message => message.Contains("hashing local source", StringComparison.Ordinal) && message.Contains("100%", StringComparison.Ordinal));
-        progress.Messages.Should().Contain(message => message.Contains("uploading source", StringComparison.Ordinal));
-        progress.Messages.Should().Contain("Staging: verifying the remote source checksum.");
+        progress.Messages.Should().Contain(message => message.Contains("hashing local original", StringComparison.Ordinal) && message.Contains("0%", StringComparison.Ordinal));
+        progress.Messages.Should().Contain(message => message.Contains("hashing local original", StringComparison.Ordinal) && message.Contains("100%", StringComparison.Ordinal));
+        progress.Messages.Should().Contain(message => message.Contains("uploading original", StringComparison.Ordinal));
+        progress.Messages.Should().Contain("Staging: verifying the remote original checksum.");
         Directory.Delete(directory, true);
     }
 
