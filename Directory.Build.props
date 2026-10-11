@@ -10,5 +10,7 @@
     <FileVersion Condition="'$(FileVersion)' == ''">0.0.0.0</FileVersion>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">0.0.0-dev</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- Infrastructure references this package and the CLI embeds its native DLL by path; one version keeps the two in step. -->
+    <SQLitePCLRawLibVersion>2.1.12</SQLitePCLRawLibVersion>
   </PropertyGroup>
 </Project>

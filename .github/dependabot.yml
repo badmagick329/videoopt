@@ -4,7 +4,12 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "chore(deps)"
     groups:
+      # The static generator emits code against the YamlDotNet API, so the two move together, majors included.
+      yamldotnet:
+        patterns: ["YamlDotNet", "Vecc.YamlDotNet.Analyzers.StaticGenerator"]
       nuget-minor-and-patch:
         update-types: [minor, patch]
     ignore:
@@ -12,6 +17,9 @@ updates:
       - dependency-name: "Microsoft.Extensions.*"
         update-types: ["version-update:semver-major"]
       - dependency-name: Microsoft.Data.Sqlite
+        update-types: ["version-update:semver-major"]
+      # The SQLitePCLRaw pin must stay within the major that Microsoft.Data.Sqlite's bundle was built against.
+      - dependency-name: "SQLitePCLRaw.*"
         update-types: ["version-update:semver-major"]
       # FluentAssertions 8 moved to a commercial licence.
       - dependency-name: FluentAssertions
@@ -21,6 +29,8 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "ci"
     groups:
       github-actions:
         patterns: ["*"]

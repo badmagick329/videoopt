@@ -16,7 +16,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="$(NuGetPackageRoot)sqlitepclraw.lib.e_sqlite3\2.1.12\runtimes\win-x64\native\e_sqlite3.dll" LogicalName="VideoOptimiser.Native.e_sqlite3.dll" />
+    <EmbeddedResource Include="$(NuGetPackageRoot)sqlitepclraw.lib.e_sqlite3\$(SQLitePCLRawLibVersion)\runtimes\win-x64\native\e_sqlite3.dll" LogicalName="VideoOptimiser.Native.e_sqlite3.dll" />
   </ItemGroup>
   <Target Name="PrepareSingleFileAotPublish" AfterTargets="Publish">
     <ItemGroup>
