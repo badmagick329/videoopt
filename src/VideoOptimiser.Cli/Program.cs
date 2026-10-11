@@ -144,11 +144,6 @@ internal static class CliApplication
 
         var configurationLoader = services.GetRequiredService<IConfigurationLoader>();
         var configuration = await configurationLoader.LoadAsync(command.ConfigurationPath, cancellationToken);
-        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        if (command.Kind == CliCommandKind.Doctor && lifecycle.IsManaged(configuration.Settings))
-        {
-            _ = await lifecycle.GetAsync(configuration.Settings, configuration.Settings.Database.Path, cancellationToken);
-        }
         return command.Kind switch
         {
             CliCommandKind.ConfigShow => ShowConfiguration(configuration),

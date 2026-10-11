@@ -1,5 +1,6 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Infrastructure.Diagnostics;
@@ -8,7 +9,8 @@ public sealed class DoctorService(
     ISettingsValidator settingsValidator,
     IDatabaseInitializer databaseInitializer,
     IToolVerifier toolVerifier,
-    IRemoteEnvironmentVerifier remoteEnvironmentVerifier) : IDoctorService
+    IRemoteEnvironmentVerifier remoteEnvironmentVerifier,
+    IRemoteWorkerLifecycle remoteWorkerLifecycle) : IDoctorService
 {
     public async Task<DoctorReport> RunAsync(LoadedConfiguration configuration, CancellationToken cancellationToken = default)
     {
@@ -53,7 +55,13 @@ public sealed class DoctorService(
                 $"{result.Name}: {result.Detail}"));
         }
 
-        if (isRemote && toolResults.First(result => result.Name == "ssh").IsAvailable && toolResults.First(result => result.Name == "sftp").IsAvailable)
+        var canCheckRemoteHost = isRemote && toolResults.First(result => result.Name == "ssh").IsAvailable && toolResults.First(result => result.Name == "sftp").IsAvailable;
+        if (remoteWorkerLifecycle.IsManaged(configuration.Settings))
+        {
+            canCheckRemoteHost &= await CheckManagedWorkerAsync(configuration.Settings, diagnostics, cancellationToken);
+        }
+
+        if (canCheckRemoteHost)
         {
             diagnostics.AddRange(await remoteEnvironmentVerifier.VerifyAsync(
                 configuration.Settings.Tools.SshPath,
@@ -62,6 +70,36 @@ public sealed class DoctorService(
         }
 
         return new DoctorReport(diagnostics);
+    }
+
+    /// <summary>
+    /// A managed worker exists only between its creation by a run or <c>worker create</c> and its deletion, so having none is
+    /// the normal state, not a failure. Without one, only the Hetzner token and API access can be checked; with a running one,
+    /// the lookup points the settings at it so the remote host checks run against it. Returns whether such a worker is running.
+    /// </summary>
+    private async Task<bool> CheckManagedWorkerAsync(AppSettings settings, List<Diagnostic> diagnostics, CancellationToken cancellationToken)
+    {
+        RemoteWorkerInfo? worker;
+        try
+        {
+            worker = await remoteWorkerLifecycle.GetAsync(settings, settings.Database.Path, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
+        {
+            diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "HetznerApiUnavailable", $"Hetzner API check failed: {exception.Message}"));
+            return false;
+        }
+
+        diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "HetznerApiAvailable", "Hetzner API accepted the token."));
+        if (worker?.Status == "running") return true;
+
+        var state = worker is null ? "No managed Hetzner worker exists" : $"Managed Hetzner worker {worker.ServerId} is {worker.Status}";
+        diagnostics.Add(new Diagnostic(
+            DiagnosticCategory.Dependency,
+            DiagnosticStatus.Warning,
+            "RemoteHostChecksSkipped",
+            $"{state}, so remote host checks were skipped. Run 'worker create', then doctor, to check one."));
+        return false;
     }
 
     private static async Task CheckDirectoryAsync(string path, string code, bool createIfMissing, List<Diagnostic> diagnostics, CancellationToken cancellationToken)

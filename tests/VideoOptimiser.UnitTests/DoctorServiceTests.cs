@@ -1,6 +1,7 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Diagnostics;
@@ -64,8 +65,78 @@ public sealed class DoctorServiceTests : IDisposable
         remote.WasCalled.Should().BeFalse();
     }
 
-    private static DoctorService CreateDoctor(IToolVerifier verifier, IRemoteEnvironmentVerifier? remote = null) =>
-        new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier());
+    [Fact]
+    public async Task RunAsyncUnderHetznerWithoutAWorkerChecksTheApiAndSkipsHostChecksWithoutFailing()
+    {
+        var settings = CreateHetznerSettings();
+        var remote = new FakeRemoteEnvironmentVerifier();
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), remote, new FakeRemoteWorkerLifecycle(worker: null)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.Success);
+        report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Status == DiagnosticStatus.Fail);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "HetznerApiAvailable" && diagnostic.Status == DiagnosticStatus.Pass);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "RemoteHostChecksSkipped" && diagnostic.Status == DiagnosticStatus.Warning);
+        remote.WasCalled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunAsyncUnderHetznerChecksTheRunningWorker()
+    {
+        var settings = CreateHetznerSettings();
+        var remote = new FakeRemoteEnvironmentVerifier();
+        var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "running", null);
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), remote, new FakeRemoteWorkerLifecycle(worker)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.Success);
+        remote.CheckedHost.Should().Be("203.0.113.7");
+        report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Code == "RemoteHostChecksSkipped");
+    }
+
+    [Fact]
+    public async Task RunAsyncUnderHetznerFailsWhenTheApiCheckFails()
+    {
+        var settings = CreateHetznerSettings();
+        var remote = new FakeRemoteEnvironmentVerifier();
+        var lifecycle = new FakeRemoteWorkerLifecycle(worker: null, failure: new InvalidOperationException("Hetzner API token 'VIDEO_OPTIMISER_HETZNER_TOKEN' was not found."));
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), remote, lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "HetznerApiUnavailable" && diagnostic.Message.Contains("was not found"));
+        remote.WasCalled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunAsyncUnderManualLifecycleStillFailsWithoutAHost()
+    {
+        var settings = CreateSettings();
+        settings.Processing.Mode = ProcessingModes.RemoteSsh;
+
+        var report = await CreateDoctor(new FakeToolVerifier(true)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.InvalidConfiguration);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "RemoteHostRequired" && diagnostic.Status == DiagnosticStatus.Fail);
+    }
+
+    private static DoctorService CreateDoctor(IToolVerifier verifier, IRemoteEnvironmentVerifier? remote = null, IRemoteWorkerLifecycle? lifecycle = null) =>
+        new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier(), lifecycle ?? new FakeRemoteWorkerLifecycle(worker: null));
+
+    private AppSettings CreateHetznerSettings()
+    {
+        var settings = CreateSettings();
+        var identityFile = Path.Combine(_directory, "id_ed25519");
+        var bootstrapScript = Path.Combine(_directory, "bootstrap.sh");
+        File.WriteAllText(identityFile, "key");
+        File.WriteAllText(bootstrapScript, "#!/bin/sh");
+        settings.Processing.Mode = ProcessingModes.RemoteSsh;
+        settings.Processing.RemoteSsh.Lifecycle = RemoteLifecycleModes.Hetzner;
+        settings.Processing.RemoteSsh.IdentityFile = identityFile;
+        settings.Processing.RemoteSsh.Hetzner.SshKeyName = "video-optimiser";
+        settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath = bootstrapScript;
+        return settings;
+    }
 
     private AppSettings CreateSettings()
     {
@@ -108,16 +179,37 @@ public sealed class DoctorServiceTests : IDisposable
 
     private sealed class FakeRemoteEnvironmentVerifier : IRemoteEnvironmentVerifier
     {
-        public bool WasCalled { get; private set; }
+        public bool WasCalled => CheckedHost is not null;
+        public string? CheckedHost { get; private set; }
 
         public Task<IReadOnlyList<Diagnostic>> VerifyAsync(string sshPath, RemoteSshSettings settings, CancellationToken cancellationToken = default)
         {
-            WasCalled = true;
+            CheckedHost = settings.Host;
             IReadOnlyList<Diagnostic> diagnostics =
             [
                 new(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "RemoteSshAvailable", "SSH succeeded.")
             ];
             return Task.FromResult(diagnostics);
         }
+    }
+
+    private sealed class FakeRemoteWorkerLifecycle(RemoteWorkerInfo? worker, Exception? failure = null) : IRemoteWorkerLifecycle
+    {
+        public bool IsManaged(AppSettings settings) =>
+            settings.Processing.Mode == ProcessingModes.RemoteSsh && settings.Processing.RemoteSsh.Lifecycle == RemoteLifecycleModes.Hetzner;
+
+        public Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
+        {
+            if (failure is not null) throw failure;
+            // Mirrors the real lifecycle, which points the settings at a live worker.
+            if (worker is not null) settings.Processing.RemoteSsh.Host = worker.Address;
+            return Task.FromResult(worker);
+        }
+
+        public Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }
