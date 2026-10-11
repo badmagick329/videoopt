@@ -134,3 +134,10 @@ Build and smoke-test the self-contained Windows executable:
 The output is `artifacts\local\video-optimiser.exe`. When following commands in this README from a source checkout, replace `.\video-optimiser.exe` with `.\artifacts\local\video-optimiser.exe`.
 
 For a faster development run without publishing, use `dotnet run --project src/VideoOptimiser.Cli -- <arguments>`.
+
+CI also runs an end-to-end test that encodes, validates and finalises generated clips with pinned ab-av1 and FFmpeg builds. To run it locally, put the pinned tools on `PATH` first:
+
+```powershell
+$env:PATH = ((.\scripts\install-media-tools.ps1 -Destination .\artifacts\media-tools) -join ';') + ";$env:PATH"
+.\scripts\e2e-test.ps1 -Executable .\artifacts\local\video-optimiser.exe
+```
