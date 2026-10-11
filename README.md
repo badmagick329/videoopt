@@ -7,7 +7,7 @@ Windows CLI for safely converting selected videos to AV1.
 - Windows 11
 - `ab-av1`, `ffmpeg`, and `ffprobe` on `PATH` or configured explicitly
 
-For source builds, install the .NET SDK 9 and run `scripts\build.ps1`. It creates a self-contained Native AOT executable at `artifacts\local\video-optimiser.exe`. The portable release is one self-contained EXE and still requires the three media tools above.
+For source builds, install the .NET 10 SDK and run `scripts\build.ps1`. It creates a self-contained Native AOT executable at `artifacts\local\video-optimiser.exe`. The portable release is one self-contained EXE and still requires the three media tools above.
 
 ## Quick start
 

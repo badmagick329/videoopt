@@ -51,7 +51,7 @@ For CI or a temporary override, an existing `VIDEO_OPTIMISER_HETZNER_TOKEN` envi
 
 ## 3. Build the Windows controller
 
-Install the .NET 9 SDK, then run this from the repository root:
+Install the .NET 10 SDK, then run this from the repository root:
 
 ```powershell
 .\scripts\build.ps1

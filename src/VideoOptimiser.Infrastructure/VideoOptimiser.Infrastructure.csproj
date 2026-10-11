@@ -4,7 +4,7 @@
     <ProjectReference Include="..\VideoOptimiser.Application\VideoOptimiser.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="$(SQLitePCLRawLibVersion)" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
