@@ -138,6 +138,36 @@ public interface IImmichDiscoveryService
 }
 
 /// <summary>
+/// An asset holding a converted original's checksum, as the user would look for it on the phone: the file name and the
+/// capture time Immich shows, in the asset's local time.
+/// </summary>
+public sealed record ImmichReuploadHit(Guid JobId, string AssetId, string OriginalFileName, DateTime TakenLocal);
+
+/// <summary>An asset Immich's upload check named that the guard left alone because the asset itself did not confirm the match.</summary>
+public sealed record ImmichReuploadIssue(Guid JobId, string AssetId, string Reason);
+
+/// <summary>
+/// What one re-upload guard run did. <see cref="Trashed"/> are originals the phone uploaded again after conversion, now back
+/// in Immich's trash; the user still has to delete them from the phone. <see cref="Restored"/> are originals the user took
+/// back out of the trash, so both versions exist; the guard never trashes these.
+/// </summary>
+public sealed record ImmichReuploadGuardResult(
+    int Checked,
+    IReadOnlyList<ImmichReuploadHit> Trashed,
+    IReadOnlyList<ImmichReuploadHit> Restored,
+    IReadOnlyList<ImmichReuploadIssue> Issues);
+
+public interface IImmichReuploadGuard
+{
+    /// <summary>
+    /// Asks Immich about the checksum of every converted original and trashes each live asset that holds one under a new ID.
+    /// Runs before discovery in every <c>immich run</c>. <paramref name="progress"/> hears each hit and issue as it is found,
+    /// so they reach the user even when a later error ends the guard.
+    /// </summary>
+    Task<ImmichReuploadGuardResult> CheckAsync(string databasePath, AppSettings settings, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// An Immich request that failed, with a message that says what to fix. <see cref="Code"/> is the diagnostic code doctor
 /// reports. The message names the key's environment variable, never the key.
 /// </summary>

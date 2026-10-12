@@ -119,6 +119,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<IJobProcessor, JobProcessor>();
         builder.Services.AddSingleton<IQueueService, QueueService>();
         builder.Services.AddSingleton<IImmichDiscoveryService>(services => new ImmichDiscoveryService(services.GetRequiredService<IImmichClientFactory>(), services.GetRequiredService<IJobRepository>(), services.GetRequiredService<Func<string, IMediaProbe>>(), services.GetRequiredService<IFileFingerprintService>()));
+        builder.Services.AddSingleton<IImmichReuploadGuard>(services => new ImmichReuploadGuard(services.GetRequiredService<IImmichClientFactory>(), services.GetRequiredService<IJobRepository>()));
         builder.Services.AddSingleton<IJobRetryService, JobRetryService>();
         builder.Services.AddSingleton<ITemporaryOutputCleanupService, TemporaryOutputCleanupService>();
         builder.Services.AddSingleton<IFinalizationService, FinalizationService>();
