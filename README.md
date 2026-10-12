@@ -100,6 +100,8 @@ When one video works, drop `--first` to queue everything that matches your rules
 
 In both remote modes, validation, review and finalisation still happen on your PC. Setup for both is in [docs/remote-ssh.md](docs/remote-ssh.md).
 
+To use the other mode for one run, add `--local` or `--remote` to `queue run`, `process` or `immich run`. The config file stays as it is. A video already started in the other mode is skipped, and the next run without the flag resumes it.
+
 ## Immich
 
 VideoOptimiser can also convert old videos in your Immich library. Each AV1 is uploaded as a new asset carrying over the original's albums, tags, favourite, description and rating, and the original goes to Immich's trash.
@@ -156,8 +158,8 @@ All commands take `--config <path>`.
 | `config validate`, `config show` | Check the config, or print its path and contents. |
 | `doctor` | Check the config, tools, database, disk space, and any Immich server or remote worker. |
 | `queue discover [--first]` | Scan the watch folders and queue matching videos. `--first` queues one. |
-| `queue run` | Convert every queued video. Stops before replacing anything. |
-| `process <file> [--force]` | Convert one file now. `--force` skips the rules and the watch-folder check. |
+| `queue run [--local \| --remote]` | Convert every queued video. Stops before replacing anything. `--local` or `--remote` picks where encoding runs, for this run only. |
+| `process <file> [--force] [--local \| --remote]` | Convert one file now. `--force` skips the rules and the watch-folder check. |
 | `status`, `history` | Open jobs, and finished jobs. Add `--json` for scripts. |
 | `queue list [--json]` | Open jobs only. |
 | `queue cancel <job-id>`, `queue cancel --all` | Cancel one job, or every queued and interrupted job. |
@@ -165,7 +167,7 @@ All commands take `--config <path>`.
 | `validate <job-id>` | Re-run the checks on a job's output. |
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one after a single confirmation. |
 | `cleanup [--dry-run]` | Delete temporary files no job will use again. |
-| `immich run [--first]`, `immich finalize` | The same flow for an Immich library. See [docs/immich.md](docs/immich.md). |
+| `immich run [--first] [--local \| --remote]`, `immich finalize` | The same flow for an Immich library. See [docs/immich.md](docs/immich.md). |
 | `worker create`, `worker status`, `worker delete` | Manage the Hetzner server by hand. Normally the run does this. |
 | `version` | Print the version. |
 

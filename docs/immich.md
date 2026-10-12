@@ -66,13 +66,13 @@ Do this first, so every video you convert has already left the phone.
 
 ### 2. Convert
 
-Start with one video:
+Start with one video, encoded on this PC whatever `processing.mode` says, so the first round costs nothing:
 
 ```powershell
-.\video-optimiser.exe immich run --first --config .\video-optimiser.yaml
+.\video-optimiser.exe immich run --first --local --config .\video-optimiser.yaml
 ```
 
-Then drop `--first` to convert everything that matches. `immich run`:
+Then drop `--first` to convert everything that matches, and drop `--local` to encode where the config says. `--remote` does the opposite for one run. `immich run`:
 
 1. Prints where encoding runs, such as `Encoding on: this PC.`, before downloading anything.
 2. Runs the [re-upload guard](#the-re-upload-guard).

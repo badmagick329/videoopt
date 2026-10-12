@@ -11,6 +11,7 @@
 - In local mode, `doctor` checks that ab-av1 is 0.11.7 or newer and that FFmpeg has the libsvtav1 encoder, the libvmaf filter and the 10-bit `yuv420p10le` format. In both modes it checks that FFmpeg can decode AV1 with libdav1d, which validation's decode test needs, unless `validation.decodeTest` is `none`.
 - [docs/immich.md](docs/immich.md) explains Immich setup and each round. [docs/agent-guide.md](docs/agent-guide.md) tells an AI agent how to run VideoOptimiser for a user, including which commands need the user's go-ahead.
 - The release zip includes `docs/`, `.env.example` and `scripts/bootstrap-remote-worker.sh`, so managed Hetzner processing works from a release download.
+- `--local` and `--remote` on `queue run`, `process` and `immich run` set `processing.mode` for one run, without editing the config; the `Encoding on:` line ends with `(from --local)` or `(from --remote)`. A job started in the other mode is skipped, printed as `Skipped <file>: started on ...`, and resumed by the next run without the flag; it does not count as a failure. Both flags together, or either on another command, exit `2`.
 - `queue run`, `process` and `immich run` first print where encoding runs, before any download or encoding: `Encoding on: this PC.`, the SSH target, a Hetzner server still running from an earlier run, or `a Hetzner server created for this run, billed hourly (tries cx43, cx53, cpx42, ccx33; max EUR 0.30/h).` `doctor` reports the same line as `EncodingLocation` in a new `Processing` category.
 
 ### Changed

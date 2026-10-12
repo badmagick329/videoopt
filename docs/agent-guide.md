@@ -28,6 +28,8 @@ Gate it with the run's own quote:
 
 A run that reuses a running server never asks; it is already billing.
 
+`--local` and `--remote` on `queue run`, `process` and `immich run` set the mode for that run only. `--remote` on a Hetzner config is gated as above. `--local` encodes on this PC and needs no gate; use it when the user wants a free trial run on a remote config. Never edit `processing.mode` to switch for one run.
+
 **Where encoding runs.** Take the encoding location from VideoOptimiser, not from your reading of the config. `doctor` reports it as `EncodingLocation` under `Processing`, and `queue run`, `process` and `immich run` print the same `Encoding on: ...` line first, before any download or encoding. Quote it at the paid-encoding gate. If a run's line differs from what the user expects, stop the run before its next line.
 
 **Prompts.** `finalize --ready`, `immich finalize` and `cleanup` ask `[y/N]` on standard input, as do `queue run`, `process`, `immich run` and `worker create` when they would create a Hetzner server. After the user approves, pipe the answer: `'y' | video-optimiser finalize --ready`. With no input, the command cancels and exits `0`. `finalize <job-id>` does not prompt, so gate it all the same. With redirected input, a failed Hetzner run never asks whether to delete the worker; it keeps it.
@@ -65,6 +67,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 
 | What you see | Meaning | Action |
 | --- | --- | --- |
+| A `Skipped <file>: started on ...` line | The job started in the other mode, and `--local` or `--remote` chose this one | Nothing is lost. Run the command without the flag to resume it; a remote resume is gated as paid encoding. |
 | `Interrupted` | Stopped by `Ctrl+C`, a crash or a lost connection | Run the same command again (`queue run`, `immich run` or `process`). It resumes. |
 | `RemoteUnavailable` | The remote worker could not be reached | Run the command again. A Hetzner worker is kept for the resume. |
 | `ValidationFailed` | The AV1 failed a check, usually too little saving | Report it. The original stays as it is, and discovery won't queue it again until the file changes. |

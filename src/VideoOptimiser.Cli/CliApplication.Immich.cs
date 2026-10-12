@@ -12,11 +12,11 @@ using VideoOptimiser.Infrastructure.Jobs;
 /// </summary>
 internal static partial class CliApplication
 {
-    private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, bool first, CancellationToken cancellationToken)
+    private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, bool first, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
     {
         if (!RequireImmich(configuration) || ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
         // Discovery downloads originals, so the banner comes first.
-        await PrintRunBannerAsync(services, configuration, cancellationToken);
+        await PrintRunBannerAsync(services, configuration, modeOverride, cancellationToken);
         var settings = configuration.Settings;
         // Guard reports are printed as they arrive and kept: when a later error ends the run, the next run sees the trashed
         // re-uploads as trashed and stays silent, so this run is the only one that can tell the user to delete them.
@@ -36,7 +36,7 @@ internal static partial class CliApplication
         ImmichRunPreparation preparation;
         try
         {
-            preparation = await services.GetRequiredService<IImmichRunService>().PrepareAsync(settings.Database.Path, settings, first, guardProgress, discoveryProgress, cancellationToken);
+            preparation = await services.GetRequiredService<IImmichRunService>().PrepareAsync(settings.Database.Path, settings, first, guardProgress, discoveryProgress, modeOverridden: modeOverride is not null, cancellationToken);
         }
         catch when (guardReports.Count > 0)
         {

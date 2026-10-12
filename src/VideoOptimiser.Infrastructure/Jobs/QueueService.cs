@@ -115,7 +115,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         return settled;
     }
 
-    public async Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind sourceKind, CancellationToken cancellationToken = default)
+    public async Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind sourceKind, bool modeOverridden = false, CancellationToken cancellationToken = default)
     {
         await jobs.MarkActiveJobsInterruptedAsync(databasePath, cancellationToken);
         var candidates = (await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
@@ -124,6 +124,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             .ToArray();
         var runnable = new List<JobRecord>();
         var failed = new List<FailedQueueJob>();
+        var skipped = new List<JobRecord>();
         foreach (var job in candidates)
         {
             if (FinalizationService.IsInterruptedImmichFinalization(job))
@@ -151,6 +152,11 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
                 JobCompatibility.Apply(job, compatibility.ExpectedBinding);
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
             }
+            else if (modeOverridden && JobCompatibility.IsBoundToOtherMode(job, compatibility))
+            {
+                skipped.Add(job);
+                continue;
+            }
             else if (compatibility.Status == JobCompatibilityStatus.Incompatible)
             {
                 job.Status = JobStatus.Failed;
@@ -165,7 +171,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             runnable.Add(job);
         }
 
-        return new QueuePreparationResult(runnable, failed);
+        return new QueuePreparationResult(runnable, failed, skipped);
     }
 
     public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)

@@ -152,6 +152,113 @@ public sealed class JobCompatibilityTests : IDisposable
         (await repository.GetAsync(settings.Database.Path, job.Id))!.RemoteWorkspace.Should().Be($"/var/tmp/video-optimiser/{job.Id:N}");
     }
 
+    [Fact]
+    public async Task LocalOverrideSkipsAStartedRemoteJobAndTheNextRunWithoutItResumesIt()
+    {
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = ManagedSettings();
+        settings.Database.Path = Path.Combine(_directory, "jobs.db");
+        var id = Guid.NewGuid();
+        var job = new JobRecord
+        {
+            Id = id,
+            SourcePath = Path.Combine(_directory, "movie.mp4"),
+            SourceFingerprint = "source",
+            Status = JobStatus.Interrupted,
+            ResumeStatus = JobStatus.Encoding,
+            Crf = 30,
+            Attempt = 1,
+            ExecutionMode = ProcessingModes.RemoteSsh,
+            RemoteHost = RemoteExecutionIdentity.ManagedHetzner,
+            RemoteWorkspace = $"/var/tmp/video-optimiser/{id:N}"
+        };
+        await repository.CreateAsync(settings.Database.Path, job);
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
+        var localRun = ManagedSettings();
+        localRun.Database.Path = settings.Database.Path;
+        ProcessingModeOverride.Local.Apply(localRun);
+
+        var skipped = await queue.PrepareAsync(settings.Database.Path, localRun, JobSourceKind.File, modeOverridden: true);
+
+        skipped.RunnableJobs.Should().BeEmpty();
+        skipped.FailedJobs.Should().BeEmpty();
+        JobCompatibility.SkippedMessage(skipped.SkippedJobs.Should().ContainSingle().Subject)
+            .Should().Be("Skipped movie.mp4: started on a managed Hetzner server; run without --local/--remote to resume it.");
+        (await repository.GetAsync(settings.Database.Path, id)).Should().Match<JobRecord>(stored =>
+            stored.Status == JobStatus.Interrupted && stored.ExecutionMode == ProcessingModes.RemoteSsh && stored.FailureCategory == null);
+
+        var resumed = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
+
+        resumed.RunnableJobs.Should().ContainSingle().Which.Id.Should().Be(id);
+        resumed.SkippedJobs.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task OverrideStillFailsAStartedJobWhoseRemoteHostChanged()
+    {
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = ManagedSettings();
+        settings.Database.Path = Path.Combine(_directory, "jobs.db");
+        ProcessingModeOverride.Remote.Apply(settings);
+        var job = new JobRecord
+        {
+            Id = Guid.NewGuid(),
+            SourcePath = Path.Combine(_directory, "movie.mp4"),
+            SourceFingerprint = "source",
+            Status = JobStatus.Interrupted,
+            ResumeStatus = JobStatus.Encoding,
+            Crf = 30,
+            Attempt = 1,
+            ExecutionMode = ProcessingModes.RemoteSsh,
+            RemoteHost = "old-box",
+            RemoteWorkspace = "/var/tmp/video-optimiser/old"
+        };
+        await repository.CreateAsync(settings.Database.Path, job);
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
+
+        var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File, modeOverridden: true);
+
+        result.SkippedJobs.Should().BeEmpty();
+        result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be(JobCompatibility.RemoteConfigurationChangedCategory);
+    }
+
+    [Theory]
+    [InlineData("--local", ProcessingModes.RemoteSsh)]
+    [InlineData("--remote", ProcessingModes.Local)]
+    public async Task OverrideAdoptsANeverStartedJobIntoItsMode(string flag, string boundMode)
+    {
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var modeOverride = flag == "--local" ? ProcessingModeOverride.Local : ProcessingModeOverride.Remote;
+        var settings = ManagedSettings();
+        settings.Database.Path = Path.Combine(_directory, "jobs.db");
+        modeOverride.Apply(settings);
+        var job = new JobRecord
+        {
+            Id = Guid.NewGuid(),
+            SourcePath = Path.Combine(_directory, "movie.mp4"),
+            SourceFingerprint = "source",
+            Status = JobStatus.Queued,
+            ExecutionMode = boundMode,
+            RemoteHost = boundMode == ProcessingModes.RemoteSsh ? RemoteExecutionIdentity.ManagedHetzner : null
+        };
+        await repository.CreateAsync(settings.Database.Path, job);
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
+
+        var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File, modeOverridden: true);
+
+        result.SkippedJobs.Should().BeEmpty();
+        result.RunnableJobs.Should().ContainSingle().Which.ExecutionMode.Should().Be(modeOverride.Mode);
+        (await repository.GetAsync(settings.Database.Path, job.Id))!.ExecutionMode.Should().Be(modeOverride.Mode);
+    }
+
+    [Theory]
+    [InlineData(ProcessingModes.Local, null, "this PC")]
+    [InlineData(ProcessingModes.RemoteSsh, "hetzner:cx43:hel1", "a managed Hetzner server")]
+    [InlineData(ProcessingModes.RemoteSsh, "encoder", "encoder over SSH")]
+    public void SkippedMessageNamesWhereTheJobStarted(string mode, string? host, string binding) =>
+        JobCompatibility.SkippedMessage(new JobRecord { SourcePath = Path.Combine(_directory, "clip.mov"), ExecutionMode = mode, RemoteHost = host })
+            .Should().Be($"Skipped clip.mov: started on {binding}; run without --local/--remote to resume it.");
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

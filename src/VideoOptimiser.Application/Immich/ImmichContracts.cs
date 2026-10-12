@@ -179,7 +179,7 @@ public interface IImmichRunService
     /// Runs the re-upload guard, then Immich discovery, then prepares the open Immich jobs for processing. Processing is left
     /// to the caller, which owns the remote worker's lifecycle.
     /// </summary>
-    Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? guardProgress = null, IProgress<ScanProgress>? discoveryProgress = null, CancellationToken cancellationToken = default);
+    Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? guardProgress = null, IProgress<ScanProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -25,6 +25,15 @@ public sealed class SettingsValidatorTests
     }
 
     [Fact]
+    public void RemoteOverrideOnAConfigWithoutARemoteSshBlockIsInvalid()
+    {
+        var settings = CreateValidSettings();
+        ProcessingModeOverride.Remote.Apply(settings);
+
+        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("RemoteHostRequired");
+    }
+
+    [Fact]
     public void ValidateCompleteSettingsIsValid()
     {
         var settings = CreateValidSettings();

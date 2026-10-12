@@ -36,6 +36,25 @@ public static class JobCompatibility
             : new JobCompatibilityResult(JobCompatibilityStatus.Incompatible, expected, RemoteConfigurationChangedMessage);
     }
 
+    /// <summary>
+    /// A started job that the current processing mode cannot resume because it ran in the other mode. Under <c>--local</c> or
+    /// <c>--remote</c> such a job is skipped rather than failed: the override lasts one run, and failing the job would throw away
+    /// its CRF search or a retained worker's encode. A started job in the same mode on a changed host or workspace is a real
+    /// configuration change and still fails. A job past processing, such as one ready to finalise, is not waiting to resume.
+    /// </summary>
+    public static bool IsBoundToOtherMode(JobRecord job, JobCompatibilityResult result) =>
+        job.Status is JobStatus.Queued or JobStatus.Interrupted &&
+        result.Status == JobCompatibilityStatus.Incompatible &&
+        !string.Equals(job.ExecutionMode, result.ExpectedBinding.ExecutionMode, StringComparison.OrdinalIgnoreCase);
+
+    public static string SkippedMessage(JobRecord job) =>
+        $"Skipped {Path.GetFileName(job.SourcePath)}: started on {DescribeBinding(job)}; run without --local/--remote to resume it.";
+
+    private static string DescribeBinding(JobRecord job) =>
+        !string.Equals(job.ExecutionMode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase) ? "this PC"
+        : RemoteExecutionIdentity.IsManagedHetzner(job.RemoteHost) ? "a managed Hetzner server"
+        : $"{job.RemoteHost} over SSH";
+
     public static JobExecutionBinding ExpectedBinding(Guid jobId, AppSettings settings)
     {
         if (!string.Equals(settings.Processing.Mode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))

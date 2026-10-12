@@ -11,11 +11,11 @@ namespace VideoOptimiser.Infrastructure.Immich;
 /// </summary>
 public sealed class ImmichRunService(IImmichReuploadGuard guard, IImmichDiscoveryService discovery, IQueueService queue) : IImmichRunService
 {
-    public async Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? guardProgress = null, IProgress<ScanProgress>? discoveryProgress = null, CancellationToken cancellationToken = default)
+    public async Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? guardProgress = null, IProgress<ScanProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
     {
         var guarded = await guard.CheckAsync(databasePath, settings, guardProgress, cancellationToken);
         var discovered = await discovery.DiscoverAsync(databasePath, settings, first, discoveryProgress, cancellationToken);
-        var prepared = await queue.PrepareAsync(databasePath, settings, JobSourceKind.Immich, cancellationToken);
+        var prepared = await queue.PrepareAsync(databasePath, settings, JobSourceKind.Immich, modeOverridden, cancellationToken);
         // --first is the cautious first round: one job is processed and then finalised, however many were already open.
         if (first && prepared.RunnableJobs.Count > 1) prepared = prepared with { RunnableJobs = prepared.RunnableJobs.Take(1).ToArray() };
         return new ImmichRunPreparation(guarded, discovered, prepared);

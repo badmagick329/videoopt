@@ -93,7 +93,10 @@ public static class RemoteExecutionIdentity
 
     public static bool Matches(string? stored, string? expected) =>
         string.Equals(stored, expected, StringComparison.Ordinal) ||
-        (expected == ManagedHetzner && stored is not null && stored.StartsWith(LegacyManagedHetznerPrefix, StringComparison.Ordinal));
+        (expected == ManagedHetzner && IsManagedHetzner(stored));
+
+    public static bool IsManagedHetzner(string? stored) =>
+        stored is not null && stored.StartsWith(LegacyManagedHetznerPrefix, StringComparison.Ordinal);
 }
 
 public static class ProcessingModes

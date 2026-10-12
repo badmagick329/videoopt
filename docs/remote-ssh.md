@@ -219,7 +219,7 @@ The delete command verifies the exact server ID and ownership labels. It refuses
 
 ## Failed jobs and retained workers
 
-Before creating a managed worker, `queue run` checks each queued or resumable job against the current processing mode, remote identity, and deterministic workspace. A never-started queued job adopts the current configuration. A partially processed or interrupted job with a different configuration fails before provisioning.
+Before creating a managed worker, `queue run` checks each queued or resumable job against the current processing mode, remote identity, and deterministic workspace. A never-started queued job adopts the current configuration. A partially processed or interrupted job with a different configuration fails before provisioning. Under `--local` or `--remote`, which set the mode for one run, a job started in the other mode is skipped instead and printed as `Skipped <file>: started on ...`; the next run without the flag resumes it.
 
 When `deleteAfterRun` is enabled, the worker is deleted only if every attempted job completes cleanly. Failures and interruptions retain the worker. Failed interactive runs offer an explicit deletion prompt. Redirected or unavailable standard input retains the worker without prompting.
 
