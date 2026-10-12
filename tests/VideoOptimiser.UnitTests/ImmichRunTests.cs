@@ -105,7 +105,7 @@ public sealed class ImmichRunTests : IDisposable
 
         var preparation = await _run.PrepareAsync(_settings.Database.Path, _settings, first: true);
 
-        preparation.Discovery.Queued.Should().ContainSingle();
+        preparation.Discovery.Queued.Should().BeEmpty("an open job is already the one video in flight");
         preparation.Queue.RunnableJobs.Should().ContainSingle();
     }
 

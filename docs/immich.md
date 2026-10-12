@@ -79,7 +79,7 @@ Then drop `--first` to convert everything that matches. `immich run`:
 3. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it.
 4. Converts the queue on your PC or remote worker, exactly like `queue run`.
 
-Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes.
+Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes. If a `--first` run stops before converting, run it again: it converts the video it already downloaded and downloads no other.
 
 ### 3. Review
 

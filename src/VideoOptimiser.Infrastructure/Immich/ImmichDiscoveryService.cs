@@ -37,7 +37,8 @@ public sealed class ImmichDiscoveryService(
         var seen = new HashSet<string>(StringComparer.Ordinal);
         await foreach (var asset in client.SearchVideosAsync(cutoff, includeFavorites: !settings.Immich.SkipFavorites, cancellationToken))
         {
-            if (first && queued.Count > 0) break;
+            // --first means one video in flight: a rerun after a failed start resumes that video rather than adding a second.
+            if (first && queued.Count + alreadyQueued > 0) break;
             if (!seen.Add(asset.Id)) continue;
 
             if (Exclusion(asset, cutoff, settings.Immich.SkipFavorites) is { } exclusion)

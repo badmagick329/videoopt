@@ -274,6 +274,20 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FirstQueuesNothingNewWhileAVideoIsAlreadyQueued()
+    {
+        var open = _immich.Add("open.mp4", "hevc open");
+        _immich.Add("next.mp4", "hevc next");
+        await CreateJobAsync(open, JobStatus.Queued);
+
+        var result = await DiscoverAsync(first: true);
+
+        result.Queued.Should().BeEmpty();
+        result.AlreadyQueued.Should().Be(1);
+        _immich.Downloads.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ADownloadThatDoesNotMatchItsChecksumIsAnIssue()
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
