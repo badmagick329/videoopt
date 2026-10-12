@@ -80,7 +80,7 @@ internal static partial class CliApplication
         catch (ImmichApiException exception)
         {
             Console.Error.WriteLine(exception.Message);
-            return exception.Code is "ImmichApiKeyMissing" or "ImmichApiKeyRejected" or "ImmichPermissionMissing"
+            return exception.Code is "ImmichApiKeyMissing" or "ImmichApiKeyRejected" or "ImmichPermissionMissing" or ImmichTrash.DisabledCode
                 ? (int)ExitCode.InvalidConfiguration
                 : (int)ExitCode.ProcessingFailure;
         }

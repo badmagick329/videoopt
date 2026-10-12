@@ -39,6 +39,7 @@ public sealed class ImmichHttpClient : IImmichClient
     private readonly TimeSpan _requestTimeout;
     private readonly TimeSpan _idleTimeout;
     private string? _apiKey;
+    private ImmichTrashSettings? _trash;
 
     public ImmichHttpClient(HttpClient http, ImmichSettings settings)
         : this(http, settings, requestTimeout: TimeSpan.FromSeconds(100), idleTimeout: TimeSpan.FromMinutes(5))
@@ -69,6 +70,15 @@ public sealed class ImmichHttpClient : IImmichClient
     {
         var user = await SendJsonAsync(HttpMethod.Get, "users/me", null, "user.read", Json.UserDto, cancellationToken);
         return new ImmichUser(user.Id, user.Name);
+    }
+
+    public async Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        if (_trash is not null) return _trash;
+        // Both endpoints are public: the web client reads them before login.
+        var features = await SendJsonAsync(HttpMethod.Get, "server/features", null, permission: null, Json.ServerFeaturesDto, cancellationToken);
+        var config = await SendJsonAsync(HttpMethod.Get, "server/config", null, permission: null, Json.ServerConfigDto, cancellationToken);
+        return _trash = new ImmichTrashSettings(features.Trash, config.TrashDays);
     }
 
     public async IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -210,10 +220,12 @@ public sealed class ImmichHttpClient : IImmichClient
         return SendNoContentAsync(HttpMethod.Put, "tags/assets", JsonContent.Create(request, Json.TagAssetsRequest), "tag.asset", cancellationToken);
     }
 
-    public Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default)
+    public async Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default)
     {
+        // Checked here as well as at the start of each run, so no caller can trash while trashing would purge.
+        await ImmichTrash.RequireOnAsync(this, cancellationToken);
         var request = new AssetDeleteRequest { Ids = assetIds, Force = false };
-        return SendNoContentAsync(HttpMethod.Delete, "assets", JsonContent.Create(request, Json.AssetDeleteRequest), "asset.delete", cancellationToken);
+        await SendNoContentAsync(HttpMethod.Delete, "assets", JsonContent.Create(request, Json.AssetDeleteRequest), "asset.delete", cancellationToken);
     }
 
     public async Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default)

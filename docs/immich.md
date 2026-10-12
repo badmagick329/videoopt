@@ -104,6 +104,7 @@ If it stops partway, run it again: it continues where it left off. Until step 3,
 
 ## What you should know
 
+- **Immich's trash must stay on.** VideoOptimiser never deletes from Immich; it moves originals to the trash, which is your undo. With the trash off, Immich would delete them for good, so `doctor` fails and `immich run` and `immich finalize` stop with exit code 3 until you turn it back on under **Administration → Settings → Trash Settings**. `doctor` warns when the trash keeps videos for fewer than 7 days.
 - **Space comes back later.** Immich keeps trashed originals until it purges its trash (30 days by default, set in Immich's server settings). Offsite backups of Immich keep them until their own retention removes them.
 - **Not carried over:** face names, comments and likes in shared albums, and memories. Immich detects faces again on the new asset.
 - **Changing `eligibility.rules`** makes every earlier "ineligible" decision stale, so each of those videos is downloaded once more on the next run.

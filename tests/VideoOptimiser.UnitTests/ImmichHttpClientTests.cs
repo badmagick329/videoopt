@@ -115,7 +115,7 @@ public sealed class ImmichHttpClientTests : IDisposable
     [InlineData("check", "asset.upload")]
     public async Task AForbiddenCallNamesThePermissionItNeeds(string operation, string permission)
     {
-        var client = CreateClient(FakeHandler.Json(HttpStatusCode.Forbidden, """{"message":"Forbidden"}"""));
+        var client = CreateClient(FakeHandler.WithTrash(true, 30, _ => FakeHandler.JsonResponse(HttpStatusCode.Forbidden, """{"message":"Forbidden"}""")));
         var upload = await WriteFileAsync("upload.mp4", "av1");
 
         Func<Task> call = operation switch
@@ -139,7 +139,7 @@ public sealed class ImmichHttpClientTests : IDisposable
     [Fact]
     public async Task ARequestFailureIncludesImmichsValidationMessages()
     {
-        var handler = FakeHandler.Json(HttpStatusCode.BadRequest, """{"message":["ids must be an array","force must be a boolean"],"statusCode":400}""");
+        var handler = FakeHandler.WithTrash(true, 30, _ => FakeHandler.JsonResponse(HttpStatusCode.BadRequest, """{"message":["ids must be an array","force must be a boolean"],"statusCode":400}"""));
 
         var call = () => CreateClient(handler).TrashAsync(["asset-1"]);
 
@@ -347,15 +347,34 @@ public sealed class ImmichHttpClientTests : IDisposable
     }
 
     [Fact]
-    public async Task TrashMovesAssetsToTheTrashWithoutPurging()
+    public async Task TrashMovesAssetsToTheTrashWithoutPurgingAfterReadingTheTrashSettingOnce()
     {
-        var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.NoContent));
+        var handler = FakeHandler.WithTrash(true, 30, _ => new HttpResponseMessage(HttpStatusCode.NoContent));
+        var client = CreateClient(handler);
 
-        await CreateClient(handler).TrashAsync(["asset-1"]);
+        await client.TrashAsync(["asset-1"]);
+        await client.TrashAsync(["asset-2"]);
 
-        handler.Last.Method.Should().Be(HttpMethod.Delete);
-        handler.Last.Uri.AbsolutePath.Should().Be("/api/assets");
-        handler.Last.Body.Should().Be("""{"ids":["asset-1"],"force":false}""");
+        handler.Requests.Select(request => $"{request.Method} {request.Uri.AbsolutePath}").Should().Equal(
+            "GET /api/server/features", "GET /api/server/config", "DELETE /api/assets", "DELETE /api/assets");
+        handler.Requests.Take(2).Should().OnlyContain(request => request.ApiKey == null);
+        handler.Requests[2].Body.Should().Be("""{"ids":["asset-1"],"force":false}""");
+    }
+
+    [Theory]
+    [InlineData(false, 30)]
+    [InlineData(true, 0)]
+    public async Task TrashRefusesWithoutADeleteWhileImmichsTrashWouldPurge(bool enabled, int days)
+    {
+        var handler = FakeHandler.WithTrash(enabled, days, _ => new HttpResponseMessage(HttpStatusCode.NoContent));
+        var client = CreateClient(handler);
+
+        var settings = await client.GetTrashSettingsAsync();
+        var call = () => client.TrashAsync(["asset-1"]);
+
+        settings.Should().Be(new ImmichTrashSettings(enabled, days));
+        (await call.Should().ThrowAsync<ImmichApiException>()).Which.Code.Should().Be(ImmichTrash.DisabledCode);
+        handler.Requests.Should().NotContain(request => request.Method == HttpMethod.Delete);
     }
 
     [Fact]
@@ -404,6 +423,14 @@ public sealed class ImmichHttpClientTests : IDisposable
         public RecordedRequest Last => Requests[^1];
 
         public static FakeHandler Json(HttpStatusCode status, string body) => new(_ => JsonResponse(status, body));
+
+        /// <summary>Answers Immich's public trash setting endpoints, and every other request with <paramref name="respond"/>.</summary>
+        public static FakeHandler WithTrash(bool enabled, int days, Func<HttpRequestMessage, HttpResponseMessage> respond) => new(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/server/features" => JsonResponse(HttpStatusCode.OK, $$"""{"trash":{{(enabled ? "true" : "false")}},"map":true}"""),
+            "/api/server/config" => JsonResponse(HttpStatusCode.OK, $$"""{"trashDays":{{days}},"userDeleteDelay":7}"""),
+            _ => respond(request)
+        });
 
         public static HttpResponseMessage JsonResponse(HttpStatusCode status, string body) =>
             new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };

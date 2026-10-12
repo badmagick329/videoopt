@@ -86,8 +86,10 @@ internal static partial class CliApplication
             .ToArray();
         if (ready.Length == 0) { Console.WriteLine("No Immich jobs are ready to finalise."); return (int)ExitCode.Success; }
 
-        // The capture date is how the user finds each video in Immich to compare before confirming.
         var client = services.GetRequiredService<IImmichClientFactory>().Create(settings.Immich);
+        // Before the prompt, so the user is not asked to confirm a finalisation every job would refuse.
+        await ImmichTrash.RequireOnAsync(client, cancellationToken);
+        // The capture date is how the user finds each video in Immich to compare before confirming.
         foreach (var job in ready)
         {
             string taken;

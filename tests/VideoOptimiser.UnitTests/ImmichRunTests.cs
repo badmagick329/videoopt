@@ -53,10 +53,23 @@ public sealed class ImmichRunTests : IDisposable
             new PassingValidator());
         _queue = new QueueService(null!, _repository, fingerprints, processor);
         _run = new ImmichRunService(
+            _immich,
             new ImmichReuploadGuard(_immich, _repository),
             new ImmichDiscoveryService(_immich, _repository, _ => new HevcProbe(), fingerprints, () => Now),
             _queue);
         _finalizer = new FinalizationService(_repository, manifests, fingerprints, new SafeFileInstaller(), new ImmichFinalizer(_immich, _repository, manifests));
+    }
+
+    [Fact]
+    public async Task ARunStopsBeforeTheGuardAndDiscoveryWhileImmichsTrashIsOff()
+    {
+        _immich.Add("PXL_20260301.mp4", "hevc original");
+        _immich.Trash = new ImmichTrashSettings(Enabled: false, Days: 30);
+
+        var call = () => _run.PrepareAsync(_settings.Database.Path, _settings, first: false);
+
+        (await call.Should().ThrowAsync<ImmichApiException>()).Which.Code.Should().Be(ImmichTrash.DisabledCode);
+        (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().BeEmpty();
     }
 
     [Fact]
@@ -281,6 +294,8 @@ public sealed class ImmichRunTests : IDisposable
                     : new ImmichUploadCheck(checksum, Rejected: false, null, null, IsTrashed: false)).ToArray());
 
         public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ImmichTrashSettings Trash { get; set; } = new(Enabled: true, Days: 30);
+        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => Task.FromResult(Trash);
         public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

@@ -12,6 +12,35 @@ public sealed record ImmichServerVersion(int Major, int Minor, int Patch)
 public sealed record ImmichUser(string Id, string Name);
 
 /// <summary>
+/// Immich's trash as the server reports it. Immich's deletion check purges trashed assets older than <see cref="Days"/>, and
+/// with the trash off it uses a cutoff of zero days, so anything trashed is deleted for good at its next run.
+/// </summary>
+public sealed record ImmichTrashSettings(bool Enabled, int Days)
+{
+    public bool IsOn => Enabled && Days > 0;
+}
+
+/// <summary>
+/// The precondition of every trash call. Finalisation and the re-upload guard trash rather than delete because the trash is
+/// the user's undo and a trashed original's checksum keeps the phone from uploading it again; with the trash off, both
+/// would delete originals permanently instead.
+/// </summary>
+public static class ImmichTrash
+{
+    public const string DisabledCode = "ImmichTrashDisabled";
+
+    /// <summary>Below this many days, doctor warns that a mistake noticed later cannot be undone from Immich's trash.</summary>
+    public const int ShortDays = 7;
+
+    public const string DisabledMessage = "Immich's trash is off, so a video VideoOptimiser moves to the trash would be deleted for good at Immich's next deletion check. Turn the trash on in Immich under Administration > Settings > Trash Settings, then run again.";
+
+    public static async Task RequireOnAsync(IImmichClient client, CancellationToken cancellationToken = default)
+    {
+        if (!(await client.GetTrashSettingsAsync(cancellationToken)).IsOn) throw new ImmichApiException(DisabledCode, DisabledMessage);
+    }
+}
+
+/// <summary>
 /// The fields of an Immich asset the Immich source reads. <see cref="Checksum"/> is Immich's base64 SHA-1 of the original
 /// file, which the phone also uses to decide whether a file is already backed up. <see cref="TagIds"/> is filled only by
 /// <see cref="IImmichClient.GetAssetAsync"/>; search results leave it empty.
@@ -79,6 +108,9 @@ public interface IImmichClient
     Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default);
     Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Reads Immich's trash setting; needs no key. Read once per client: each run or finalisation creates its own.</summary>
+    Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Videos taken before <paramref name="takenBefore"/> on the timeline or in the archive, not trashed and not from an
     /// external library, oldest first. Callers must still re-check each result: a wrong match ends with an original in the trash.
@@ -101,7 +133,10 @@ public interface IImmichClient
 
     Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default);
 
-    /// <summary>Moves assets to Immich's trash. Never purges: the trash is the user's undo and keeps the checksums known.</summary>
+    /// <summary>
+    /// Moves assets to Immich's trash. Never purges: the trash is the user's undo and keeps the checksums known. Refuses with
+    /// <see cref="ImmichTrash.DisabledCode"/> while the trash is off, whatever the caller checked before.
+    /// </summary>
     Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default);

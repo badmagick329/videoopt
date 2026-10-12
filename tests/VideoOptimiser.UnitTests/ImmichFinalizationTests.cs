@@ -35,6 +35,25 @@ public sealed class ImmichFinalizationTests : IDisposable
         _finalizer = new FinalizationService(_repository, _manifests, _fingerprints, new SafeFileInstaller(), new ImmichFinalizer(_immich, _repository, _manifests));
     }
 
+    [Theory]
+    [InlineData(false, 30)]
+    [InlineData(true, 0)]
+    public async Task RefusesBeforeTheUploadWhileImmichsTrashWouldPurgeAndLeavesTheJobReady(bool enabled, int days)
+    {
+        var original = _immich.Add("PXL_20250501.MOV", "original");
+        var job = await ReadyJobAsync(original);
+        _immich.Trash = new ImmichTrashSettings(enabled, days);
+
+        var result = await FinalizeAsync(job);
+
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        _immich.Calls.Should().BeEmpty();
+        _immich.Get(original.Id).IsTrashed.Should().BeFalse();
+        var stored = await JobAsync(job);
+        stored.Status.Should().Be(JobStatus.ReadyToFinalize);
+        stored.FailureMessage.Should().Be(ImmichTrash.DisabledMessage);
+    }
+
     [Fact]
     public async Task UploadsTheAv1CopiesEverythingImmichKeepsThenTrashesTheOriginalAndDeletesTheStagingFolder()
     {
@@ -429,6 +448,8 @@ public sealed class ImmichFinalizationTests : IDisposable
         });
 
         public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ImmichTrashSettings Trash { get; set; } = new(Enabled: true, Days: 30);
+        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => Task.FromResult(Trash);
         public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();

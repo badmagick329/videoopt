@@ -260,6 +260,11 @@ public sealed class DoctorService(
             diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "ImmichServerAvailable", $"Immich {version} is reachable at {immich.BaseUrl}."));
             var user = await client.GetCurrentUserAsync(cancellationToken);
             diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "ImmichApiKeyAccepted", $"Immich accepted the API key for {user.Name}."));
+            var trash = await client.GetTrashSettingsAsync(cancellationToken);
+            diagnostics.Add(
+                !trash.IsOn ? new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, ImmichTrash.DisabledCode, ImmichTrash.DisabledMessage)
+                : trash.Days < ImmichTrash.ShortDays ? new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Warning, "ImmichTrashShort", $"Immich keeps trashed videos for {trash.Days} day(s), so a converted original can be restored from its trash only that long after finalize. Raise it under Administration > Settings > Trash Settings.")
+                : new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "ImmichTrashOn", $"Immich keeps trashed videos for {trash.Days} days before deleting them."));
         }
         catch (ImmichApiException exception)
         {

@@ -23,6 +23,8 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         }
 
         var client = clients.Create(settings.Immich);
+        // Before the upload, so a trash that is off leaves no AV1 beside the original; the job returns to ready.
+        await ImmichTrash.RequireOnAsync(client, cancellationToken);
         var original = await client.GetAssetAsync(originalId, cancellationToken);
         if (!string.Equals(original.Checksum, checksum, StringComparison.Ordinal))
         {

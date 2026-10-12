@@ -12,6 +12,16 @@ internal sealed class ServerVersionDto
     public int Patch { get; init; }
 }
 
+internal sealed class ServerFeaturesDto
+{
+    public bool Trash { get; init; }
+}
+
+internal sealed class ServerConfigDto
+{
+    public int TrashDays { get; init; }
+}
+
 internal sealed class UserDto
 {
     public string Id { get; init; } = "";
@@ -185,6 +195,8 @@ internal sealed class UploadCheckResult
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(ServerVersionDto))]
+[JsonSerializable(typeof(ServerFeaturesDto))]
+[JsonSerializable(typeof(ServerConfigDto))]
 [JsonSerializable(typeof(UserDto))]
 [JsonSerializable(typeof(MetadataSearchRequest))]
 [JsonSerializable(typeof(SearchResponseDto))]

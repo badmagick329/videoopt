@@ -186,6 +186,22 @@ public sealed class DoctorServiceTests : IDisposable
     }
 
     [Theory]
+    [InlineData(true, 30, DiagnosticStatus.Pass, "ImmichTrashOn")]
+    [InlineData(true, 3, DiagnosticStatus.Warning, "ImmichTrashShort")]
+    [InlineData(false, 30, DiagnosticStatus.Fail, "ImmichTrashDisabled")]
+    [InlineData(true, 0, DiagnosticStatus.Fail, "ImmichTrashDisabled")]
+    public async Task RunAsyncChecksThatImmichsTrashKeepsWhatVideoOptimiserTrashes(bool enabled, int days, DiagnosticStatus status, string code)
+    {
+        var immich = new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2), trash: new ImmichTrashSettings(enabled, days));
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), immich: immich).RunAsync(new LoadedConfiguration(CreateImmichSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code.StartsWith("ImmichTrash", StringComparison.Ordinal))
+            .Which.Should().Match<Diagnostic>(diagnostic => diagnostic.Status == status && diagnostic.Code == code);
+        if (status == DiagnosticStatus.Fail) report.ExitCode.Should().Be(ExitCode.MissingDependency);
+    }
+
+    [Theory]
     [InlineData("ImmichApiKeyRejected")]
     [InlineData("ImmichPermissionMissing")]
     public async Task RunAsyncFailsWithTheImmichClientsDiagnosisOfAKeyFailure(string code)
@@ -425,7 +441,7 @@ public sealed class DoctorServiceTests : IDisposable
         }
     }
 
-    private sealed class FakeImmichClientFactory(ImmichServerVersion version, ImmichApiException? userFailure = null) : IImmichClientFactory, IImmichClient
+    private sealed class FakeImmichClientFactory(ImmichServerVersion version, ImmichApiException? userFailure = null, ImmichTrashSettings? trash = null) : IImmichClientFactory, IImmichClient
     {
         public bool Created { get; private set; }
         public bool UserRequested { get; private set; }
@@ -444,7 +460,9 @@ public sealed class DoctorServiceTests : IDisposable
             return userFailure is null ? Task.FromResult(new ImmichUser("user-1", "Pat")) : Task.FromException<ImmichUser>(userFailure);
         }
 
-        // doctor only checks the version and the key.
+        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => Task.FromResult(trash ?? new ImmichTrashSettings(Enabled: true, Days: 30));
+
+        // doctor only checks the version, the key and the trash.
         public IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();

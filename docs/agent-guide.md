@@ -53,7 +53,7 @@ A run that reuses a running server never asks; it is already billing.
 
 ## Workflow: Immich
 
-Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. Read [immich.md](immich.md) once for the reasons behind the age rule.
+Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A `doctor` failure `ImmichTrashDisabled`, or exit `3` with `Immich's trash is off` from `immich run` or `immich finalize`, means the user must turn Immich's trash back on; only they can. Read [immich.md](immich.md) once for the reasons behind the age rule.
 
 1. **Phone.** Ask the user whether they have run the Immich app's "Free up space" since the last round, with a cutoff no older than `immich.minimumAgeDays`, and emptied the phone's trash. Only the user can do this. Wait for their answer.
 2. **Convert.** `immich run`, with `--first` on a user's first round. Done when it exits. If it lists re-uploaded originals, pass that list to the user exactly as printed: they must delete those files from the phone. Exit `10` also covers guard or search issues; quote those lines.
