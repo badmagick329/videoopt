@@ -56,6 +56,16 @@ public sealed class SettingsValidator : ISettingsValidator
             Add("WatchRootPathRequired", "Every watch.roots entry must include a path.");
         }
 
+        var immich = settings.Immich;
+        if (immich.IsConfigured)
+        {
+            AddWhen(!IsHttpUrl(immich.BaseUrl), "InvalidImmichBaseUrl", "immich.baseUrl must be an absolute http or https URL, such as http://IMMICH_HOST:2283.");
+            AddWhen(string.IsNullOrWhiteSpace(immich.ApiKeyEnvironmentVariable) || immich.ApiKeyEnvironmentVariable.Any(char.IsWhiteSpace), "InvalidImmichApiKeyVariable", "immich.apiKeyEnvironmentVariable must name one environment variable.");
+            AddWhen(!string.IsNullOrWhiteSpace(immich.ApiKeyFile) && Directory.Exists(immich.ApiKeyFile), "InvalidImmichApiKeyFile", "immich.apiKeyFile must be a file path, not a directory.");
+            AddWhen(immich.MinimumAgeDays < 1, "InvalidImmichMinimumAge", "immich.minimumAgeDays must be at least 1.");
+            AddWhen(string.IsNullOrWhiteSpace(immich.StagingDirectory) || File.Exists(immich.StagingDirectory), "InvalidImmichStagingDirectory", "immich.stagingDirectory must be a folder path.");
+        }
+
         AddWhen(settings.Eligibility.Rules.Count == 0, "EligibilityRulesRequired", "At least one eligibility.rules entry is required.");
         foreach (var rule in settings.Eligibility.Rules)
         {
@@ -110,6 +120,9 @@ public sealed class SettingsValidator : ISettingsValidator
     private static bool IsFolderNameOrAbsolutePath(string value) =>
         Path.IsPathFullyQualified(value) ||
         (value is not "." and not ".." && value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && value.Trim() == value);
+
+    private static bool IsHttpUrl(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) && string.IsNullOrEmpty(uri.Query);
 
     private static bool IsOneOf(string? value, params string[] permitted) =>
         !string.IsNullOrWhiteSpace(value) && permitted.Contains(value, StringComparer.OrdinalIgnoreCase);

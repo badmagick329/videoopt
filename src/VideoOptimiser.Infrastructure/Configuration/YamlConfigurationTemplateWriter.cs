@@ -79,6 +79,23 @@ watch:
     # - path: "D:\\Videos"
     #   recursive: true
 
+immich:
+  # Take originals from an Immich library as well. Leave baseUrl empty to not use Immich.
+  # Use the LAN address: a public hostname behind Cloudflare rejects uploads over 100 MB.
+  baseUrl: ""
+  # The API key loads from this environment variable, then from apiKeyFile. Never put it in this file.
+  # Create it in Immich under Account settings > API keys with these permissions: asset.read,
+  # asset.download, asset.upload, asset.update, asset.copy, asset.delete, tag.asset, user.read.
+  apiKeyEnvironmentVariable: "VIDEO_OPTIMISER_IMMICH_API_KEY"
+  apiKeyFile: ".env"
+  # Only videos taken more than this many days ago are converted. Keep it above the phone's
+  # "Free up space" cutoff, so each original has left the phone first.
+  minimumAgeDays: 90
+  # Skip favourites; the phone's "Free up space" keeps them by default.
+  skipFavorites: true
+  # Downloaded originals and their temporary outputs. Relative paths are relative to this YAML file.
+  stagingDirectory: "immich-staging"
+
 eligibility:
   # File extensions considered during discovery.
   extensions: [".mkv", ".mp4", ".mov", ".m4v"]

@@ -89,6 +89,8 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         settings.Processing.RemoteSsh.KnownHostsFile = ResolveOptionalPath(settings.Processing.RemoteSsh.KnownHostsFile, configurationDirectory);
         settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath = ResolvePath(settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, configurationDirectory);
         settings.Processing.RemoteSsh.Hetzner.ApiTokenFile = ResolveOptionalPath(settings.Processing.RemoteSsh.Hetzner.ApiTokenFile, configurationDirectory);
+        settings.Immich.ApiKeyFile = ResolveOptionalPath(settings.Immich.ApiKeyFile, configurationDirectory);
+        settings.Immich.StagingDirectory = ResolveOptionalPath(settings.Immich.StagingDirectory, configurationDirectory);
         foreach (var root in settings.Watch.Roots)
         {
             root.Path = ResolvePath(root.Path, configurationDirectory);
@@ -110,6 +112,11 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         settings.Processing.RemoteSsh.Hetzner.Locations ??= ["hel1", "fsn1", "nbg1"];
         settings.Database ??= new DatabaseSettings();
         settings.Watch ??= new WatchSettings();
+        settings.Immich ??= new ImmichSettings();
+        settings.Immich.BaseUrl ??= string.Empty;
+        settings.Immich.ApiKeyEnvironmentVariable ??= string.Empty;
+        settings.Immich.ApiKeyFile ??= string.Empty;
+        settings.Immich.StagingDirectory ??= string.Empty;
         settings.Eligibility ??= new EligibilitySettings();
         settings.Quality ??= new QualitySettings();
         settings.Savings ??= new SavingsSettings();

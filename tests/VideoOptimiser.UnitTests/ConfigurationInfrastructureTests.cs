@@ -11,6 +11,25 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     public ConfigurationInfrastructureTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
+    public async Task LoadAsyncAppliesImmichDefaultsAndResolvesItsPathsAgainstConfigDirectory()
+    {
+        var configPath = Path.Combine(_directory, "config.yaml");
+        await File.WriteAllTextAsync(configPath, """
+            version: 1
+            immich:
+              baseUrl: "http://192.168.1.113:2283"
+            """);
+
+        var immich = (await new YamlConfigurationLoader().LoadAsync(configPath)).Settings.Immich;
+
+        immich.ApiKeyEnvironmentVariable.Should().Be("VIDEO_OPTIMISER_IMMICH_API_KEY");
+        immich.ApiKeyFile.Should().Be(Path.Combine(_directory, ".env"));
+        immich.StagingDirectory.Should().Be(Path.Combine(_directory, "immich-staging"));
+        immich.MinimumAgeDays.Should().Be(90);
+        immich.SkipFavorites.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task LoadAsyncResolvesRelativeConfiguredPathsAgainstConfigDirectory()
     {
         var configPath = Path.Combine(_directory, "config.yaml");

@@ -1,6 +1,7 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
@@ -120,8 +121,65 @@ public sealed class DoctorServiceTests : IDisposable
         report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "RemoteHostRequired" && diagnostic.Status == DiagnosticStatus.Fail);
     }
 
-    private static DoctorService CreateDoctor(IToolVerifier verifier, IRemoteEnvironmentVerifier? remote = null, IRemoteWorkerLifecycle? lifecycle = null) =>
-        new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier(), lifecycle ?? new FakeRemoteWorkerLifecycle(worker: null));
+    [Fact]
+    public async Task RunAsyncWithoutAnImmichBaseUrlNeverCallsImmich()
+    {
+        var immich = new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2));
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), immich: immich).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.Success);
+        immich.Created.Should().BeFalse();
+        report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Code.StartsWith("Immich", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunAsyncReportsTheImmichVersionAndUserAndPreparesTheStagingDirectory()
+    {
+        var settings = CreateImmichSettings();
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), immich: new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2))).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.Success);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "ImmichServerAvailable" && diagnostic.Message.Contains("3.2.2"));
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "ImmichApiKeyAccepted" && diagnostic.Message.Contains("Pat"));
+        Directory.Exists(settings.Immich.StagingDirectory).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunAsyncFailsForAnImmichServerThatIsNotVersion3WithoutTryingTheKey()
+    {
+        var immich = new FakeImmichClientFactory(new ImmichServerVersion(2, 5, 6));
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), immich: immich).RunAsync(new LoadedConfiguration(CreateImmichSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "ImmichVersionUnsupported" && diagnostic.Message.Contains("2.5.6"));
+        immich.UserRequested.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("ImmichApiKeyRejected")]
+    [InlineData("ImmichPermissionMissing")]
+    public async Task RunAsyncFailsWithTheImmichClientsDiagnosisOfAKeyFailure(string code)
+    {
+        var immich = new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2), new ImmichApiException(code, "what to fix"));
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), immich: immich).RunAsync(new LoadedConfiguration(CreateImmichSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == code && diagnostic.Status == DiagnosticStatus.Fail && diagnostic.Message == "what to fix");
+    }
+
+    private static DoctorService CreateDoctor(IToolVerifier verifier, IRemoteEnvironmentVerifier? remote = null, IRemoteWorkerLifecycle? lifecycle = null, IImmichClientFactory? immich = null) =>
+        new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier(), lifecycle ?? new FakeRemoteWorkerLifecycle(worker: null), immich ?? new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2)));
+
+    private AppSettings CreateImmichSettings()
+    {
+        var settings = CreateSettings();
+        settings.Immich = new ImmichSettings { BaseUrl = "http://192.168.1.113:2283", StagingDirectory = Path.Combine(_directory, "immich-staging") };
+        return settings;
+    }
 
     private AppSettings CreateHetznerSettings()
     {
@@ -190,6 +248,26 @@ public sealed class DoctorServiceTests : IDisposable
                 new(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "RemoteSshAvailable", "SSH succeeded.")
             ];
             return Task.FromResult(diagnostics);
+        }
+    }
+
+    private sealed class FakeImmichClientFactory(ImmichServerVersion version, ImmichApiException? userFailure = null) : IImmichClientFactory, IImmichClient
+    {
+        public bool Created { get; private set; }
+        public bool UserRequested { get; private set; }
+
+        public IImmichClient Create(ImmichSettings settings)
+        {
+            Created = true;
+            return this;
+        }
+
+        public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => Task.FromResult(version);
+
+        public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default)
+        {
+            UserRequested = true;
+            return userFailure is null ? Task.FromResult(new ImmichUser("user-1", "Pat")) : Task.FromException<ImmichUser>(userFailure);
         }
     }
 

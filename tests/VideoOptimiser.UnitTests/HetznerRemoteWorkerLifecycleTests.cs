@@ -4,6 +4,7 @@ using System.Text.Json;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Processing;
 
 namespace VideoOptimiser.UnitTests;
@@ -18,7 +19,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         {
             File.WriteAllText(path, "# ignored\nOTHER=value\nexport VIDEO_OPTIMISER_HETZNER_TOKEN='first'\nVIDEO_OPTIMISER_HETZNER_TOKEN=second\n");
 
-            HetznerRemoteWorkerLifecycle.ReadDotEnvValue(path, "VIDEO_OPTIMISER_HETZNER_TOKEN").Should().Be("second");
+            SecretLoader.ReadDotEnvValue(path, "VIDEO_OPTIMISER_HETZNER_TOKEN").Should().Be("second");
         }
         finally
         {

@@ -1,5 +1,6 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
 
@@ -10,7 +11,8 @@ public sealed class DoctorService(
     IDatabaseInitializer databaseInitializer,
     IToolVerifier toolVerifier,
     IRemoteEnvironmentVerifier remoteEnvironmentVerifier,
-    IRemoteWorkerLifecycle remoteWorkerLifecycle) : IDoctorService
+    IRemoteWorkerLifecycle remoteWorkerLifecycle,
+    IImmichClientFactory immichClients) : IDoctorService
 {
     public async Task<DoctorReport> RunAsync(LoadedConfiguration configuration, CancellationToken cancellationToken = default)
     {
@@ -28,6 +30,11 @@ public sealed class DoctorService(
 
         await CheckDatabaseAsync(configuration.Settings.Database.Path, diagnostics, cancellationToken);
         AddFreeSpaceDiagnostics(configuration.Settings, diagnostics);
+
+        if (configuration.Settings.Immich.IsConfigured && !diagnostics.Any(diagnostic => diagnostic.Code.StartsWith("InvalidImmich", StringComparison.Ordinal)))
+        {
+            await CheckImmichAsync(configuration.Settings.Immich, diagnostics, cancellationToken);
+        }
 
         var isRemote = configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase);
         var toolChecks = new List<Task<ToolVerificationResult>>
@@ -102,6 +109,33 @@ public sealed class DoctorService(
         return false;
     }
 
+    /// <summary>
+    /// The version check needs no key, so a wrong URL and a bad key are reported separately. Immich 3 is required because the
+    /// search filters and endpoints were checked against v3.2.2.
+    /// </summary>
+    private async Task CheckImmichAsync(ImmichSettings immich, List<Diagnostic> diagnostics, CancellationToken cancellationToken)
+    {
+        await CheckDirectoryAsync(immich.StagingDirectory, "ImmichStagingDirectory", createIfMissing: true, diagnostics, cancellationToken);
+        var client = immichClients.Create(immich);
+        try
+        {
+            var version = await client.GetServerVersionAsync(cancellationToken);
+            if (version.Major != 3)
+            {
+                diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "ImmichVersionUnsupported", $"Immich {version} at {immich.BaseUrl} is not supported; VideoOptimiser needs Immich 3."));
+                return;
+            }
+
+            diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "ImmichServerAvailable", $"Immich {version} is reachable at {immich.BaseUrl}."));
+            var user = await client.GetCurrentUserAsync(cancellationToken);
+            diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "ImmichApiKeyAccepted", $"Immich accepted the API key for {user.Name}."));
+        }
+        catch (ImmichApiException exception)
+        {
+            diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, exception.Code, exception.Message));
+        }
+    }
+
     private static async Task CheckDirectoryAsync(string path, string code, bool createIfMissing, List<Diagnostic> diagnostics, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -158,6 +192,7 @@ public sealed class DoctorService(
     {
         var paths = settings.Watch.Roots.Select(root => root.Path)
             .Append(settings.Database.Path)
+            .Append(settings.Immich.IsConfigured ? settings.Immich.StagingDirectory : string.Empty)
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase);
 

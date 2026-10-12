@@ -10,6 +10,7 @@ public sealed class AppSettings
     [YamlMember(Alias = "processing")] public ProcessingSettings Processing { get; set; } = new();
     [YamlMember(Alias = "database")] public DatabaseSettings Database { get; set; } = new();
     [YamlMember(Alias = "watch")] public WatchSettings Watch { get; set; } = new();
+    [YamlMember(Alias = "immich")] public ImmichSettings Immich { get; set; } = new();
     [YamlMember(Alias = "eligibility")] public EligibilitySettings Eligibility { get; set; } = new();
     [YamlMember(Alias = "quality")] public QualitySettings Quality { get; set; } = new();
     [YamlMember(Alias = "savings")] public SavingsSettings Savings { get; set; } = new();
@@ -111,6 +112,29 @@ public sealed class WatchRootSettings
 {
     [YamlMember(Alias = "path")] public string Path { get; set; } = string.Empty;
     [YamlMember(Alias = "recursive")] public bool Recursive { get; set; } = true;
+}
+
+/// <summary>
+/// The Immich source. An empty <see cref="BaseUrl"/> means Immich is not used. The API key never lives here: it loads from
+/// <see cref="ApiKeyEnvironmentVariable"/>, then from <see cref="ApiKeyFile"/>, so it stays out of YAML, logs and the database.
+/// </summary>
+[YamlSerializable]
+public sealed class ImmichSettings
+{
+    [YamlMember(Alias = "baseUrl")] public string BaseUrl { get; set; } = string.Empty;
+    [YamlMember(Alias = "apiKeyEnvironmentVariable")] public string ApiKeyEnvironmentVariable { get; set; } = "VIDEO_OPTIMISER_IMMICH_API_KEY";
+    [YamlMember(Alias = "apiKeyFile")] public string ApiKeyFile { get; set; } = ".env";
+
+    /// <summary>
+    /// The age gate. It must stay above the phone's "Free up space" cutoff, so an original has left the phone before it is
+    /// converted; otherwise the phone would upload it again once Immich purges the trashed original.
+    /// </summary>
+    [YamlMember(Alias = "minimumAgeDays")] public int MinimumAgeDays { get; set; } = 90;
+
+    [YamlMember(Alias = "skipFavorites")] public bool SkipFavorites { get; set; } = true;
+    [YamlMember(Alias = "stagingDirectory")] public string StagingDirectory { get; set; } = "immich-staging";
+
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl);
 }
 
 [YamlSerializable]

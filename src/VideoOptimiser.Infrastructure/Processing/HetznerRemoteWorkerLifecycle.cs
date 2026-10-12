@@ -7,6 +7,7 @@ using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
+using VideoOptimiser.Infrastructure.Configuration;
 
 namespace VideoOptimiser.Infrastructure.Processing;
 
@@ -773,28 +774,9 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
 
     private static string GetToken(AppSettings settings)
     {
-        var variable = settings.Processing.RemoteSsh.Hetzner.ApiTokenEnvironmentVariable;
-        if (!string.IsNullOrWhiteSpace(variable) && Environment.GetEnvironmentVariable(variable) is { Length: > 0 } token) return token;
-        var tokenFile = settings.Processing.RemoteSsh.Hetzner.ApiTokenFile;
-        if (!string.IsNullOrWhiteSpace(tokenFile) && File.Exists(tokenFile) && ReadDotEnvValue(tokenFile, variable) is { Length: > 0 } fileToken) return fileToken;
-        throw new InvalidOperationException($"Hetzner API token '{variable}' was not found in the environment or '{tokenFile}'. Add it to the ignored token file or set the environment variable.");
-    }
-
-    internal static string? ReadDotEnvValue(string path, string variable)
-    {
-        string? result = null;
-        foreach (var rawLine in File.ReadLines(path))
-        {
-            var line = rawLine.Trim().TrimStart('\uFEFF');
-            if (line.Length == 0 || line.StartsWith('#')) continue;
-            if (line.StartsWith("export ", StringComparison.Ordinal)) line = line[7..].TrimStart();
-            var separator = line.IndexOf('=');
-            if (separator < 1 || !string.Equals(line[..separator].Trim(), variable, StringComparison.Ordinal)) continue;
-            var value = line[(separator + 1)..].Trim();
-            if (value.Length >= 2 && ((value[0] == '"' && value[^1] == '"') || (value[0] == '\'' && value[^1] == '\''))) value = value[1..^1];
-            result = value;
-        }
-        return result;
+        var hetzner = settings.Processing.RemoteSsh.Hetzner;
+        return SecretLoader.Load(hetzner.ApiTokenEnvironmentVariable, hetzner.ApiTokenFile)
+            ?? throw new InvalidOperationException($"Hetzner API token '{hetzner.ApiTokenEnvironmentVariable}' was not found in the environment or '{hetzner.ApiTokenFile}'. Add it to the ignored token file or set the environment variable.");
     }
 
     private static string ControllerId(string databasePath)

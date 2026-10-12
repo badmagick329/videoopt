@@ -200,6 +200,25 @@ public sealed class SettingsValidatorTests
         new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("InvalidRemoteWorkingDirectory");
     }
 
+    [Theory]
+    [InlineData("", 0, "", null)]
+    [InlineData("http://192.168.1.113:2283", 90, "C:\\staging", null)]
+    [InlineData("https://photos.example.com/api/", 1, "C:\\staging", null)]
+    [InlineData("192.168.1.113:2283", 90, "C:\\staging", "InvalidImmichBaseUrl")]
+    [InlineData("ftp://192.168.1.113", 90, "C:\\staging", "InvalidImmichBaseUrl")]
+    [InlineData("http://192.168.1.113:2283", 0, "C:\\staging", "InvalidImmichMinimumAge")]
+    [InlineData("http://192.168.1.113:2283", 90, " ", "InvalidImmichStagingDirectory")]
+    public void ValidateChecksTheImmichSectionOnlyWhenABaseUrlIsSet(string baseUrl, int minimumAgeDays, string stagingDirectory, string? expectedCode)
+    {
+        var settings = CreateValidSettings();
+        settings.Immich = new ImmichSettings { BaseUrl = baseUrl, MinimumAgeDays = minimumAgeDays, StagingDirectory = stagingDirectory };
+
+        var codes = new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code);
+
+        if (expectedCode is null) codes.Should().BeEmpty();
+        else codes.Should().Equal(expectedCode);
+    }
+
     internal static AppSettings CreateValidSettings() => new()
     {
         Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = "C:\\Videos" }] },
