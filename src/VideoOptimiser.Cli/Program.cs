@@ -316,6 +316,13 @@ internal static partial class CliApplication
 
     private static async Task<int> RunQueueDiscoverAsync(IQueueService queue, LoadedConfiguration configuration, bool first, CancellationToken cancellationToken)
     {
+        // Settings validation allows no roots when Immich is configured; scanning nothing would only print "Queued: 0".
+        if (configuration.Settings.Watch.Roots.Count == 0)
+        {
+            Console.Error.WriteLine("queue discover needs at least one watch.roots entry. For Immich videos, use 'immich run'.");
+            return (int)ExitCode.InvalidConfiguration;
+        }
+
         var progress = new InlineProgress<ScanProgress>(update => Console.WriteLine(FormatScanProgress(update)));
         var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, progress, cancellationToken);
         foreach (var path in result.QueuedPaths) Console.WriteLine($"Queued  {path}");
@@ -385,11 +392,11 @@ internal static partial class CliApplication
         return (int)QueueExitCode.Calculate(ready, failures.Length);
     }
 
-    private static bool ReportInvalidSettings(IServiceProvider services, LoadedConfiguration configuration, string? ignoredCode = null)
+    private static bool ReportInvalidSettings(IServiceProvider services, LoadedConfiguration configuration)
     {
-        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings).Where(diagnostic => diagnostic.Code != ignoredCode).ToArray();
+        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
         foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}");
-        return diagnostics.Length > 0;
+        return diagnostics.Count > 0;
     }
 
     /// <summary>

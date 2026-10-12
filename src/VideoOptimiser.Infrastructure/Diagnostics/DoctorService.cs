@@ -62,6 +62,16 @@ public sealed class DoctorService(
                 $"{result.Name}: {result.Detail}"));
         }
 
+        if (!isRemote)
+        {
+            AddAbAv1VersionDiagnostic(toolResults, diagnostics);
+        }
+
+        if (toolResults.First(result => result.Name == "ffmpeg").IsAvailable)
+        {
+            await AddFfmpegFeatureDiagnosticsAsync(configuration.Settings, isRemote, diagnostics, cancellationToken);
+        }
+
         var canCheckRemoteHost = isRemote && toolResults.First(result => result.Name == "ssh").IsAvailable && toolResults.First(result => result.Name == "sftp").IsAvailable;
         if (remoteWorkerLifecycle.IsManaged(configuration.Settings))
         {
@@ -78,6 +88,104 @@ public sealed class DoctorService(
 
         return new DoctorReport(diagnostics);
     }
+
+    /// <summary>
+    /// Starting is not enough: ab-av1 older than <see cref="AbAv1VersionPolicy.Minimum"/> passes <c>--version</c> yet is not the
+    /// code CI tests, so local mode applies the same floor as the remote worker.
+    /// </summary>
+    private static void AddAbAv1VersionDiagnostic(ToolVerificationResult[] toolResults, List<Diagnostic> diagnostics)
+    {
+        var abAv1 = toolResults.First(result => result.Name == "ab-av1");
+        if (!abAv1.IsAvailable)
+        {
+            return;
+        }
+
+        var minimum = AbAv1VersionPolicy.Minimum;
+        if (!AbAv1VersionPolicy.TryParse(abAv1.Detail, out var version))
+        {
+            diagnostics.Add(DependencyFailure("AbAv1VersionUnavailable", $"ab-av1 version could not be determined from '{abAv1.Detail}'; minimum required version is {minimum}."));
+            return;
+        }
+
+        diagnostics.Add(version >= minimum
+            ? new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "AbAv1VersionSufficient", $"ab-av1 version {version} meets the minimum required version {minimum}.")
+            : DependencyFailure(
+                "AbAv1VersionInsufficient",
+                $"ab-av1 version {version} is too old; minimum required version is {minimum}. Update it with 'cargo install ab-av1 --version {minimum} --locked' or download it from https://github.com/alexheretic/ab-av1/releases."));
+    }
+
+    /// <summary>
+    /// A local run encodes with ab-av1, which drives FFmpeg's libsvtav1 encoder and libvmaf filter on 10-bit input, so a build
+    /// without them fails mid-job. Both modes decode the AV1 output in validation, and FFmpeg's native AV1 decoder needs hardware
+    /// acceleration, so libdav1d is required unless the decode test is off. Queries run concurrently and only for the listings
+    /// that a required feature needs.
+    /// </summary>
+    private async Task AddFfmpegFeatureDiagnosticsAsync(AppSettings settings, bool isRemote, List<Diagnostic> diagnostics, CancellationToken cancellationToken)
+    {
+        var features = new List<FfmpegFeature>();
+        if (!isRemote)
+        {
+            features.AddRange(LocalEncodeFeatures);
+        }
+
+        var requiresDecoder = !settings.Validation.DecodeTest.Equals(DecodeTestModes.None, StringComparison.OrdinalIgnoreCase);
+        if (requiresDecoder)
+        {
+            features.Add(Libdav1dDecoder);
+        }
+
+        var listings = features.Select(feature => feature.Listing).Distinct().ToList();
+        var outputs = await Task.WhenAll(listings.Select(listing =>
+            toolVerifier.ReadOutputAsync(settings.Tools.FfmpegPath, ["-hide_banner", $"-{listing.Argument}"], cancellationToken)));
+
+        foreach (var feature in features)
+        {
+            var output = outputs[listings.IndexOf(feature.Listing)];
+            if (output is null)
+            {
+                diagnostics.Add(DependencyFailure(feature.UnavailableCode, $"The FFmpeg {feature.Listing.Name} listing could not be read, so {feature.Description} cannot be verified."));
+                continue;
+            }
+
+            diagnostics.Add(ListsToken(output, feature.Token)
+                ? new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, feature.AvailableCode, $"FFmpeg exposes {feature.Description}.")
+                : DependencyFailure(feature.UnavailableCode, $"FFmpeg does not expose {feature.Description}; {feature.Consequence}"));
+        }
+    }
+
+    // Matches a whole whitespace-delimited token, as the remote probe's grep does, so 'libsvtav1' never matches 'libsvtav1x'.
+    private static bool ListsToken(string listing, string token) =>
+        listing.Split('\n')
+            .Any(line => line.Split(TokenSeparators, StringSplitOptions.RemoveEmptyEntries).Contains(token, StringComparer.Ordinal));
+
+    private static readonly char[] TokenSeparators = [' ', '\t', '\r'];
+
+    private static Diagnostic DependencyFailure(string code, string message) => new(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, code, message);
+
+    private sealed record FfmpegListing(string Argument, string Name);
+
+    private sealed record FfmpegFeature(FfmpegListing Listing, string Token, string Description, string Consequence, string AvailableCode, string UnavailableCode);
+
+    private static readonly FfmpegListing Encoders = new("encoders", "encoder");
+    private static readonly FfmpegListing Filters = new("filters", "filter");
+    private static readonly FfmpegListing PixelFormats = new("pix_fmts", "pixel format");
+    private static readonly FfmpegListing Decoders = new("decoders", "decoder");
+
+    private static readonly FfmpegFeature[] LocalEncodeFeatures =
+    [
+        new(Encoders, "libsvtav1", "the libsvtav1 encoder", "ab-av1 needs it to encode AV1.", "FfmpegFeatureAvailable", "FfmpegFeatureUnavailable"),
+        new(Filters, "libvmaf", "the libvmaf filter", "ab-av1 needs it to score quality.", "FfmpegFeatureAvailable", "FfmpegFeatureUnavailable"),
+        new(PixelFormats, "yuv420p10le", "the yuv420p10le pixel format", "ab-av1 needs it for 10-bit AV1 output.", "FfmpegFeatureAvailable", "FfmpegFeatureUnavailable")
+    ];
+
+    private static readonly FfmpegFeature Libdav1dDecoder = new(
+        Decoders,
+        "libdav1d",
+        "the libdav1d software AV1 decoder",
+        "validation's decode test cannot decode AV1 outputs without it. Install a full FFmpeg build such as gyan.dev's \"full\" build, or set validation.decodeTest to none.",
+        "Av1DecoderAvailable",
+        "Av1DecoderUnavailable");
 
     /// <summary>
     /// A managed worker exists only between its creation by a run or <c>worker create</c> and its deletion, so having none is

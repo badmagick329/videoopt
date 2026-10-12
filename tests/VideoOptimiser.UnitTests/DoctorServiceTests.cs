@@ -171,6 +171,128 @@ public sealed class DoctorServiceTests : IDisposable
         report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == code && diagnostic.Status == DiagnosticStatus.Fail && diagnostic.Message == "what to fix");
     }
 
+    [Theory]
+    [InlineData("ab-av1 0.9.3")]
+    [InlineData("ab-av1 0.11.6")]
+    public async Task RunAsyncInLocalModeFailsAnAbAv1OlderThanTheMinimum(string versionLine)
+    {
+        var report = await CreateDoctor(new FakeToolVerifier(true) { AbAv1VersionLine = versionLine }).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "AbAv1VersionInsufficient" && diagnostic.Status == DiagnosticStatus.Fail
+            && diagnostic.Message.Contains("is too old") && diagnostic.Message.Contains("cargo install ab-av1 --version 0.11.7 --locked"));
+    }
+
+    [Theory]
+    [InlineData("ab-av1 0.11.7")]
+    [InlineData("ab-av1 0.12.0")]
+    public async Task RunAsyncInLocalModePassesAnAbAv1AtOrAboveTheMinimum(string versionLine)
+    {
+        var report = await CreateDoctor(new FakeToolVerifier(true) { AbAv1VersionLine = versionLine }).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.Success);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "AbAv1VersionSufficient" && diagnostic.Status == DiagnosticStatus.Pass);
+    }
+
+    [Fact]
+    public async Task RunAsyncInLocalModeFailsWhenTheAbAv1VersionCannotBeParsed()
+    {
+        var report = await CreateDoctor(new FakeToolVerifier(true) { AbAv1VersionLine = "something unexpected" }).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "AbAv1VersionUnavailable" && diagnostic.Status == DiagnosticStatus.Fail);
+    }
+
+    [Fact]
+    public async Task RunAsyncInLocalModeFailsWhenFfmpegLacksLibvmaf()
+    {
+        var tools = new FakeToolVerifier(true) { Filters = " ... vmafmotion       V->V       Calculate the VMAF Motion score." };
+
+        var report = await CreateDoctor(tools).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "FfmpegFeatureUnavailable" && diagnostic.Message.Contains("libvmaf"));
+        report.Diagnostics.Count(diagnostic => diagnostic.Code == "FfmpegFeatureAvailable").Should().Be(2);
+    }
+
+    [Fact]
+    public async Task RunAsyncInLocalModeDoesNotAcceptAFeatureNameThatIsOnlyAPrefixOfAnotherToken()
+    {
+        var tools = new FakeToolVerifier(true) { Encoders = " V....D libsvtav1x           hypothetical encoder" };
+
+        var report = await CreateDoctor(tools).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "FfmpegFeatureUnavailable" && diagnostic.Message.Contains("libsvtav1"));
+    }
+
+    [Fact]
+    public async Task RunAsyncInLocalModeFailsTheFeatureChecksWhenFfmpegListingsCannotBeRead()
+    {
+        var report = await CreateDoctor(new FakeToolVerifier(true) { ListingsReadable = false }).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Count(diagnostic => diagnostic.Code == "FfmpegFeatureUnavailable" && diagnostic.Message.Contains("could not be read")).Should().Be(3);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "Av1DecoderUnavailable" && diagnostic.Message.Contains("could not be read"));
+    }
+
+    [Fact]
+    public async Task RunAsyncInLocalModeFailsWithoutTheLibdav1dDecoder()
+    {
+        var tools = new FakeToolVerifier(true) { Decoders = " V....D av1                  Alliance for Open Media AV1" };
+
+        var report = await CreateDoctor(tools).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "Av1DecoderUnavailable" && diagnostic.Message.Contains("gyan.dev"));
+    }
+
+    [Fact]
+    public async Task RunAsyncSkipsTheLibdav1dCheckWhenTheDecodeTestIsOff()
+    {
+        var settings = CreateSettings();
+        settings.Validation.DecodeTest = DecodeTestModes.None;
+        var tools = new FakeToolVerifier(true) { Decoders = " V....D av1                  Alliance for Open Media AV1" };
+
+        var report = await CreateDoctor(tools).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.Success);
+        report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Code.StartsWith("Av1Decoder", StringComparison.Ordinal));
+        tools.ListingsRequested.Should().NotContain("-decoders");
+    }
+
+    [Fact]
+    public async Task RunAsyncInRemoteModeRequiresLibdav1dButNotTheLocalEncodeFeatures()
+    {
+        var settings = CreateSettings();
+        settings.Processing.Mode = ProcessingModes.RemoteSsh;
+        settings.Processing.RemoteSsh.Host = "video-worker";
+        var tools = new FakeToolVerifier(true)
+        {
+            AbAv1VersionLine = "ab-av1 0.9.3",
+            Encoders = string.Empty,
+            Filters = string.Empty,
+            PixelFormats = string.Empty,
+            Decoders = " V....D av1                  Alliance for Open Media AV1"
+        };
+
+        var report = await CreateDoctor(tools).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "Av1DecoderUnavailable");
+        report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Code.StartsWith("FfmpegFeature", StringComparison.Ordinal) || diagnostic.Code.StartsWith("AbAv1Version", StringComparison.Ordinal));
+        tools.ListingsRequested.Should().BeEquivalentTo(["-decoders"]);
+    }
+
+    [Fact]
+    public async Task RunAsyncDoesNotQueryFfmpegWhenItIsUnavailable()
+    {
+        var tools = new FakeToolVerifier(true, unavailableName: "ffmpeg");
+
+        var report = await CreateDoctor(tools).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        tools.ListingsRequested.Should().BeEmpty();
+    }
+
     private static DoctorService CreateDoctor(IToolVerifier verifier, IRemoteEnvironmentVerifier? remote = null, IRemoteWorkerLifecycle? lifecycle = null, IImmichClientFactory? immich = null) =>
         new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier(), lifecycle ?? new FakeRemoteWorkerLifecycle(worker: null), immich ?? new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2)));
 
@@ -217,9 +339,18 @@ public sealed class DoctorServiceTests : IDisposable
         }
     }
 
+    // Defaults describe a healthy install: ab-av1 at the minimum version and an FFmpeg exposing every required feature.
     private sealed class FakeToolVerifier(bool isAvailable, string? unavailableName = null) : IToolVerifier
     {
         public List<string> VerifiedNames { get; } = [];
+        public string AbAv1VersionLine { get; init; } = "ab-av1 0.11.7";
+        public string Encoders { get; init; } = " V....D libsvtav1           SVT-AV1(Scalable Video Technology for AV1) encoder (codec av1)";
+        public string Filters { get; init; } = " ... libvmaf          VV->V      Calculate the VMAF between two video streams.";
+        public string PixelFormats { get; init; } = "IO... yuv420p10le          3            10";
+        public string Decoders { get; init; } = " V....D libdav1d           dav1d AV1 decoder by VideoLAN (codec av1)";
+        // Models ffmpeg failing to run a listing query.
+        public bool ListingsReadable { get; init; } = true;
+        public List<string> ListingsRequested { get; } = [];
 
         public Task<ToolVerificationResult> VerifyAsync(string name, string executable, string versionArgument, CancellationToken cancellationToken = default) =>
             VerifyCore(name);
@@ -227,11 +358,27 @@ public sealed class DoctorServiceTests : IDisposable
         public Task<ToolVerificationResult> VerifyPresenceAsync(string name, string executable, string availabilityArgument, CancellationToken cancellationToken = default) =>
             VerifyCore(name);
 
+        public Task<string?> ReadOutputAsync(string executable, IReadOnlyList<string> arguments, CancellationToken cancellationToken = default)
+        {
+            var listing = arguments[^1];
+            lock (ListingsRequested) ListingsRequested.Add(listing);
+            if (!ListingsReadable) return Task.FromResult<string?>(null);
+            return Task.FromResult<string?>(listing switch
+            {
+                "-encoders" => Encoders,
+                "-filters" => Filters,
+                "-pix_fmts" => PixelFormats,
+                "-decoders" => Decoders,
+                _ => throw new NotSupportedException(listing)
+            });
+        }
+
         private Task<ToolVerificationResult> VerifyCore(string name)
         {
             VerifiedNames.Add(name);
             var available = isAvailable && !string.Equals(name, unavailableName, StringComparison.Ordinal);
-            return Task.FromResult(new ToolVerificationResult(name, available, available ? "version 1" : "not found"));
+            var detail = !available ? "not found" : name == "ab-av1" ? AbAv1VersionLine : "version 1";
+            return Task.FromResult(new ToolVerificationResult(name, available, detail));
         }
     }
 

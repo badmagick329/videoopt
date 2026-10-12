@@ -23,8 +23,8 @@ public sealed partial class ToolVersionPinTests
         ciVersion.Success.Should().BeTrue("install-media-tools.ps1 names its ab-av1 tool ab-av1-<version>");
         workerVersion.Groups[1].Value.Should().Be(ciVersion.Groups[1].Value);
         mediaTools.Should().Contain($"/releases/download/v{ciVersion.Groups[1].Value}/", "the download URL matches the tool name");
-        Version.Parse(workerVersion.Groups[1].Value).Should().Be(ProcessRemoteEnvironmentVerifier.MinimumAbAv1Version,
-            "doctor rejects a remote worker older than the pinned version");
+        Version.Parse(workerVersion.Groups[1].Value).Should().Be(AbAv1VersionPolicy.Minimum,
+            "doctor rejects an ab-av1 older than the pinned version");
     }
 
     private static string RepositoryRoot()

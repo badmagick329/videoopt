@@ -11,8 +11,6 @@ namespace VideoOptimiser.Infrastructure.Diagnostics;
 public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifier
 {
     private const string Prefix = "video-optimiser-doctor:";
-    // The version the bootstrap pins and CI tests, so a remote job runs the ab-av1 code the tests exercised.
-    internal static readonly Version MinimumAbAv1Version = new(0, 11, 7);
 
     public async Task<IReadOnlyList<Diagnostic>> VerifyAsync(
         string sshPath,
@@ -169,44 +167,17 @@ public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifie
     private static void AddAbAv1VersionDiagnostic(Dictionary<string, string> values, List<Diagnostic> diagnostics)
     {
         var reportedVersion = values.GetValueOrDefault("ab_av1_version");
-        if (!TryParseAbAv1Version(reportedVersion, out var version))
+        if (!AbAv1VersionPolicy.TryParse(reportedVersion, out var version))
         {
             diagnostics.Add(Failure(
                 "RemoteAbAv1VersionUnavailable",
-                $"Remote ab-av1 version could not be determined; minimum required version is {MinimumAbAv1Version}."));
+                $"Remote ab-av1 version could not be determined; minimum required version is {AbAv1VersionPolicy.Minimum}."));
             return;
         }
 
-        diagnostics.Add(version >= MinimumAbAv1Version
-            ? Pass("RemoteAbAv1VersionSufficient", $"Remote ab-av1 version {version} meets the minimum required version {MinimumAbAv1Version}.")
-            : Failure("RemoteAbAv1VersionInsufficient", $"Remote ab-av1 version {version} is too old; minimum required version is {MinimumAbAv1Version}."));
-    }
-
-    internal static bool TryParseAbAv1Version(string? value, out Version version)
-    {
-        version = new Version();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        var normalized = value.Trim();
-        if (normalized.StartsWith("v", StringComparison.OrdinalIgnoreCase))
-        {
-            normalized = normalized[1..];
-        }
-
-        var components = normalized.Split('.', StringSplitOptions.None);
-        if (components.Length != 3 || components.Any(component => !int.TryParse(component, NumberStyles.None, CultureInfo.InvariantCulture, out _)))
-        {
-            return false;
-        }
-
-        version = new Version(
-            int.Parse(components[0], CultureInfo.InvariantCulture),
-            int.Parse(components[1], CultureInfo.InvariantCulture),
-            int.Parse(components[2], CultureInfo.InvariantCulture));
-        return true;
+        diagnostics.Add(version >= AbAv1VersionPolicy.Minimum
+            ? Pass("RemoteAbAv1VersionSufficient", $"Remote ab-av1 version {version} meets the minimum required version {AbAv1VersionPolicy.Minimum}.")
+            : Failure("RemoteAbAv1VersionInsufficient", $"Remote ab-av1 version {version} is too old; minimum required version is {AbAv1VersionPolicy.Minimum}."));
     }
 
     private static string BuildProbeScript(string workingDirectory)

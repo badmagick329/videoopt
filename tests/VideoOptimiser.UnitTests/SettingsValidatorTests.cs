@@ -15,6 +15,16 @@ public sealed class SettingsValidatorTests
     }
 
     [Fact]
+    public void ValidateAcceptsAnImmichOnlySetupWithoutWatchRoots()
+    {
+        var settings = CreateValidSettings();
+        settings.Watch.Roots.Clear();
+        settings.Immich.BaseUrl = "http://immich.test:2283";
+
+        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().NotContain("WatchRootsRequired");
+    }
+
+    [Fact]
     public void ValidateCompleteSettingsIsValid()
     {
         var settings = CreateValidSettings();

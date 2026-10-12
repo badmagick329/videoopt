@@ -16,6 +16,52 @@ public sealed class ProcessToolVerifier : IToolVerifier
         return await RunAsync(name, executable, availabilityArgument, requireSuccessfulExit: false, cancellationToken);
     }
 
+    public async Task<string?> ReadOutputAsync(string executable, IReadOnlyList<string> arguments, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(executable))
+        {
+            return null;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        try
+        {
+            using var process = new Process { StartInfo = startInfo };
+            if (!process.Start())
+            {
+                return null;
+            }
+
+            // Both pipes are drained concurrently so a chatty stderr cannot block the process before it exits.
+            var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            await process.WaitForExitAsync(cancellationToken);
+            var output = await standardOutputTask;
+            await standardErrorTask;
+            return process.ExitCode == 0 ? output : null;
+        }
+        catch (Win32Exception)
+        {
+            return null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     private static async Task<ToolVerificationResult> RunAsync(
         string name,
         string executable,

@@ -9,6 +9,9 @@ public interface IToolVerifier
 {
     Task<ToolVerificationResult> VerifyAsync(string name, string executable, string versionArgument, CancellationToken cancellationToken = default);
     Task<ToolVerificationResult> VerifyPresenceAsync(string name, string executable, string availabilityArgument, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns the tool's standard output, or null when it cannot start or exits non-zero.</summary>
+    Task<string?> ReadOutputAsync(string executable, IReadOnlyList<string> arguments, CancellationToken cancellationToken = default);
 }
 
 public interface IRemoteEnvironmentVerifier

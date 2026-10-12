@@ -3,15 +3,17 @@
 ## [Unreleased]
 ### Added
 
-- An `immich:` configuration section for the Immich source: the server's LAN URL, where the API key loads from (`VIDEO_OPTIMISER_IMMICH_API_KEY`, then `.env`), the age gate, whether to skip favourites, and the staging directory. With `immich.baseUrl` set, `doctor` checks that the server runs Immich 3, that it accepts the key (naming a missing permission), and that the staging directory is writable.
+- An `immich:` configuration section for the Immich source: the server's LAN URL, where the API key loads from (`VIDEO_OPTIMISER_IMMICH_API_KEY`, then `.env`), the age gate, whether to skip favourites, and the staging directory. With `immich.baseUrl` set, `doctor` checks that the server runs Immich 3, that it accepts the key, and that the staging directory is writable. A command that needs a permission the key lacks stops with exit code 3 and names it.
 - `immich run` converts old videos from the Immich library. It first moves back to Immich's trash any converted original the phone uploaded again and lists those files to delete from the phone. Then it downloads each eligible video taken more than `immich.minimumAgeDays` ago to the staging directory and processes it as `queue run` does. `--first` converts one video.
 - `immich finalize` lists the converted Immich videos with their capture date and sizes and asks once. It then uploads each AV1 as a new asset with the original's albums, tags, favourite, description and rating, and moves the original to Immich's trash. If finalisation stops partway, the next run continues it.
 - `queue cancel <job-id>` also cancels a job that is ready to finalise.
 - `status` and `history` show an Immich job's asset IDs; their `--json` output adds `source`, `immichAssetId` and `immichNewAssetId`.
+- In local mode, `doctor` checks that ab-av1 is 0.11.7 or newer and that FFmpeg has the libsvtav1 encoder, the libvmaf filter and the 10-bit `yuv420p10le` format. In both modes it checks that FFmpeg can decode AV1 with libdav1d, which validation's decode test needs, unless `validation.decodeTest` is `none`.
 
 ### Changed
 
 - `queue run` processes only jobs from the watch roots. Immich jobs run with `immich run`.
+- `watch.roots` may be empty when `immich.baseUrl` is set, so an Immich-only config passes `config validate` and `doctor`. `queue discover` then says it needs a watch root.
 - A managed Hetzner worker now installs ab-av1 0.11.7, the version CI tests, instead of 0.10.4. `doctor` rejects a remote worker with an older ab-av1. A worker created before this change keeps 0.10.4: delete it with `worker delete` and the next run creates a new one.
 
 ### Fixed

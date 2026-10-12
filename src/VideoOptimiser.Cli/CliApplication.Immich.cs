@@ -14,8 +14,7 @@ internal static partial class CliApplication
 {
     private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, bool first, CancellationToken cancellationToken)
     {
-        // An Immich-only setup has no use for watch roots.
-        if (!RequireImmich(configuration) || ReportInvalidSettings(services, configuration, "WatchRootsRequired")) return (int)ExitCode.InvalidConfiguration;
+        if (!RequireImmich(configuration) || ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
         var settings = configuration.Settings;
         // Guard reports are printed as they arrive and kept: when a later error ends the run, the next run sees the trashed
         // re-uploads as trashed and stays silent, so this run is the only one that can tell the user to delete them.
