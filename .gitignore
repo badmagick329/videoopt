@@ -9,6 +9,7 @@ jobs.db-*
 *.hetzner-worker.lock
 *.hetzner-*.known_hosts
 logs/
+immich-staging/
 .ab-av1-*/
 **/bin/
 **/obj/
