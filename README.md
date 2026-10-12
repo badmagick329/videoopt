@@ -97,7 +97,8 @@ A folder name such as `Archive` is created beside each original, so archiving is
 # Process one file directly. --force ignores eligibility rules.
 .\video-optimiser.exe process "C:\Videos\movie.mp4" --config .\video-optimiser.yaml
 
-# List active jobs, or cancel queued/interrupted jobs.
+# List active jobs, or cancel jobs. --all cancels queued and interrupted jobs;
+# a job ID also cancels a job that is ready to finalise.
 .\video-optimiser.exe queue list --config .\video-optimiser.yaml
 .\video-optimiser.exe queue cancel <job-id> --config .\video-optimiser.yaml
 .\video-optimiser.exe queue cancel --all --config .\video-optimiser.yaml

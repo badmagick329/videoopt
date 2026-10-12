@@ -122,6 +122,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<IImmichReuploadGuard>(services => new ImmichReuploadGuard(services.GetRequiredService<IImmichClientFactory>(), services.GetRequiredService<IJobRepository>()));
         builder.Services.AddSingleton<IJobRetryService, JobRetryService>();
         builder.Services.AddSingleton<ITemporaryOutputCleanupService, TemporaryOutputCleanupService>();
+        builder.Services.AddSingleton<ImmichFinalizer>();
         builder.Services.AddSingleton<IFinalizationService, FinalizationService>();
         builder.Services.AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
         builder.Services.AddSingleton<IInteractiveConfirmation, ConsoleInteractiveConfirmation>();
@@ -328,13 +329,16 @@ internal static class CliApplication
         if (jobs.Length == 0) { Console.WriteLine("No cancellable jobs found."); return (int)ExitCode.Success; }
         foreach (var job in jobs)
         {
-            if (job.Status is not (JobStatus.Queued or JobStatus.Interrupted)) { Console.Error.WriteLine($"{job.Id:N} is not cancellable."); continue; }
+            // A ready job is cancellable only by ID, so --all never discards finished encodes. It is the way out for an Immich
+            // job whose original went away, which would otherwise wait at ready forever.
+            if (job.Status is not (JobStatus.Queued or JobStatus.Interrupted) && (command.All || job.Status != JobStatus.ReadyToFinalize)) { Console.Error.WriteLine($"{job.Id:N} is not cancellable."); continue; }
             job.Status = JobStatus.Cancelled;
             job.FailureCategory = "Cancelled";
             job.FailureMessage = "Cancelled by user.";
             job.CompletedUtc = DateTimeOffset.UtcNow;
             await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
             Console.WriteLine($"Cancelled  {job.Id:N}  {Path.GetFileName(job.SourcePath)}");
+            if (job.ImmichNewAssetId is { } uploaded) Console.WriteLine($"The AV1 already uploaded to Immich as asset {uploaded} stays there; delete it in Immich if you do not want it.");
         }
         return (int)ExitCode.Success;
     }
@@ -537,10 +541,13 @@ internal static class CliApplication
             return (int)result.ExitCode;
         }
 
-        var ready = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Where(job => job.Status == JobStatus.ReadyToFinalize).ToArray();
+        var ready = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken))
+            .Where(job => job.Status == JobStatus.ReadyToFinalize || FinalizationService.IsInterruptedImmichFinalization(job))
+            .ToArray();
         if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
         foreach (var job in ready) Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
-        Console.WriteLine(DescribeOriginalAction(configuration.Settings.Original));
+        if (ready.Any(job => job.SourceKind == JobSourceKind.File)) Console.WriteLine(DescribeOriginalAction(configuration.Settings.Original));
+        if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) Console.WriteLine("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
         Console.Write("Finalise these jobs? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
         var failures = 0;

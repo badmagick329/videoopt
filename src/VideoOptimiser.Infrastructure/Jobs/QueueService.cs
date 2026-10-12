@@ -126,6 +126,13 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         var failed = new List<FailedQueueJob>();
         foreach (var job in candidates)
         {
+            if (FinalizationService.IsInterruptedImmichFinalization(job))
+            {
+                FinalizationService.ReturnToReady(job, FinalizationService.InterruptedMessage);
+                await jobs.UpdateAsync(databasePath, job, cancellationToken);
+                continue;
+            }
+
             if (job.Status == JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)
             {
                 job.Status = JobStatus.Failed;

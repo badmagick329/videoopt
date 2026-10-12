@@ -42,6 +42,12 @@ public sealed class JobProcessor(
         {
             return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is already ready to finalise.");
         }
+        else if (FinalizationService.IsInterruptedImmichFinalization(job))
+        {
+            FinalizationService.ReturnToReady(job, FinalizationService.InterruptedMessage);
+            await jobs.UpdateAsync(databasePath, job, cancellationToken);
+            return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} was interrupted during finalisation. Run finalize to resume it.");
+        }
         else if (job.Status == JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)
         {
             return await FailAsync(job, databasePath, "ManualInterventionRequired", "Finalisation was interrupted and requires manual review.", ExitCode.FinalisationFailure, cancellationToken);
