@@ -26,8 +26,52 @@ public sealed class JobCompatibilityTests : IDisposable
         result.Status.Should().Be(JobCompatibilityStatus.Adopted);
         JobCompatibility.Apply(job, result.ExpectedBinding);
         job.ExecutionMode.Should().Be(ProcessingModes.RemoteSsh);
-        job.RemoteHost.Should().Be("hetzner:cx43:hel1,fsn1");
+        job.RemoteHost.Should().Be(RemoteExecutionIdentity.ManagedHetzner);
         job.RemoteWorkspace.Should().Be($"/var/tmp/video-optimiser/{job.Id:N}");
+    }
+
+    [Theory]
+    [InlineData("hetzner:cx43:hel1,fsn1,nbg1")]
+    [InlineData("hetzner:cpx42:nbg1")]
+    [InlineData(RemoteExecutionIdentity.ManagedHetzner)]
+    public void StartedJobKeepsResumingAfterTheManagedServerTypeOrLocationsChange(string storedBinding)
+    {
+        var id = Guid.NewGuid();
+        var job = new JobRecord
+        {
+            Id = id,
+            Status = JobStatus.Interrupted,
+            ResumeStatus = JobStatus.Encoding,
+            Crf = 30,
+            Attempt = 1,
+            ExecutionMode = ProcessingModes.RemoteSsh,
+            RemoteHost = storedBinding,
+            RemoteWorkspace = $"/var/tmp/video-optimiser/{id:N}"
+        };
+
+        JobCompatibility.Evaluate(job, ManagedSettings()).Status.Should().Be(JobCompatibilityStatus.Compatible);
+    }
+
+    [Fact]
+    public void ManagedHetznerJobDoesNotMatchAManualAliasNamedHetzner()
+    {
+        var id = Guid.NewGuid();
+        var settings = ManagedSettings();
+        settings.Processing.RemoteSsh.Lifecycle = RemoteLifecycleModes.Manual;
+        settings.Processing.RemoteSsh.Host = "hetzner";
+        var job = new JobRecord
+        {
+            Id = id,
+            Status = JobStatus.Interrupted,
+            ResumeStatus = JobStatus.Encoding,
+            Crf = 30,
+            Attempt = 1,
+            ExecutionMode = ProcessingModes.RemoteSsh,
+            RemoteHost = RemoteExecutionIdentity.ManagedHetzner,
+            RemoteWorkspace = $"/var/tmp/video-optimiser/{id:N}"
+        };
+
+        JobCompatibility.Evaluate(job, settings).Status.Should().Be(JobCompatibilityStatus.Incompatible);
     }
 
     [Theory]
@@ -104,7 +148,7 @@ public sealed class JobCompatibilityTests : IDisposable
         var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
 
         result.FailedJobs.Should().BeEmpty();
-        result.RunnableJobs.Should().ContainSingle().Which.RemoteHost.Should().Be("hetzner:cx43:hel1,fsn1");
+        result.RunnableJobs.Should().ContainSingle().Which.RemoteHost.Should().Be(RemoteExecutionIdentity.ManagedHetzner);
         (await repository.GetAsync(settings.Database.Path, job.Id))!.RemoteWorkspace.Should().Be($"/var/tmp/video-optimiser/{job.Id:N}");
     }
 
@@ -344,7 +388,7 @@ public sealed class JobCompatibilityTests : IDisposable
             {
                 Lifecycle = RemoteLifecycleModes.Hetzner,
                 WorkingDirectory = "/var/tmp/video-optimiser",
-                Hetzner = new HetznerSettings { ServerType = "cx43", Locations = ["hel1", "fsn1"] }
+                Hetzner = new HetznerSettings { ServerTypes = ["cx43"], Locations = ["hel1", "fsn1"] }
             }
         }
     };

@@ -12,7 +12,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 | Working | `queue discover`, `queue run`, `process`, `immich run`, `validate`, `queue cancel`, `queue retry` | Run when the user's request covers it. They change only the job database and temporary files. The one exception: `immich run`'s re-upload guard moves converted originals the phone uploaded again back to Immich's trash, which is the intended outcome. |
 | Gated | `finalize`, `immich finalize`, `cleanup`, `worker create`, `worker delete` | Gate first. They replace originals, delete files, or create or delete a paid server. |
 
-**Paid encoding.** When the config has `processing.mode: "remoteSsh"` and `remoteSsh.lifecycle: "hetzner"`, a `queue run`, `process` or `immich run` with work to do creates a Hetzner server that bills by the hour. Gate the first such run in a session, and say it will create a server.
+**Paid encoding.** When the config has `processing.mode: "remoteSsh"` and `remoteSsh.lifecycle: "hetzner"`, a `queue run`, `process` or `immich run` with work to do creates a Hetzner server that bills by the hour. Gate the first such run in a session: say it will create a server, name the `remoteSsh.hetzner.serverTypes` it may pick from, and state the `maxHourlyPrice` cap (or that there is none, when it is `null`).
 
 **Prompts.** `finalize --ready`, `immich finalize` and `cleanup` ask `[y/N]` on standard input. After the user approves, pipe the answer: `'y' | video-optimiser finalize --ready`. With no input, the command cancels and exits `0`. `finalize <job-id>` does not prompt, so gate it all the same. With redirected input, a failed Hetzner run never asks whether to delete the worker; it keeps it.
 

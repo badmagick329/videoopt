@@ -86,7 +86,7 @@ public sealed class DoctorServiceTests : IDisposable
     {
         var settings = CreateHetznerSettings();
         var remote = new FakeRemoteEnvironmentVerifier();
-        var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "running", null);
+        var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "running", null, "cx43", "hel1");
 
         var report = await CreateDoctor(new FakeToolVerifier(true), remote, new FakeRemoteWorkerLifecycle(worker)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 

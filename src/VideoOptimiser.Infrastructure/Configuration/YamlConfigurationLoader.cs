@@ -110,6 +110,8 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         settings.Processing.RemoteSsh ??= new RemoteSshSettings();
         settings.Processing.RemoteSsh.Hetzner ??= new HetznerSettings();
         settings.Processing.RemoteSsh.Hetzner.Locations ??= ["hel1", "fsn1", "nbg1"];
+        // An explicit empty value must fail validation rather than quietly become the default list.
+        settings.Processing.RemoteSsh.Hetzner.ServerTypes ??= [];
         settings.Database ??= new DatabaseSettings();
         settings.Watch ??= new WatchSettings();
         settings.Immich ??= new ImmichSettings();

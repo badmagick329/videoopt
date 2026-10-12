@@ -14,6 +14,10 @@
 
 ### Changed
 
+- **Breaking config change:** `processing.remoteSsh.hetzner.serverType` is replaced by `serverTypes`, a list tried in order, each in every configured location, so a sold-out type falls through to the next. The default is `["cx43", "cx53", "cpx42", "ccx33"]`. A config that still has `serverType` fails to load and names the replacement. Before creating a server, VideoOptimiser skips any type that is sold out, not x86, deprecated, or smaller than `minimumCpuCount` or `minimumAvailableMemory`, and prints the type, location and hourly price it creates. Jobs started on a managed worker before this change still resume.
+- New `processing.remoteSsh.hetzner.maxHourlyPrice` skips any server type and location costing more, in EUR per hour including VAT. The default is `0.30`; `null` removes the cap.
+- When no Hetzner server can be created, the error lists each server type, the locations tried for it, and why each failed.
+- `worker status` and `worker create` show the worker's server type and location.
 - `queue run` processes only jobs from the watch roots. Immich jobs run with `immich run`.
 - `watch.roots` may be empty when `immich.baseUrl` is set, so an Immich-only config passes `config validate` and `doctor`. `queue discover` then says it needs a watch root.
 - The README is rewritten to be shorter and task-first.

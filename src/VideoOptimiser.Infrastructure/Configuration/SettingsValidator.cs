@@ -33,7 +33,9 @@ public sealed class SettingsValidator : ISettingsValidator
                 var hetzner = settings.Processing.RemoteSsh.Hetzner;
                 AddWhen(string.IsNullOrWhiteSpace(hetzner.ApiTokenEnvironmentVariable) || hetzner.ApiTokenEnvironmentVariable.Any(char.IsWhiteSpace), "InvalidHetznerTokenVariable", "processing.remoteSsh.hetzner.apiTokenEnvironmentVariable must name one environment variable.");
                 AddWhen(!string.IsNullOrWhiteSpace(hetzner.ApiTokenFile) && Directory.Exists(hetzner.ApiTokenFile), "InvalidHetznerTokenFile", "processing.remoteSsh.hetzner.apiTokenFile must be a file path, not a directory.");
-                AddWhen(string.IsNullOrWhiteSpace(hetzner.ServerType), "HetznerServerTypeRequired", "processing.remoteSsh.hetzner.serverType is required.");
+                AddWhen(hetzner.ServerTypes is null || hetzner.ServerTypes.Count == 0, "HetznerServerTypesRequired", "processing.remoteSsh.hetzner.serverTypes must list at least one server type, such as [\"cx43\", \"cx53\", \"cpx42\", \"ccx33\"].");
+                AddWhen(hetzner.ServerTypes is not null && hetzner.ServerTypes.Any(type => string.IsNullOrWhiteSpace(type) || type.Any(char.IsWhiteSpace)), "InvalidHetznerServerTypes", "processing.remoteSsh.hetzner.serverTypes must contain non-empty server type names without whitespace.");
+                AddWhen(hetzner.MaxHourlyPrice <= 0, "InvalidHetznerMaxHourlyPrice", "processing.remoteSsh.hetzner.maxHourlyPrice must be greater than zero, in EUR per hour including VAT. Set it to null for no cap.");
                 AddWhen(string.IsNullOrWhiteSpace(hetzner.Image), "HetznerImageRequired", "processing.remoteSsh.hetzner.image is required.");
                 AddWhen(hetzner.Locations is null || hetzner.Locations.Count == 0, "HetznerLocationsRequired", "processing.remoteSsh.hetzner.locations must contain at least one location.");
                 if (hetzner.Locations is not null)

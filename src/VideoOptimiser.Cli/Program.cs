@@ -497,7 +497,7 @@ internal static partial class CliApplication
         var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
         if (diagnostics.Count > 0) { foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}"); return (int)ExitCode.InvalidConfiguration; }
         var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
-        Console.WriteLine($"Worker ready: {worker.Name} ({worker.ServerId}) {worker.Address}");
+        Console.WriteLine($"Worker ready: {worker.Name} ({worker.ServerId}) {worker.Address}{DescribePlacement(worker)}");
         return (int)ExitCode.Success;
     }
 
@@ -506,9 +506,15 @@ internal static partial class CliApplication
         var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
         if (!lifecycle.IsManaged(configuration.Settings)) { Console.WriteLine("Managed Hetzner lifecycle is not enabled."); return (int)ExitCode.Success; }
         var worker = await lifecycle.GetAsync(configuration.Settings, configuration.Settings.Database.Path, cancellationToken);
-        Console.WriteLine(worker is null ? "No managed Hetzner worker exists." : $"{worker.Name}  server {worker.ServerId}  {worker.Status}  {worker.Address}");
+        Console.WriteLine(worker is null ? "No managed Hetzner worker exists." : $"{worker.Name}  server {worker.ServerId}  {worker.Status}  {worker.Address}{DescribePlacement(worker)}");
         return (int)ExitCode.Success;
     }
+
+    // A worker recovered from Hetzner without a stored state file can lack either.
+    private static string DescribePlacement(RemoteWorkerInfo worker) =>
+        worker.ServerType.Length == 0 ? string.Empty
+        : worker.Location.Length == 0 ? $"  {worker.ServerType}"
+        : $"  {worker.ServerType} in {worker.Location}";
 
     private static async Task<int> RunWorkerDeleteAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
     {

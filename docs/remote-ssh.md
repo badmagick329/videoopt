@@ -1,6 +1,6 @@
 # Remote SSH processing
 
-Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a CX43 when work starts and deletes it after every required output is safely downloaded.
+Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a server when work starts, using the first type on your list that Hetzner has in stock, and deletes it after every required output is safely downloaded.
 
 The managed workflow has only two one-time manual prerequisites: store the dedicated SSH public key in the Hetzner project and create an API token. Do **not** create a server in the Hetzner console; VideoOptimiser creates it through the API.
 
@@ -93,10 +93,11 @@ processing:
     hetzner:
       apiTokenEnvironmentVariable: "VIDEO_OPTIMISER_HETZNER_TOKEN"
       apiTokenFile: ".env"
-      serverType: "cx43"
+      # Tried in this order, each in every location below.
+      serverTypes: ["cx43", "cx53", "cpx42", "ccx33"]
+      # EUR per hour including VAT. null removes the cap.
+      maxHourlyPrice: 0.30
       image: "ubuntu-24.04"
-      # Tried in this order after the CX43 availability preflight. A placement
-      # failure automatically advances to the next candidate.
       locations: ["hel1", "fsn1", "nbg1"]
       sshKeyName: "video-optimiser-hetzner-cx43"
       serverNamePrefix: "video-optimiser"
@@ -107,7 +108,32 @@ processing:
 
 Use the real path to the private key. The image must be Ubuntu 24.04 x86-64; the bootstrap intentionally rejects Ubuntu 26.04. The controller enables public IPv4, disables IPv6, marks the Primary IPv4 for automatic deletion, and applies ownership labels before it will reuse or delete a server.
 
-Before creating a worker, VideoOptimiser queries the selected server type and skips configured locations that Hetzner currently reports as unavailable. The availability result is only an indicator, so a placement can still return HTTP 412; when the error is `resource_unavailable` or `placement_unavailable`, the next configured location is tried. Locations remain in the order listed in YAML; Hetzner's `recommended` flag is advisory and does not override that explicit order. The default candidates (`hel1`, `fsn1`, and `nbg1`) are all in the `eu-central` network zone.
+### How the server is chosen
+
+VideoOptimiser tries each server type in `serverTypes` order, and each type in every location in `locations` order, before moving to the next type. With the defaults that is `cx43` in hel1, fsn1 and nbg1, then `cx53` in the same three, and so on.
+
+Before creating anything, it reads Hetzner's server type list once and skips any type and location where:
+
+- Hetzner reports the type as unavailable (sold out) there, or doesn't sell it there;
+- the type has fewer cores than `minimumCpuCount` or less memory than `minimumAvailableMemory`, because the worker check would reject it after billing starts;
+- the type isn't x86 (the bootstrap installs x86 builds), or Hetzner has deprecated it;
+- its price there, including VAT, is above `maxHourlyPrice`.
+
+It prints each skipped type with the reason, then the type, location and hourly price before each create request, such as `Creating Hetzner cpx42 in fsn1 (€0.134/h incl. VAT).` Availability is only an indicator, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`); the next type and location is then tried. If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No server is left running.
+
+Gross hourly prices in the EU on 2026-10-12, for choosing your list:
+
+| Type | Cores | Memory | €/h incl. VAT |
+| --- | --- | --- | --- |
+| `cx43` | 8 shared | 16 GB | 0.031 |
+| `cx53` | 16 shared | 32 GB | 0.057 |
+| `cpx42` | 8 shared (AMD) | 16 GB | 0.134 |
+| `cpx62` | 16 shared (AMD) | 32 GB | 0.250 |
+| `ccx33` | 8 dedicated | 32 GB | 0.266 |
+
+CX types sell out often, and Hetzner sells them only in fsn1, nbg1 and hel1. Prices change, so check the Hetzner Console. Locations outside Europe (ash, hil, sin) mostly cost more, and every original and output crosses that distance, so keep EU locations first. Hetzner's `recommended` flag never reorders your list.
+
+The worker's type and location show in `worker status`.
 
 Validate the local settings without creating a server:
 

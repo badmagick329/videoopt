@@ -70,6 +70,6 @@ public static class JobCompatibility
 
     private static bool Matches(JobRecord job, JobExecutionBinding binding) =>
         string.Equals(job.ExecutionMode, binding.ExecutionMode, StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(job.RemoteHost, binding.RemoteIdentity, StringComparison.Ordinal) &&
+        RemoteExecutionIdentity.Matches(job.RemoteHost, binding.RemoteIdentity) &&
         string.Equals(job.RemoteWorkspace, binding.RemoteWorkspace, StringComparison.Ordinal);
 }

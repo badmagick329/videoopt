@@ -9,12 +9,19 @@ namespace VideoOptimiser.Infrastructure.Configuration;
 /// </summary>
 internal static class YamlErrorDescriber
 {
+    // Removed keys whose replacement the generic spelling hint would not reveal.
+    private static readonly Dictionary<string, string> Replacements = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["processing.remoteSsh.hetzner.serverType"] = "It was replaced by serverTypes, a list tried in order, such as serverTypes: [\"cx43\", \"cx53\", \"cpx42\", \"ccx33\"]."
+    };
+
     public static string Describe(string yaml, YamlException exception)
     {
         var location = $"line {exception.Start.Line}, column {exception.Start.Column}";
         var match = FindNode(yaml, exception.Start);
         return match switch
         {
+            (var path, true) when Replacements.TryGetValue(path, out var replacement) => $"Unknown setting '{path}' at {location}. {replacement}",
             (var path, true) => $"Unknown setting '{path}' at {location}. Check its spelling, or remove it if it is no longer supported.",
             (var path, false) => $"Invalid value for '{path}' at {location}: {Reason(exception)}",
             _ => $"{Reason(exception)} ({location})"

@@ -187,6 +187,31 @@ public sealed class SettingsValidatorTests
         }
     }
 
+    [Theory]
+    [InlineData(new string[0], null, "HetznerServerTypesRequired")]
+    [InlineData(new[] { "cx43", " " }, null, "InvalidHetznerServerTypes")]
+    [InlineData(new[] { "cx43" }, "-0.10", "InvalidHetznerMaxHourlyPrice")]
+    [InlineData(new[] { "cx43" }, "0", "InvalidHetznerMaxHourlyPrice")]
+    public void ValidateManagedHetznerRejectsUnusableServerTypesOrPriceCap(string[] serverTypes, string? maxHourlyPrice, string expectedCode)
+    {
+        var settings = CreateValidSettings();
+        settings.Processing = new ProcessingSettings
+        {
+            Mode = ProcessingModes.RemoteSsh,
+            RemoteSsh = new RemoteSshSettings
+            {
+                Lifecycle = RemoteLifecycleModes.Hetzner,
+                Hetzner = new HetznerSettings
+                {
+                    ServerTypes = [.. serverTypes],
+                    MaxHourlyPrice = maxHourlyPrice is null ? 0.30m : decimal.Parse(maxHourlyPrice, System.Globalization.CultureInfo.InvariantCulture)
+                }
+            }
+        };
+
+        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain(expectedCode);
+    }
+
     [Fact]
     public void ValidateRejectsUnknownProcessingMode()
     {

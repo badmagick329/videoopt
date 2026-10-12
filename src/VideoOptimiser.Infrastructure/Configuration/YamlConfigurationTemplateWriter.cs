@@ -58,7 +58,10 @@ processing:
       apiTokenEnvironmentVariable: "VIDEO_OPTIMISER_HETZNER_TOKEN"
       # Loaded automatically when the environment variable is not set. Keep this file ignored.
       apiTokenFile: ".env"
-      serverType: "cx43"
+      # Tried in this order, each in every location below. Each needs x86, minimumCpuCount cores and minimumAvailableMemory.
+      serverTypes: ["cx43", "cx53", "cpx42", "ccx33"]
+      # Skips any type and location costing more than this, in EUR per hour including VAT. null removes the cap.
+      maxHourlyPrice: 0.30
       image: "ubuntu-24.04"
       # Candidates are tried in this order after the availability preflight.
       locations: ["hel1", "fsn1", "nbg1"]

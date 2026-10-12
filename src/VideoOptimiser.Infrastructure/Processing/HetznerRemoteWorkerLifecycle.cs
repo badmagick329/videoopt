@@ -21,6 +21,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     private static readonly TimeSpan DefaultReadinessProbeTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ProcessTerminationGracePeriod = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan DefaultProgressHeartbeatInterval = TimeSpan.FromSeconds(60);
+    private const int MaxServerTypePages = 10;
     private readonly IExternalProcessRunner _processes;
     private readonly HttpClient _http;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
@@ -155,7 +156,9 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                 {
                     Address = server.Value.Address,
                     PrimaryIpv4Id = server.Value.PrimaryIpv4Id,
-                    CreatedUtc = server.Value.CreatedUtc
+                    CreatedUtc = server.Value.CreatedUtc,
+                    Location = server.Value.Location.Length > 0 ? server.Value.Location : state.Location,
+                    ServerType = server.Value.ServerType.Length > 0 ? server.Value.ServerType : state.ServerType
                 };
                 await WriteStateAsync(statePath, refreshed, cancellationToken);
                 return refreshed;
@@ -175,7 +178,8 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             servers[0].PrimaryIpv4Id,
             servers[0].Name,
             servers[0].Address,
-            string.Empty,
+            servers[0].Location,
+            servers[0].ServerType,
             KnownHostsPath(databasePath: Path.GetFullPath(statePath[..^".hetzner-worker.json".Length]), servers[0].Id),
             controller,
             servers[0].CreatedUtc);
@@ -195,26 +199,29 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         var hetzner = settings.Processing.RemoteSsh.Hetzner;
         if (Encoding.UTF8.GetByteCount(bootstrapScript) > 32 * 1024) throw new InvalidOperationException("The Hetzner bootstrap script exceeds the 32 KiB user-data limit.");
         var name = $"{hetzner.ServerNamePrefix}-{controller[..12]}".ToLowerInvariant();
-        var candidates = await PreflightLocationsAsync(token, hetzner, progress, cancellationToken);
+        var (candidates, reports) = await PreflightCandidatesAsync(token, settings.Processing.RemoteSsh, progress, cancellationToken);
         var failures = new List<string>();
         Exception? lastPlacementFailure = null;
         for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
         {
             var candidate = candidates[candidateIndex];
-            progress?.Report($"Creating Hetzner server in {candidate.Name}.");
+            progress?.Report(candidate.HourlyGross is { } price
+                ? $"Creating Hetzner {candidate} ({FormatPrice(price)} incl. VAT)."
+                : $"Creating Hetzner {candidate}.");
             JsonDocument document;
             try
             {
-                document = await SendJsonAsync(token, HttpMethod.Post, "servers", CreateServerPayload(name, hetzner, candidate.Name, controller, bootstrapScript), cancellationToken);
+                document = await SendJsonAsync(token, HttpMethod.Post, "servers", CreateServerPayload(name, hetzner, candidate, controller, bootstrapScript), cancellationToken);
             }
             catch (HetznerApiException exception) when (IsPlacementUnavailable(exception))
             {
                 lastPlacementFailure = exception;
                 var reason = DescribeApiFailure(exception);
-                failures.Add($"{candidate.Name} ({reason})");
+                failures.Add($"{candidate} ({reason})");
+                reports[candidate.ServerType].Notes.Add($"placement failed in {candidate.Location} ({reason})");
                 if (candidateIndex + 1 < candidates.Count)
                 {
-                    progress?.Report($"Hetzner location {candidate.Name} placement unavailable ({reason}); falling back to {candidates[candidateIndex + 1].Name}.");
+                    progress?.Report($"Hetzner {candidate} placement unavailable ({reason}); falling back to {candidates[candidateIndex + 1]}.");
                     continue;
                 }
                 break;
@@ -225,7 +232,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                 var serverElement = document.RootElement.GetProperty("server");
                 var server = ParseServer(serverElement);
                 var knownHostsFile = KnownHostsPath(statePath[..^".hetzner-worker.json".Length], server.Id);
-                var state = new WorkerState(server.Id, server.PrimaryIpv4Id, server.Name, server.Address, candidate.Name, knownHostsFile, controller, server.CreatedUtc);
+                var state = new WorkerState(server.Id, server.PrimaryIpv4Id, server.Name, server.Address, candidate.Location, candidate.ServerType, knownHostsFile, controller, server.CreatedUtc);
 
                 // A failed POST never reaches this point, so no local state is left for a failed placement attempt.
                 await WriteStateAsync(statePath, state, cancellationToken);
@@ -235,20 +242,21 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                     if (server.PrimaryIpv4Id > 0) await SetPrimaryIpAutoDeleteAsync(token, server.PrimaryIpv4Id, controller, cancellationToken);
                     if (document.RootElement.TryGetProperty("action", out var action) && action.TryGetProperty("id", out var actionId))
                     {
-                        progress?.Report($"Hetzner server {server.Id} allocated in {candidate.Name}; waiting for server provisioning to finish.");
+                        progress?.Report($"Hetzner server {server.Id} allocated as {candidate}; waiting for server provisioning to finish.");
                         await WaitForActionAsync(token, actionId.GetInt64(), cancellationToken);
                     }
                 }
                 catch (HetznerActionException exception) when (IsPlacementUnavailable(exception))
                 {
                     var reason = $"Hetzner action failed ({exception.Code ?? "unknown"}): {exception.Message}";
-                    failures.Add($"{candidate.Name} ({reason})");
+                    failures.Add($"{candidate} ({reason})");
+                    reports[candidate.ServerType].Notes.Add($"provisioning failed in {candidate.Location} ({reason})");
                     lastPlacementFailure = exception;
-                    progress?.Report($"Hetzner location {candidate.Name} provisioning failed ({reason}); cleaning up before fallback.");
+                    progress?.Report($"Hetzner {candidate} provisioning failed ({reason}); cleaning up before fallback.");
                     await CleanupFailedCreateAsync(token, statePath, state, cancellationToken);
                     if (candidateIndex + 1 < candidates.Count)
                     {
-                        progress?.Report($"Hetzner location {candidate.Name} cleaned up; falling back to {candidates[candidateIndex + 1].Name}.");
+                        progress?.Report($"Hetzner {candidate} cleaned up; falling back to {candidates[candidateIndex + 1]}.");
                         continue;
                     }
                     break;
@@ -258,124 +266,221 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         }
 
         throw new RemoteWorkerCapacityUnavailableException(
-            hetzner.ServerType,
-            candidates.Select(candidate => candidate.Name).ToArray(),
+            reports.Values.Select(report => report.ToOutcome()).ToArray(),
             failures,
             lastPlacementFailure);
     }
 
-    private async Task<IReadOnlyList<LocationCandidate>> PreflightLocationsAsync(
+    /// <summary>
+    /// Lists every server type once and returns the (type, location) pairs worth a create request, type-major in
+    /// configuration order. A pair is dropped here, before anything bills, when Hetzner cannot place it, when the
+    /// worker doctor would reject the type after it already bills, or when it costs more than the cap.
+    /// </summary>
+    private async Task<(IReadOnlyList<PlacementCandidate> Candidates, OrderedDictionary<string, TypeReport> Reports)> PreflightCandidatesAsync(
         string token,
-        HetznerSettings hetzner,
+        RemoteSshSettings remote,
         IProgress<string>? progress,
         CancellationToken cancellationToken)
     {
-        var configuredLocations = hetzner.Locations
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        progress?.Report($"Checking Hetzner {hetzner.ServerType} capacity in {FormatLocationList(configuredLocations)}.");
-        JsonDocument document;
-        try
+        var hetzner = remote.Hetzner;
+        var types = hetzner.ServerTypes.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var locations = hetzner.Locations.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var cap = hetzner.MaxHourlyPrice;
+        if (!HumanReadableValues.TryParseSize(remote.MinimumAvailableMemory, out var minimumMemory))
+            throw new InvalidOperationException("The configured remote minimum available memory is invalid.");
+        progress?.Report($"Checking Hetzner capacity for {FormatList(types, "or")} in {FormatList(locations, "or")}" +
+                         (cap is null ? "." : $", up to {FormatCap(cap.Value)} incl. VAT."));
+
+        var offers = await FetchServerTypesAsync(token, types, cancellationToken);
+        var candidates = new List<PlacementCandidate>();
+        var reports = new OrderedDictionary<string, TypeReport>(StringComparer.OrdinalIgnoreCase);
+        foreach (var type in types)
         {
-            document = await SendJsonAsync(token, HttpMethod.Get, $"server_types?name={Uri.EscapeDataString(hetzner.ServerType)}", null, cancellationToken);
+            var report = new TypeReport(type);
+            reports.Add(type, report);
+            var unsuitable = offers.TryGetValue(type, out var offer)
+                ? DescribeUnsuitable(offer, remote, minimumMemory)
+                : "not a Hetzner server type";
+            if (unsuitable is not null)
+            {
+                report.Notes.Add(unsuitable);
+                progress?.Report($"Skipping Hetzner {type}: {unsuitable}.");
+                continue;
+            }
+
+            report.LocationsTried.AddRange(locations);
+            var skipped = new List<(string Kind, string Location)>();
+            var kept = new List<string>();
+            foreach (var location in locations)
+            {
+                offer!.HourlyGross.TryGetValue(location, out var listedPrice);
+                var price = offer.HourlyGross.ContainsKey(location) ? listedPrice : (decimal?)null;
+                var skip = DescribeSkippedLocation(offer, location, price, cap);
+                if (skip is not null)
+                {
+                    skipped.Add(skip.Value);
+                    continue;
+                }
+                // Hetzner's own name, so the create request and the worker state use its spelling.
+                candidates.Add(new PlacementCandidate(offer.Name, location, price));
+                kept.Add(location);
+            }
+
+            var skippedText = DescribeSkipped(skipped);
+            if (skippedText.Length > 0) report.Notes.Add(skippedText);
+            progress?.Report(kept.Count == 0
+                ? $"Skipping Hetzner {type}: {skippedText}."
+                : skipped.Count == 0
+                    ? $"Hetzner {type} is available in {FormatList(kept, "and")}."
+                    : $"Hetzner {type} is available in {FormatList(kept, "and")}; {skippedText}.");
         }
-        catch (JsonException exception)
-        {
-            throw PreflightFailure(hetzner.ServerType, $"the response was not valid JSON: {exception.Message}", exception);
-        }
-        using (document)
-        {
-            return ParsePreflightLocations(document, hetzner, progress);
-        }
+
+        if (candidates.Count == 0)
+            throw new RemoteWorkerCapacityUnavailableException(reports.Values.Select(report => report.ToOutcome()).ToArray());
+        return (candidates, reports);
     }
 
-    private static List<LocationCandidate> ParsePreflightLocations(
-        JsonDocument document,
-        HetznerSettings hetzner,
-        IProgress<string>? progress)
+    private static string? DescribeUnsuitable(ServerTypeOffer offer, RemoteSshSettings remote, long minimumMemory)
     {
-        var root = document.RootElement;
-        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("server_types", out var serverTypes) || serverTypes.ValueKind != JsonValueKind.Array)
-            throw PreflightFailure(hetzner.ServerType, "the response did not contain a server_types array");
+        var reasons = new List<string>();
+        // The bootstrap script installs x86_64 builds and exits on any other architecture.
+        if (!offer.Architecture.Equals("x86", StringComparison.OrdinalIgnoreCase)) reasons.Add($"{offer.Architecture} architecture, but the worker needs x86");
+        if (offer.Deprecated) reasons.Add("deprecated by Hetzner");
+        if (offer.Cores < remote.MinimumCpuCount) reasons.Add($"{offer.Cores} cores, below minimumCpuCount {remote.MinimumCpuCount}");
+        // Hetzner's "GB" are GiB. The worker doctor checks available memory, which is a little lower than this total.
+        if (offer.MemoryGiB * 1024m * 1024m * 1024m < minimumMemory) reasons.Add($"{offer.MemoryGiB.ToString("0.##", CultureInfo.InvariantCulture)} GB memory, below minimumAvailableMemory {remote.MinimumAvailableMemory}");
+        return reasons.Count == 0 ? null : string.Join("; ", reasons);
+    }
 
-        var matches = new List<JsonElement>();
+    private static (string Kind, string Location)? DescribeSkippedLocation(ServerTypeOffer offer, string location, decimal? price, decimal? cap)
+    {
+        if (!offer.Locations.TryGetValue(location, out var status)) return ("not offered in", location);
+        if (status.Deprecated) return ("deprecated in", location);
+        if (!status.Available) return ("unavailable in", location);
+        if (cap is null) return null;
+        if (price is null) return ("no price listed in", location);
+        return price > cap ? ($"over the {FormatCap(cap.Value)} cap in", $"{location} ({FormatPrice(price.Value)})") : null;
+    }
+
+    private static string DescribeSkipped(List<(string Kind, string Location)> skipped) => string.Join("; ", skipped
+        .GroupBy(item => item.Kind)
+        .Select(group => $"{group.Key} {FormatList(group.Select(item => item.Location).ToArray(), "and")}"));
+
+    private async Task<Dictionary<string, ServerTypeOffer>> FetchServerTypesAsync(string token, IReadOnlyCollection<string> wanted, CancellationToken cancellationToken)
+    {
+        // One listing covers every configured type; Hetzner's name filter takes a single name.
+        var offers = new Dictionary<string, ServerTypeOffer>(StringComparer.OrdinalIgnoreCase);
+        var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int? page = 1;
+        for (var requests = 0; page is not null; requests++)
+        {
+            if (requests == MaxServerTypePages) throw PreflightFailure($"the server type listing did not end within {MaxServerTypePages} pages");
+            JsonDocument document;
+            try
+            {
+                document = await SendJsonAsync(token, HttpMethod.Get, $"server_types?per_page=50&page={page}", null, cancellationToken);
+            }
+            catch (JsonException exception)
+            {
+                throw PreflightFailure($"the response was not valid JSON: {exception.Message}", exception);
+            }
+            using (document)
+            {
+                page = ParseServerTypesPage(document.RootElement, wanted, listed, offers);
+            }
+        }
+        return offers;
+    }
+
+    private static int? ParseServerTypesPage(JsonElement root, IReadOnlyCollection<string> wanted, HashSet<string> listed, Dictionary<string, ServerTypeOffer> offers)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("server_types", out var serverTypes) || serverTypes.ValueKind != JsonValueKind.Array)
+            throw PreflightFailure("the response did not contain a server_types array");
         foreach (var serverType in serverTypes.EnumerateArray())
         {
-            if (serverType.ValueKind != JsonValueKind.Object || !serverType.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String)
-                throw PreflightFailure(hetzner.ServerType, "the server_types array contained an entry without a string name");
-            if (string.Equals(name.GetString(), hetzner.ServerType, StringComparison.OrdinalIgnoreCase)) matches.Add(serverType);
+            if (serverType.ValueKind != JsonValueKind.Object || !serverType.TryGetProperty("name", out var nameElement) || nameElement.ValueKind != JsonValueKind.String)
+                throw PreflightFailure("the server_types array contained an entry without a string name");
+            var name = nameElement.GetString()!;
+            if (!listed.Add(name)) throw PreflightFailure($"server type '{name}' was listed more than once");
+            if (wanted.Contains(name, StringComparer.OrdinalIgnoreCase)) offers.Add(name, ParseOffer(serverType, name));
         }
-        if (matches.Count == 0) throw new InvalidOperationException($"Hetzner server type '{hetzner.ServerType}' was not found during location preflight; no server creation was attempted.");
-        if (matches.Count > 1) throw new InvalidOperationException($"Hetzner server type lookup for '{hetzner.ServerType}' returned multiple matches during location preflight; no server creation was attempted.");
 
-        if (!matches[0].TryGetProperty("locations", out var locationArray) || locationArray.ValueKind != JsonValueKind.Array)
-            throw PreflightFailure(hetzner.ServerType, "the matching server type did not contain a locations array");
+        return root.TryGetProperty("meta", out var meta) && meta.ValueKind == JsonValueKind.Object &&
+               meta.TryGetProperty("pagination", out var pagination) && pagination.ValueKind == JsonValueKind.Object &&
+               pagination.TryGetProperty("next_page", out var next) && next.ValueKind == JsonValueKind.Number
+            ? next.GetInt32()
+            : null;
+    }
 
+    private static ServerTypeOffer ParseOffer(JsonElement serverType, string name)
+    {
+        if (!serverType.TryGetProperty("architecture", out var architecture) || architecture.ValueKind != JsonValueKind.String)
+            throw PreflightFailure($"server type '{name}' did not contain a string architecture");
+        if (!serverType.TryGetProperty("cores", out var cores) || !cores.TryGetInt32(out var coreCount))
+            throw PreflightFailure($"server type '{name}' did not contain an integer cores field");
+        if (!serverType.TryGetProperty("memory", out var memory) || !memory.TryGetDecimal(out var memoryGiB))
+            throw PreflightFailure($"server type '{name}' did not contain a numeric memory field");
+        var deprecated = serverType.TryGetProperty("deprecated", out var deprecatedField) && deprecatedField.ValueKind == JsonValueKind.True ||
+                         serverType.TryGetProperty("deprecation", out var deprecation) && deprecation.ValueKind == JsonValueKind.Object;
+
+        if (!serverType.TryGetProperty("locations", out var locationArray) || locationArray.ValueKind != JsonValueKind.Array)
+            throw PreflightFailure($"server type '{name}' did not contain a locations array");
         var locations = new Dictionary<string, LocationStatus>(StringComparer.OrdinalIgnoreCase);
         foreach (var location in locationArray.EnumerateArray())
         {
             if (location.ValueKind != JsonValueKind.Object ||
-                !location.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(name.GetString()))
-                throw PreflightFailure(hetzner.ServerType, "the locations array contained an entry without a non-empty string name");
+                !location.TryGetProperty("name", out var locationName) || locationName.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(locationName.GetString()))
+                throw PreflightFailure($"the locations array of '{name}' contained an entry without a non-empty string name");
             if (!location.TryGetProperty("available", out var available) || available.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
-                throw PreflightFailure(hetzner.ServerType, $"location '{name.GetString()}' did not contain a boolean available field");
-            if (location.TryGetProperty("recommended", out var recommendedField) && recommendedField.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
-                throw PreflightFailure(hetzner.ServerType, $"location '{name.GetString()}' did not contain a boolean recommended field");
-            var locationName = name.GetString()!;
-            if (!locations.TryAdd(locationName, new LocationStatus(
-                    available.GetBoolean(),
-                    location.TryGetProperty("recommended", out var recommended) && recommended.GetBoolean())))
-                throw PreflightFailure(hetzner.ServerType, $"the locations array contained duplicate location '{locationName}'");
+                throw PreflightFailure($"location '{locationName.GetString()}' of '{name}' did not contain a boolean available field");
+            var locationDeprecated = location.TryGetProperty("deprecation", out var locationDeprecation) && locationDeprecation.ValueKind == JsonValueKind.Object;
+            if (!locations.TryAdd(locationName.GetString()!, new LocationStatus(available.GetBoolean(), locationDeprecated)))
+                throw PreflightFailure($"the locations array of '{name}' contained duplicate location '{locationName.GetString()}'");
         }
-        var candidates = new List<LocationCandidate>();
-        var seenConfiguredLocations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var configuredLocation in hetzner.Locations)
+
+        var prices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        if (serverType.TryGetProperty("prices", out var priceArray) && priceArray.ValueKind == JsonValueKind.Array)
         {
-            if (!seenConfiguredLocations.Add(configuredLocation)) continue;
-            if (!locations.TryGetValue(configuredLocation, out var status))
+            foreach (var price in priceArray.EnumerateArray())
             {
-                continue;
-            }
-
-            if (status.Available)
-            {
-                // Configuration order is the explicit preference. Recommendations are advisory and are
-                // reported, but never reorder an explicitly ordered locations list.
-                candidates.Add(new LocationCandidate(configuredLocation, status.Recommended));
+                if (price.ValueKind != JsonValueKind.Object ||
+                    !price.TryGetProperty("location", out var location) || location.ValueKind != JsonValueKind.String ||
+                    !price.TryGetProperty("price_hourly", out var hourly) || hourly.ValueKind != JsonValueKind.Object ||
+                    !hourly.TryGetProperty("gross", out var gross) || gross.ValueKind != JsonValueKind.String ||
+                    !decimal.TryParse(gross.GetString(), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var grossValue))
+                    throw PreflightFailure($"the prices array of '{name}' contained an entry without a location and a decimal price_hourly.gross");
+                prices[location.GetString()!] = grossValue;
             }
         }
 
-        if (candidates.Count == 0)
-            throw new RemoteWorkerCapacityUnavailableException(hetzner.ServerType, seenConfiguredLocations.ToArray());
-
-        var candidateNames = candidates.Select(candidate => candidate.Name).ToArray();
-        progress?.Report(candidateNames.Length == 1
-            ? $"Hetzner {hetzner.ServerType} capacity available in {candidateNames[0]}; trying it."
-            : $"Hetzner {hetzner.ServerType} capacity available in {FormatLocationList(candidateNames)}; trying configured order.");
-        return candidates;
+        return new ServerTypeOffer(name, architecture.GetString()!, coreCount, memoryGiB, deprecated, locations, prices);
     }
 
-    private static string FormatLocationList(string[] locations) => locations.Length switch
+    private static string FormatList(IReadOnlyList<string> items, string conjunction) => items.Count switch
     {
-        0 => "the configured locations",
-        1 => locations[0],
-        2 => $"{locations[0]} or {locations[1]}",
-        _ => $"{string.Join(", ", locations.Take(locations.Length - 1))}, or {locations[^1]}"
+        0 => "nothing",
+        1 => items[0],
+        2 => $"{items[0]} {conjunction} {items[1]}",
+        _ => $"{string.Join(", ", items.Take(items.Count - 1))}, {conjunction} {items[^1]}"
     };
 
-    private static InvalidOperationException PreflightFailure(string serverType, string reason, Exception? innerException = null) =>
-        new($"Hetzner {serverType} location preflight failed: {reason}; no server creation was attempted.", innerException);
+    private static string FormatPrice(decimal price) => $"€{price.ToString("0.000", CultureInfo.InvariantCulture)}/h";
 
-    private static byte[] CreateServerPayload(string name, HetznerSettings hetzner, string location, string controller, string bootstrapScript)
+    private static string FormatCap(decimal cap) => $"€{cap.ToString("0.00##", CultureInfo.InvariantCulture)}/h";
+
+    private static InvalidOperationException PreflightFailure(string reason, Exception? innerException = null) =>
+        new($"Hetzner server type preflight failed: {reason}; no server creation was attempted.", innerException);
+
+    private static byte[] CreateServerPayload(string name, HetznerSettings hetzner, PlacementCandidate candidate, string controller, string bootstrapScript)
     {
         using var payload = new MemoryStream();
         using (var writer = new Utf8JsonWriter(payload))
         {
             writer.WriteStartObject();
             writer.WriteString("name", name);
-            writer.WriteString("server_type", hetzner.ServerType);
+            writer.WriteString("server_type", candidate.ServerType);
             writer.WriteString("image", hetzner.Image);
-            writer.WriteString("location", location);
+            writer.WriteString("location", candidate.Location);
             writer.WritePropertyName("ssh_keys");
             writer.WriteStartArray();
             writer.WriteStringValue(hetzner.SshKeyName);
@@ -757,6 +862,16 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         var ipv4 = publicNet.GetProperty("ipv4");
         var labels = server.GetProperty("labels").EnumerateObject().ToDictionary(item => item.Name, item => item.Value.GetString() ?? string.Empty, StringComparer.Ordinal);
         DateTimeOffset? created = server.TryGetProperty("created", out var createdElement) && DateTimeOffset.TryParse(createdElement.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : null;
+        // Informational only: shown by worker status, never used to decide anything.
+        var serverType = server.TryGetProperty("server_type", out var typeElement) && typeElement.ValueKind == JsonValueKind.Object &&
+                         typeElement.TryGetProperty("name", out var typeName) && typeName.ValueKind == JsonValueKind.String
+            ? typeName.GetString()!
+            : string.Empty;
+        var location = server.TryGetProperty("datacenter", out var datacenter) && datacenter.ValueKind == JsonValueKind.Object &&
+                       datacenter.TryGetProperty("location", out var locationElement) && locationElement.ValueKind == JsonValueKind.Object &&
+                       locationElement.TryGetProperty("name", out var locationName) && locationName.ValueKind == JsonValueKind.String
+            ? locationName.GetString()!
+            : string.Empty;
         return new ServerSnapshot(
             server.GetProperty("id").GetInt64(),
             server.GetProperty("name").GetString() ?? string.Empty,
@@ -764,7 +879,9 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             ipv4.GetProperty("ip").GetString() ?? throw new InvalidDataException("Hetzner server has no public IPv4 address."),
             ipv4.TryGetProperty("id", out var primaryId) && primaryId.ValueKind == JsonValueKind.Number ? primaryId.GetInt64() : 0,
             labels,
-            created);
+            created,
+            serverType,
+            location);
     }
 
     private static void VerifyOwnership(ServerSnapshot server, string controller)
@@ -819,6 +936,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             root.GetProperty("name").GetString() ?? string.Empty,
             root.GetProperty("address").GetString() ?? string.Empty,
             root.TryGetProperty("location", out var location) ? location.GetString() ?? string.Empty : string.Empty,
+            root.TryGetProperty("serverType", out var serverType) ? serverType.GetString() ?? string.Empty : string.Empty,
             root.GetProperty("knownHostsFile").GetString() ?? string.Empty,
             root.GetProperty("controller").GetString() ?? string.Empty,
             root.TryGetProperty("createdUtc", out var created) && DateTimeOffset.TryParse(created.GetString(), out var parsed) ? parsed : null);
@@ -837,6 +955,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             writer.WriteString("name", state.Name);
             writer.WriteString("address", state.Address);
             if (!string.IsNullOrWhiteSpace(state.Location)) writer.WriteString("location", state.Location);
+            if (!string.IsNullOrWhiteSpace(state.ServerType)) writer.WriteString("serverType", state.ServerType);
             writer.WriteString("knownHostsFile", state.KnownHostsFile);
             writer.WriteString("controller", state.Controller);
             if (state.CreatedUtc is not null) writer.WriteString("createdUtc", state.CreatedUtc.Value);
@@ -862,9 +981,19 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         if (_ownsHttpClient) _http.Dispose();
     }
 
-    private readonly record struct ServerSnapshot(long Id, string Name, string Status, string Address, long PrimaryIpv4Id, IReadOnlyDictionary<string, string> Labels, DateTimeOffset? CreatedUtc);
-    private readonly record struct LocationStatus(bool Available, bool Recommended);
-    private readonly record struct LocationCandidate(string Name, bool Recommended);
+    private readonly record struct ServerSnapshot(long Id, string Name, string Status, string Address, long PrimaryIpv4Id, IReadOnlyDictionary<string, string> Labels, DateTimeOffset? CreatedUtc, string ServerType, string Location);
+    private readonly record struct LocationStatus(bool Available, bool Deprecated);
+    private sealed record ServerTypeOffer(string Name, string Architecture, int Cores, decimal MemoryGiB, bool Deprecated, IReadOnlyDictionary<string, LocationStatus> Locations, IReadOnlyDictionary<string, decimal> HourlyGross);
+    private readonly record struct PlacementCandidate(string ServerType, string Location, decimal? HourlyGross)
+    {
+        public override string ToString() => $"{ServerType} in {Location}";
+    }
+    private sealed class TypeReport(string serverType)
+    {
+        public List<string> LocationsTried { get; } = [];
+        public List<string> Notes { get; } = [];
+        public RemoteWorkerTypeOutcome ToOutcome() => new(serverType, LocationsTried, string.Join("; ", Notes));
+    }
     private sealed class HetznerApiException(HttpStatusCode statusCode, string? code, string message) : InvalidOperationException($"Hetzner API returned {(int)statusCode} ({statusCode}): {message}")
     {
         public HttpStatusCode StatusCode { get; } = statusCode;
@@ -875,8 +1004,8 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     {
         public string? Code { get; } = code;
     }
-    private sealed record WorkerState(long ServerId, long PrimaryIpv4Id, string Name, string Address, string Location, string KnownHostsFile, string Controller, DateTimeOffset? CreatedUtc)
+    private sealed record WorkerState(long ServerId, long PrimaryIpv4Id, string Name, string Address, string Location, string ServerType, string KnownHostsFile, string Controller, DateTimeOffset? CreatedUtc)
     {
-        public RemoteWorkerInfo ToInfo(string status) => new(ServerId, Name, Address, status, CreatedUtc);
+        public RemoteWorkerInfo ToInfo(string status) => new(ServerId, Name, Address, status, CreatedUtc, ServerType, Location);
     }
 }

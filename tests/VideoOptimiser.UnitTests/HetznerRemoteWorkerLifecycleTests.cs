@@ -81,9 +81,9 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
 
         fixture.Handler.CreateLocations.Should().ContainSingle().Which.Should().Be("fsn1");
-        messages.Should().Contain("Checking Hetzner cx43 capacity in hel1, fsn1, or nbg1.");
-        messages.Should().Contain("Hetzner cx43 capacity available in fsn1 or nbg1; trying configured order.");
-        messages.Should().Contain("Creating Hetzner server in fsn1.");
+        messages.Should().Contain("Checking Hetzner capacity for cx43 in hel1, fsn1, or nbg1, up to €0.30/h incl. VAT.");
+        messages.Should().Contain("Hetzner cx43 is available in fsn1 and nbg1; unavailable in hel1.");
+        messages.Should().Contain("Creating Hetzner cx43 in fsn1 (€0.031/h incl. VAT).");
         messages.Should().NotContain(message => message.Contains("recommended", StringComparison.OrdinalIgnoreCase));
         messages.Should().NotContain(message => message.Contains("available=False", StringComparison.OrdinalIgnoreCase));
     }
@@ -134,9 +134,10 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
 
         var exception = await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
-        exception.Which.Message.Should().Be("No CX43 capacity is currently available in hel1 or fsn1. No server was created. Try again later.");
+        exception.Which.Message.Should().Contain("No Hetzner server could be created")
+            .And.Contain("cx43 in hel1, fsn1: placement failed in hel1 (HTTP 412 PreconditionFailed (resource_unavailable): hel capacity); placement failed in fsn1 (HTTP 412 PreconditionFailed (resource_unavailable): fsn capacity)");
         exception.Which.AttemptedFailures.Should().HaveCount(2)
-            .And.ContainInOrder("hel1 (HTTP 412 PreconditionFailed (resource_unavailable): hel capacity)", "fsn1 (HTTP 412 PreconditionFailed (resource_unavailable): fsn capacity)");
+            .And.ContainInOrder("cx43 in hel1 (HTTP 412 PreconditionFailed (resource_unavailable): hel capacity)", "cx43 in fsn1 (HTTP 412 PreconditionFailed (resource_unavailable): fsn capacity)");
         fixture.Handler.CreateCount.Should().Be(2);
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
     }
@@ -167,8 +168,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
 
         var exception = await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
-        exception.Which.Message.Should().Be("No CX43 capacity is currently available in hel1 or fsn1. No server was created. Try again later.");
-        exception.Which.Locations.Should().Equal("hel1", "fsn1");
+        exception.Which.Outcomes.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new RemoteWorkerTypeOutcome("cx43", ["hel1", "fsn1"], "unavailable in hel1 and fsn1"));
         fixture.Handler.CreateCount.Should().Be(0);
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
     }
@@ -190,13 +191,137 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     public async Task EnsureDoesNotCreateWhenServerTypeLocationPreflightIsMalformed()
     {
         using var fixture = new Fixture();
-        fixture.Handler.ServerTypePreflightResponse = "{\"server_types\":[{\"name\":\"cx43\",\"locations\":[{\"name\":\"hel1\"}]}]}";
+        fixture.Handler.ServerTypePreflightResponse = "{\"server_types\":[{\"name\":\"cx43\",\"architecture\":\"x86\",\"cores\":8,\"memory\":16,\"locations\":[{\"name\":\"hel1\"}]}]}";
         using var lifecycle = fixture.CreateLifecycle();
 
         var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
 
         await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*did not contain a boolean available field*no server creation was attempted*");
         fixture.Handler.CreateCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task EnsureFallsThroughToTheNextServerTypeWhenTheFirstIsSoldOut()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx43", "cx53", "cpx42"];
+        fixture.Handler.Catalogue["cx43"].SoldOut();
+        fixture.Handler.Catalogue["cx53"].SoldOut();
+        using var lifecycle = fixture.CreateLifecycle();
+        var messages = new List<string>();
+
+        var worker = await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
+
+        fixture.Handler.ServerTypeRequests.Should().Be(1);
+        fixture.Handler.CreateServerTypes.Should().Equal("cpx42");
+        fixture.Handler.CreateLocations.Should().Equal("hel1");
+        messages.Should().ContainInOrder(
+            "Skipping Hetzner cx43: unavailable in hel1, fsn1, and nbg1.",
+            "Skipping Hetzner cx53: unavailable in hel1, fsn1, and nbg1.",
+            "Hetzner cpx42 is available in hel1, fsn1, and nbg1.",
+            "Creating Hetzner cpx42 in hel1 (€0.134/h incl. VAT).");
+        worker.ServerType.Should().Be("cpx42");
+        worker.Location.Should().Be("hel1");
+        File.ReadAllText(fixture.DatabasePath + ".hetzner-worker.json").Should().Contain("\"serverType\": \"cpx42\"");
+    }
+
+    [Fact]
+    public async Task EnsureFallsBackAcrossTypesWhenPlacementFailsInEveryLocation()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx43", "cpx42"];
+        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "stale"));
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "stale"));
+        using var lifecycle = fixture.CreateLifecycle();
+        var messages = new List<string>();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
+
+        fixture.Handler.CreateServerTypes.Should().Equal("cx43", "cx43", "cpx42");
+        fixture.Handler.CreateLocations.Should().Equal("hel1", "fsn1", "hel1");
+        messages.Should().Contain(message => message.StartsWith("Hetzner cx43 in fsn1 placement unavailable", StringComparison.Ordinal) && message.EndsWith("falling back to cpx42 in hel1.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task EnsureNeverCreatesATypeTheWorkerWouldRejectOrThatCostsMoreThanTheCap()
+    {
+        using var fixture = new Fixture();
+        // cx23: too few cores and too little memory. cax31: ARM. ccx43: over the cap. cpx62: deprecated.
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx23", "cax31", "ccx43", "cpx62", "nope1", "ccx33"];
+        fixture.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice = 0.30m;
+        fixture.Handler.Catalogue["cpx62"].Deprecated = true;
+        using var lifecycle = fixture.CreateLifecycle();
+        var messages = new List<string>();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
+
+        fixture.Handler.CreateServerTypes.Should().Equal("ccx33");
+        messages.Should().Contain("Skipping Hetzner cx23: 2 cores, below minimumCpuCount 8; 4 GB memory, below minimumAvailableMemory 14GiB.");
+        messages.Should().Contain("Skipping Hetzner cax31: arm architecture, but the worker needs x86.");
+        messages.Should().Contain("Skipping Hetzner ccx43: over the €0.30/h cap in hel1 (€0.533/h), fsn1 (€0.533/h), and nbg1 (€0.533/h).");
+        messages.Should().Contain("Skipping Hetzner cpx62: deprecated by Hetzner.");
+        messages.Should().Contain("Skipping Hetzner nope1: not a Hetzner server type.");
+    }
+
+    [Fact]
+    public async Task EnsureAppliesThePriceCapPerLocationAndAllowsNoCap()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["ccx43"];
+        fixture.Handler.Catalogue["ccx43"].PriceOverrides["hel1"] = 0.90m;
+        fixture.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice = 0.60m;
+        using (var capped = fixture.CreateLifecycle()) await capped.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        fixture.Handler.CreateLocations.Should().Equal("fsn1");
+
+        using var uncappedFixture = new Fixture();
+        uncappedFixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["ccx43"];
+        uncappedFixture.Handler.Catalogue["ccx43"].PriceOverrides["hel1"] = 0.90m;
+        uncappedFixture.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice = null;
+        using var uncapped = uncappedFixture.CreateLifecycle();
+        await uncapped.EnsureReadyAsync(uncappedFixture.Settings, uncappedFixture.DatabasePath);
+        uncappedFixture.Handler.CreateLocations.Should().Equal("hel1");
+    }
+
+    [Fact]
+    public async Task EnsureNamesEveryTypeAndLocationWhenNoCandidateRemains()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx43", "cax31", "cpx42"];
+        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
+        fixture.Handler.Catalogue["cx43"].SoldOut();
+        fixture.Handler.Catalogue["cpx42"].Locations["hel1"] = (false, false);
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "fsn capacity"));
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        var exception = await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
+        exception.Which.Outcomes.Should().BeEquivalentTo(new[]
+        {
+            new RemoteWorkerTypeOutcome("cx43", ["hel1", "fsn1"], "unavailable in hel1 and fsn1"),
+            new RemoteWorkerTypeOutcome("cax31", [], "arm architecture, but the worker needs x86"),
+            new RemoteWorkerTypeOutcome("cpx42", ["hel1", "fsn1"], "unavailable in hel1; placement failed in fsn1 (HTTP 412 PreconditionFailed (resource_unavailable): fsn capacity)")
+        }, options => options.WithStrictOrdering());
+        exception.Which.Message.Should().Contain("cx43 in hel1, fsn1: unavailable in hel1 and fsn1")
+            .And.Contain("cax31: arm architecture")
+            .And.Contain("cpx42 in hel1, fsn1:");
+        fixture.Handler.CreateCount.Should().Be(1);
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EnsureReadsEveryPageOfTheServerTypeListing()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cax31", "ccx33"];
+        fixture.Handler.ServerTypePageSize = 3;
+        using var lifecycle = fixture.CreateLifecycle();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        fixture.Handler.ServerTypeRequests.Should().Be(3);
+        fixture.Handler.CreateServerTypes.Should().Equal("ccx33");
     }
 
     [Fact]
@@ -377,7 +502,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                         {
                             ApiTokenEnvironmentVariable = _tokenVariable,
                             SshKeyName = "video-optimiser-hetzner-cx43",
-                            BootstrapScriptPath = bootstrap
+                            BootstrapScriptPath = bootstrap,
+                            ServerTypes = ["cx43"]
                         }
                     }
                 }
@@ -460,6 +586,35 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         public void Advance(TimeSpan amount) => _now += amount;
     }
 
+    private sealed class FakeServerType(string name, string architecture, int cores, decimal memory, decimal hourlyGross)
+    {
+        public bool Deprecated { get; set; }
+        public Dictionary<string, (bool Available, bool Recommended)> Locations { get; } = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["hel1"] = (true, false),
+            ["fsn1"] = (true, false),
+            ["nbg1"] = (true, false)
+        };
+        public Dictionary<string, decimal> PriceOverrides { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public void SoldOut()
+        {
+            foreach (var location in Locations.Keys.ToArray()) Locations[location] = (false, false);
+        }
+
+        public string ToJson()
+        {
+            static string Bool(bool value) => value ? "true" : "false";
+            var locations = string.Join(",", Locations.Select(item => $"{{\"name\":\"{item.Key}\",\"available\":{Bool(item.Value.Available)},\"recommended\":{Bool(item.Value.Recommended)},\"deprecation\":null}}"));
+            var prices = string.Join(",", Locations.Keys.Select(location =>
+            {
+                var gross = PriceOverrides.GetValueOrDefault(location, hourlyGross).ToString("0.0000000000000000", System.Globalization.CultureInfo.InvariantCulture);
+                return $"{{\"location\":\"{location}\",\"price_hourly\":{{\"gross\":\"{gross}\",\"net\":\"0\"}}}}";
+            }));
+            return $"{{\"name\":\"{name}\",\"architecture\":\"{architecture}\",\"cores\":{cores},\"memory\":{memory.ToString(System.Globalization.CultureInfo.InvariantCulture)},\"deprecated\":{Bool(Deprecated)},\"deprecation\":null,\"locations\":[{locations}],\"prices\":[{prices}]}}";
+        }
+    }
+
     private sealed class FakeHetznerHandler : HttpMessageHandler
     {
         public bool ServerExists { get; private set; }
@@ -474,14 +629,24 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         private (string Code, string Message)? _pendingActionFailure;
         public JsonDocument? CreatePayload { get; set; }
         public int CreateCount { get; private set; }
-        public Dictionary<string, (bool Available, bool Recommended)> LocationAvailability { get; } = new(StringComparer.OrdinalIgnoreCase)
+        // Mirrors the live catalogue's shape on 2026-10-12: gross EUR per hour, memory in GB (GiB).
+        public Dictionary<string, FakeServerType> Catalogue { get; } = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["hel1"] = (true, false),
-            ["fsn1"] = (true, false),
-            ["nbg1"] = (true, false)
+            ["cx23"] = new("cx23", "x86", 2, 4, 0.006m),
+            ["cx43"] = new("cx43", "x86", 8, 16, 0.031m),
+            ["cx53"] = new("cx53", "x86", 16, 32, 0.057m),
+            ["cpx42"] = new("cpx42", "x86", 8, 16, 0.134m),
+            ["cpx62"] = new("cpx62", "x86", 16, 32, 0.250m),
+            ["ccx33"] = new("ccx33", "x86", 8, 32, 0.266m),
+            ["ccx43"] = new("ccx43", "x86", 16, 64, 0.533m),
+            ["cax31"] = new("cax31", "arm", 8, 16, 0.019m)
         };
+        public Dictionary<string, (bool Available, bool Recommended)> LocationAvailability => Catalogue["cx43"].Locations;
+        public int? ServerTypePageSize { get; set; }
+        public int ServerTypeRequests { get; private set; }
         public Queue<(HttpStatusCode Status, string Code, string Message)> CreateFailures { get; } = new();
         public List<string> CreateLocations { get; } = [];
+        public List<string> CreateServerTypes { get; } = [];
 
         public void DeleteServerOutOfBand() => ServerExists = false;
 
@@ -490,11 +655,15 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             request.Headers.Authorization!.Scheme.Should().Be("Bearer");
             request.Headers.Authorization.Parameter.Should().Be("secret-test-token");
             var path = request.RequestUri!.PathAndQuery;
-            if (request.Method == HttpMethod.Get && path.StartsWith("/v1/server_types?name=", StringComparison.Ordinal))
+            if (request.Method == HttpMethod.Get && path.StartsWith("/v1/server_types?", StringComparison.Ordinal))
             {
+                ServerTypeRequests++;
                 if (ServerTypePreflightResponse is not null) return Json(ServerTypePreflightResponse);
-                var locations = string.Join(",", LocationAvailability.Select(item => $"{{\"name\":\"{item.Key}\",\"available\":{item.Value.Available.ToString().ToLowerInvariant()},\"recommended\":{item.Value.Recommended.ToString().ToLowerInvariant()}}}"));
-                return Json($"{{\"server_types\":[{{\"name\":\"cx43\",\"locations\":[{locations}]}}]}}");
+                var page = int.Parse(System.Web.HttpUtility.ParseQueryString(request.RequestUri.Query)["page"] ?? "1", System.Globalization.CultureInfo.InvariantCulture);
+                var size = ServerTypePageSize ?? Catalogue.Count;
+                var entries = Catalogue.Values.Skip((page - 1) * size).Take(size).Select(type => type.ToJson());
+                var next = page * size < Catalogue.Count ? (page + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) : "null";
+                return Json($"{{\"server_types\":[{string.Join(",", entries)}],\"meta\":{{\"pagination\":{{\"page\":{page},\"next_page\":{next}}}}}}}");
             }
             if (request.Method == HttpMethod.Get && path.StartsWith("/v1/servers?", StringComparison.Ordinal))
             {
@@ -509,6 +678,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                 if (CreateCount == 1) SecondCreateObservedCleanResources = !ServerExists && !PrimaryIpExists;
                 CreateCount++;
                 CreateLocations.Add(CreatePayload.RootElement.GetProperty("location").GetString()!);
+                CreateServerTypes.Add(CreatePayload.RootElement.GetProperty("server_type").GetString()!);
                 if (CreateFailures.TryDequeue(out var failure))
                     return Error(failure.Status, failure.Code, failure.Message);
                 ServerExists = true;
@@ -554,7 +724,10 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                 ? "\"video-optimiser-managed\":\"true\",\"video-optimiser-controller\":\"someone-else\""
                 : CreatePayload?.RootElement.GetProperty("labels").EnumerateObject().Select(item => $"\"{item.Name}\":\"{item.Value.GetString()}\"").Aggregate((left, right) => left + "," + right)
                   ?? "\"video-optimiser-managed\":\"true\",\"video-optimiser-controller\":\"placeholder\"";
-            return $"{{\"id\":42,\"name\":\"video-optimiser-test\",\"status\":\"running\",\"created\":\"2026-08-20T00:00:00Z\",\"labels\":{{{labels}}},\"public_net\":{{\"ipv4\":{{\"id\":99,\"ip\":\"203.0.113.42\"}}}}}}";
+            var placement = CreatePayload is null
+                ? string.Empty
+                : $",\"server_type\":{{\"name\":\"{CreateServerTypes[^1]}\"}},\"datacenter\":{{\"location\":{{\"name\":\"{CreateLocations[^1]}\"}}}}";
+            return $"{{\"id\":42,\"name\":\"video-optimiser-test\",\"status\":\"running\",\"created\":\"2026-08-20T00:00:00Z\",\"labels\":{{{labels}}},\"public_net\":{{\"ipv4\":{{\"id\":99,\"ip\":\"203.0.113.42\"}}}}{placement}}}";
         }
 
         private static HttpResponseMessage Json(string json) => new(HttpStatusCode.OK)

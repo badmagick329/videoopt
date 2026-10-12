@@ -91,7 +91,8 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         loaded.Settings.Processing.RemoteSsh.MinimumAvailableMemory.Should().Be("14GiB");
         loaded.Settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier.Should().Be(2.5);
         loaded.Settings.Processing.RemoteSsh.Lifecycle.Should().Be(RemoteLifecycleModes.Manual);
-        loaded.Settings.Processing.RemoteSsh.Hetzner.ServerType.Should().Be("cx43");
+        loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().Equal("cx43", "cx53", "cpx42", "ccx33");
+        loaded.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice.Should().Be(0.30m);
         loaded.Settings.Processing.RemoteSsh.Hetzner.ApiTokenFile.Should().Be(Path.Combine(_directory, ".env"));
         loaded.Settings.Processing.RemoteSsh.Hetzner.Locations.Should().Equal("hel1", "fsn1", "nbg1");
     }
@@ -122,7 +123,7 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
             processing:
               remoteSsh:
                 hetzner:
-                  serverType: "cx43"
+                  serverTypes: ["cx43"]
                   ocations: ["hel1"]
             """);
 
@@ -130,6 +131,60 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
 
         (await load.Should().ThrowAsync<InvalidDataException>())
             .WithMessage("Unknown setting 'processing.remoteSsh.hetzner.ocations' at line 6, column 7.*");
+    }
+
+    [Fact]
+    public async Task LoadAsyncRejectsTheSingleServerTypeAndNamesItsReplacement()
+    {
+        var configPath = Path.Combine(_directory, "server-type.yaml");
+        await File.WriteAllTextAsync(configPath, """
+            version: 1
+            processing:
+              remoteSsh:
+                hetzner:
+                  serverType: "cx43"
+            """);
+
+        var load = () => new YamlConfigurationLoader().LoadAsync(configPath);
+
+        (await load.Should().ThrowAsync<InvalidDataException>())
+            .WithMessage("Unknown setting 'processing.remoteSsh.hetzner.serverType' at line 5, column 7. It was replaced by serverTypes*");
+    }
+
+    [Fact]
+    public async Task LoadAsyncReadsServerTypesAndANullPriceCap()
+    {
+        var configPath = Path.Combine(_directory, "server-types.yaml");
+        await File.WriteAllTextAsync(configPath, """
+            version: 1
+            processing:
+              remoteSsh:
+                hetzner:
+                  serverTypes: ["cpx42", "ccx33"]
+                  maxHourlyPrice: null
+            """);
+
+        var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
+
+        loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().Equal("cpx42", "ccx33");
+        loaded.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LoadAsyncKeepsAnEmptyServerTypeListForValidationToReject()
+    {
+        var configPath = Path.Combine(_directory, "no-server-types.yaml");
+        await File.WriteAllTextAsync(configPath, """
+            version: 1
+            processing:
+              remoteSsh:
+                hetzner:
+                  serverTypes:
+            """);
+
+        var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
+
+        loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().BeEmpty();
     }
 
     [Fact]
@@ -172,18 +227,20 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
 
         loaded.Settings.Processing.RemoteSsh.Hetzner.Locations.Should().Equal("hel1", "fsn1", "nbg1");
+        loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().Equal("cx43", "cx53", "cpx42", "ccx33");
+        loaded.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice.Should().Be(0.30m);
     }
 
     [Fact]
-    public void RemoteExecutionIdentityCanonicalizesEffectiveHetznerLocations()
+    public void RemoteExecutionIdentityForManagedHetznerIgnoresServerTypesAndLocations()
     {
         var settings = new RemoteSshSettings
         {
             Lifecycle = RemoteLifecycleModes.Hetzner,
-            Hetzner = new HetznerSettings { Locations = ["HEL1", "hel1", " fsn1 ", "FSN1"] }
+            Hetzner = new HetznerSettings { ServerTypes = ["cpx42"], Locations = ["HEL1", "fsn1"] }
         };
 
-        RemoteExecutionIdentity.Host(settings).Should().Be("hetzner:cx43:hel1,fsn1");
+        RemoteExecutionIdentity.Host(settings).Should().Be(RemoteExecutionIdentity.ManagedHetzner);
     }
 
     [Fact]
@@ -195,7 +252,7 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         await writer.WriteAsync(destination);
         var contents = await File.ReadAllTextAsync(destination);
         contents.Should().Contain("roots:").And.Contain("# Folders searched by queue discover.").And.Contain("action: \"delete\"").And.Contain("locations: [\"hel1\", \"fsn1\", \"nbg1\"]");
-        contents.Should().Contain("mode: \"local\"").And.Contain("lifecycle: \"manual\"").And.Contain("serverType: \"cx43\"").And.Contain("workingDirectory: \"/var/tmp/video-optimiser\"").And.Contain("sshPath: \"ssh\"");
+        contents.Should().Contain("mode: \"local\"").And.Contain("lifecycle: \"manual\"").And.Contain("serverTypes: [\"cx43\", \"cx53\", \"cpx42\", \"ccx33\"]").And.Contain("maxHourlyPrice: 0.30").And.Contain("workingDirectory: \"/var/tmp/video-optimiser\"").And.Contain("sshPath: \"ssh\"");
 
         var action = () => writer.WriteAsync(destination);
         await action.Should().ThrowAsync<InvalidOperationException>();

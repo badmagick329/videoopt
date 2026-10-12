@@ -55,7 +55,10 @@ public sealed class HetznerSettings
 {
     [YamlMember(Alias = "apiTokenEnvironmentVariable")] public string ApiTokenEnvironmentVariable { get; set; } = "VIDEO_OPTIMISER_HETZNER_TOKEN";
     [YamlMember(Alias = "apiTokenFile")] public string ApiTokenFile { get; set; } = ".env";
-    [YamlMember(Alias = "serverType")] public string ServerType { get; set; } = "cx43";
+    // Tried in order, each across every location, so a sold-out type falls through to the next.
+    [YamlMember(Alias = "serverTypes")] public List<string> ServerTypes { get; set; } = ["cx43", "cx53", "cpx42", "ccx33"];
+    // Gross EUR per hour, as Hetzner bills it. Null means no cap.
+    [YamlMember(Alias = "maxHourlyPrice")] public decimal? MaxHourlyPrice { get; set; } = 0.30m;
     [YamlMember(Alias = "image")] public string Image { get; set; } = "ubuntu-24.04";
     [YamlMember(Alias = "locations")] public List<string> Locations { get; set; } = ["hel1", "fsn1", "nbg1"];
     [YamlMember(Alias = "sshKeyName")] public string SshKeyName { get; set; } = string.Empty;
@@ -73,20 +76,24 @@ public static class RemoteLifecycleModes
 
 public static class RemoteExecutionIdentity
 {
+    /// <summary>
+    /// The binding for every managed Hetzner job. The server type and location vary per run with the
+    /// fallback list, and a started job lives on whichever retained worker exists, so neither belongs in it.
+    /// The colon keeps it apart from a manual SSH alias named "hetzner".
+    /// </summary>
+    public const string ManagedHetzner = "hetzner:managed";
+
+    // Before serverTypes, the binding was hetzner:{serverType}:{locations}; jobs started then must still resume.
+    private const string LegacyManagedHetznerPrefix = "hetzner:";
+
     public static string Host(RemoteSshSettings settings) =>
         settings.Lifecycle.Equals(RemoteLifecycleModes.Hetzner, StringComparison.OrdinalIgnoreCase)
-            ? $"hetzner:{settings.Hetzner.ServerType}:{string.Join(',', CanonicalLocations(settings.Hetzner.Locations))}"
+            ? ManagedHetzner
             : settings.Host;
 
-    private static IEnumerable<string> CanonicalLocations(IEnumerable<string>? locations)
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var location in locations ?? [])
-        {
-            var canonical = location?.Trim().ToLowerInvariant() ?? string.Empty;
-            if (canonical.Length > 0 && seen.Add(canonical)) yield return canonical;
-        }
-    }
+    public static bool Matches(string? stored, string? expected) =>
+        string.Equals(stored, expected, StringComparison.Ordinal) ||
+        (expected == ManagedHetzner && stored is not null && stored.StartsWith(LegacyManagedHetznerPrefix, StringComparison.Ordinal));
 }
 
 public static class ProcessingModes
