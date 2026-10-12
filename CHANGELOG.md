@@ -12,10 +12,12 @@
 ### Changed
 
 - `queue run` processes only jobs from the watch roots. Immich jobs run with `immich run`.
+- A managed Hetzner worker now installs ab-av1 0.11.7, the version CI tests, instead of 0.10.4. `doctor` rejects a remote worker with an older ab-av1. A worker created before this change keeps 0.10.4: delete it with `worker delete` and the next run creates a new one.
 
 ### Fixed
 
 - `queue discover` no longer queues an original again after its job failed or was cancelled, which encoded a failing file again on every run and undid `queue cancel`. It skips the original until the file changes and reports it as "Previously failed or cancelled". Failures caused only by the file not being ready, being ineligible, or lying outside the watch roots still requeue.
+- Creating a managed Hetzner worker from a Windows checkout with Git's `core.autocrlf` no longer sends the bootstrap script with CRLF line endings, which bash on the worker cannot run.
 - `queue retry <job-id>` now queues any failed or cancelled job's original again, not only one whose remote configuration changed.
 - The AV1 output now keeps the original's container metadata: its capture date (`creation_time`), GPS location, and phone make and model (`com.android.*`). Before, every converted file lost them, so photo libraries dated it by the conversion and dropped it from the map. Files already converted stay without them.
 

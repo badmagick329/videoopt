@@ -8,7 +8,8 @@ readonly WORKER_HOME="/var/lib/videoopt"
 readonly VMAF_VERSION="3.0.0"
 readonly SVT_AV1_VERSION="3.1.0"
 readonly FFMPEG_VERSION="8.0"
-readonly AB_AV1_VERSION="0.10.4"
+# Same version as scripts/install-media-tools.ps1, which CI tests; ToolVersionPinTests fails when they differ.
+readonly AB_AV1_VERSION="0.11.7"
 readonly AUTHORIZED_KEYS_SOURCE="${VIDEOOPT_AUTHORIZED_KEYS_FILE:-/root/.ssh/authorized_keys}"
 readonly PROGRESS_FILE="${PREFIX}/.bootstrap-progress"
 

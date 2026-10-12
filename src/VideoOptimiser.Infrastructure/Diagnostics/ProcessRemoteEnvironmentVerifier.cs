@@ -11,7 +11,8 @@ namespace VideoOptimiser.Infrastructure.Diagnostics;
 public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifier
 {
     private const string Prefix = "video-optimiser-doctor:";
-    private static readonly Version MinimumAbAv1Version = new(0, 10, 4);
+    // The version the bootstrap pins and CI tests, so a remote job runs the ab-av1 code the tests exercised.
+    internal static readonly Version MinimumAbAv1Version = new(0, 11, 7);
 
     public async Task<IReadOnlyList<Diagnostic>> VerifyAsync(
         string sshPath,

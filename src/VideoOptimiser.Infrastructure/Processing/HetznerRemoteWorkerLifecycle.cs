@@ -71,7 +71,8 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         {
             _ = await DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
             progress?.Report("Creating managed Hetzner worker.");
-            var script = await File.ReadAllTextAsync(settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, cancellationToken);
+            // cloud-init runs the script with bash, which fails on CRLF; a Windows checkout with core.autocrlf has CRLF.
+            var script = (await File.ReadAllTextAsync(settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, cancellationToken)).ReplaceLineEndings("\n");
             state = await CreateAsync(token, settings, controller, statePath, script, progress, cancellationToken);
             progress?.Report($"Created Hetzner server {state.ServerId} at {state.Address}; bootstrap is running.");
         }

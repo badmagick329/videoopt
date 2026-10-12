@@ -66,7 +66,7 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
     public void ParseProbeOutputRejectsAbAv1OlderThanMinimumVersion()
     {
         var output = HealthyProbeOutput()
-            .Replace("video-optimiser-doctor:ab_av1_version=0.10.4", "video-optimiser-doctor:ab_av1_version=0.9.3", StringComparison.Ordinal);
+            .Replace("video-optimiser-doctor:ab_av1_version=0.11.7", "video-optimiser-doctor:ab_av1_version=0.9.3", StringComparison.Ordinal);
         var settings = new RemoteSshSettings { Host = "video-worker", MinimumCpuCount = 8, MinimumAvailableMemory = "16GiB" };
 
         var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(output, settings, 16L * 1024 * 1024 * 1024);
@@ -74,14 +74,14 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
         diagnostics.Should().ContainSingle(diagnostic =>
             diagnostic.Code == "RemoteAbAv1VersionInsufficient" &&
             diagnostic.Status == DiagnosticStatus.Fail &&
-            diagnostic.Message == "Remote ab-av1 version 0.9.3 is too old; minimum required version is 0.10.4.");
+            diagnostic.Message == "Remote ab-av1 version 0.9.3 is too old; minimum required version is 0.11.7.");
     }
 
     [Fact]
     public void ParseProbeOutputRejectsMissingAbAv1Version()
     {
         var output = HealthyProbeOutput()
-            .Replace("video-optimiser-doctor:ab_av1_version=0.10.4", "video-optimiser-doctor:ab_av1_version=", StringComparison.Ordinal);
+            .Replace("video-optimiser-doctor:ab_av1_version=0.11.7", "video-optimiser-doctor:ab_av1_version=", StringComparison.Ordinal);
         var settings = new RemoteSshSettings { Host = "video-worker", MinimumCpuCount = 8, MinimumAvailableMemory = "16GiB" };
 
         var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(output, settings, 16L * 1024 * 1024 * 1024);
@@ -89,7 +89,7 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
         diagnostics.Should().ContainSingle(diagnostic =>
             diagnostic.Code == "RemoteAbAv1VersionUnavailable" &&
             diagnostic.Status == DiagnosticStatus.Fail &&
-            diagnostic.Message == "Remote ab-av1 version could not be determined; minimum required version is 0.10.4.");
+            diagnostic.Message == "Remote ab-av1 version could not be determined; minimum required version is 0.11.7.");
     }
 
     private static string HealthyProbeOutput() => """
@@ -100,7 +100,7 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
         video-optimiser-doctor:tool_sha256sum=1
         video-optimiser-doctor:tool_time=1
         video-optimiser-doctor:tool_ab_av1=1
-        video-optimiser-doctor:ab_av1_version=0.10.4
+        video-optimiser-doctor:ab_av1_version=0.11.7
         video-optimiser-doctor:tool_ffmpeg=1
         video-optimiser-doctor:tool_ffprobe=1
         video-optimiser-doctor:ffmpeg_libsvtav1=1

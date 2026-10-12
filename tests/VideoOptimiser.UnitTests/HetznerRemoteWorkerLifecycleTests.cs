@@ -338,6 +338,19 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         fixture.Handler.CreatePayload.Should().BeNull();
     }
 
+    [Fact]
+    public async Task EnsureSendsTheBootstrapWithLfLineEndingsWhenTheCheckoutHasCrlf()
+    {
+        using var fixture = new Fixture();
+        File.WriteAllText(fixture.Settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, "#!/usr/bin/env bash\r\nset -Eeuo pipefail\r\ntouch /opt/video-optimiser/.bootstrap-complete\r\n");
+        using var lifecycle = fixture.CreateLifecycle();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        fixture.Handler.CreatePayload!.RootElement.GetProperty("user_data").GetString()
+            .Should().Be("#!/usr/bin/env bash\nset -Eeuo pipefail\ntouch /opt/video-optimiser/.bootstrap-complete\n");
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly string _directory = Path.Combine(Path.GetTempPath(), "video-optimiser-tests", Guid.NewGuid().ToString("N"));

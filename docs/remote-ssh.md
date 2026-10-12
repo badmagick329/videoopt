@@ -61,7 +61,7 @@ This creates and smoke-tests the Windows Native AOT executable at `artifacts\loc
 
 The bootstrap installs this pinned stack under `/opt/video-optimiser`:
 
-- `ab-av1` 0.10.4
+- `ab-av1` 0.11.7
 - FFmpeg 8.0
 - SVT-AV1 3.1.0
 - libvmaf 3.0.0
