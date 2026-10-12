@@ -67,6 +67,34 @@ public sealed class CliCommandParserTests
         command.Error.Should().Be("--local and --remote cannot be used together.");
     }
 
+    [Fact]
+    public void ParsesRemoteSetupWithAnOptionalConfig()
+    {
+        var command = CliCommand.Parse(["remote", "setup", "--config", "my.yaml"]);
+
+        command.Kind.Should().Be(CliCommandKind.RemoteSetup, command.Error);
+        command.ConfigurationPath.Should().Be("my.yaml");
+        CliCommand.Parse(["remote", "setup"]).Kind.Should().Be(CliCommandKind.RemoteSetup);
+    }
+
+    [Theory]
+    [InlineData("remote")]
+    [InlineData("setup")]
+    public void RemoteSetupNeedsBothWords(string word)
+    {
+        CliCommand.Parse([word]).IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("--local")]
+    [InlineData("--remote")]
+    [InlineData("--json")]
+    [InlineData("--first")]
+    public void RemoteSetupRejectsFlagsMeantForOtherCommands(string flag)
+    {
+        CliCommand.Parse(["remote", "setup", flag]).IsValid.Should().BeFalse();
+    }
+
     [Theory]
     [InlineData("--local", "queue", "discover")]
     [InlineData("--remote", "worker", "create")]
@@ -88,5 +116,15 @@ public sealed class CliCommandParserTests
         CliApplication.Usage.Should()
             .Contain("video-optimiser immich run [--first] [--config <path>] [--local | --remote]")
             .And.Contain("video-optimiser immich finalize [--config <path>]");
+    }
+
+    [Fact]
+    public void HelpListsRemoteSetupAfterTheWorkerCommands()
+    {
+        const string deleteLine = "video-optimiser worker delete [--config <path>]";
+        const string setupLine = "video-optimiser remote setup [--config <path>]";
+
+        CliApplication.Usage.Should().Contain(setupLine);
+        CliApplication.Usage.IndexOf(setupLine, StringComparison.Ordinal).Should().BeGreaterThan(CliApplication.Usage.IndexOf(deleteLine, StringComparison.Ordinal));
     }
 }

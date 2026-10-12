@@ -123,6 +123,7 @@ internal static partial class CliApplication
         builder.Services.AddSingleton<Func<string, IVideoEncoder>>(_ => abAv1Path => new AbAv1VideoEncoder(abAv1Path));
         builder.Services.AddSingleton<IExternalProcessRunner, ExternalProcessRunner>();
         builder.Services.AddSingleton<IRemoteWorkerLifecycle, HetznerRemoteWorkerLifecycle>();
+        builder.Services.AddSingleton<IRemoteSetupService, RemoteSetupService>();
         builder.Services.AddSingleton<IProcessingSessionFactory, ProcessingSessionFactory>();
         builder.Services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
         builder.Services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
@@ -174,6 +175,7 @@ internal static partial class CliApplication
             CliCommandKind.WorkerCreate => await RunWorkerCreateAsync(services, configuration, cancellationToken),
             CliCommandKind.WorkerStatus => await RunWorkerStatusAsync(services, configuration, cancellationToken),
             CliCommandKind.WorkerDelete => await RunWorkerDeleteAsync(services, configuration, cancellationToken),
+            CliCommandKind.RemoteSetup => (int)await services.GetRequiredService<IRemoteSetupService>().RunAsync(configuration, ConfirmAsync, new InlineProgress<string>(Console.WriteLine), cancellationToken),
             CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
             CliCommandKind.QueueDiscover => await RunQueueDiscoverAsync(services.GetRequiredService<IQueueService>(), configuration, command.First, cancellationToken),
             CliCommandKind.QueueRun => await RunQueueRunAsync(services, configuration, command.ModeOverride, cancellationToken),
@@ -423,9 +425,12 @@ internal static partial class CliApplication
     /// Reads the answer even when input is redirected, like <c>finalize</c>, so an agent or script approves by piping
     /// <c>'y'</c>; <see cref="ConsoleInteractiveConfirmation"/> refuses redirected input. No input at all declines.
     /// </summary>
-    private static Task<bool> ConfirmServerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken)
+    private static Task<bool> ConfirmServerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken) =>
+        ConfirmAsync(quote.FormatPrompt(), cancellationToken);
+
+    private static Task<bool> ConfirmAsync(string prompt, CancellationToken cancellationToken)
     {
-        Console.Write(quote.FormatPrompt());
+        Console.Write(prompt);
         string? response;
         try { response = Console.ReadLine(); }
         catch (IOException) { response = null; }
@@ -685,6 +690,7 @@ Usage:
   video-optimiser worker create [--config <path>]
   video-optimiser worker status [--config <path>]
   video-optimiser worker delete [--config <path>]
+  video-optimiser remote setup [--config <path>]
   video-optimiser process <file> [--config <path>] [--force] [--dry-run] [--local | --remote]
   video-optimiser queue discover [--first] [--config <path>]
   video-optimiser queue run [--config <path>] [--local | --remote]
@@ -717,6 +723,7 @@ internal enum CliCommandKind
     WorkerCreate,
     WorkerStatus,
     WorkerDelete,
+    RemoteSetup,
     Process,
     QueueDiscover,
     QueueRun,
@@ -804,6 +811,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["worker", "create"] => CliCommandKind.WorkerCreate,
             ["worker", "status"] => CliCommandKind.WorkerStatus,
             ["worker", "delete"] => CliCommandKind.WorkerDelete,
+            ["remote", "setup"] => CliCommandKind.RemoteSetup,
             ["process", _] => CliCommandKind.Process,
             ["queue", "discover"] => CliCommandKind.QueueDiscover,
             ["queue", "run"] => CliCommandKind.QueueRun,

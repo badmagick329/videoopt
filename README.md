@@ -98,7 +98,7 @@ When one video works, drop `--first` to queue everything that matches your rules
 | Hetzner, managed | `processing.mode: "remoteSsh"` with `remoteSsh.lifecycle: "hetzner"` | Large batches. The app picks a server from your list of server types, shows its price and asks before creating it, sets it up, and deletes it after a clean run. You pay per hour, up to `maxHourlyPrice` (€0.30 by default). |
 | Your own Linux server | `processing.mode: "remoteSsh"` with `remoteSsh.lifecycle: "manual"` | A spare machine you already run |
 
-In both remote modes, validation, review and finalisation still happen on your PC. Setup for both is in [docs/remote-ssh.md](docs/remote-ssh.md).
+In both remote modes, validation, review and finalisation still happen on your PC. For Hetzner, `remote setup` does the one-time setup: it checks your API token, creates and uploads an SSH key, and writes the `processing:` section once you say yes. Setup for both modes is in [docs/remote-ssh.md](docs/remote-ssh.md).
 
 To use the other mode for one run, add `--local` or `--remote` to `queue run`, `process` or `immich run`. The config file stays as it is. A video already started in the other mode is skipped, and the next run without the flag resumes it.
 
@@ -168,6 +168,7 @@ All commands take `--config <path>`.
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one after a single confirmation. |
 | `cleanup [--dry-run]` | Delete temporary files no job will use again. |
 | `immich run [--first] [--local \| --remote]`, `immich finalize` | The same flow for an Immich library. See [docs/immich.md](docs/immich.md). |
+| `remote setup` | One-time Hetzner setup: checks the API token, creates and uploads an SSH key, and writes the `processing:` section after asking. Creates no server. |
 | `worker create`, `worker status`, `worker delete` | Manage the Hetzner server by hand. Normally the run does this. |
 | `version` | Print the version. |
 

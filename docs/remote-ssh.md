@@ -2,54 +2,9 @@
 
 Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a server when work starts, using the first type on your list that Hetzner has in stock, once you approve its hourly price, and deletes it after every required output is safely downloaded.
 
-The managed workflow has only two one-time manual prerequisites: store the dedicated SSH public key in the Hetzner project and create an API token. Do **not** create a server in the Hetzner console; VideoOptimiser creates it through the API.
+Setup is one-time: build the controller, create a Hetzner API token, and run `remote setup`. Do **not** create a server in the Hetzner console; VideoOptimiser creates it through the API.
 
-## 1. Confirm the dedicated SSH key
-
-This is a one-time setup per Hetzner project, not something repeated for each worker. If the project already shows an SSH key named `video-optimiser-hetzner-cx43` and the matching private key still exists at `%USERPROFILE%\.ssh\video-optimiser-hetzner-cx43-ed25519`, skip to step 2.
-
-To check Hetzner, open the project that the API token will control, then go to **Security > SSH Keys**. The key must be in this same project because the creation request refers to it by the configured `sshKeyName`.
-
-Only if the key is missing, generate it in PowerShell:
-
-```powershell
-ssh-keygen -t ed25519 -a 100 -f "$env:USERPROFILE\.ssh\video-optimiser-hetzner-cx43-ed25519" -C "video-optimiser-hetzner-cx43"
-```
-
-For the simplest non-interactive worker, press Enter twice when asked for a passphrase. If the key has a passphrase, load it into the Windows OpenSSH agent before processing.
-
-Copy only the public key:
-
-```powershell
-Get-Content "$env:USERPROFILE\.ssh\video-optimiser-hetzner-cx43-ed25519.pub" | Set-Clipboard
-```
-
-In **Security > SSH Keys**, select **Add SSH Key**, paste the public key, and name it `video-optimiser-hetzner-cx43`. Leave **Set as default key** unchecked. Never upload or share the file without the `.pub` extension; that is the private key.
-
-VideoOptimiser sends this project key's name in each server-creation request. Hetzner installs the public key for `root`; the cloud-init bootstrap copies it to the restricted `videoopt` account. Windows then connects as `videoopt` with the matching private key. Deleting a server does not delete the project-level SSH key, so later workers reuse it automatically.
-
-## 2. Create a Hetzner API token
-
-Open the same Hetzner Cloud project, go to **Security > API Tokens**, and create a token with **Read & Write** permission. Copy it immediately; Hetzner only shows it once.
-
-Create the ignored local token file once from the repository root:
-
-```powershell
-Copy-Item .\.env.example .\.env
-notepad .\.env
-```
-
-Replace the placeholder so the file contains:
-
-```dotenv
-VIDEO_OPTIMISER_HETZNER_TOKEN=<paste-token>
-```
-
-`.env` is already excluded by `.gitignore`. The controller loads it automatically from the path configured below, so nothing must be entered again after opening a new terminal. The token is never copied into YAML, the job database, recovery state, or command output. Do not commit or share `.env`.
-
-For CI or a temporary override, an existing `VIDEO_OPTIMISER_HETZNER_TOKEN` environment variable takes precedence over the file.
-
-## 3. Build the Windows controller
+## 1. Build the Windows controller
 
 Skip this step when you use the release zip: it already holds the executable and `scripts/bootstrap-remote-worker.sh`. From a source checkout, install the .NET 10 SDK, then run this from the repository root:
 
@@ -69,44 +24,34 @@ The bootstrap installs this pinned stack under `/opt/video-optimiser`:
 
 It creates the password-disabled, non-sudo `videoopt` SSH user and the `/var/tmp/video-optimiser` workspace.
 
-## 4. Configure managed Hetzner processing
+## 2. Run remote setup
 
-Add the following settings to the existing YAML blocks. Paths are relative to the YAML file unless absolute.
-
-```yaml
-tools:
-  abAv1Path: "ab-av1"
-  ffmpegPath: "ffmpeg"
-  ffprobePath: "ffprobe"
-  sshPath: "ssh"
-  sftpPath: "sftp"
-
-processing:
-  mode: "remoteSsh"
-  remoteSsh:
-    lifecycle: "hetzner"
-    identityFile: "C:\\Users\\YOUR_USER\\.ssh\\video-optimiser-hetzner-cx43-ed25519"
-    workingDirectory: "/var/tmp/video-optimiser"
-    minimumCpuCount: 8
-    minimumAvailableMemory: "14GiB"
-    minimumFreeDiskMultiplier: 2.5
-    hetzner:
-      apiTokenEnvironmentVariable: "VIDEO_OPTIMISER_HETZNER_TOKEN"
-      apiTokenFile: ".env"
-      # Tried in this order, each in every location below.
-      serverTypes: ["cx43", "cx53", "cpx42", "ccx33"]
-      # EUR per hour including VAT. null removes the cap.
-      maxHourlyPrice: 0.30
-      image: "ubuntu-24.04"
-      locations: ["hel1", "fsn1", "nbg1"]
-      sshKeyName: "video-optimiser-hetzner-cx43"
-      serverNamePrefix: "video-optimiser"
-      bootstrapScriptPath: "scripts/bootstrap-remote-worker.sh"
-      bootstrapTimeout: "90m"
-      deleteAfterRun: true
+```powershell
+.\artifacts\local\video-optimiser.exe remote setup --config .\video-optimiser.yaml
 ```
 
-Use the real path to the private key. The image must be Ubuntu 24.04 x86-64; the bootstrap intentionally rejects Ubuntu 26.04. The controller enables public IPv4, disables IPv6, marks the Primary IPv4 for automatic deletion, and applies ownership labels before it will reuse or delete a server.
+`remote setup` creates no server and costs nothing. In order, it:
+
+1. **Checks the Hetzner API token.** With none, it prints how to create one and exits `3`. In the Hetzner Cloud project, open **Security > API Tokens** and create a token with **Read & Write** permission; Hetzner shows it only once. Then create the ignored token file from the repository root or release folder:
+
+   ```powershell
+   Copy-Item .\.env.example .\.env
+   notepad .\.env
+   ```
+
+   Set `VIDEO_OPTIMISER_HETZNER_TOKEN=<paste-token>` and run `remote setup` again. A token Hetzner rejects also exits `3`.
+2. **Finds or creates the SSH key.** It uses `processing.remoteSsh.identityFile` when that file exists. Otherwise it uses `%USERPROFILE%\.ssh\video-optimiser-hetzner-ed25519`, creating it with `ssh-keygen` if it is missing. A new key has no passphrase, because VideoOptimiser runs ssh without a prompt. It never overwrites a key file.
+3. **Uploads the public key to the Hetzner project**, unless the project already has that key under any name; then it reuses that name. A new upload is named `video-optimiser-hetzner`, or `video-optimiser-hetzner-2` and so on when the name is taken. This is the only change it makes in Hetzner. A read-only token exits `3`.
+4. **Shows the `processing:` section it will write** and asks `Write this to <config>? A backup goes to <config>.bak. [y/N]`. The section keeps your own values, sets `mode: "remoteSsh"` and `lifecycle: "hetzner"`, and fills in `identityFile` and `sshKeyName`. On `y`, it saves the old file as `<config>.bak`, replaces only the `processing:` section, and validates the result; an invalid result restores the backup and exits `3`. Comments inside the old `processing:` section are replaced; everything outside it stays as written. Any other answer, or no input, changes nothing, so you can paste the section yourself.
+5. **Prints the next command**: `immich run --first --remote` when Immich is configured, otherwise `queue run --remote`.
+
+Running it again is safe: it finds the same key file and the same Hetzner entry.
+
+`.env` is already excluded by `.gitignore`, and the controller loads it automatically. The token is never copied into YAML, the job database, recovery state, or command output. Do not commit or share `.env`. For CI or a temporary override, an existing `VIDEO_OPTIMISER_HETZNER_TOKEN` environment variable takes precedence over the file.
+
+VideoOptimiser sends the key's Hetzner name in each server-creation request. Hetzner installs the public key for `root`; the cloud-init bootstrap copies it to the restricted `videoopt` account, and Windows connects as `videoopt` with the private key. Deleting a server does not delete the project's SSH key, so later workers reuse it.
+
+The image must be Ubuntu 24.04 x86-64; the bootstrap intentionally rejects Ubuntu 26.04. The controller enables public IPv4, disables IPv6, marks the Primary IPv4 for automatic deletion, and applies ownership labels before it will reuse or delete a server.
 
 ### How the server is chosen
 
@@ -150,13 +95,69 @@ CX types sell out often, and Hetzner sells them only in fsn1, nbg1 and hel1. Pri
 
 The worker's type and location show in `worker status`.
 
-Validate the local settings without creating a server:
+<details>
+<summary>Doing it by hand</summary>
 
-```powershell
-.\artifacts\local\video-optimiser.exe config validate --config .\video-optimiser.yaml
-```
+`remote setup` does these steps for you. Do them by hand only if you want to.
 
-## 5. Optional preflight
+1. Create the API token and `.env` as in the first item of *Run remote setup*.
+2. Generate the key in PowerShell, pressing Enter twice when asked for a passphrase:
+
+   ```powershell
+   ssh-keygen -t ed25519 -a 100 -f "$env:USERPROFILE\.ssh\video-optimiser-hetzner-ed25519" -C "video-optimiser-hetzner"
+   ```
+
+3. Copy only the public key:
+
+   ```powershell
+   Get-Content "$env:USERPROFILE\.ssh\video-optimiser-hetzner-ed25519.pub" | Set-Clipboard
+   ```
+
+4. In the same Hetzner project, open **Security > SSH Keys**, select **Add SSH Key**, paste the public key, and name it `video-optimiser-hetzner`. Leave **Set as default key** unchecked. Never upload the file without the `.pub` extension; that is the private key.
+5. Add these settings to the existing YAML blocks, with the real path to the private key. Paths are relative to the YAML file unless absolute.
+
+   ```yaml
+   tools:
+     abAv1Path: "ab-av1"
+     ffmpegPath: "ffmpeg"
+     ffprobePath: "ffprobe"
+     sshPath: "ssh"
+     sftpPath: "sftp"
+
+   processing:
+     mode: "remoteSsh"
+     remoteSsh:
+       lifecycle: "hetzner"
+       identityFile: "C:\\Users\\YOUR_USER\\.ssh\\video-optimiser-hetzner-ed25519"
+       workingDirectory: "/var/tmp/video-optimiser"
+       minimumCpuCount: 8
+       minimumAvailableMemory: "14GiB"
+       minimumFreeDiskMultiplier: 2.5
+       hetzner:
+         apiTokenEnvironmentVariable: "VIDEO_OPTIMISER_HETZNER_TOKEN"
+         apiTokenFile: ".env"
+         # Tried in this order, each in every location below.
+         serverTypes: ["cx43", "cx53", "cpx42", "ccx33"]
+         # EUR per hour including VAT. null removes the cap.
+         maxHourlyPrice: 0.30
+         image: "ubuntu-24.04"
+         locations: ["hel1", "fsn1", "nbg1"]
+         sshKeyName: "video-optimiser-hetzner"
+         serverNamePrefix: "video-optimiser"
+         bootstrapScriptPath: "scripts/bootstrap-remote-worker.sh"
+         bootstrapTimeout: "90m"
+         deleteAfterRun: true
+   ```
+
+6. Validate the settings without creating a server:
+
+   ```powershell
+   .\artifacts\local\video-optimiser.exe config validate --config .\video-optimiser.yaml
+   ```
+
+</details>
+
+## 3. Optional preflight
 
 Normal processing creates the worker once you approve its price. To create it early and wait for the full toolchain build:
 
@@ -178,7 +179,7 @@ During the first build, the controller prints phase-based setup percentages for 
 .\artifacts\local\video-optimiser.exe worker delete --config .\video-optimiser.yaml
 ```
 
-## 6. Process videos
+## 4. Process videos
 
 For one video:
 
@@ -229,7 +230,7 @@ To retry a job that failed because its remote configuration changed, create a ne
 .\artifacts\local\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
 ```
 
-## 7. Finalise locally
+## 5. Finalise locally
 
 Finalisation remains local and can happen after the server has been deleted:
 

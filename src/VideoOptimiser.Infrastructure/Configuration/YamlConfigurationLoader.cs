@@ -7,7 +7,7 @@ namespace VideoOptimiser.Infrastructure.Configuration;
 public sealed class YamlConfigurationLoader : IConfigurationLoader
 {
     // Unknown keys are errors: a misspelled or removed setting would otherwise fall back to its default unnoticed.
-    private readonly IDeserializer _deserializer = new StaticDeserializerBuilder(new VideoOptimiserYamlContext())
+    private static readonly IDeserializer Deserializer = new StaticDeserializerBuilder(new VideoOptimiserYamlContext())
         .WithCaseInsensitivePropertyMatching()
         .Build();
 
@@ -15,10 +15,21 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
     {
         var path = ResolveConfigurationPath(explicitPath);
         var yaml = await File.ReadAllTextAsync(path, cancellationToken);
+        var settings = ParseUnresolved(yaml);
+        ResolveRelativePaths(settings, Path.GetDirectoryName(path)!);
+        return new LoadedConfiguration(settings, path, yaml);
+    }
+
+    /// <summary>
+    /// The settings exactly as written, with defaults filled in but paths left relative. Rewriting a section of the file
+    /// from the resolved settings would replace the user's relative paths with absolute ones.
+    /// </summary>
+    internal static AppSettings ParseUnresolved(string yaml)
+    {
         AppSettings? settings;
         try
         {
-            settings = _deserializer.Deserialize<AppSettings>(yaml);
+            settings = Deserializer.Deserialize<AppSettings>(yaml);
         }
         catch (YamlException exception)
         {
@@ -28,8 +39,7 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         if (settings is null) throw new InvalidDataException("The configuration file is empty.");
 
         NormalizeDefaults(settings);
-        ResolveRelativePaths(settings, Path.GetDirectoryName(path)!);
-        return new LoadedConfiguration(settings, path, yaml);
+        return settings;
     }
 
     public string GetDefaultConfigurationPath() => Path.Combine(
