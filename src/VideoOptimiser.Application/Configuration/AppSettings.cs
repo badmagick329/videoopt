@@ -165,7 +165,20 @@ public sealed class SavingsSettings
 [YamlSerializable]
 public sealed class OriginalSettings
 {
-    [YamlMember(Alias = "action")] public string Action { get; set; } = "delete";
+    [YamlMember(Alias = "action")] public string Action { get; set; } = OriginalActions.Delete;
+
+    /// <summary>
+    /// Where <c>archive</c> moves originals. A bare folder name is created next to each original, so archives stay on the
+    /// original's drive and the move is a rename; an absolute path collects every original in one folder.
+    /// </summary>
+    [YamlMember(Alias = "archiveDirectory")] public string ArchiveDirectory { get; set; } = "Archive";
+}
+
+public static class OriginalActions
+{
+    public const string Delete = "delete";
+    public const string Archive = "archive";
+    public const string Keep = "keep";
 }
 
 [YamlSerializable]

@@ -73,6 +73,12 @@ public sealed class FileScanner(
                         continue;
                     }
 
+                    if (IsWithinArchiveDirectory(canonicalPath, settings.Original.ArchiveDirectory))
+                    {
+                        items.Add(new ScanItem(canonicalPath, ScanItemStatus.Ineligible, "File is in the archive directory."));
+                        continue;
+                    }
+
                     var evaluation = await EvaluateAsync(canonicalPath, settings, cacheByPath, progress, cancellationToken);
                     items.Add(evaluation.Item);
                     cacheHits += evaluation.CacheHit ? 1 : 0;
@@ -171,6 +177,14 @@ public sealed class FileScanner(
     private sealed record EvaluationResult(ScanItem Item, bool CacheHit = false, bool RealProbe = false);
 
     private static bool IsMatch(string fileName, string globPattern) => Regex.IsMatch(fileName, "^" + Regex.Escape(globPattern).Replace("\\*", ".*").Replace("\\?", ".") + "$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    // Archived originals are still eligible H.264, so discovery must never queue them again, whatever excludedDirectories says.
+    private static bool IsWithinArchiveDirectory(string path, string archiveDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(archiveDirectory)) return false;
+        if (!Path.IsPathFullyQualified(archiveDirectory)) return IsWithinExcludedDirectory(path, [archiveDirectory]);
+        return path.StartsWith(Path.TrimEndingDirectorySeparator(archiveDirectory) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsWithinExcludedDirectory(string path, IReadOnlyCollection<string> excludedDirectories)
     {

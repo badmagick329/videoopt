@@ -132,8 +132,12 @@ savings:
   minimumPercentageSaved: 5
 
 original:
-  # The only currently supported finalisation policy.
+  # What finalize does with the original: delete, archive (move it to archiveDirectory),
+  # or keep (leave it and install the AV1 beside it as <name>.av1<extension>).
   action: "delete"
+  # A folder name is created beside each original; an absolute path collects them all.
+  # Discovery never scans it.
+  archiveDirectory: "Archive"
 
 validation:
   # Codec, duration, stream-count and savings checks always run.

@@ -31,6 +31,26 @@ public sealed class SettingsValidatorTests
         new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("InvalidDecodeTest");
     }
 
+    [Theory]
+    [InlineData("delete", "Archive", null)]
+    [InlineData("archive", "Archive", null)]
+    [InlineData("Keep", "", null)]
+    [InlineData("archive", "D:\\Video archive", null)]
+    [InlineData("move", "Archive", "InvalidOriginalAction")]
+    [InlineData("archive", "", "ArchiveDirectoryRequired")]
+    [InlineData("archive", "old\\originals", "InvalidArchiveDirectory")]
+    [InlineData("delete", "..", "InvalidArchiveDirectory")]
+    public void ValidateAcceptsEveryOriginalActionAndOnlyAFolderNameOrAbsoluteArchiveDirectory(string action, string archiveDirectory, string? expectedCode)
+    {
+        var settings = CreateValidSettings();
+        settings.Original = new OriginalSettings { Action = action, ArchiveDirectory = archiveDirectory };
+
+        var codes = new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code);
+
+        if (expectedCode is null) codes.Should().BeEmpty();
+        else codes.Should().Equal(expectedCode);
+    }
+
     [Fact]
     public void ValidateRemoteModeRequiresOnlyRemoteSpecificToolSettings()
     {

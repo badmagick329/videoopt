@@ -1,4 +1,6 @@
 using FluentAssertions;
+using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Infrastructure.Processing;
 
 namespace VideoOptimiser.UnitTests;
@@ -6,22 +8,87 @@ namespace VideoOptimiser.UnitTests;
 public sealed class SafeFileInstallerTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
-    public SafeFileInstallerTests() => Directory.CreateDirectory(_directory);
+    private readonly string _source;
+    private readonly string _output;
+
+    public SafeFileInstallerTests()
+    {
+        Directory.CreateDirectory(Path.Combine(_directory, ".video-optimiser"));
+        _source = Path.Combine(_directory, "movie.mp4");
+        _output = Path.Combine(_directory, ".video-optimiser", "movie.encoding.mp4");
+        File.WriteAllText(_source, "original");
+        File.WriteAllText(_output, "av1");
+    }
 
     [Fact]
-    public async Task InstallAsyncReplacesSourceAndDeletesRollback()
+    public async Task DeleteReplacesTheOriginalAndDeletesTheRollbackFile()
     {
-        var source = Path.Combine(_directory, "movie.mp4");
-        var output = Path.Combine(_directory, "movie.encoding.mp4");
-        await File.WriteAllTextAsync(source, "original");
-        await File.WriteAllTextAsync(output, "av1");
+        var installation = await Install(OriginalActions.Delete);
 
-        await new SafeFileInstaller().InstallAsync(source, output);
+        installation.Should().Be(new FileInstallation(_source, null));
+        (await File.ReadAllTextAsync(_source)).Should().Be("av1");
+        File.Exists(_output).Should().BeFalse();
+        Directory.EnumerateFiles(_directory).Should().Equal(_source);
+    }
 
-        (await File.ReadAllTextAsync(source)).Should().Be("av1");
-        File.Exists(output).Should().BeFalse();
-        Directory.EnumerateFiles(_directory, "*.original.pending-delete.mp4").Should().BeEmpty();
+    [Fact]
+    public async Task ArchiveMovesTheOriginalBesideItWithoutOverwritingAnEarlierArchive()
+    {
+        var archive = Path.Combine(_directory, "Archive");
+        Directory.CreateDirectory(archive);
+        await File.WriteAllTextAsync(Path.Combine(archive, "movie.mp4"), "earlier");
+
+        var installation = await Install(OriginalActions.Archive);
+
+        var archived = Path.Combine(archive, "movie (2).mp4");
+        installation.Should().Be(new FileInstallation(_source, archived));
+        (await File.ReadAllTextAsync(_source)).Should().Be("av1");
+        (await File.ReadAllTextAsync(archived)).Should().Be("original");
+        (await File.ReadAllTextAsync(Path.Combine(archive, "movie.mp4"))).Should().Be("earlier");
+    }
+
+    [Fact]
+    public async Task ArchiveToAnAbsoluteDirectoryCreatesIt()
+    {
+        var archive = Path.Combine(_directory, "elsewhere", "originals");
+
+        var installation = await Install(OriginalActions.Archive, archive);
+
+        installation.ArchivedOriginalPath.Should().Be(Path.Combine(archive, "movie.mp4"));
+        (await File.ReadAllTextAsync(installation.ArchivedOriginalPath!)).Should().Be("original");
+        (await File.ReadAllTextAsync(_source)).Should().Be("av1");
+    }
+
+    [Theory]
+    [InlineData(OriginalActions.Delete)]
+    [InlineData(OriginalActions.Archive)]
+    public async Task AFailedInstallPutsTheOriginalBack(string action)
+    {
+        File.Delete(_output);
+
+        var install = () => Install(action);
+
+        await install.Should().ThrowAsync<FileNotFoundException>();
+        (await File.ReadAllTextAsync(_source)).Should().Be("original");
+        Directory.EnumerateFiles(_directory, "*", SearchOption.AllDirectories).Should().Equal(_source);
+    }
+
+    [Fact]
+    public async Task KeepLeavesTheOriginalAndInstallsTheAv1BesideItUnderAFreeName()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_directory, "movie.av1.mp4"), "earlier");
+
+        var installation = await Install(OriginalActions.Keep);
+
+        var installed = Path.Combine(_directory, "movie.av1 (2).mp4");
+        installation.Should().Be(new FileInstallation(installed, null));
+        (await File.ReadAllTextAsync(_source)).Should().Be("original");
+        (await File.ReadAllTextAsync(installed)).Should().Be("av1");
+        (await File.ReadAllTextAsync(Path.Combine(_directory, "movie.av1.mp4"))).Should().Be("earlier");
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    private Task<FileInstallation> Install(string action, string archiveDirectory = "Archive") =>
+        new SafeFileInstaller().InstallAsync(_source, _output, new OriginalSettings { Action = action, ArchiveDirectory = archiveDirectory });
 }

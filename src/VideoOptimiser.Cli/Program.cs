@@ -310,7 +310,7 @@ internal static class CliApplication
                 : $"{update.Stage}: {update.Path}"));
         var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, progress, cancellationToken);
         foreach (var path in result.QueuedPaths) Console.WriteLine($"Queued  {path}");
-        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");
+        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Already converted: {result.AlreadyConverted}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
@@ -534,6 +534,7 @@ internal static class CliApplication
         var ready = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Where(job => job.Status == JobStatus.ReadyToFinalize).ToArray();
         if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
         foreach (var job in ready) Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
+        Console.WriteLine(DescribeOriginalAction(configuration.Settings.Original));
         Console.Write("Finalise these jobs? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
         var failures = 0;
@@ -545,6 +546,15 @@ internal static class CliApplication
         }
         return failures == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
+
+    private static string DescribeOriginalAction(OriginalSettings original) => original.Action.ToLowerInvariant() switch
+    {
+        OriginalActions.Archive => Path.IsPathFullyQualified(original.ArchiveDirectory)
+            ? $"Each original moves to {original.ArchiveDirectory} and its AV1 takes its place."
+            : $"Each original moves to an {original.ArchiveDirectory} folder beside it and its AV1 takes its place.",
+        OriginalActions.Keep => "Each original stays; its AV1 is installed beside it as <name>.av1<extension>.",
+        _ => "Each original is deleted and its AV1 takes its place."
+    };
 
     private static async Task<int> RunCleanupAsync(ITemporaryOutputCleanupService cleanup, LoadedConfiguration configuration, bool dryRun, CancellationToken cancellationToken)
     {

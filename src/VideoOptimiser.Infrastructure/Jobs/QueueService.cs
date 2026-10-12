@@ -10,6 +10,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
 {
     public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
     {
+        var keptOriginals = await FindKeptOriginalsAsync(databasePath, cancellationToken);
         var openSourcePaths = first
             ? new HashSet<string>(
                 (await jobs.ListAsync(databasePath, terminal: false, cancellationToken)).Select(job => Path.GetFullPath(job.SourcePath)),
@@ -19,7 +20,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             settings.Watch.Roots,
             settings,
             stopAfterFirstEligible: first,
-            openSourcePaths: openSourcePaths,
+            openSourcePaths: openSourcePaths?.Union(keptOriginals, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase),
             progress: progress,
             cancellationToken: cancellationToken);
         var queued = new List<string>();
@@ -27,11 +28,18 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             item.Status == ScanItemStatus.Eligible &&
             openSourcePaths?.Contains(Path.GetFullPath(item.Path)) == true);
         var issues = report.Issues.Count;
+        var alreadyConverted = 0;
         foreach (var item in report.Items.Where(item => item.Status == ScanItemStatus.Eligible))
         {
             if (first && queued.Count > 0)
             {
                 break;
+            }
+
+            if (keptOriginals.Contains(Path.GetFullPath(item.Path)))
+            {
+                alreadyConverted++;
+                continue;
             }
 
             try
@@ -65,7 +73,32 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             }
         }
 
-        return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes);
+        return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes, alreadyConverted);
+    }
+
+    /// <summary>
+    /// Originals that <c>original.action: keep</c> left in place after a completed job. They are still eligible, so without
+    /// this every discovery would queue them again. A matching fingerprint proves the file is the one that was converted;
+    /// the size check first skips the fingerprint read for paths that <c>delete</c> or <c>archive</c> replaced.
+    /// </summary>
+    private async Task<HashSet<string>> FindKeptOriginalsAsync(string databasePath, CancellationToken cancellationToken)
+    {
+        var kept = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var job in (await jobs.ListAsync(databasePath, terminal: true, cancellationToken)).Where(job => job.Status == JobStatus.Completed))
+        {
+            var file = new FileInfo(job.SourcePath);
+            if (!file.Exists || (job.SourceSizeBytes is { } size && file.Length != size)) continue;
+            try
+            {
+                if (await fingerprints.CreateAsync(job.SourcePath, cancellationToken) == job.SourceFingerprint) kept.Add(Path.GetFullPath(job.SourcePath));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // An unreadable file cannot be queued either; discovery reports it as an issue.
+            }
+        }
+
+        return kept;
     }
 
     public async Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, CancellationToken cancellationToken = default)

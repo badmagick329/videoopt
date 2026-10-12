@@ -93,6 +93,12 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         {
             root.Path = ResolvePath(root.Path, configurationDirectory);
         }
+
+        // A bare folder name is relative to each original, not to the config file, so only an absolute path is normalised here.
+        if (Path.IsPathFullyQualified(settings.Original.ArchiveDirectory))
+        {
+            settings.Original.ArchiveDirectory = Path.GetFullPath(settings.Original.ArchiveDirectory);
+        }
     }
 
     private static void NormalizeDefaults(AppSettings settings)
@@ -115,6 +121,8 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         settings.Eligibility.ExcludedExtensions ??= [];
         settings.Eligibility.ExcludedNamePatterns ??= [];
         settings.Eligibility.ExcludedDirectories ??= [];
+        settings.Original.Action ??= string.Empty;
+        settings.Original.ArchiveDirectory ??= string.Empty;
         settings.Quality.CrfSearch ??= new CrfSearchSettings();
     }
 

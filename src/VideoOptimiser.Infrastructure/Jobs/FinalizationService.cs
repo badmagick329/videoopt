@@ -12,7 +12,6 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         var job = await jobs.GetAsync(databasePath, jobId, cancellationToken);
         if (job is null) return new FinalizationResult(null, ExitCode.ProcessingFailure, "Job was not found.");
         if (job.Status != JobStatus.ReadyToFinalize || job.OutputPath is null) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job is not ready to finalise.");
-        if (!settings.Original.Action.Equals("delete", StringComparison.OrdinalIgnoreCase)) return new FinalizationResult(job, ExitCode.InvalidConfiguration, "finalize currently requires original.action: delete.");
         var manifest = await manifests.LoadAsync(job.OutputPath, cancellationToken);
         if (manifest.Validation?.Passed != true) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job validation did not pass.");
         job.Status = JobStatus.Finalizing;
@@ -20,11 +19,11 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         try
         {
             if (await fingerprints.CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint) throw new InvalidOperationException("Original changed after encoding.");
-            await installer.InstallAsync(manifest.SourcePath, manifest.OutputPath, cancellationToken);
+            var installation = await installer.InstallAsync(manifest.SourcePath, manifest.OutputPath, settings.Original, cancellationToken);
             job.Status = JobStatus.Completed;
             job.CompletedUtc = DateTimeOffset.UtcNow;
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            return new FinalizationResult(job, ExitCode.Success, "Finalisation complete. Original deleted.");
+            return new FinalizationResult(job, ExitCode.Success, Describe(manifest.SourcePath, installation));
         }
         catch (OperationCanceledException)
         {
@@ -45,4 +44,9 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             return new FinalizationResult(job, ExitCode.FinalisationFailure, exception.Message);
         }
     }
+
+    private static string Describe(string sourcePath, FileInstallation installation) =>
+        installation.ArchivedOriginalPath is { } archived ? $"Finalisation complete. Original archived to {archived}."
+        : installation.InstalledPath != sourcePath ? $"Finalisation complete. Original kept; AV1 installed as {installation.InstalledPath}."
+        : "Finalisation complete. Original deleted.";
 }

@@ -71,7 +71,9 @@ public sealed class SettingsValidator : ISettingsValidator
         AddWhen(settings.Quality.CrfSearch.SampleCount < 1, "InvalidSampleCount", "quality.crfSearch.sampleCount must be at least 1.");
         ValidateDuration(settings.Quality.CrfSearch.SampleDuration, "quality.crfSearch.sampleDuration", diagnostics);
         AddWhen(string.IsNullOrWhiteSpace(settings.Quality.Encoder), "EncoderRequired", "quality.encoder is required.");
-        AddWhen(!IsOneOf(settings.Original.Action, "delete"), "InvalidOriginalAction", "original.action must currently be delete.");
+        AddWhen(!IsOneOf(settings.Original.Action, OriginalActions.Delete, OriginalActions.Archive, OriginalActions.Keep), "InvalidOriginalAction", "original.action must be delete, archive, or keep.");
+        AddWhen(settings.Original.Action.Equals(OriginalActions.Archive, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(settings.Original.ArchiveDirectory), "ArchiveDirectoryRequired", "original.archiveDirectory is required when original.action is archive.");
+        AddWhen(!string.IsNullOrWhiteSpace(settings.Original.ArchiveDirectory) && !IsFolderNameOrAbsolutePath(settings.Original.ArchiveDirectory), "InvalidArchiveDirectory", "original.archiveDirectory must be a folder name, such as Archive, or an absolute path.");
         AddWhen(!IsOneOf(settings.Validation.DecodeTest, DecodeTestModes.None, DecodeTestModes.Sampled, DecodeTestModes.Full), "InvalidDecodeTest", "validation.decodeTest must be none, sampled, or full.");
         AddWhen(settings.Validation.DurationToleranceSeconds < 0, "InvalidDurationTolerance", "validation.durationToleranceSeconds cannot be negative.");
 
@@ -103,6 +105,11 @@ public sealed class SettingsValidator : ISettingsValidator
             diagnostics.Add(new Diagnostic(DiagnosticCategory.Configuration, DiagnosticStatus.Fail, "InvalidDuration", $"{settingName} must use a non-negative duration such as 10m or 500ms."));
         }
     }
+
+    // A relative path with separators would be ambiguous between the config folder and the original's folder, so only a bare name is relative.
+    private static bool IsFolderNameOrAbsolutePath(string value) =>
+        Path.IsPathFullyQualified(value) ||
+        (value is not "." and not ".." && value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && value.Trim() == value);
 
     private static bool IsOneOf(string? value, params string[] permitted) =>
         !string.IsNullOrWhiteSpace(value) && permitted.Contains(value, StringComparer.OrdinalIgnoreCase);

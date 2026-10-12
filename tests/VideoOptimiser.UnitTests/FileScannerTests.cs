@@ -46,6 +46,28 @@ public sealed class FileScannerTests : IDisposable
         report.Items.Should().ContainSingle(item => item.Path == path && item.Reason == "File is in an excluded directory.");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScanAsyncSkipsTheArchiveDirectoryEvenWhenItIsNotAnExcludedDirectory(bool absolute)
+    {
+        var archive = Path.Combine(_directory, "Old originals");
+        Directory.CreateDirectory(archive);
+        var archived = Path.Combine(archive, "movie.mkv");
+        var original = Path.Combine(_directory, "movie.mkv");
+        await File.WriteAllBytesAsync(archived, [1, 2, 3]);
+        await File.WriteAllBytesAsync(original, [1, 2, 3]);
+        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
+        var settings = Settings("1B", recursive: true);
+        settings.Eligibility.ExcludedDirectories = [];
+        settings.Original.ArchiveDirectory = absolute ? archive : "Old originals";
+
+        var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
+
+        report.Items.Should().ContainSingle(item => item.Path == archived && item.Reason == "File is in the archive directory.");
+        report.Items.Should().ContainSingle(item => item.Path == original && item.Status == ScanItemStatus.Eligible);
+    }
+
     [Fact]
     public async Task ScanAsyncStopsAfterTheFirstEligibleFileWhenRequested()
     {

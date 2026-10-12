@@ -1,3 +1,5 @@
+using VideoOptimiser.Application.Configuration;
+
 namespace VideoOptimiser.Application.Processing;
 
 public sealed class OutputManifest
@@ -32,7 +34,10 @@ public interface IFileFingerprintService
     Task<string> CreateAsync(string path, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Where finalisation put the AV1, and where <c>archive</c> moved the original.</summary>
+public sealed record FileInstallation(string InstalledPath, string? ArchivedOriginalPath);
+
 public interface ISafeFileInstaller
 {
-    Task InstallAsync(string sourcePath, string outputPath, CancellationToken cancellationToken = default);
+    Task<FileInstallation> InstallAsync(string sourcePath, string outputPath, OriginalSettings original, CancellationToken cancellationToken = default);
 }

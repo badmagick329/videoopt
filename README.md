@@ -66,6 +66,24 @@ eligibility:
 
 Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate is the primary video-stream bitrate from `ffprobe`; files without it do not match.
 
+## Original actions
+
+`original.action` sets what `finalize` does with each original:
+
+| Action | Original | AV1 |
+| --- | --- | --- |
+| `delete` (default) | Deleted | Takes the original's path |
+| `archive` | Moved to `original.archiveDirectory` | Takes the original's path |
+| `keep` | Left in place | Installed beside it as `<name>.av1<extension>` |
+
+```yaml
+original:
+  action: "archive"
+  archiveDirectory: "Archive"
+```
+
+A folder name such as `Archive` is created beside each original, so archiving is a rename on the same drive. An absolute path collects every original in one folder; on another drive, `finalize` copies each original there, which takes longer. A name that is already taken gets a number, as in `movie (2).mp4`. `queue discover` never scans the archive directory, and skips an original that `keep` left in place until that file changes.
+
 ## Command reference
 
 ```powershell
@@ -124,8 +142,7 @@ Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate
 - `process` creates a job, then CRF-searches, encodes, and validates a separate temporary AV1 file.
 - `queue run` resumes interrupted CRF searches, encodes, or validations from a safe stage. A local encode cannot continue a partial file, so its resume deletes that file and starts a new attempt; `status` says which jobs this applies to.
 - `validate` rechecks a job's temporary AV1 before replacement.
-- `finalize` is explicit: it renames the original to a rollback file, installs the AV1, then deletes the rollback file.
-- `finalize` currently requires `original.action: "delete"`.
+- `finalize` is explicit. With `delete` or `archive`, it moves the original aside, installs the AV1 in its place, and moves the original back if that fails; `delete` then deletes it. `keep` never moves the original.
 - A never-started queued job adopts a changed processing configuration. A job that has started keeps its captured mode, remote identity, and workspace. If they differ, it fails before a managed worker is created.
 - With a managed Hetzner worker, `deleteAfterRun: true` deletes the worker only after a clean run. Failed or interrupted jobs retain it. On an interactive console, failed runs offer one explicit deletion confirmation; redirected input never prompts.
 
