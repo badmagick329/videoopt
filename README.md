@@ -2,7 +2,7 @@
 
 Shrink big videos by converting them to AV1 at the same visual quality. Nothing is replaced until you review the result and say so.
 
-- **Finds** large H.264 or HEVC videos in your folders or your [Immich](https://immich.app) library, using rules you set.
+- **Finds** videos worth shrinking in your folders or your [Immich](https://immich.app) library, using rules you set: codec, resolution, bitrate and file size. Any codec FFmpeg can read works.
 - **Converts** each one with [ab-av1](https://github.com/alexheretic/ab-av1), which picks the smallest file that still scores VMAF 95 or higher (you can change the target).
 - **Checks** every output (codec, duration, streams, a decode test, real savings) before it can replace anything.
 - **Waits** for you: the original stays untouched until you run `finalize`.
@@ -23,18 +23,22 @@ Every step before `finalize` works on a separate temporary file. Stop it at any 
 
 ## Requirements
 
-| What | Version | Where to get it |
-| --- | --- | --- |
-| Windows 11 | x64 | |
-| ab-av1 | 0.11.7 or newer | `cargo install ab-av1 --locked`, or `ab-av1.exe` from its [releases](https://github.com/alexheretic/ab-av1/releases) |
-| FFmpeg and ffprobe | a build with libsvtav1, libvmaf and libdav1d | the "full" build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), or `winget install Gyan.FFmpeg` |
+Windows 11 (x64), plus these tools on your PC:
 
-Put all three on `PATH`, or set their paths in the config. With remote encoding, your PC still needs FFmpeg for validation; ab-av1 is only needed where encoding runs.
+| Tool | Needed for | Where to get it |
+| --- | --- | --- |
+| FFmpeg and ffprobe | Every setup. ffprobe reads each video during discovery, and FFmpeg decodes each output during validation. | The "full" build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), or `winget install Gyan.FFmpeg` |
+| ab-av1 0.11.7 or newer | Encoding on your PC only | `cargo install ab-av1 --locked`, or `ab-av1.exe` from its [releases](https://github.com/alexheretic/ab-av1/releases) |
+
+- **Encoding on your PC:** FFmpeg needs libsvtav1, libvmaf and libdav1d. The full builds above have all three.
+- **Encoding on a remote server:** the server installs its own ab-av1 and FFmpeg. Your PC needs only FFmpeg and ffprobe, with libdav1d for validation.
+
+Put the tools on `PATH`, or set their paths under `tools:` in the config. `doctor` checks them.
 
 ## Install
 
 1. Download `video-optimiser-v<version>-win-x64.zip` from [Releases](https://github.com/badmagick329/videoopt/releases).
-2. Unzip it to a folder, for example `C:\Tools\VideoOptimiser`.
+2. Unzip it into a folder of your choice.
 3. Open PowerShell in that folder.
 
 The commands below assume you run them there, with the config file beside the exe.
@@ -124,7 +128,8 @@ eligibility:
 
 - `resolution` is one of `1080p-1440p`, `1440p-4k` or `4k+`, measured by total pixels.
 - `minimumVideoBitrate` is the video stream's bitrate as ffprobe reports it. A file without one never matches.
-- Phones usually record HEVC, so add `"hevc"` to `codecs` for phone footage.
+- `codecs` takes any codec name ffprobe reports, such as `h264`, `hevc`, `mpeg4`, `vp9` or `prores`. Phones usually record HEVC.
+- Only files whose extension is in `eligibility.extensions` are scanned: `.mkv`, `.mp4`, `.mov` and `.m4v` by default.
 - Small files rarely save enough to pass validation (`savings.minimumBytesSaved`, 100 MiB by default), so keep a size floor.
 
 ## Choose what happens to originals
@@ -175,7 +180,7 @@ Exit code `0` means success. Scripts and agents can find every exit code in [doc
 
 ## Build from source
 
-You need the .NET 10 SDK.
+You need the .NET 10 SDK. Run these from the repository root; `scripts\` is the repository's own folder.
 
 ```powershell
 .\scripts\build.ps1
