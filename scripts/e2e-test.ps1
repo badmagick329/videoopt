@@ -5,7 +5,7 @@ param(
 )
 
 # Runs discover -> queue run -> validate -> finalise (archive and keep) -> rediscover -> retry -> cleanup against real ab-av1, ffmpeg and ffprobe, which must be on PATH
-# (ab-av1 itself calls ffmpeg from PATH). Unit tests fake every tool, so this is the only check of their real output.
+# (ab-av1 itself calls ffmpeg from PATH). Unit tests fake every tool, so this is the only check of their real output. It also checks that the output keeps capture metadata.
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -42,6 +42,13 @@ function Get-VideoCodec([string] $Path) {
     $codec
 }
 
+function Get-FormatTag([string] $Path, [string] $Tag) {
+    $value = (& ffprobe -v error -show_entries "format_tags=$Tag" -of csv=p=0 $Path | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "ffprobe failed on $Path." }
+    # use_metadata_tags stores creation_time both in the mvhd box and as a key, so ffprobe can list it twice.
+    ($value -split ';')[0]
+}
+
 function Assert([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw "Assertion failed: $Message" }
 }
@@ -52,10 +59,13 @@ New-Item -ItemType Directory -Path $watchRoot | Out-Null
 try {
     # Three 1080p H.264 clips: 1080p is the lowest resolution band, and near-lossless H.264 clears any bitrate floor.
     # Clip a is finalised with archive and clip c with keep; clip b's output is damaged to prove validation rejects it.
+    # Each carries a phone-style capture date, GPS point and com.android tag, which the output must keep.
     foreach ($name in 'a', 'b', 'c') {
         & ffmpeg -hide_banner -v error -f lavfi -i 'testsrc2=size=1920x1080:rate=30:duration=3' `
             -f lavfi -i 'sine=frequency=440:duration=3:sample_rate=48000' `
-            -c:v libx264 -preset ultrafast -qp 5 -pix_fmt yuv420p -c:a aac -shortest (Join-Path $watchRoot "$name.mp4")
+            -c:v libx264 -preset ultrafast -qp 5 -pix_fmt yuv420p -c:a aac -shortest `
+            -metadata 'creation_time=2025-05-28T23:51:45.000000Z' -metadata 'location=+51.5074-000.1278/' `
+            -metadata 'com.android.model=Pixel 9 Pro' -movflags +use_metadata_tags (Join-Path $watchRoot "$name.mp4")
         if ($LASTEXITCODE -ne 0) { throw "ffmpeg failed to generate clip $name." }
     }
 
@@ -114,6 +124,9 @@ validation:
     $jobB = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'b.mp4' }
     $jobC = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'c.mp4' }
     Assert ((Get-VideoCodec $jobA.outputPath) -eq 'av1') 'clip a output should be AV1.'
+    Assert ((Get-FormatTag $jobA.outputPath 'creation_time') -eq '2025-05-28T23:51:45.000000Z') 'the output should keep the capture date.'
+    Assert ((Get-FormatTag $jobA.outputPath 'location') -eq '+51.5074-000.1278/') 'the output should keep the GPS location.'
+    Assert ((Get-FormatTag $jobA.outputPath 'com.android.model') -eq 'Pixel 9 Pro') 'the output should keep the phone model.'
 
     # Overwrite bytes mid-file: the container index and packet counts stay intact, so only the decode test can catch it.
     $bytes = [System.IO.File]::ReadAllBytes($jobB.outputPath)

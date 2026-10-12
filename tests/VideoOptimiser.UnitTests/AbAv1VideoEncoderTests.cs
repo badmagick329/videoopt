@@ -7,7 +7,7 @@ namespace VideoOptimiser.UnitTests;
 public sealed class AbAv1VideoEncoderTests
 {
     [Fact]
-    public void BuildArgumentsExcludesDataStreams()
+    public void BuildArgumentsExcludesDataStreamsAndKeepsSourceMetadata()
     {
         var settings = new QualitySettings
         {
@@ -23,6 +23,7 @@ public sealed class AbAv1VideoEncoderTests
         arguments.Should().Equal(
             "encode", "--input", "C:\\video.mp4", "--output", "C:\\out.mp4",
             "--encoder", "libsvtav1", "--pix-format", "yuv420p10le", "--preset", "6",
-            "--crf", "30", "--enc", "map=-0:d");
+            "--crf", "30", "--enc", "map=-0:d",
+            "--enc", "map_metadata=0", "--enc", "movflags=+faststart+use_metadata_tags");
     }
 }

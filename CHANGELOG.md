@@ -9,6 +9,7 @@
 
 - `queue discover` no longer queues an original again after its job failed or was cancelled, which encoded a failing file again on every run and undid `queue cancel`. It skips the original until the file changes and reports it as "Previously failed or cancelled". Failures caused only by the file not being ready, being ineligible, or lying outside the watch roots still requeue.
 - `queue retry <job-id>` now queues any failed or cancelled job's original again, not only one whose remote configuration changed.
+- The AV1 output now keeps the original's container metadata: its capture date (`creation_time`), GPS location, and phone make and model (`com.android.*`). Before, every converted file lost them, so photo libraries dated it by the conversion and dropped it from the map. Files already converted stay without them.
 
 ## [0.5.0] - 2026-10-12
 ### Added

@@ -15,7 +15,14 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
         "--preset", settings.Preset.ToString(CultureInfo.InvariantCulture),
         "--crf", crf.ToString(CultureInfo.InvariantCulture),
         // Container-specific data streams such as timecode tracks are not generally portable to the output container.
-        "--enc", "map=-0:d"
+        "--enc", "map=-0:d",
+        // ffmpeg writes no source metadata unless told to. Without these the output loses its capture date
+        // (creation_time), GPS (location) and the phone's make/model (com.android.* keys, which only
+        // use_metadata_tags writes), and photo libraries such as Immich date and place it wrongly.
+        // Setting movflags replaces ab-av1's own +faststart, so it is repeated: the index stays ahead of the media
+        // for streaming, and a truncated output still probes and fails validation cleanly.
+        "--enc", "map_metadata=0",
+        "--enc", "movflags=+faststart+use_metadata_tags"
     ];
 
     public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
