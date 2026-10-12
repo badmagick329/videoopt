@@ -3,15 +3,19 @@ using VideoOptimiser.Application.Jobs;
 
 namespace VideoOptimiser.Infrastructure.Jobs;
 
+/// <summary>
+/// The explicit opt-in that requeues a failed or cancelled original, which discovery otherwise leaves alone while the file is
+/// unchanged. The replacement starts from scratch rather than resuming, so it never reuses the earlier output or workspace.
+/// </summary>
 public sealed class JobRetryService(IJobRepository jobs) : IJobRetryService
 {
-    public async Task<JobRetryResult> RetryRemoteConfigurationChangedAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default)
+    public async Task<JobRetryResult> RetryAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default)
     {
         var original = await jobs.GetAsync(databasePath, jobId, cancellationToken);
         if (original is null) return new JobRetryResult(null, "Job was not found.");
-        if (original.Status != JobStatus.Failed || !string.Equals(original.FailureCategory, JobCompatibility.RemoteConfigurationChangedCategory, StringComparison.Ordinal))
+        if (original.Status is not (JobStatus.Failed or JobStatus.Cancelled))
         {
-            return new JobRetryResult(null, "Only jobs failed because their remote configuration changed can be retried.");
+            return new JobRetryResult(null, "Only failed or cancelled jobs can be retried.");
         }
         var openJob = await jobs.FindOpenBySourceAsync(databasePath, original.SourcePath, cancellationToken);
         if (openJob is not null)
@@ -19,11 +23,13 @@ public sealed class JobRetryService(IJobRepository jobs) : IJobRetryService
             return new JobRetryResult(null, $"An open job already exists for this original: {openJob.Id:N} ({openJob.Status}).");
         }
 
+        // The earlier fingerprint lets discovery recognise the file again if this job is cancelled before it runs;
+        // processing replaces it with the file's current fingerprint.
         var replacement = new JobRecord
         {
             Id = Guid.NewGuid(),
             SourcePath = original.SourcePath,
-            SourceFingerprint = string.Empty,
+            SourceFingerprint = original.SourceFingerprint,
             Status = JobStatus.Queued
         };
         JobCompatibility.Apply(replacement, JobCompatibility.ExpectedBinding(replacement.Id, settings));

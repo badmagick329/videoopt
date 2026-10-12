@@ -10,17 +10,16 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
 {
     public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        var keptOriginals = await FindKeptOriginalsAsync(databasePath, cancellationToken);
-        var openSourcePaths = first
-            ? new HashSet<string>(
-                (await jobs.ListAsync(databasePath, terminal: false, cancellationToken)).Select(job => Path.GetFullPath(job.SourcePath)),
-                StringComparer.OrdinalIgnoreCase)
-            : null;
+        var open = new HashSet<string>(
+            (await jobs.ListAsync(databasePath, terminal: false, cancellationToken)).Select(job => Path.GetFullPath(job.SourcePath)),
+            StringComparer.OrdinalIgnoreCase);
+        var settled = await FindSettledOriginalsAsync(databasePath, open, cancellationToken);
+        var openSourcePaths = first ? open : null;
         var report = await scanner.ScanAsync(
             settings.Watch.Roots,
             settings,
             stopAfterFirstEligible: first,
-            openSourcePaths: openSourcePaths?.Union(keptOriginals, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            openSourcePaths: openSourcePaths?.Union(settled.Keys, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase),
             progress: progress,
             cancellationToken: cancellationToken);
         var queued = new List<string>();
@@ -29,6 +28,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             openSourcePaths?.Contains(Path.GetFullPath(item.Path)) == true);
         var issues = report.Issues.Count;
         var alreadyConverted = 0;
+        var previouslyFailed = 0;
         foreach (var item in report.Items.Where(item => item.Status == ScanItemStatus.Eligible))
         {
             if (first && queued.Count > 0)
@@ -36,9 +36,10 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
                 break;
             }
 
-            if (keptOriginals.Contains(Path.GetFullPath(item.Path)))
+            if (settled.TryGetValue(Path.GetFullPath(item.Path), out var outcome))
             {
-                alreadyConverted++;
+                if (outcome == JobStatus.Completed) alreadyConverted++;
+                else previouslyFailed++;
                 continue;
             }
 
@@ -73,24 +74,37 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             }
         }
 
-        return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes, alreadyConverted);
+        return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes, alreadyConverted, previouslyFailed);
     }
 
     /// <summary>
-    /// Originals that <c>original.action: keep</c> left in place after a completed job. They are still eligible, so without
-    /// this every discovery would queue them again. A matching fingerprint proves the file is the one that was converted;
-    /// the size check first skips the fingerprint read for paths that <c>delete</c> or <c>archive</c> replaced.
+    /// Failures that judged the file's state or the settings at run time rather than an attempt to convert it. Discovery has
+    /// just found the file eligible inside a watch root, so the earlier verdict no longer holds and the file is queued again.
     /// </summary>
-    private async Task<HashSet<string>> FindKeptOriginalsAsync(string databasePath, CancellationToken cancellationToken)
+    private static readonly HashSet<string> RequeuedFailureCategories = new(StringComparer.Ordinal) { "SourceNotReady", "Ineligible", "SourceOutsideWatchRoot" };
+
+    /// <summary>
+    /// Originals discovery leaves alone because their latest job settled them, mapped to that job's status. A completed job
+    /// means <c>original.action: keep</c> left the original in place; a failed or cancelled one means converting it again
+    /// would repeat the same encode and fail the same way, or undo the user's cancel, so only <c>queue retry</c> requeues it.
+    /// Either way the file is still eligible, and a matching fingerprint proves it is the one that job saw; a changed file
+    /// is queued as normal. The size check first skips the fingerprint read for paths that <c>delete</c> or <c>archive</c>
+    /// replaced. Paths with an open job are left to the open-job count.
+    /// </summary>
+    private async Task<Dictionary<string, JobStatus>> FindSettledOriginalsAsync(string databasePath, HashSet<string> open, CancellationToken cancellationToken)
     {
-        var kept = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var job in (await jobs.ListAsync(databasePath, terminal: true, cancellationToken)).Where(job => job.Status == JobStatus.Completed))
+        var settled = new Dictionary<string, JobStatus>(StringComparer.OrdinalIgnoreCase);
+        var latestJobs = (await jobs.ListAsync(databasePath, terminal: true, cancellationToken))
+            .GroupBy(job => Path.GetFullPath(job.SourcePath), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.MaxBy(job => job.CreatedUtc)!)
+            .Where(job => !open.Contains(Path.GetFullPath(job.SourcePath)) && !RequeuedFailureCategories.Contains(job.FailureCategory ?? string.Empty));
+        foreach (var job in latestJobs)
         {
             var file = new FileInfo(job.SourcePath);
             if (!file.Exists || (job.SourceSizeBytes is { } size && file.Length != size)) continue;
             try
             {
-                if (await fingerprints.CreateAsync(job.SourcePath, cancellationToken) == job.SourceFingerprint) kept.Add(Path.GetFullPath(job.SourcePath));
+                if (await fingerprints.CreateAsync(job.SourcePath, cancellationToken) == job.SourceFingerprint) settled[Path.GetFullPath(job.SourcePath)] = job.Status;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -98,7 +112,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             }
         }
 
-        return kept;
+        return settled;
     }
 
     public async Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, CancellationToken cancellationToken = default)

@@ -108,7 +108,7 @@ public interface IJobProcessor
         CancellationToken cancellationToken = default);
 }
 
-public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0);
+public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0);
 public sealed record FailedQueueJob(Guid Id, string SourcePath, string FailureCategory, string FailureMessage);
 
 public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs);
@@ -139,7 +139,7 @@ public interface IQueueService
 
 public interface IJobRetryService
 {
-    Task<JobRetryResult> RetryRemoteConfigurationChangedAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default);
+    Task<JobRetryResult> RetryAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default);
 }
 
 public sealed record FinalizationResult(JobRecord? Job, ExitCode ExitCode, string Message);

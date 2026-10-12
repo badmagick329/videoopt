@@ -310,7 +310,8 @@ internal static class CliApplication
                 : $"{update.Stage}: {update.Path}"));
         var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, progress, cancellationToken);
         foreach (var path in result.QueuedPaths) Console.WriteLine($"Queued  {path}");
-        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Already converted: {result.AlreadyConverted}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");
+        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Already converted: {result.AlreadyConverted}. Previously failed or cancelled: {result.PreviouslyFailed}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");
+        if (result.PreviouslyFailed > 0) Console.WriteLine("Failed or cancelled originals stay out of the queue until they change. 'history' lists their jobs; 'queue retry <job-id>' queues one again.");
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
@@ -340,7 +341,7 @@ internal static class CliApplication
             Console.Error.WriteLine("Job ID is invalid.");
             return (int)ExitCode.InvalidArguments;
         }
-        var result = await retryService.RetryRemoteConfigurationChangedAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
+        var result = await retryService.RetryAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
         if (!result.Succeeded)
         {
             Console.Error.WriteLine(result.Error);

@@ -119,6 +119,95 @@ public sealed class QueueServiceTests : IDisposable
         result.AlreadyQueued.Should().Be(0);
     }
 
+    [Theory]
+    [InlineData(JobStatus.Failed, "ValidationFailed")]
+    [InlineData(JobStatus.Failed, "CrfSearchFailed")]
+    [InlineData(JobStatus.Cancelled, "Cancelled")]
+    public async Task DiscoverAsyncSkipsAFailedOrCancelledOriginalUntilItChanges(JobStatus status, string category)
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "source");
+        var fingerprints = new FileFingerprintService();
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
+        await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = await fingerprints.CreateAsync(source), Status = status, FailureCategory = category });
+        var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor());
+
+        var unchanged = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
+        await File.WriteAllTextAsync(source, "edited");
+        var changed = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
+
+        unchanged.PreviouslyFailed.Should().Be(1);
+        unchanged.QueuedPaths.Should().BeEmpty();
+        changed.PreviouslyFailed.Should().Be(0);
+        changed.QueuedPaths.Should().Equal(source);
+    }
+
+    [Theory]
+    [InlineData("SourceNotReady")]
+    [InlineData("Ineligible")]
+    [InlineData("SourceOutsideWatchRoot")]
+    public async Task DiscoverAsyncRequeuesAnUnchangedOriginalWhoseFailureJudgedOnlyItsStateAtRunTime(string category)
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "source");
+        var fingerprints = new FileFingerprintService();
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
+        await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = await fingerprints.CreateAsync(source), Status = JobStatus.Failed, FailureCategory = category });
+        var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor());
+
+        var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
+
+        result.PreviouslyFailed.Should().Be(0);
+        result.QueuedPaths.Should().Equal(source);
+    }
+
+    [Fact]
+    public async Task DiscoverAsyncJudgesAnOriginalByItsLatestJob()
+    {
+        var failedLast = Path.Combine(_directory, "failed-last.mp4");
+        var notReadyLast = Path.Combine(_directory, "not-ready-last.mp4");
+        await File.WriteAllTextAsync(failedLast, "source");
+        await File.WriteAllTextAsync(notReadyLast, "source");
+        var fingerprints = new FileFingerprintService();
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
+        foreach (var (path, category) in new[] { (failedLast, "SourceNotReady"), (notReadyLast, "ValidationFailed"), (failedLast, "ValidationFailed"), (notReadyLast, "SourceNotReady") })
+        {
+            await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = path, SourceFingerprint = await fingerprints.CreateAsync(path), Status = JobStatus.Failed, FailureCategory = category });
+            await Task.Delay(5);
+        }
+        var queue = new QueueService(new FixedScanner(failedLast, notReadyLast), repository, fingerprints, new NoopProcessor());
+
+        var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
+
+        result.PreviouslyFailed.Should().Be(1);
+        result.QueuedPaths.Should().Equal(notReadyLast);
+    }
+
+    [Fact]
+    public async Task DiscoverAsyncFirstCountsARetriedOriginalOnlyAsQueued()
+    {
+        var retried = Path.Combine(_directory, "retried.mp4");
+        var next = Path.Combine(_directory, "next.mp4");
+        var later = Path.Combine(_directory, "later.mp4");
+        foreach (var path in new[] { retried, next, later }) await File.WriteAllTextAsync(path, "source");
+        var fingerprints = new FileFingerprintService();
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
+        var fingerprint = await fingerprints.CreateAsync(retried);
+        await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = retried, SourceFingerprint = fingerprint, Status = JobStatus.Failed, FailureCategory = "ValidationFailed" });
+        await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = retried, SourceFingerprint = fingerprint, Status = JobStatus.Queued });
+        var queue = new QueueService(new FirstAwareScanner(retried, next, later), repository, fingerprints, new NoopProcessor());
+
+        var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: true);
+
+        result.QueuedPaths.Should().Equal(next);
+        result.AlreadyQueued.Should().Be(1);
+        result.PreviouslyFailed.Should().Be(0);
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private sealed class FixedScanner(params string[] paths) : IFileScanner

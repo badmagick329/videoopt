@@ -166,7 +166,7 @@ public sealed class JobCompatibilityTests : IDisposable
         await repository.CreateAsync(settings.Database.Path, original);
         var retry = new JobRetryService(repository);
 
-        var result = await retry.RetryRemoteConfigurationChangedAsync(settings.Database.Path, original.Id, settings);
+        var result = await retry.RetryAsync(settings.Database.Path, original.Id, settings);
 
         result.Succeeded.Should().BeTrue();
         var replacement = result.Replacement!;
@@ -183,7 +183,7 @@ public sealed class JobCompatibilityTests : IDisposable
         replacement.FailureCategory.Should().BeNull();
         replacement.FailureMessage.Should().BeNull();
         replacement.CompletedUtc.Should().BeNull();
-        var second = await retry.RetryRemoteConfigurationChangedAsync(settings.Database.Path, original.Id, settings);
+        var second = await retry.RetryAsync(settings.Database.Path, original.Id, settings);
         second.Succeeded.Should().BeFalse();
         second.Error.Should().Contain(replacement.Id.ToString("N")).And.Contain(JobStatus.Queued.ToString());
         var storedOriginal = (await repository.GetAsync(settings.Database.Path, original.Id))!;
@@ -192,6 +192,26 @@ public sealed class JobCompatibilityTests : IDisposable
         storedOriginal.OutputPath.Should().Be("old-output.mp4");
         (await repository.ListAsync(settings.Database.Path, terminal: true)).Should().ContainSingle(job => job.Id == original.Id);
         (await repository.ListAsync(settings.Database.Path, terminal: false)).Should().ContainSingle(job => job.Id == replacement.Id);
+    }
+
+    [Theory]
+    [InlineData(JobStatus.Failed, "ValidationFailed", true)]
+    [InlineData(JobStatus.Failed, "CrfSearchFailed", true)]
+    [InlineData(JobStatus.Cancelled, "Cancelled", true)]
+    [InlineData(JobStatus.Completed, null, false)]
+    public async Task RetryRequeuesAnyFailedOrCancelledJobWithItsFingerprint(JobStatus status, string? category, bool retried)
+    {
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = ManagedSettings();
+        settings.Database.Path = Path.Combine(_directory, $"retry-{status}-{category}.db");
+        var original = new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "movie.mp4"), SourceFingerprint = "source", Status = status, FailureCategory = category, CompletedUtc = DateTimeOffset.UtcNow };
+        await repository.CreateAsync(settings.Database.Path, original);
+
+        var result = await new JobRetryService(repository).RetryAsync(settings.Database.Path, original.Id, settings);
+
+        result.Succeeded.Should().Be(retried);
+        if (retried) result.Replacement!.SourceFingerprint.Should().Be("source");
+        else result.Error.Should().Be("Only failed or cancelled jobs can be retried.");
     }
 
     [Theory]
@@ -225,7 +245,7 @@ public sealed class JobCompatibilityTests : IDisposable
         await repository.CreateAsync(settings.Database.Path, openJob);
         var retry = new JobRetryService(repository);
 
-        var result = await retry.RetryRemoteConfigurationChangedAsync(settings.Database.Path, original.Id, settings);
+        var result = await retry.RetryAsync(settings.Database.Path, original.Id, settings);
 
         result.Succeeded.Should().BeFalse();
         result.Error.Should().Contain(openJob.Id.ToString("N")).And.Contain(openStatus.ToString());

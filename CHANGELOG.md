@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+
+- `queue discover` no longer queues an original again after its job failed or was cancelled, which encoded a failing file again on every run and undid `queue cancel`. It skips the original until the file changes and reports it as "Previously failed or cancelled". Failures caused only by the file not being ready, being ineligible, or lying outside the watch roots still requeue.
+- `queue retry <job-id>` now queues any failed or cancelled job's original again, not only one whose remote configuration changed.
 
 ## [0.5.0] - 2026-10-12
 ### Added

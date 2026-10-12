@@ -4,7 +4,7 @@ param(
     [string] $Executable
 )
 
-# Runs discover -> queue run -> validate -> finalise (archive and keep) -> rediscover -> cleanup against real ab-av1, ffmpeg and ffprobe, which must be on PATH
+# Runs discover -> queue run -> validate -> finalise (archive and keep) -> rediscover -> retry -> cleanup against real ab-av1, ffmpeg and ffprobe, which must be on PATH
 # (ab-av1 itself calls ffmpeg from PATH). Unit tests fake every tool, so this is the only check of their real output.
 
 $ErrorActionPreference = 'Stop'
@@ -158,9 +158,19 @@ validation:
         Assert ($LASTEXITCODE -eq 0 -and -not $decodeErrors) "the installed AV1 $installed should decode cleanly: $decodeErrors"
     }
 
-    # The archived and kept originals are still eligible H.264; neither may be queued again. Clip b's failed job does not block it.
+    # The archived and kept originals and failed clip b are all still eligible H.264; none may be queued again.
     $rediscovered = Invoke-Cli 0 @('queue', 'discover')
-    Assert ($rediscovered -cmatch '(?m)^Queued: 1\.' -and $rediscovered -match 'Already converted: 1\.' -and $rediscovered -match 'Queued  .*\\b\.mp4') "rediscovery should queue only clip b: $rediscovered"
+    Assert ($rediscovered -cmatch '(?m)^Queued: 0\.' -and $rediscovered -match 'Already converted: 1\.' -and $rediscovered -match 'Previously failed or cancelled: 1\.') "rediscovery should queue nothing: $rediscovered"
+
+    # queue retry opts clip b back in; cancelling that job leaves it out of the queue again.
+    $retried = Invoke-Cli 0 @('queue', 'retry', $jobB.id)
+    Assert ($retried -match 'Created fresh queued job ([0-9a-f]{32})') "queue retry should create a job for clip b: $retried"
+    $retryId = $Matches[1]
+    $whileRetried = Invoke-Cli 0 @('queue', 'discover')
+    Assert ($whileRetried -match 'Already queued: 1\.') "discovery should count the retried clip b as queued: $whileRetried"
+    Invoke-Cli 0 @('queue', 'cancel', $retryId) | Out-Null
+    $afterCancel = Invoke-Cli 0 @('queue', 'discover')
+    Assert ($afterCancel -cmatch '(?m)^Queued: 0\.' -and $afterCancel -match 'Previously failed or cancelled: 1\.') "a cancelled clip b should stay out of the queue: $afterCancel"
 
     # Left behind: the manifests of clips a and c (completed) and clip b's output and manifest (failed).
     $outputFolder = Join-Path $watchRoot '.video-optimiser'

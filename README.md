@@ -102,8 +102,8 @@ A folder name such as `Archive` is created beside each original, so archiving is
 .\video-optimiser.exe queue cancel <job-id> --config .\video-optimiser.yaml
 .\video-optimiser.exe queue cancel --all --config .\video-optimiser.yaml
 
-# Create a new queued job for a failure caused by a changed remote configuration.
-# The failed job remains in history; the new job uses a fresh workspace and state.
+# Queue a failed or cancelled job's original again. The old job remains in history;
+# the new job uses a fresh workspace and state.
 .\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
 
 # Revalidate or finalise one job.
@@ -138,7 +138,7 @@ A folder name such as `Archive` is created beside each original, so archiving is
 
 ## Safety
 
-- `queue discover` scans configured roots and queues eligible files.
+- `queue discover` scans configured roots and queues eligible files. It skips an original whose last job failed or was cancelled until that file changes or `queue retry` queues it, so a file that fails is not encoded again on every run. It still requeues a job that failed only because the file was not ready, was ineligible, or was outside the watch roots when it ran.
 - `process` creates a job, then CRF-searches, encodes, and validates a separate temporary AV1 file.
 - `queue run` resumes interrupted CRF searches, encodes, or validations from a safe stage. A local encode cannot continue a partial file, so its resume deletes that file and starts a new attempt; `status` says which jobs this applies to.
 - `validate` rechecks a job's temporary AV1 before replacement.
