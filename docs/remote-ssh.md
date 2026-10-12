@@ -1,6 +1,6 @@
 # Remote SSH processing
 
-Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a server when work starts, using the first type on your list that Hetzner has in stock, and deletes it after every required output is safely downloaded.
+Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a server when work starts, using the first type on your list that Hetzner has in stock, once you approve its hourly price, and deletes it after every required output is safely downloaded.
 
 The managed workflow has only two one-time manual prerequisites: store the dedicated SSH public key in the Hetzner project and create an API token. Do **not** create a server in the Hetzner console; VideoOptimiser creates it through the API.
 
@@ -119,7 +119,22 @@ Before creating anything, it reads Hetzner's server type list once and skips any
 - the type isn't x86 (the bootstrap installs x86 builds), or Hetzner has deprecated it;
 - its price there, including VAT, is above `maxHourlyPrice`.
 
-It prints each skipped type with the reason, then the type, location and hourly price before each create request, such as `Creating Hetzner cpx42 in fsn1 (EUR 0.134/h incl. VAT).` Availability is only an indicator, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`); the next type and location is then tried. If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No server is left running.
+It prints each skipped type with the reason, then asks once before creating anything:
+
+```text
+Will create cpx42 in hel1 at EUR 0.134/h incl. VAT.
+If that placement fails, a fallback may cost up to EUR 0.266/h (ccx33 in hel1).
+Create the server? [y/N]
+```
+
+- **The first line** is the first type and location left after the checks above.
+- **The second line** is the most expensive one left. It appears only when that one costs more than the first.
+- **Fallbacks:** availability is only an indicator, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`). The next type and location is then tried without asking again: one `y` approves every candidate up to the second line's price.
+- **Declining:** any answer other than `y` or `yes`, or no input at all, creates nothing. The command prints `No server was created.`, exits `0`, and leaves the jobs queued.
+- **Scripts** approve by piping the answer: `'y' | .\artifacts\local\video-optimiser.exe queue run --config .\video-optimiser.yaml`.
+- **A server that's already running** is reused without asking; it is already billing.
+
+Before each create request it prints the type, location and price, such as `Creating Hetzner cpx42 in hel1 (EUR 0.134/h incl. VAT).` If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No server is left running.
 
 Gross hourly prices in the EU on 2026-10-12, for choosing your list:
 
@@ -143,7 +158,7 @@ Validate the local settings without creating a server:
 
 ## 5. Optional preflight
 
-Normal processing creates the worker automatically. To create it early and wait for the full toolchain build:
+Normal processing creates the worker once you approve its price. To create it early and wait for the full toolchain build:
 
 ```powershell
 .\artifacts\local\video-optimiser.exe worker create --config .\video-optimiser.yaml
@@ -185,7 +200,7 @@ For an initial test with an empty queue, discover only one eligible video:
 .\artifacts\local\video-optimiser.exe queue discover --first --config .\video-optimiser.yaml
 ```
 
-`--first` limits only newly discovered videos; it does not remove existing queued jobs. An empty `queue run` does not create a server.
+`--first` limits only newly discovered videos; it does not remove existing queued jobs. An empty `queue run` does not create a server. With work to do and no server running, `process` and `queue run` show the price and ask `Create the server? [y/N]` first; see [How the server is chosen](#how-the-server-is-chosen).
 
 With `deleteAfterRun: true`, a clean `process` or `queue run` deletes the server after outputs have been downloaded, checksum-verified, and validated locally. It then confirms that the separately billable Primary IPv4 was also deleted. The original video remains untouched in `ReadyToFinalize` state.
 

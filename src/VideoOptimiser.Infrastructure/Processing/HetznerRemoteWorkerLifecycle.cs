@@ -60,7 +60,12 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase) &&
         settings.Processing.RemoteSsh.Lifecycle.Equals(RemoteLifecycleModes.Hetzner, StringComparison.OrdinalIgnoreCase);
 
-    public async Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<RemoteWorkerInfo> EnsureReadyAsync(
+        AppSettings settings,
+        string databasePath,
+        IProgress<string>? progress = null,
+        Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null,
+        CancellationToken cancellationToken = default)
     {
         RequireManaged(settings);
         await using var lifecycleLock = await AcquireLockAsync(databasePath, cancellationToken);
@@ -71,10 +76,10 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         if (state is null)
         {
             _ = await DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
-            progress?.Report("Creating managed Hetzner worker.");
+            progress?.Report("No managed Hetzner worker is running.");
             // cloud-init runs the script with bash, which fails on CRLF; a Windows checkout with core.autocrlf has CRLF.
             var script = (await File.ReadAllTextAsync(settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, cancellationToken)).ReplaceLineEndings("\n");
-            state = await CreateAsync(token, settings, controller, statePath, script, progress, cancellationToken);
+            state = await CreateAsync(token, settings, controller, statePath, script, progress, confirmCreation, cancellationToken);
             progress?.Report($"Created Hetzner server {state.ServerId} at {state.Address}; bootstrap is running.");
         }
         else
@@ -207,12 +212,17 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         string statePath,
         string bootstrapScript,
         IProgress<string>? progress,
+        Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation,
         CancellationToken cancellationToken)
     {
         var hetzner = settings.Processing.RemoteSsh.Hetzner;
         if (Encoding.UTF8.GetByteCount(bootstrapScript) > 32 * 1024) throw new InvalidOperationException("The Hetzner bootstrap script exceeds the 32 KiB user-data limit.");
         var name = $"{hetzner.ServerNamePrefix}-{controller[..12]}".ToLowerInvariant();
         var (candidates, reports) = await PreflightCandidatesAsync(token, settings.Processing.RemoteSsh, progress, cancellationToken);
+        // Asked once, inside the lifecycle lock, so the approved candidates are the ones tried. The fallback loop below never
+        // asks again: the quote already named the most it can cost.
+        if (confirmCreation is not null && !await confirmCreation(Quote(candidates), cancellationToken))
+            throw new RemoteWorkerCreationDeclinedException();
         var failures = new List<string>();
         Exception? lastPlacementFailure = null;
         for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
@@ -351,6 +361,14 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         if (candidates.Count == 0)
             throw new RemoteWorkerCapacityUnavailableException(reports.Values.Select(report => report.ToOutcome()).ToArray());
         return (candidates, reports);
+    }
+
+    // An unlisted price ranks above every listed one, since nothing bounds it. MaxBy keeps the first of equal prices, so a
+    // list whose first candidate is already the most expensive quotes it alone.
+    private static RemoteWorkerCreationQuote Quote(IReadOnlyList<PlacementCandidate> candidates)
+    {
+        static RemoteWorkerCreationOption Option(PlacementCandidate candidate) => new(candidate.ServerType, candidate.Location, candidate.HourlyGross);
+        return new RemoteWorkerCreationQuote(Option(candidates[0]), Option(candidates.MaxBy(candidate => candidate.HourlyGross ?? decimal.MaxValue)));
     }
 
     private static string? DescribeUnsuitable(ServerTypeOffer offer, RemoteSshSettings remote, long minimumMemory)

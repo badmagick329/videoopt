@@ -84,6 +84,12 @@ internal static partial class CliApplication
                 ? (int)ExitCode.InvalidConfiguration
                 : (int)ExitCode.ProcessingFailure;
         }
+        catch (RemoteWorkerCreationDeclinedException exception)
+        {
+            // A declined price is the user's choice, as with a declined finalize, not a failure. Jobs stay as they were.
+            Console.WriteLine(exception.Message);
+            return (int)ExitCode.Success;
+        }
         catch (RemoteWorkerCapacityUnavailableException exception)
         {
             Console.Error.WriteLine(exception.Message);
@@ -273,7 +279,7 @@ internal static partial class CliApplication
         var managedWork = lifecycle.IsManaged(configuration.Settings) && canRunExistingJob;
         if (managedWork)
         {
-            await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
+            await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
         }
         Console.WriteLine($"Processing: {sourcePath}");
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
@@ -407,6 +413,22 @@ internal static partial class CliApplication
         Console.WriteLine(RunBanner.Describe(configuration.Settings, worker));
     }
 
+    /// <summary>
+    /// Reads the answer even when input is redirected, like <c>finalize</c>, so an agent or script approves by piping
+    /// <c>'y'</c>; <see cref="ConsoleInteractiveConfirmation"/> refuses redirected input. No input at all declines.
+    /// </summary>
+    private static Task<bool> ConfirmServerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken)
+    {
+        Console.Write(quote.FormatPrompt());
+        string? response;
+        try { response = Console.ReadLine(); }
+        catch (IOException) { response = null; }
+        // Ctrl+C at the prompt ends the read with no answer; report it as a cancellation, not a decline.
+        cancellationToken.ThrowIfCancellationRequested();
+        if (response is null) Console.WriteLine();
+        return Task.FromResult(ManagedWorkerDeletionPolicy.IsAffirmative(response?.Trim()));
+    }
+
     private static bool ReportInvalidSettings(IServiceProvider services, LoadedConfiguration configuration)
     {
         var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
@@ -431,7 +453,7 @@ internal static partial class CliApplication
         var managedWork = lifecycle.IsManaged(configuration.Settings);
         if (managedWork)
         {
-            await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
+            await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
         }
         Console.WriteLine("Running queued jobs.");
         var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
@@ -511,7 +533,7 @@ internal static partial class CliApplication
         if (!lifecycle.IsManaged(configuration.Settings)) { Console.Error.WriteLine("Configure processing.remoteSsh.lifecycle as hetzner first."); return (int)ExitCode.InvalidConfiguration; }
         var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
         if (diagnostics.Count > 0) { foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}"); return (int)ExitCode.InvalidConfiguration; }
-        var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
+        var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
         Console.WriteLine($"Worker ready: {worker.Name} ({worker.ServerId}) {worker.Address}{DescribePlacement(worker)}");
         return (int)ExitCode.Success;
     }

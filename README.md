@@ -95,7 +95,7 @@ When one video works, drop `--first` to queue everything that matches your rules
 | Mode | Config | Good for |
 | --- | --- | --- |
 | Your PC | `processing.mode: "local"` (the default) | Trying it out, a few videos, a fast CPU |
-| Hetzner, managed | `processing.mode: "remoteSsh"` with `remoteSsh.lifecycle: "hetzner"` | Large batches. The app creates a server from your list of server types, sets it up, and deletes it after a clean run. You pay per hour, up to `maxHourlyPrice` (€0.30 by default). |
+| Hetzner, managed | `processing.mode: "remoteSsh"` with `remoteSsh.lifecycle: "hetzner"` | Large batches. The app picks a server from your list of server types, shows its price and asks before creating it, sets it up, and deletes it after a clean run. You pay per hour, up to `maxHourlyPrice` (€0.30 by default). |
 | Your own Linux server | `processing.mode: "remoteSsh"` with `remoteSsh.lifecycle: "manual"` | A spare machine you already run |
 
 In both remote modes, validation, review and finalisation still happen on your PC. Setup for both is in [docs/remote-ssh.md](docs/remote-ssh.md).

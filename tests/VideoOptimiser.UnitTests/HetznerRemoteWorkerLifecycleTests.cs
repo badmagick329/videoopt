@@ -226,6 +226,84 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     [Fact]
+    public async Task CreationIsQuotedFromTheFirstCandidateAndTheMostExpensiveAfterSkippedTypes()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx43", "cx53", "ccx33", "cpx42"];
+        fixture.Handler.Catalogue["cx43"].SoldOut();
+        using var lifecycle = fixture.CreateLifecycle();
+        var quotes = new List<RemoteWorkerCreationQuote>();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, confirmCreation: (quote, _) =>
+        {
+            quotes.Add(quote);
+            fixture.Handler.CreateCount.Should().Be(0, "the quote is asked about before anything bills");
+            return Task.FromResult(true);
+        });
+
+        quotes.Should().Equal(new RemoteWorkerCreationQuote(
+            new RemoteWorkerCreationOption("cx53", "hel1", 0.057m),
+            new RemoteWorkerCreationOption("ccx33", "hel1", 0.266m)));
+        fixture.Handler.CreateServerTypes.Should().Equal("cx53");
+    }
+
+    [Fact]
+    public async Task DecliningTheQuoteCreatesNothingAndLeavesNoWorkerState()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, confirmCreation: (_, _) => Task.FromResult(false));
+
+        await action.Should().ThrowAsync<RemoteWorkerCreationDeclinedException>().WithMessage("No server was created.");
+        fixture.Handler.CreateCount.Should().Be(0);
+        fixture.Handler.ServerExists.Should().BeFalse();
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+        fixture.Processes.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReusingAWorkerNeverAsksAboutCreation()
+    {
+        using var fixture = new Fixture();
+        using (var first = fixture.CreateLifecycle()) await first.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        var asked = 0;
+
+        using var second = fixture.CreateLifecycle();
+        var worker = await second.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, confirmCreation: (_, _) =>
+        {
+            asked++;
+            return Task.FromResult(false);
+        });
+
+        asked.Should().Be(0);
+        worker.ServerId.Should().Be(42);
+        fixture.Handler.CreateCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task OneApprovalCoversEveryPlacementFallback()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx43", "cpx42"];
+        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "stale"));
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "stale"));
+        using var lifecycle = fixture.CreateLifecycle();
+        var asked = 0;
+
+        var worker = await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, confirmCreation: (_, _) =>
+        {
+            asked++;
+            return Task.FromResult(true);
+        });
+
+        asked.Should().Be(1);
+        fixture.Handler.CreateServerTypes.Should().Equal("cx43", "cx43", "cpx42");
+        worker.ServerType.Should().Be("cpx42");
+    }
+
+    [Fact]
     public async Task ReadRecordedReturnsTheStoredWorkerWithoutCallingHetzner()
     {
         using var fixture = new Fixture();

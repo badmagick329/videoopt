@@ -12,11 +12,25 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 | Working | `queue discover`, `queue run`, `process`, `immich run`, `validate`, `queue cancel`, `queue retry` | Run when the user's request covers it. They change only the job database and temporary files. The one exception: `immich run`'s re-upload guard moves converted originals the phone uploaded again back to Immich's trash, which is the intended outcome. |
 | Gated | `finalize`, `immich finalize`, `cleanup`, `worker create`, `worker delete` | Gate first. They replace originals, delete files, or create or delete a paid server. |
 
-**Paid encoding.** When the config has `processing.mode: "remoteSsh"` and `remoteSsh.lifecycle: "hetzner"`, a `queue run`, `process` or `immich run` with work to do creates a Hetzner server that bills by the hour. Gate the first such run in a session: say it will create a server, name the `remoteSsh.hetzner.serverTypes` it may pick from, and state the `maxHourlyPrice` cap (or that there is none, when it is `null`).
+**Paid encoding.** When the config has `processing.mode: "remoteSsh"` and `remoteSsh.lifecycle: "hetzner"`, a `queue run`, `process`, `immich run` or `worker create` that needs a server asks before creating one, which bills by the hour:
+
+```text
+Will create cpx42 in hel1 at EUR 0.134/h incl. VAT.
+If that placement fails, a fallback may cost up to EUR 0.266/h (ccx33 in hel1).
+Create the server? [y/N]
+```
+
+Gate it with the run's own quote:
+
+1. Run the command without piping anything. It prints these lines, creates nothing, prints `No server was created.` and exits `0`. Its jobs stay queued.
+2. Show the user the price lines.
+3. After the go-ahead, run it again with `'y'` piped. One `y` also covers the fallbacks, up to the second line's price.
+
+A run that reuses a running server never asks; it is already billing.
 
 **Where encoding runs.** Take the encoding location from VideoOptimiser, not from your reading of the config. `doctor` reports it as `EncodingLocation` under `Processing`, and `queue run`, `process` and `immich run` print the same `Encoding on: ...` line first, before any download or encoding. Quote it at the paid-encoding gate. If a run's line differs from what the user expects, stop the run before its next line.
 
-**Prompts.** `finalize --ready`, `immich finalize` and `cleanup` ask `[y/N]` on standard input. After the user approves, pipe the answer: `'y' | video-optimiser finalize --ready`. With no input, the command cancels and exits `0`. `finalize <job-id>` does not prompt, so gate it all the same. With redirected input, a failed Hetzner run never asks whether to delete the worker; it keeps it.
+**Prompts.** `finalize --ready`, `immich finalize` and `cleanup` ask `[y/N]` on standard input, as do `queue run`, `process`, `immich run` and `worker create` when they would create a Hetzner server. After the user approves, pipe the answer: `'y' | video-optimiser finalize --ready`. With no input, the command cancels and exits `0`. `finalize <job-id>` does not prompt, so gate it all the same. With redirected input, a failed Hetzner run never asks whether to delete the worker; it keeps it.
 
 **Secrets.** `.env` beside the config holds `VIDEO_OPTIMISER_HETZNER_TOKEN` and `VIDEO_OPTIMISER_IMMICH_API_KEY`. Check that a key exists by reading its name only, for example `(Get-Content .env) -replace '=.*'`. Keep values out of your output, commands and files.
 

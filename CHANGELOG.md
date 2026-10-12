@@ -16,6 +16,7 @@
 ### Changed
 
 - **Breaking config change:** `processing.remoteSsh.hetzner.serverType` is replaced by `serverTypes`, a list tried in order, each in every configured location, so a sold-out type falls through to the next. The default is `["cx43", "cx53", "cpx42", "ccx33"]`. A config that still has `serverType` fails to load and names the replacement. Before creating a server, VideoOptimiser skips any type that is sold out, not x86, deprecated, or smaller than `minimumCpuCount` or `minimumAvailableMemory`, and prints the type, location and hourly price it creates. Jobs started on a managed worker before this change still resume.
+- **Breaking for scripts:** a managed Hetzner `queue run`, `process` or `immich run`, and `worker create`, now ask `Create the server? [y/N]` before creating a server. The prompt shows the first type's hourly price and, when a fallback costs more, the most a fallback may cost; one `y` covers every fallback. Any other answer, or no input, creates nothing: the command prints `No server was created.`, exits `0`, and leaves the jobs queued. Scripts must pipe `'y'`. Reusing a running server never asks.
 - New `processing.remoteSsh.hetzner.maxHourlyPrice` skips any server type and location costing more, in EUR per hour including VAT. The default is `0.30`; `null` removes the cap.
 - When no Hetzner server can be created, the error lists each server type, the locations tried for it, and why each failed.
 - `worker status` and `worker create` show the worker's server type and location.
