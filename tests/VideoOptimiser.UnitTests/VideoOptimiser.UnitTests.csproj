@@ -6,6 +6,7 @@
     <ProjectReference Include="..\..\src\VideoOptimiser.Domain\VideoOptimiser.Domain.csproj" />
     <ProjectReference Include="..\..\src\VideoOptimiser.Application\VideoOptimiser.Application.csproj" />
     <ProjectReference Include="..\..\src\VideoOptimiser.Infrastructure\VideoOptimiser.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\VideoOptimiser.Cli\VideoOptimiser.Cli.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />

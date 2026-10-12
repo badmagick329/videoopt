@@ -168,6 +168,21 @@ public interface IImmichReuploadGuard
 }
 
 /// <summary>
+/// What <c>immich run</c> did before processing. <see cref="Queue"/> holds the open Immich jobs to process; with
+/// <c>--first</c> at most one.
+/// </summary>
+public sealed record ImmichRunPreparation(ImmichReuploadGuardResult Guard, ImmichDiscoveryResult Discovery, QueuePreparationResult Queue);
+
+public interface IImmichRunService
+{
+    /// <summary>
+    /// Runs the re-upload guard, then Immich discovery, then prepares the open Immich jobs for processing. Processing is left
+    /// to the caller, which owns the remote worker's lifecycle.
+    /// </summary>
+    Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? guardProgress = null, IProgress<ScanProgress>? discoveryProgress = null, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// An Immich request that failed, with a message that says what to fix. <see cref="Code"/> is the diagnostic code doctor
 /// reports. The message names the key's environment variable, never the key.
 /// </summary>

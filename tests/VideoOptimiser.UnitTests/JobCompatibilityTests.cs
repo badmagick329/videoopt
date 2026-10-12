@@ -77,7 +77,7 @@ public sealed class JobCompatibilityTests : IDisposable
         await repository.CreateAsync(settings.Database.Path, job);
         var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
 
-        var result = await queue.PrepareAsync(settings.Database.Path, settings);
+        var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
 
         result.RunnableJobs.Should().BeEmpty();
         result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be(JobCompatibility.RemoteConfigurationChangedCategory);
@@ -101,7 +101,7 @@ public sealed class JobCompatibilityTests : IDisposable
         await repository.CreateAsync(settings.Database.Path, job);
         var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
 
-        var result = await queue.PrepareAsync(settings.Database.Path, settings);
+        var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
 
         result.FailedJobs.Should().BeEmpty();
         result.RunnableJobs.Should().ContainSingle().Which.RemoteHost.Should().Be("hetzner:cx43:hel1,fsn1");
@@ -131,7 +131,7 @@ public sealed class JobCompatibilityTests : IDisposable
         await repository.CreateAsync(settings.Database.Path, job);
         var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
 
-        var result = await queue.PrepareAsync(settings.Database.Path, settings);
+        var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
 
         result.RunnableJobs.Should().BeEmpty();
         result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be("ManualInterventionRequired");
@@ -305,7 +305,7 @@ public sealed class JobCompatibilityTests : IDisposable
         await repository.CreateAsync(settings.Database.Path, runnable);
         var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new ReadyProcessor());
 
-        var preparation = await queue.PrepareAsync(settings.Database.Path, settings);
+        var preparation = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
         var run = await queue.RunAsync(settings.Database.Path, settings, preparation.RunnableJobs);
 
         QueueExitCode.Calculate(run.ReadyToFinalize, preparation.FailedJobs.Count + run.FailedJobs.Count).Should().Be(ExitCode.PartialSuccess);

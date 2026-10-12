@@ -134,7 +134,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         // Preparation marks the crashed job interrupted first, as at the start of every queue run.
         var queue = new QueueService(null!, _repository, _fingerprints, null!);
 
-        var preparation = await queue.PrepareAsync(_settings.Database.Path, _settings);
+        var preparation = await queue.PrepareAsync(_settings.Database.Path, _settings, JobSourceKind.Immich);
 
         preparation.RunnableJobs.Should().BeEmpty();
         preparation.FailedJobs.Should().BeEmpty();

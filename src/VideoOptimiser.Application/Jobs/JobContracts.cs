@@ -174,7 +174,11 @@ public sealed record JobRetryResult(JobRecord? Replacement, string? Error)
 public interface IQueueService
 {
     Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
-    Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Readies the open jobs of one source for processing: <c>queue run</c> takes file jobs, <c>immich run</c> Immich jobs.
+    /// Every source's Immich finalisation that a crash interrupted goes back to ready either way.
+    /// </summary>
+    Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind sourceKind, CancellationToken cancellationToken = default);
     Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
 }
 

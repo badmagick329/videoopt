@@ -115,7 +115,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         return settled;
     }
 
-    public async Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, CancellationToken cancellationToken = default)
+    public async Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind sourceKind, CancellationToken cancellationToken = default)
     {
         await jobs.MarkActiveJobsInterruptedAsync(databasePath, cancellationToken);
         var candidates = (await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
@@ -133,6 +133,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
                 continue;
             }
 
+            if (job.SourceKind != sourceKind) continue;
             if (job.Status == JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)
             {
                 job.Status = JobStatus.Failed;

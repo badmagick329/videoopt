@@ -20,7 +20,7 @@ using VideoOptimiser.Cli;
 NativeSqliteBootstrapper.Initialize();
 return await CliApplication.RunAsync(args);
 
-internal static class CliApplication
+internal static partial class CliApplication
 {
     public static async Task<int> RunAsync(string[] args)
     {
@@ -77,6 +77,13 @@ internal static class CliApplication
             Console.Error.WriteLine($"Configuration could not be read: {exception.Message}");
             return (int)ExitCode.InvalidConfiguration;
         }
+        catch (ImmichApiException exception)
+        {
+            Console.Error.WriteLine(exception.Message);
+            return exception.Code is "ImmichApiKeyMissing" or "ImmichApiKeyRejected" or "ImmichPermissionMissing"
+                ? (int)ExitCode.InvalidConfiguration
+                : (int)ExitCode.ProcessingFailure;
+        }
         catch (RemoteWorkerCapacityUnavailableException exception)
         {
             Console.Error.WriteLine(exception.Message);
@@ -120,6 +127,7 @@ internal static class CliApplication
         builder.Services.AddSingleton<IQueueService, QueueService>();
         builder.Services.AddSingleton<IImmichDiscoveryService>(services => new ImmichDiscoveryService(services.GetRequiredService<IImmichClientFactory>(), services.GetRequiredService<IJobRepository>(), services.GetRequiredService<Func<string, IMediaProbe>>(), services.GetRequiredService<IFileFingerprintService>()));
         builder.Services.AddSingleton<IImmichReuploadGuard>(services => new ImmichReuploadGuard(services.GetRequiredService<IImmichClientFactory>(), services.GetRequiredService<IJobRepository>()));
+        builder.Services.AddSingleton<IImmichRunService, ImmichRunService>();
         builder.Services.AddSingleton<IJobRetryService, JobRetryService>();
         builder.Services.AddSingleton<ITemporaryOutputCleanupService, TemporaryOutputCleanupService>();
         builder.Services.AddSingleton<ImmichFinalizer>();
@@ -170,6 +178,8 @@ internal static class CliApplication
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
             CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command, cancellationToken),
             CliCommandKind.Cleanup => await RunCleanupAsync(services.GetRequiredService<ITemporaryOutputCleanupService>(), configuration, command.DryRun, cancellationToken),
+            CliCommandKind.ImmichRun => await RunImmichRunAsync(services, configuration, command.First, cancellationToken),
+            CliCommandKind.ImmichFinalize => await RunImmichFinalizeAsync(services, configuration, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -306,20 +316,22 @@ internal static class CliApplication
 
     private static async Task<int> RunQueueDiscoverAsync(IQueueService queue, LoadedConfiguration configuration, bool first, CancellationToken cancellationToken)
     {
-        var progress = new InlineProgress<ScanProgress>(update => Console.WriteLine(
-            update.Stage == "Issue"
-                ? string.IsNullOrWhiteSpace(update.Path)
-                    ? $"{update.Stage}: {update.Message}"
-                    : $"{update.Stage}: {update.Path} — {update.Message}"
-                : string.IsNullOrWhiteSpace(update.Path)
-                ? $"{update.Stage}: {update.Message}"
-                : $"{update.Stage}: {update.Path}"));
+        var progress = new InlineProgress<ScanProgress>(update => Console.WriteLine(FormatScanProgress(update)));
         var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, progress, cancellationToken);
         foreach (var path in result.QueuedPaths) Console.WriteLine($"Queued  {path}");
         Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Already converted: {result.AlreadyConverted}. Previously failed or cancelled: {result.PreviouslyFailed}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");
         if (result.PreviouslyFailed > 0) Console.WriteLine("Failed or cancelled originals stay out of the queue until they change. 'history' lists their jobs; 'queue retry <job-id>' queues one again.");
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
+
+    private static string FormatScanProgress(ScanProgress update) =>
+        update.Stage == "Issue"
+            ? string.IsNullOrWhiteSpace(update.Path)
+                ? $"{update.Stage}: {update.Message}"
+                : $"{update.Stage}: {update.Path} — {update.Message}"
+            : string.IsNullOrWhiteSpace(update.Path)
+            ? $"{update.Stage}: {update.Message}"
+            : $"{update.Stage}: {update.Path}";
 
     private static async Task<int> RunQueueCancelAsync(IJobRepository repository, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
@@ -363,18 +375,37 @@ internal static class CliApplication
 
     private static async Task<int> RunQueueRunAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
-        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
-        if (diagnostics.Count > 0) { foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}"); return (int)ExitCode.InvalidConfiguration; }
-        var queue = services.GetRequiredService<IQueueService>();
-        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        var preparation = await queue.PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, cancellationToken);
+        if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
+        var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, cancellationToken);
+        var (ready, failures) = await ProcessPreparedJobsAsync(services, configuration, preparation, (ready, failures) =>
+        {
+            Console.WriteLine($"Ready to finalise: {ready}. Failed: {failures.Length}.");
+            PrintFailedJobs(failures);
+        }, cancellationToken);
+        return (int)QueueExitCode.Calculate(ready, failures.Length);
+    }
+
+    private static bool ReportInvalidSettings(IServiceProvider services, LoadedConfiguration configuration, string? ignoredCode = null)
+    {
+        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings).Where(diagnostic => diagnostic.Code != ignoredCode).ToArray();
+        foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}");
+        return diagnostics.Length > 0;
+    }
+
+    /// <summary>
+    /// Processes prepared jobs, creating a managed worker only when there is work for it. <paramref name="report"/> prints the
+    /// outcome before the worker's deletion policy speaks, so its retention messages follow the failures they refer to.
+    /// </summary>
+    private static async Task<(int Ready, FailedQueueJob[] Failures)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, QueuePreparationResult preparation, Action<int, FailedQueueJob[]> report, CancellationToken cancellationToken)
+    {
         if (preparation.RunnableJobs.Count == 0)
         {
-            Console.WriteLine("Ready to finalise: 0. Failed: {0}.", preparation.FailedJobs.Count);
-            PrintFailedJobs(preparation.FailedJobs);
-            return (int)QueueExitCode.Calculate(0, preparation.FailedJobs.Count);
+            report(0, [.. preparation.FailedJobs]);
+            return (0, [.. preparation.FailedJobs]);
         }
 
+        var queue = services.GetRequiredService<IQueueService>();
+        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
         var managedWork = lifecycle.IsManaged(configuration.Settings);
         if (managedWork)
         {
@@ -399,21 +430,20 @@ internal static class CliApplication
         }
 
         var failures = preparation.FailedJobs.Concat(result.FailedJobs).ToArray();
-        Console.WriteLine($"Ready to finalise: {result.ReadyToFinalize}. Failed: {failures.Length}.");
-        PrintFailedJobs(failures);
+        report(result.ReadyToFinalize, failures);
         await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, failures, result.Interrupted, unexpectedFailure: false, processRoute: false, cancellationToken);
         if (!managedWork && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the server; powering it off still bills.");
         }
-        return (int)QueueExitCode.Calculate(result.ReadyToFinalize, failures.Length);
+        return (result.ReadyToFinalize, failures);
     }
 
     private static FailedQueueJob ToFailedQueueJob(JobRecord job, string message) => new(job.Id, job.SourcePath, job.FailureCategory ?? "ProcessingFailed", job.FailureMessage ?? message);
 
-    private static void PrintFailedJobs(IReadOnlyCollection<FailedQueueJob> failedJobs)
+    private static void PrintFailedJobs(FailedQueueJob[] failedJobs)
     {
-        if (failedJobs.Count == 0) return;
+        if (failedJobs.Length == 0) return;
         Console.WriteLine();
         Console.WriteLine("Failed jobs:");
         foreach (var job in failedJobs)
@@ -487,7 +517,7 @@ internal static class CliApplication
         var jobs = await repository.ListAsync(configuration.Settings.Database.Path, terminal, cancellationToken);
         if (json)
         {
-            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.SourcePath, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.UpdatedUtc)).ToArray();
+            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.SourcePath, job.SourceKind == JobSourceKind.Immich ? "immich" : "file", job.ImmichAssetId, job.ImmichNewAssetId, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.UpdatedUtc)).ToArray();
             Console.WriteLine(JsonSerializer.Serialize(output, CliJsonContext.Default.JobJsonOutputArray));
         }
         else if (jobs.Count == 0)
@@ -501,7 +531,9 @@ internal static class CliApplication
                 var suffix = job.FailureMessage is null ? string.Empty : $" — {job.FailureCategory}: {job.FailureMessage}";
                 var savings = job.PercentageSaved is null ? string.Empty : $" {job.PercentageSaved:F1}% saved";
                 var resume = TemporaryOutputClassifier.DescribeResume(job) is { } behaviour ? $" ({behaviour})" : string.Empty;
-                Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}{resume}");
+                // An Immich job's file name is the original's in Immich; the asset IDs find it there.
+                var immich = job.ImmichAssetId is { } asset ? $" Immich {asset}{(job.ImmichNewAssetId is { } av1 ? $" → {av1}" : string.Empty)}" : string.Empty;
+                Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}{resume}");
             }
         }
 
@@ -586,7 +618,7 @@ internal static class CliApplication
         return result.Failures.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
-    private const string Usage = """
+    internal const string Usage = """
 Usage:
   video-optimiser config init [--config <path>]
   video-optimiser version
@@ -609,6 +641,8 @@ Usage:
   video-optimiser finalize <job-id> [--config <path>]
   video-optimiser finalize --ready [--config <path>]
   video-optimiser cleanup [--dry-run] [--config <path>]
+  video-optimiser immich run [--first] [--config <path>]
+  video-optimiser immich finalize [--config <path>]
 """;
 
     private static string GetVersion() => typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0-dev";
@@ -636,7 +670,9 @@ internal enum CliCommandKind
     History,
     Validate,
     Finalize,
-    Cleanup
+    Cleanup,
+    ImmichRun,
+    ImmichFinalize
 }
 
 internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false)
@@ -715,6 +751,8 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["validate", _] => CliCommandKind.Validate,
             ["finalize"] or ["finalize", _] => CliCommandKind.Finalize,
             ["cleanup"] => CliCommandKind.Cleanup,
+            ["immich", "run"] => CliCommandKind.ImmichRun,
+            ["immich", "finalize"] => CliCommandKind.ImmichFinalize,
             _ => CliCommandKind.Invalid
         };
 
@@ -728,7 +766,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("--json is only supported by doctor, scan, status, and history.");
         }
 
-        if (first && kind != CliCommandKind.QueueDiscover) return Invalid("--first is only supported by queue discover.");
+        if (first && kind is not (CliCommandKind.QueueDiscover or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue discover and immich run.");
         if (all && kind != CliCommandKind.QueueCancel) return Invalid("--all is only supported by queue cancel.");
 
         if (force && kind != CliCommandKind.Process)
