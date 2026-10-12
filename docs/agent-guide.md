@@ -14,6 +14,8 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 
 **Paid encoding.** When the config has `processing.mode: "remoteSsh"` and `remoteSsh.lifecycle: "hetzner"`, a `queue run`, `process` or `immich run` with work to do creates a Hetzner server that bills by the hour. Gate the first such run in a session: say it will create a server, name the `remoteSsh.hetzner.serverTypes` it may pick from, and state the `maxHourlyPrice` cap (or that there is none, when it is `null`).
 
+**Where encoding runs.** Take the encoding location from VideoOptimiser, not from your reading of the config. `doctor` reports it as `EncodingLocation` under `Processing`, and `queue run`, `process` and `immich run` print the same `Encoding on: ...` line first, before any download or encoding. Quote it at the paid-encoding gate. If a run's line differs from what the user expects, stop the run before its next line.
+
 **Prompts.** `finalize --ready`, `immich finalize` and `cleanup` ask `[y/N]` on standard input. After the user approves, pipe the answer: `'y' | video-optimiser finalize --ready`. With no input, the command cancels and exits `0`. `finalize <job-id>` does not prompt, so gate it all the same. With redirected input, a failed Hetzner run never asks whether to delete the worker; it keeps it.
 
 **Secrets.** `.env` beside the config holds `VIDEO_OPTIMISER_HETZNER_TOKEN` and `VIDEO_OPTIMISER_IMMICH_API_KEY`. Check that a key exists by reading its name only, for example `(Get-Content .env) -replace '=.*'`. Keep values out of your output, commands and files.

@@ -244,6 +244,7 @@ internal static partial class CliApplication
             return (int)ExitCode.InvalidConfiguration;
         }
 
+        await PrintRunBannerAsync(services, configuration, cancellationToken);
         var sourcePath = Path.GetFullPath(command.ProcessPath!);
         if (!File.Exists(sourcePath))
         {
@@ -383,6 +384,7 @@ internal static partial class CliApplication
     private static async Task<int> RunQueueRunAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
         if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
+        await PrintRunBannerAsync(services, configuration, cancellationToken);
         var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, cancellationToken);
         var (ready, failures) = await ProcessPreparedJobsAsync(services, configuration, preparation, (ready, failures) =>
         {
@@ -390,6 +392,19 @@ internal static partial class CliApplication
             PrintFailedJobs(failures);
         }, cancellationToken);
         return (int)QueueExitCode.Calculate(ready, failures.Length);
+    }
+
+    /// <summary>
+    /// Prints <see cref="RunBanner"/> before any download or encoding, so a config still set to <c>remoteSsh</c> is noticed
+    /// before it costs anything. A retained managed worker comes from the local state file, with no Hetzner API call.
+    /// </summary>
+    private static async Task PrintRunBannerAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
+    {
+        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
+        var worker = lifecycle.IsManaged(configuration.Settings)
+            ? await lifecycle.ReadRecordedAsync(configuration.Settings.Database.Path, cancellationToken)
+            : null;
+        Console.WriteLine(RunBanner.Describe(configuration.Settings, worker));
     }
 
     private static bool ReportInvalidSettings(IServiceProvider services, LoadedConfiguration configuration)

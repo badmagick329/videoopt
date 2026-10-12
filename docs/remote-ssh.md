@@ -119,7 +119,7 @@ Before creating anything, it reads Hetzner's server type list once and skips any
 - the type isn't x86 (the bootstrap installs x86 builds), or Hetzner has deprecated it;
 - its price there, including VAT, is above `maxHourlyPrice`.
 
-It prints each skipped type with the reason, then the type, location and hourly price before each create request, such as `Creating Hetzner cpx42 in fsn1 (€0.134/h incl. VAT).` Availability is only an indicator, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`); the next type and location is then tried. If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No server is left running.
+It prints each skipped type with the reason, then the type, location and hourly price before each create request, such as `Creating Hetzner cpx42 in fsn1 (EUR 0.134/h incl. VAT).` Availability is only an indicator, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`); the next type and location is then tried. If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No server is left running.
 
 Gross hourly prices in the EU on 2026-10-12, for choosing your list:
 

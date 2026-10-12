@@ -75,6 +75,8 @@ The commands below assume you run them there, with the config file beside the ex
    .\video-optimiser.exe queue run --config .\video-optimiser.yaml
    ```
 
+   The first line says where encoding runs, such as `Encoding on: this PC.` If it names a server you didn't expect, press `Ctrl+C`: nothing has been encoded yet.
+
 5. Look at the result, then replace the original:
 
    ```powershell

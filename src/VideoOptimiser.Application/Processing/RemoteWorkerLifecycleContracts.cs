@@ -47,5 +47,11 @@ public interface IRemoteWorkerLifecycle
     bool IsManaged(AppSettings settings);
     Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default);
     Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The worker in the local state file, without a Hetzner API call or the lifecycle lock, so a run can say where it will
+    /// encode before anything else. Its status is <c>recorded</c>: the server may have been deleted outside VideoOptimiser.
+    /// </summary>
+    Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default);
     Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default);
 }

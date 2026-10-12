@@ -22,6 +22,8 @@ public sealed class DoctorService(
             diagnostics.Add(new Diagnostic(DiagnosticCategory.Configuration, DiagnosticStatus.Pass, "ConfigurationValid", $"Configuration is valid: {configuration.Path}"));
         }
 
+        diagnostics.Add(await DescribeEncodingLocationAsync(configuration.Settings, cancellationToken));
+
 
         foreach (var root in configuration.Settings.Watch.Roots.Where(root => !string.IsNullOrWhiteSpace(root.Path)))
         {
@@ -186,6 +188,27 @@ public sealed class DoctorService(
         "validation's decode test cannot decode AV1 outputs without it. Install a full FFmpeg build such as gyan.dev's \"full\" build, or set validation.decodeTest to none.",
         "Av1DecoderAvailable",
         "Av1DecoderUnavailable");
+
+    /// <summary>
+    /// The same line runs print first, so doctor and a run say the same thing about where encoding happens. An unreadable
+    /// worker state file is reported by the Hetzner check, so here it only drops the retained-worker detail.
+    /// </summary>
+    private async Task<Diagnostic> DescribeEncodingLocationAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        RemoteWorkerInfo? worker = null;
+        if (remoteWorkerLifecycle.IsManaged(settings))
+        {
+            try
+            {
+                worker = await remoteWorkerLifecycle.ReadRecordedAsync(settings.Database.Path, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
+            {
+            }
+        }
+
+        return new Diagnostic(DiagnosticCategory.Processing, DiagnosticStatus.Pass, "EncodingLocation", RunBanner.Describe(settings, worker));
+    }
 
     /// <summary>
     /// A managed worker exists only between its creation by a run or <c>worker create</c> and its deletion, so having none is

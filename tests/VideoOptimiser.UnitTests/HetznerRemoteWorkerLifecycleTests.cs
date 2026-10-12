@@ -81,9 +81,9 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
 
         fixture.Handler.CreateLocations.Should().ContainSingle().Which.Should().Be("fsn1");
-        messages.Should().Contain("Checking Hetzner capacity for cx43 in hel1, fsn1, or nbg1, up to €0.30/h incl. VAT.");
+        messages.Should().Contain("Checking Hetzner capacity for cx43 in hel1, fsn1, or nbg1, up to EUR 0.30/h incl. VAT.");
         messages.Should().Contain("Hetzner cx43 is available in fsn1 and nbg1; unavailable in hel1.");
-        messages.Should().Contain("Creating Hetzner cx43 in fsn1 (€0.031/h incl. VAT).");
+        messages.Should().Contain("Creating Hetzner cx43 in fsn1 (EUR 0.031/h incl. VAT).");
         messages.Should().NotContain(message => message.Contains("recommended", StringComparison.OrdinalIgnoreCase));
         messages.Should().NotContain(message => message.Contains("available=False", StringComparison.OrdinalIgnoreCase));
     }
@@ -219,10 +219,31 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             "Skipping Hetzner cx43: unavailable in hel1, fsn1, and nbg1.",
             "Skipping Hetzner cx53: unavailable in hel1, fsn1, and nbg1.",
             "Hetzner cpx42 is available in hel1, fsn1, and nbg1.",
-            "Creating Hetzner cpx42 in hel1 (€0.134/h incl. VAT).");
+            "Creating Hetzner cpx42 in hel1 (EUR 0.134/h incl. VAT).");
         worker.ServerType.Should().Be("cpx42");
         worker.Location.Should().Be("hel1");
         File.ReadAllText(fixture.DatabasePath + ".hetzner-worker.json").Should().Contain("\"serverType\": \"cpx42\"");
+    }
+
+    [Fact]
+    public async Task ReadRecordedReturnsTheStoredWorkerWithoutCallingHetzner()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cpx42"];
+        using var lifecycle = fixture.CreateLifecycle();
+        (await lifecycle.ReadRecordedAsync(fixture.DatabasePath)).Should().BeNull();
+        var created = await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        var requestsBefore = fixture.Handler.RequestCount;
+
+        var recorded = await lifecycle.ReadRecordedAsync(fixture.DatabasePath);
+
+        fixture.Handler.RequestCount.Should().Be(requestsBefore);
+        recorded.Should().NotBeNull();
+        recorded!.ServerId.Should().Be(created.ServerId);
+        recorded.ServerType.Should().Be("cpx42");
+        recorded.Location.Should().Be("hel1");
+        recorded.CreatedUtc.Should().Be(created.CreatedUtc);
+        recorded.Status.Should().Be("recorded");
     }
 
     [Fact]
@@ -259,7 +280,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         fixture.Handler.CreateServerTypes.Should().Equal("ccx33");
         messages.Should().Contain("Skipping Hetzner cx23: 2 cores, below minimumCpuCount 8; 4 GB memory, below minimumAvailableMemory 14GiB.");
         messages.Should().Contain("Skipping Hetzner cax31: arm architecture, but the worker needs x86.");
-        messages.Should().Contain("Skipping Hetzner ccx43: over the €0.30/h cap in hel1 (€0.533/h), fsn1 (€0.533/h), and nbg1 (€0.533/h).");
+        messages.Should().Contain("Skipping Hetzner ccx43: over the EUR 0.30/h cap in hel1 (EUR 0.533/h), fsn1 (EUR 0.533/h), and nbg1 (EUR 0.533/h).");
         messages.Should().Contain("Skipping Hetzner cpx62: deprecated by Hetzner.");
         messages.Should().Contain("Skipping Hetzner nope1: not a Hetzner server type.");
     }
@@ -650,8 +671,11 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         public void DeleteServerOutOfBand() => ServerExists = false;
 
+        public int RequestCount { get; private set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            RequestCount++;
             request.Headers.Authorization!.Scheme.Should().Be("Bearer");
             request.Headers.Authorization.Parameter.Should().Be("secret-test-token");
             var path = request.RequestUri!.PathAndQuery;

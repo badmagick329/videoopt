@@ -106,6 +106,19 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         return state.ToInfo(server.Value.Status);
     }
 
+    public async Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return (await ReadStateAsync(StatePath(databasePath), cancellationToken))?.ToInfo("recorded");
+        }
+        catch (FileNotFoundException)
+        {
+            // Without the lock, a concurrent worker delete can remove the file between the existence check and the read.
+            return null;
+        }
+    }
+
     public async Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
         RequireManaged(settings);
@@ -464,9 +477,10 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         _ => $"{string.Join(", ", items.Take(items.Count - 1))}, {conjunction} {items[^1]}"
     };
 
-    private static string FormatPrice(decimal price) => $"€{price.ToString("0.000", CultureInfo.InvariantCulture)}/h";
+    // "EUR", not the euro sign: Windows consoles and redirected output default to an OEM code page that prints it as "?".
+    private static string FormatPrice(decimal price) => $"EUR {price.ToString("0.000", CultureInfo.InvariantCulture)}/h";
 
-    private static string FormatCap(decimal cap) => $"€{cap.ToString("0.00##", CultureInfo.InvariantCulture)}/h";
+    private static string FormatCap(decimal cap) => $"EUR {cap.ToString("0.00##", CultureInfo.InvariantCulture)}/h";
 
     private static InvalidOperationException PreflightFailure(string reason, Exception? innerException = null) =>
         new($"Hetzner server type preflight failed: {reason}; no server creation was attempted.", innerException);

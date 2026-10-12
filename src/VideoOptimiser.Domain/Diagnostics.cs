@@ -5,7 +5,8 @@ public enum DiagnosticCategory
     Configuration,
     FileSystem,
     Database,
-    Dependency
+    Dependency,
+    Processing
 }
 
 public enum DiagnosticStatus

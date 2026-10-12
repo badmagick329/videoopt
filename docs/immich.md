@@ -74,10 +74,11 @@ Start with one video:
 
 Then drop `--first` to convert everything that matches. `immich run`:
 
-1. Runs the [re-upload guard](#the-re-upload-guard).
-2. Searches Immich for videos taken before the age cutoff, skipping favourites if configured, and anything already converted, skipped or failed.
-3. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it.
-4. Converts the queue on your PC or remote worker, exactly like `queue run`.
+1. Prints where encoding runs, such as `Encoding on: this PC.`, before downloading anything.
+2. Runs the [re-upload guard](#the-re-upload-guard).
+3. Searches Immich for videos taken before the age cutoff, skipping favourites if configured, and anything already converted, skipped or failed.
+4. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it.
+5. Converts the queue on your PC or remote worker, exactly like `queue run`.
 
 Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes. If a `--first` run stops before converting, run it again: it converts the video it already downloaded and downloads no other.
 

@@ -145,6 +145,7 @@ public sealed class ManagedWorkerDeletionPolicyTests
         public bool IsManaged(AppSettings settings) => true;
         public Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
         {

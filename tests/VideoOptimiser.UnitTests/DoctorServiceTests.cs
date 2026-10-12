@@ -82,6 +82,33 @@ public sealed class DoctorServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsyncReportsWhereEncodingRunsAsTheFirstProcessingDiagnosticBeforeAnyDependency()
+    {
+        var settings = CreateHetznerSettings();
+        var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "running", new DateTimeOffset(2026, 10, 12, 18, 4, 0, TimeSpan.Zero), "cx43", "hel1");
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), new FakeRemoteEnvironmentVerifier(), new FakeRemoteWorkerLifecycle(worker)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        var location = report.Diagnostics.First(diagnostic => diagnostic.Category == DiagnosticCategory.Processing);
+        location.Code.Should().Be("EncodingLocation");
+        location.Status.Should().Be(DiagnosticStatus.Pass);
+        location.Message.Should().Be(RunBanner.Describe(settings, worker));
+        report.Diagnostics.TakeWhile(diagnostic => diagnostic != location).Should().NotContain(diagnostic => diagnostic.Category == DiagnosticCategory.Dependency);
+    }
+
+    [Fact]
+    public async Task RunAsyncStillDescribesTheEncodingLocationWhenTheWorkerStateCannotBeRead()
+    {
+        var settings = CreateHetznerSettings();
+        var lifecycle = new FakeRemoteWorkerLifecycle(worker: null, failure: new InvalidDataException("bad state"));
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), new FakeRemoteEnvironmentVerifier(), lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "EncodingLocation")
+            .Which.Message.Should().StartWith("Encoding on: a Hetzner server created for this run");
+    }
+
+    [Fact]
     public async Task RunAsyncUnderHetznerChecksTheRunningWorker()
     {
         var settings = CreateHetznerSettings();
@@ -441,6 +468,9 @@ public sealed class DoctorServiceTests : IDisposable
             if (worker is not null) settings.Processing.RemoteSsh.Host = worker.Address;
             return Task.FromResult(worker);
         }
+
+        public Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default) =>
+            failure is not null ? throw failure : Task.FromResult(worker);
 
         public Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
