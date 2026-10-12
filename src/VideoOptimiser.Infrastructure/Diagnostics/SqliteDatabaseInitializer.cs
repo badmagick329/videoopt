@@ -93,6 +93,25 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
                 """, cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (5, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
+        if (!await HasMigrationAsync(connection, 6, cancellationToken))
+        {
+            // An Immich job is identified by its asset, not by source_path: that holds only the staged copy.
+            await ExecuteAsync(connection, """
+                ALTER TABLE jobs ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'file';
+                ALTER TABLE jobs ADD COLUMN immich_asset_id TEXT NULL;
+                ALTER TABLE jobs ADD COLUMN immich_checksum TEXT NULL;
+                ALTER TABLE jobs ADD COLUMN immich_new_asset_id TEXT NULL;
+                CREATE INDEX IF NOT EXISTS ix_jobs_immich_asset ON jobs(immich_asset_id, status) WHERE immich_asset_id IS NOT NULL;
+                CREATE TABLE IF NOT EXISTS immich_skipped_assets (
+                    asset_id TEXT PRIMARY KEY,
+                    checksum TEXT NOT NULL,
+                    rules_fingerprint TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    recorded_utc TEXT NOT NULL
+                );
+                """, cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (6, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 

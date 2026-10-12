@@ -21,11 +21,26 @@ public enum JobStatus
     Downloading = 11
 }
 
+/// <summary>Where a job's original came from. Stored as <c>file</c> or <c>immich</c>.</summary>
+public enum JobSourceKind
+{
+    File = 0,
+    Immich = 1
+}
+
 public sealed class JobRecord
 {
     public Guid Id { get; set; }
+    /// <summary>The file the pipeline reads. For an Immich job this is the staged original, a disposable local copy.</summary>
     public string SourcePath { get; set; } = string.Empty;
     public string SourceFingerprint { get; set; } = string.Empty;
+    public JobSourceKind SourceKind { get; set; } = JobSourceKind.File;
+    /// <summary>An Immich job's identity: the original asset, which outlives the staged copy at <see cref="SourcePath"/>.</summary>
+    public string? ImmichAssetId { get; set; }
+    /// <summary>The original's base64 SHA-1 exactly as Immich returned it; the re-upload guard matches on it.</summary>
+    public string? ImmichChecksum { get; set; }
+    /// <summary>Set as soon as finalisation's upload succeeds, so a resumed finalisation continues with that asset.</summary>
+    public string? ImmichNewAssetId { get; set; }
     public JobStatus Status { get; set; }
     public JobStatus? ResumeStatus { get; set; }
     public int Attempt { get; set; }
@@ -77,6 +92,30 @@ public interface IJobRepository
     Task UpdateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default);
     Task MarkActiveJobsInterruptedAsync(string databasePath, CancellationToken cancellationToken = default);
+
+    /// <summary>The newest job for the asset that is not completed, failed or cancelled.</summary>
+    Task<JobRecord?> FindOpenByImmichAssetAsync(string databasePath, string assetId, CancellationToken cancellationToken = default);
+
+    /// <summary>Completed Immich jobs, oldest first. The re-upload guard looks for their original checksums coming back.</summary>
+    Task<IReadOnlyList<JobRecord>> ListCompletedImmichAsync(string databasePath, CancellationToken cancellationToken = default);
+
+    /// <summary>Every recorded skip, keyed by asset ID. Discovery reads them once per run and checks each with <see cref="ImmichSkipRecord.IsCurrent"/>.</summary>
+    Task<IReadOnlyDictionary<string, ImmichSkipRecord>> ListImmichSkipsAsync(string databasePath, CancellationToken cancellationToken = default);
+
+    /// <summary>Records or replaces the skip for <see cref="ImmichSkipRecord.AssetId"/>.</summary>
+    Task PutImmichSkipAsync(string databasePath, ImmichSkipRecord skip, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// An Immich asset that discovery downloaded and found ineligible, kept so later runs skip it without downloading it again.
+/// <see cref="RulesFingerprint"/> identifies the eligibility settings that rejected it, so changing the rules lets the
+/// asset be checked again.
+/// </summary>
+public sealed record ImmichSkipRecord(string AssetId, string Checksum, string RulesFingerprint, string Reason, DateTimeOffset RecordedUtc)
+{
+    /// <summary>False once the asset's file or the eligibility rules have changed since the skip was recorded.</summary>
+    public bool IsCurrent(string checksum, string rulesFingerprint) =>
+        string.Equals(Checksum, checksum, StringComparison.Ordinal) && string.Equals(RulesFingerprint, rulesFingerprint, StringComparison.Ordinal);
 }
 
 public interface IOutputValidationService
