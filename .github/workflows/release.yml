@@ -30,7 +30,11 @@ jobs:
           $packageName = "video-optimiser-$tag-win-x64"
           New-Item -ItemType Directory -Path "artifacts/$packageName" | Out-Null
           Copy-Item artifacts/publish/video-optimiser.exe "artifacts/$packageName/"
-          Copy-Item README.md, LICENSE "artifacts/$packageName/"
+          Copy-Item README.md, LICENSE, .env.example "artifacts/$packageName/"
+          # The README links to docs/, and the default bootstrapScriptPath is scripts/ beside a config next to the exe.
+          Copy-Item docs "artifacts/$packageName/docs" -Recurse
+          New-Item -ItemType Directory -Path "artifacts/$packageName/scripts" | Out-Null
+          Copy-Item scripts/bootstrap-remote-worker.sh "artifacts/$packageName/scripts/"
           Compress-Archive -Path "artifacts/$packageName/*" -DestinationPath "artifacts/$packageName.zip"
           $hash = (Get-FileHash "artifacts/$packageName.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -LiteralPath "artifacts/$packageName.zip.sha256" -Value "$hash  $packageName.zip" -NoNewline

@@ -1,60 +1,118 @@
 # VideoOptimiser
 
-Windows CLI for safely converting selected videos to AV1.
+Shrink big videos by converting them to AV1 at the same visual quality. Nothing is replaced until you review the result and say so.
+
+- **Finds** large H.264 or HEVC videos in your folders or your [Immich](https://immich.app) library, using rules you set.
+- **Converts** each one with [ab-av1](https://github.com/alexheretic/ab-av1), which picks the smallest file that still scores VMAF 95 or higher (you can change the target).
+- **Checks** every output (codec, duration, streams, a decode test, real savings) before it can replace anything.
+- **Waits** for you: the original stays untouched until you run `finalize`.
+
+Encoding runs on your PC, on a Hetzner server it creates and deletes for you, or on any Linux server you reach over SSH.
+
+Windows only. Using an AI agent to run it? Point the agent at [docs/agent-guide.md](docs/agent-guide.md).
+
+## How it works
+
+```text
+discover  →  CRF search  →  encode  →  validate  →  you review  →  finalize
+(queue)      (find the       (temporary  (checks)     (status)        (replace the
+             right quality)  AV1 file)                                 original)
+```
+
+Every step before `finalize` works on a separate temporary file. Stop it at any point with `Ctrl+C`; the next run resumes from a safe stage.
 
 ## Requirements
 
-- Windows 11
-- `ab-av1`, `ffmpeg`, and `ffprobe` on `PATH` or configured explicitly
+| What | Version | Where to get it |
+| --- | --- | --- |
+| Windows 11 | x64 | |
+| ab-av1 | 0.11.7 or newer | `cargo install ab-av1 --locked`, or `ab-av1.exe` from its [releases](https://github.com/alexheretic/ab-av1/releases) |
+| FFmpeg and ffprobe | a build with libsvtav1, libvmaf and libdav1d | the "full" build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), or `winget install Gyan.FFmpeg` |
 
-For source builds, install the .NET 10 SDK and run `scripts\build.ps1`. It creates a self-contained Native AOT executable at `artifacts\local\video-optimiser.exe`. The portable release is one self-contained EXE and still requires the three media tools above.
+Put all three on `PATH`, or set their paths in the config. With remote encoding, your PC still needs FFmpeg for validation; ab-av1 is only needed where encoding runs.
+
+## Install
+
+1. Download `video-optimiser-v<version>-win-x64.zip` from [Releases](https://github.com/badmagick329/videoopt/releases).
+2. Unzip it to a folder, for example `C:\Tools\VideoOptimiser`.
+3. Open PowerShell in that folder.
+
+The commands below assume you run them there, with the config file beside the exe.
 
 ## Quick start
 
-Create a config:
+1. Create a config file:
+
+   ```powershell
+   .\video-optimiser.exe config init --config .\video-optimiser.yaml
+   ```
+
+2. Open `video-optimiser.yaml` and add a folder under `watch.roots`:
+
+   ```yaml
+   watch:
+     roots:
+       - path: "D:\\Videos"
+         recursive: true
+   ```
+
+   The starter rules only pick large H.264 files at 1080p and above. For phone videos, which are usually HEVC, edit them first: see [Choose which videos to convert](#choose-which-videos-to-convert).
+
+3. Check everything is set up:
+
+   ```powershell
+   .\video-optimiser.exe doctor --config .\video-optimiser.yaml
+   ```
+
+4. Queue one video and convert it:
+
+   ```powershell
+   .\video-optimiser.exe queue discover --first --config .\video-optimiser.yaml
+   .\video-optimiser.exe queue run --config .\video-optimiser.yaml
+   ```
+
+5. Look at the result, then replace the original:
+
+   ```powershell
+   .\video-optimiser.exe status --config .\video-optimiser.yaml
+   .\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
+   ```
+
+   The converted file waits in a `.video-optimiser` folder beside the original; `status --json` gives its exact path as `outputPath`. Watch it before you finalise. `finalize` says what it will do to each original and asks once.
+
+When one video works, drop `--first` to queue everything that matches your rules.
+
+> **Tip:** set `VIDEO_OPTIMISER_CONFIG` to the config's full path and you can leave out `--config`. Without either, the app looks for `%ProgramData%\VideoOptimiser\config.yaml`, then `video-optimiser.yaml` in the current folder.
+
+## Choose where encoding runs
+
+| Mode | Config | Good for |
+| --- | --- | --- |
+| Your PC | `processing.mode: "local"` (the default) | Trying it out, a few videos, a fast CPU |
+| Hetzner, managed | `processing.mode: "remoteSsh"` with `remoteSsh.lifecycle: "hetzner"` | Large batches. The app creates a server, sets it up, and deletes it after a clean run. You pay per hour. |
+| Your own Linux server | `processing.mode: "remoteSsh"` with `remoteSsh.lifecycle: "manual"` | A spare machine you already run |
+
+In both remote modes, validation, review and finalisation still happen on your PC. Setup for both is in [docs/remote-ssh.md](docs/remote-ssh.md).
+
+## Immich
+
+VideoOptimiser can also convert old videos in your Immich library. Each AV1 is uploaded as a new asset carrying over the original's albums, tags, favourite, description and rating, and the original goes to Immich's trash.
 
 ```powershell
-.\video-optimiser.exe config init --config .\video-optimiser.yaml
+.\video-optimiser.exe immich run --first --config .\video-optimiser.yaml
+.\video-optimiser.exe immich finalize --config .\video-optimiser.yaml
 ```
 
-Edit `watch.roots`. The generated eligibility rules and safe-delete policy are ready to use. Check the setup:
+Read [docs/immich.md](docs/immich.md) before the first run. It covers the API key, the phone's "Free up space" setting, and why only videos older than 90 days are touched.
 
-```powershell
-.\video-optimiser.exe doctor --config .\video-optimiser.yaml
-```
+## Choose which videos to convert
 
-Then the normal workflow is:
-
-1. Find and queue eligible videos.
-2. Process the queue. Each video goes through CRF search, temporary encoding, and validation. Originals are untouched.
-3. Review ready jobs, then explicitly finalise them.
-
-```powershell
-# Queue every eligible video. Add --first to queue only one.
-.\video-optimiser.exe queue discover --config .\video-optimiser.yaml
-
-# Process all queued videos. This stops before replacing originals.
-.\video-optimiser.exe queue run --config .\video-optimiser.yaml
-
-# See what is ready, then replace every ready original after one confirmation.
-.\video-optimiser.exe status --config .\video-optimiser.yaml
-.\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
-```
-
-`queue run` can be stopped with `Ctrl+C`. The job becomes `Interrupted`; a later `queue run` resumes it safely. It never finalises an original automatically.
-
-## Remote SSH processing
-
-CRF search and encoding can run on Ubuntu while validation and finalisation stay local. The recommended [remote SSH workflow](docs/remote-ssh.md) creates, bootstraps, reuses, and safely deletes a Hetzner CX43 and its Primary IPv4 automatically. A manual SSH lifecycle remains available.
-
-## Eligibility rules
-
-A file queues if it matches any rule. Every condition within one rule must match.
+A video is queued when it matches **any** rule. Within a rule, **every** condition must match.
 
 ```yaml
 eligibility:
   rules:
-    - codecs: ["h264"]
+    - codecs: ["h264", "hevc"]
       resolution: "4k+"
       minimumVideoBitrate: "20Mbps"
       minimumFileSize: "2GiB"
@@ -64,104 +122,80 @@ eligibility:
       minimumFileSize: "800MiB"
 ```
 
-Resolution bands use total pixels: `1080p-1440p`, `1440p-4k`, and `4k+`. Bitrate is the primary video-stream bitrate from `ffprobe`; files without it do not match.
+- `resolution` is one of `1080p-1440p`, `1440p-4k` or `4k+`, measured by total pixels.
+- `minimumVideoBitrate` is the video stream's bitrate as ffprobe reports it. A file without one never matches.
+- Phones usually record HEVC, so add `"hevc"` to `codecs` for phone footage.
+- Small files rarely save enough to pass validation (`savings.minimumBytesSaved`, 100 MiB by default), so keep a size floor.
 
-## Original actions
+## Choose what happens to originals
 
-`original.action` sets what `finalize` does with each original:
+`original.action` decides what `finalize` does:
 
-| Action | Original | AV1 |
+| Action | The original | The AV1 |
 | --- | --- | --- |
-| `delete` (default) | Deleted | Takes the original's path |
-| `archive` | Moved to `original.archiveDirectory` | Takes the original's path |
-| `keep` | Left in place | Installed beside it as `<name>.av1<extension>` |
+| `delete` (default) | Deleted | Takes the original's name and place |
+| `archive` | Moved to `original.archiveDirectory` | Takes the original's name and place |
+| `keep` | Left where it is | Saved beside it as `<name>.av1<extension>` |
 
-```yaml
-original:
-  action: "archive"
-  archiveDirectory: "Archive"
-```
+`archiveDirectory` can be a folder name, such as `Archive`, created beside each original, or a full path that collects every original in one place. Nothing is ever overwritten: a taken name gets a number, as in `movie (2).mp4`.
 
-A folder name such as `Archive` is created beside each original, so archiving is a rename on the same drive. An absolute path collects every original in one folder; on another drive, `finalize` copies each original there, which takes longer. A name that is already taken gets a number, as in `movie (2).mp4`. `queue discover` never scans the archive directory, and skips an original that `keep` left in place until that file changes.
+## Commands
 
-## Command reference
+All commands take `--config <path>`.
 
-```powershell
-# Queue all eligible files, or only the first one.
-.\video-optimiser.exe queue discover --config .\video-optimiser.yaml
-.\video-optimiser.exe queue discover --first --config .\video-optimiser.yaml
+| Command | What it does |
+| --- | --- |
+| `config init` | Write a starter config. Never overwrites an existing file. |
+| `config validate`, `config show` | Check the config, or print its path and contents. |
+| `doctor` | Check the config, tools, database, disk space, and any Immich server or remote worker. |
+| `queue discover [--first]` | Scan the watch folders and queue matching videos. `--first` queues one. |
+| `queue run` | Convert every queued video. Stops before replacing anything. |
+| `process <file> [--force]` | Convert one file now. `--force` skips the rules and the watch-folder check. |
+| `status`, `history` | Open jobs, and finished jobs. Add `--json` for scripts. |
+| `queue list [--json]` | Open jobs only. |
+| `queue cancel <job-id>`, `queue cancel --all` | Cancel one job, or every queued and interrupted job. |
+| `queue retry <job-id>` | Queue a failed or cancelled video again. |
+| `validate <job-id>` | Re-run the checks on a job's output. |
+| `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one after a single confirmation. |
+| `cleanup [--dry-run]` | Delete temporary files no job will use again. |
+| `immich run [--first]`, `immich finalize` | The same flow for an Immich library. See [docs/immich.md](docs/immich.md). |
+| `worker create`, `worker status`, `worker delete` | Manage the Hetzner server by hand. Normally the run does this. |
+| `version` | Print the version. |
 
-# Process queued jobs.
-.\video-optimiser.exe queue run --config .\video-optimiser.yaml
-
-# Process one file directly. --force ignores eligibility rules.
-.\video-optimiser.exe process "C:\Videos\movie.mp4" --config .\video-optimiser.yaml
-
-# List active jobs, or cancel jobs. --all cancels queued and interrupted jobs;
-# a job ID also cancels a job that is ready to finalise.
-.\video-optimiser.exe queue list --config .\video-optimiser.yaml
-.\video-optimiser.exe queue cancel <job-id> --config .\video-optimiser.yaml
-.\video-optimiser.exe queue cancel --all --config .\video-optimiser.yaml
-
-# Queue a failed or cancelled job's original again. The old job remains in history;
-# the new job uses a fresh workspace and state.
-.\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
-
-# Revalidate or finalise one job.
-.\video-optimiser.exe validate <job-id> --config .\video-optimiser.yaml
-.\video-optimiser.exe finalize <job-id> --config .\video-optimiser.yaml
-
-# Finalise every validated job after one confirmation.
-.\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
-
-# List temporary outputs no job will use again, then delete them after one confirmation.
-.\video-optimiser.exe cleanup --dry-run --config .\video-optimiser.yaml
-.\video-optimiser.exe cleanup --config .\video-optimiser.yaml
-
-# Active jobs and terminal job history. Add --json for machine-readable output.
-.\video-optimiser.exe status --config .\video-optimiser.yaml
-.\video-optimiser.exe history --config .\video-optimiser.yaml
-
-# Configuration and dependency checks.
-.\video-optimiser.exe config show --config .\video-optimiser.yaml
-.\video-optimiser.exe config validate --config .\video-optimiser.yaml
-.\video-optimiser.exe doctor --config .\video-optimiser.yaml
-.\video-optimiser.exe version
-```
-
-`process` writes temporary output and its manifest under:
-
-```text
-<original folder>\.video-optimiser\<file>.<job-id>.<attempt>.encoding.<extension>
-```
-
-`cleanup` deletes the files there that belong to a completed, failed, or cancelled job, to an earlier attempt, or to an interrupted local encode. It keeps the current output of every other job, everything after a failed or interrupted finalisation, and any file whose job is not in the configured database. Revalidate a failed job's output with `validate` before running `cleanup` if you want to keep it.
+Exit code `0` means success. Scripts and agents can find every exit code in [docs/agent-guide.md](docs/agent-guide.md#exit-codes).
 
 ## Safety
 
-- `queue discover` scans configured roots and queues eligible files. It skips an original whose last job failed or was cancelled until that file changes or `queue retry` queues it, so a file that fails is not encoded again on every run. It still requeues a job that failed only because the file was not ready, was ineligible, or was outside the watch roots when it ran.
-- `process` creates a job, then CRF-searches, encodes, and validates a separate temporary AV1 file.
-- `queue run` resumes interrupted CRF searches, encodes, or validations from a safe stage. A local encode cannot continue a partial file, so its resume deletes that file and starts a new attempt; `status` says which jobs this applies to.
-- `validate` rechecks a job's temporary AV1 before replacement.
-- `finalize` is explicit. With `delete` or `archive`, it moves the original aside, installs the AV1 in its place, and moves the original back if that fails; `delete` then deletes it. `keep` never moves the original.
-- A never-started queued job adopts a changed processing configuration. A job that has started keeps its captured mode, remote identity, and workspace. If they differ, it fails before a managed worker is created.
-- With a managed Hetzner worker, `deleteAfterRun: true` deletes the worker only after a clean run. Failed or interrupted jobs retain it. On an interactive console, failed runs offer one explicit deletion confirmation; redirected input never prompts.
+- Originals are only read until you finalise.
+- `finalize` moves the original aside first, puts the AV1 in place, and moves the original back if anything fails.
+- A video that failed or was cancelled is not queued again until the file changes, or you run `queue retry`.
+- Temporary outputs live in a `.video-optimiser` folder beside each original. `cleanup` removes the ones no job needs.
+- The job database (`jobs.db` by default) tracks every job, so a crash or `Ctrl+C` never loses track of a file.
+- Secrets (the Hetzner token, the Immich API key) load from environment variables or a `.env` file, never from the YAML. Copy `.env.example` to `.env` to start.
 
-## Source builds
+## Build from source
 
-Build and smoke-test the self-contained Windows executable:
+You need the .NET 10 SDK.
 
 ```powershell
 .\scripts\build.ps1
 ```
 
-The output is `artifacts\local\video-optimiser.exe`. When following commands in this README from a source checkout, replace `.\video-optimiser.exe` with `.\artifacts\local\video-optimiser.exe`.
+This builds and smoke-tests `artifacts\local\video-optimiser.exe`. Use that path in place of `.\video-optimiser.exe` above. For quick development runs: `dotnet run --project src/VideoOptimiser.Cli -- <arguments>`.
 
-For a faster development run without publishing, use `dotnet run --project src/VideoOptimiser.Cli -- <arguments>`.
+Run the tests:
 
-CI also runs an end-to-end test that encodes, validates and finalises generated clips with pinned ab-av1 and FFmpeg builds. To run it locally, put the pinned tools on `PATH` first:
+```powershell
+dotnet test tests/VideoOptimiser.UnitTests
+```
+
+CI also runs an end-to-end test that encodes, validates and finalises generated clips with pinned ab-av1 and FFmpeg builds. To run it locally:
 
 ```powershell
 $env:PATH = ((.\scripts\install-media-tools.ps1 -Destination .\artifacts\media-tools) -join ';') + ";$env:PATH"
 .\scripts\e2e-test.ps1 -Executable .\artifacts\local\video-optimiser.exe
 ```
+
+## License
+
+[MIT](LICENSE)

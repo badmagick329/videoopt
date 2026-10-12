@@ -51,7 +51,7 @@ For CI or a temporary override, an existing `VIDEO_OPTIMISER_HETZNER_TOKEN` envi
 
 ## 3. Build the Windows controller
 
-Install the .NET 10 SDK, then run this from the repository root:
+Skip this step when you use the release zip: it already holds the executable and `scripts/bootstrap-remote-worker.sh`. From a source checkout, install the .NET 10 SDK, then run this from the repository root:
 
 ```powershell
 .\scripts\build.ps1
