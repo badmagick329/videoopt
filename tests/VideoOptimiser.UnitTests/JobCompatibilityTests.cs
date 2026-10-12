@@ -214,6 +214,28 @@ public sealed class JobCompatibilityTests : IDisposable
         else result.Error.Should().Be("Only failed or cancelled jobs can be retried.");
     }
 
+    [Fact]
+    public async Task RetryKeepsAnImmichJobsAssetIdentity()
+    {
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = ManagedSettings();
+        settings.Database.Path = Path.Combine(_directory, "retry-immich.db");
+        var original = new JobRecord
+        {
+            Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "staging", "asset-1", "PXL.mp4"), SourceFingerprint = "source",
+            Status = JobStatus.Failed, FailureCategory = "EncodeFailed", CompletedUtc = DateTimeOffset.UtcNow,
+            SourceKind = JobSourceKind.Immich, ImmichAssetId = "asset-1", ImmichChecksum = "checksum"
+        };
+        await repository.CreateAsync(settings.Database.Path, original);
+
+        var result = await new JobRetryService(repository).RetryAsync(settings.Database.Path, original.Id, settings);
+
+        var stored = await repository.GetAsync(settings.Database.Path, result.Replacement!.Id);
+        stored!.SourceKind.Should().Be(JobSourceKind.Immich);
+        stored.ImmichAssetId.Should().Be("asset-1");
+        stored.ImmichChecksum.Should().Be("checksum");
+    }
+
     [Theory]
     [InlineData(JobStatus.Queued)]
     [InlineData(JobStatus.Interrupted)]

@@ -50,6 +50,43 @@ public sealed class JobProcessorTests : IDisposable
         encoder.CallCount.Should().Be(1);
     }
 
+    [Theory]
+    [InlineData(JobSourceKind.Immich, "staging", JobStatus.ReadyToFinalize)]
+    [InlineData(JobSourceKind.Immich, "elsewhere", JobStatus.Failed)]
+    [InlineData(JobSourceKind.File, "staging", JobStatus.Failed)]
+    public async Task ProcessAsyncAcceptsAStagedImmichOriginalOnlyUnderTheStagingDirectory(JobSourceKind kind, string stagingDirectory, JobStatus expected)
+    {
+        var staged = Path.Combine(_directory, "staging", "asset-1", "PXL.mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(staged)!);
+        await File.WriteAllTextAsync(staged, "original video data");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var processor = new JobProcessor(
+            repository,
+            new ReadableFiles(),
+            _ => new H264Probe(),
+            new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
+            new FileFingerprintService(),
+            new OutputManifestStore(),
+            new PassingValidator());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = Path.Combine(_directory, "watched") }] },
+            Immich = new ImmichSettings { StagingDirectory = Path.Combine(_directory, stagingDirectory) },
+            Eligibility = Rules()
+        };
+        await repository.CreateAsync(settings.Database.Path, new JobRecord
+        {
+            Id = Guid.NewGuid(), SourcePath = staged, SourceFingerprint = "fingerprint", Status = JobStatus.Queued,
+            SourceKind = kind, ImmichAssetId = kind == JobSourceKind.Immich ? "asset-1" : null
+        });
+
+        var result = await processor.ProcessAsync(settings.Database.Path, staged, settings, force: false);
+
+        result.Job.Status.Should().Be(expected);
+        if (expected == JobStatus.Failed) result.Job.FailureCategory.Should().Be("SourceOutsideWatchRoot");
+    }
+
     [Fact]
     public async Task ProcessAsyncMarksTheJobInterruptedWhenCancelled()
     {

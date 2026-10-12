@@ -22,6 +22,24 @@ public static class EligibilityEvaluator
 
     public static bool IsValidResolutionBand(string? value) => value?.ToLowerInvariant() is "1080p-1440p" or "1440p-4k" or "4k+";
 
+    /// <summary>
+    /// Identifies what <see cref="IsEligible"/> would decide for any file, so a verdict stored with it goes stale once the
+    /// rules change. Rule order, codec order, case and size or bitrate spelling do not change a verdict, so they do not
+    /// change the fingerprint either.
+    /// </summary>
+    public static string RulesFingerprint(EligibilitySettings settings)
+    {
+        var rules = settings.Rules
+            .Select(rule => string.Join('|',
+                string.Join(',', rule.Codecs.Select(codec => codec.ToLowerInvariant()).Order(StringComparer.Ordinal)),
+                rule.Resolution.ToLowerInvariant(),
+                HumanReadableValues.TryParseBitrate(rule.MinimumVideoBitrate, out var bitrate) ? bitrate.ToString(System.Globalization.CultureInfo.InvariantCulture) : rule.MinimumVideoBitrate,
+                HumanReadableValues.TryParseSize(rule.MinimumFileSize, out var size) ? size.ToString(System.Globalization.CultureInfo.InvariantCulture) : rule.MinimumFileSize))
+            .Order(StringComparer.Ordinal);
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join('\n', rules)));
+        return Convert.ToHexStringLower(hash)[..16];
+    }
+
     private static bool Matches(EligibilityRuleSettings rule, FileInfo file, MediaInfo media) =>
         rule.Codecs.Contains(media.PrimaryVideoCodec, StringComparer.OrdinalIgnoreCase) &&
         HumanReadableValues.TryParseSize(rule.MinimumFileSize, out var minimumSize) && file.Length >= minimumSize &&

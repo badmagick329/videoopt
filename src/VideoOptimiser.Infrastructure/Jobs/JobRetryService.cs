@@ -30,7 +30,11 @@ public sealed class JobRetryService(IJobRepository jobs) : IJobRetryService
             Id = Guid.NewGuid(),
             SourcePath = original.SourcePath,
             SourceFingerprint = original.SourceFingerprint,
-            Status = JobStatus.Queued
+            Status = JobStatus.Queued,
+            // Discovery and finalisation know an Immich job by its asset, not by the staged path.
+            SourceKind = original.SourceKind,
+            ImmichAssetId = original.ImmichAssetId,
+            ImmichChecksum = original.ImmichChecksum
         };
         JobCompatibility.Apply(replacement, JobCompatibility.ExpectedBinding(replacement.Id, settings));
         await jobs.CreateAsync(databasePath, replacement, cancellationToken);

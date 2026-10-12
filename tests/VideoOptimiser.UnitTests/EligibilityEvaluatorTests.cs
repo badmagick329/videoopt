@@ -68,6 +68,35 @@ public sealed class EligibilityEvaluatorTests : IDisposable
     public void IsValidResolutionBandRecognisesSupportedValues(string value, bool expected) =>
         EligibilityEvaluator.IsValidResolutionBand(value).Should().Be(expected);
 
+    [Fact]
+    public void RulesFingerprintIgnoresWhatCannotChangeAVerdict()
+    {
+        var original = new EligibilitySettings { Rules = [Rule(["h264"], "1080p-1440p", "15Mbps", "800MiB"), Rule(["hevc", "h264"], "4k+", "35Mbps", "2GiB")] };
+        var reordered = new EligibilitySettings { Rules = [Rule(["H264", "HEVC"], "4K+", "35 Mbps", "2048MiB"), Rule(["h264"], "1080p-1440p", "15000kbps", "800 MiB")] };
+
+        EligibilityEvaluator.RulesFingerprint(reordered).Should().Be(EligibilityEvaluator.RulesFingerprint(original));
+    }
+
+    [Fact]
+    public void RulesFingerprintChangesWithAnyThresholdOrCodec()
+    {
+        var baseline = EligibilityEvaluator.RulesFingerprint(new EligibilitySettings { Rules = [Rule(["h264"], "1080p-1440p", "15Mbps", "800MiB")] });
+
+        string[] changed =
+        [
+            EligibilityEvaluator.RulesFingerprint(new EligibilitySettings { Rules = [Rule(["h264", "hevc"], "1080p-1440p", "15Mbps", "800MiB")] }),
+            EligibilityEvaluator.RulesFingerprint(new EligibilitySettings { Rules = [Rule(["h264"], "1440p-4k", "15Mbps", "800MiB")] }),
+            EligibilityEvaluator.RulesFingerprint(new EligibilitySettings { Rules = [Rule(["h264"], "1080p-1440p", "10Mbps", "800MiB")] }),
+            EligibilityEvaluator.RulesFingerprint(new EligibilitySettings { Rules = [Rule(["h264"], "1080p-1440p", "15Mbps", "500MiB")] }),
+            EligibilityEvaluator.RulesFingerprint(new EligibilitySettings { Rules = [Rule(["h264"], "1080p-1440p", "15Mbps", "800MiB"), Rule(["hevc"], "1080p-1440p", "15Mbps", "800MiB")] })
+        ];
+
+        changed.Should().OnlyHaveUniqueItems().And.NotContain(baseline);
+    }
+
+    private static EligibilityRuleSettings Rule(List<string> codecs, string resolution, string bitrate, string size) =>
+        new() { Codecs = codecs, Resolution = resolution, MinimumVideoBitrate = bitrate, MinimumFileSize = size };
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private bool IsEligible(EligibilityRuleSettings rule, MediaInfo media)

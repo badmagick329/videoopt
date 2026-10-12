@@ -1,4 +1,6 @@
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.Scanning;
 
 namespace VideoOptimiser.Application.Immich;
 
@@ -108,6 +110,31 @@ public interface IImmichClient
 public interface IImmichClientFactory
 {
     IImmichClient Create(ImmichSettings settings);
+}
+
+/// <summary>
+/// What one Immich discovery run did. <see cref="Excluded"/> counts search results the client-side re-check rejected, which
+/// means Immich's filter let through an asset it should not have. <see cref="Ineligible"/> counts assets rejected without a
+/// download (extension or size); <see cref="Skipped"/> counts those downloaded, probed and recorded as Immich skips.
+/// </summary>
+public sealed record ImmichDiscoveryResult(
+    IReadOnlyList<JobRecord> Queued,
+    int AlreadyQueued,
+    int AlreadyConverted,
+    int PreviouslyFailed,
+    int PreviouslySkipped,
+    int Excluded,
+    int Ineligible,
+    int Skipped,
+    int Issues);
+
+public interface IImmichDiscoveryService
+{
+    /// <summary>
+    /// Stages and queues every eligible Immich video without an open, completed or settled failed job (<paramref name="first"/>:
+    /// at most one). Assets that need a download to judge are downloaded under <see cref="ImmichSettings.StagingDirectory"/>.
+    /// </summary>
+    Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -81,7 +81,9 @@ public sealed class JobProcessor(
         await using var session = sessions.Create(job, settings);
         try
         {
-            if (!force && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return await FailAsync(job, databasePath, "SourceOutsideWatchRoot", "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure, cancellationToken);
+            // An Immich job's original is the staged copy, which lives under immich.stagingDirectory rather than a watch root.
+            if (!force && job.SourceKind == JobSourceKind.Immich && !(settings.Immich.StagingDirectory.Length > 0 && IsWithinRoot(path, settings.Immich.StagingDirectory))) return await FailAsync(job, databasePath, "SourceOutsideWatchRoot", "Staged Immich original is outside immich.stagingDirectory. Use --force to bypass this check.", ExitCode.ProcessingFailure, cancellationToken);
+            if (!force && job.SourceKind == JobSourceKind.File && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return await FailAsync(job, databasePath, "SourceOutsideWatchRoot", "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure, cancellationToken);
             var info = new FileInfo(path);
             var readinessResult = await readiness.CheckAsync(path, cancellationToken);
             if (!readinessResult.IsReady) return await FailAsync(job, databasePath, "SourceNotReady", $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure, cancellationToken);
