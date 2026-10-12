@@ -391,7 +391,16 @@ internal static partial class CliApplication
             return (int)ExitCode.InvalidArguments;
         }
 
-        Console.WriteLine($"Created fresh queued job {result.Replacement!.Id:N}. Run 'queue run' to process it.");
+        var replacement = result.Replacement!;
+        if (replacement.SourceKind == JobSourceKind.Immich)
+        {
+            Console.WriteLine($"Created fresh queued job {replacement.Id:N}. Run 'immich run' to process it.");
+            if (!File.Exists(replacement.SourcePath)) Console.WriteLine("Its staged copy is gone; 'immich run' downloads it from Immich again first.");
+        }
+        else
+        {
+            Console.WriteLine($"Created fresh queued job {replacement.Id:N}. Run 'queue run' to process it.");
+        }
         return (int)ExitCode.Success;
     }
 
@@ -665,11 +674,14 @@ internal static partial class CliApplication
 
     private static async Task<int> RunCleanupAsync(ITemporaryOutputCleanupService cleanup, LoadedConfiguration configuration, bool dryRun, CancellationToken cancellationToken)
     {
-        var plan = await cleanup.FindAsync(configuration.Settings.Database.Path, cancellationToken);
+        var settings = configuration.Settings;
+        var plan = await cleanup.FindAsync(settings.Database.Path, settings.Immich.IsConfigured ? settings.Immich.StagingDirectory : string.Empty, cancellationToken);
         foreach (var path in plan.UnknownJobFiles) Console.WriteLine($"Skipped  {path} (its job is not in this database)");
-        if (plan.Abandoned.Count == 0) { Console.WriteLine("No abandoned temporary outputs found."); return (int)ExitCode.Success; }
+        if (plan.Count == 0) { Console.WriteLine("No abandoned temporary outputs or staged Immich originals found."); return (int)ExitCode.Success; }
         foreach (var file in plan.Abandoned) Console.WriteLine($"{HumanReadableValues.FormatSize(file.SizeBytes),10}  {file.Path} ({file.Reason})");
-        Console.WriteLine($"Abandoned temporary outputs: {plan.Abandoned.Count}, {HumanReadableValues.FormatSize(plan.TotalBytes)}.");
+        foreach (var file in plan.StagedOriginals) Console.WriteLine($"{HumanReadableValues.FormatSize(file.SizeBytes),10}  {file.Path} ({file.Reason})");
+        Console.WriteLine($"Abandoned temporary outputs: {plan.Abandoned.Count}. Staged Immich originals: {plan.StagedOriginals.Count}. Total: {HumanReadableValues.FormatSize(plan.TotalBytes)}.");
+        if (plan.StagedOriginals.Count > 0) Console.WriteLine("Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.");
         if (dryRun) return (int)ExitCode.Success;
 
         Console.Write("Delete these files? [y/N] ");

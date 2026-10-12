@@ -116,9 +116,11 @@ public interface IImmichClientFactory
 /// What one Immich discovery run did. <see cref="Excluded"/> counts search results the client-side re-check rejected, which
 /// means Immich's filter let through an asset it should not have. <see cref="Ineligible"/> counts assets rejected without a
 /// download (extension or size); <see cref="Skipped"/> counts those downloaded, probed and recorded as Immich skips.
+/// <see cref="Restaged"/> counts open jobs whose missing staged original was downloaded again.
 /// </summary>
 public sealed record ImmichDiscoveryResult(
     IReadOnlyList<JobRecord> Queued,
+    int Restaged,
     int AlreadyQueued,
     int AlreadyConverted,
     int PreviouslyFailed,

@@ -81,7 +81,10 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
     /// Failures that judged the file's state or the settings at run time rather than an attempt to convert it. Discovery has
     /// just found the file eligible inside a watch root, so the earlier verdict no longer holds and the file is queued again.
     /// </summary>
-    internal static readonly HashSet<string> RequeuedFailureCategories = new(StringComparer.Ordinal) { "SourceNotReady", "Ineligible", "SourceOutsideWatchRoot" };
+    internal static readonly HashSet<string> RequeuedFailureCategories = new(StringComparer.Ordinal) { "SourceNotReady", "Ineligible", "SourceOutsideWatchRoot", SourceMissingCategory };
+
+    /// <summary>An open job's original was gone when it was about to run. Its asset or file is queued again once it is back.</summary>
+    internal const string SourceMissingCategory = "SourceMissing";
 
     /// <summary>
     /// Originals discovery leaves alone because their latest job settled them, mapped to that job's status. A completed job

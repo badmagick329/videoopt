@@ -166,7 +166,7 @@ All commands take `--config <path>`.
 | `queue retry <job-id>` | Queue a failed or cancelled video again. |
 | `validate <job-id>` | Re-run the checks on a job's output. |
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one after a single confirmation. |
-| `cleanup [--dry-run]` | Delete temporary files no job will use again. |
+| `cleanup [--dry-run]` | Delete temporary files and staged Immich downloads no job will use again. |
 | `immich run [--first] [--local \| --remote]`, `immich finalize` | The same flow for an Immich library. See [docs/immich.md](docs/immich.md). |
 | `remote setup` | One-time Hetzner setup: checks the API token, creates and uploads an SSH key, and writes the `processing:` section after asking. Creates no server. |
 | `worker create`, `worker status`, `worker delete` | Manage the Hetzner server by hand. Normally the run does this. |
@@ -179,7 +179,7 @@ Exit code `0` means success. Scripts and agents can find every exit code in [doc
 - Originals are only read until you finalise.
 - `finalize` moves the original aside first, puts the AV1 in place, and moves the original back if anything fails.
 - A video that failed or was cancelled is not queued again until the file changes, or you run `queue retry`.
-- Temporary outputs live in a `.video-optimiser` folder beside each original. `cleanup` removes the ones no job needs.
+- Temporary outputs live in a `.video-optimiser` folder beside each original. `cleanup` removes the ones no job needs, and the downloaded copies of Immich videos whose job has ended.
 - The job database (`jobs.db` by default) tracks every job, so a crash or `Ctrl+C` never loses track of a file.
 - Secrets (the Hetzner token, the Immich API key) load from environment variables or a `.env` file, never from the YAML. Copy `.env.example` to `.env` to start.
 

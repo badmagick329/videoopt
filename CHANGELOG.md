@@ -11,6 +11,8 @@
 - In local mode, `doctor` checks that ab-av1 is 0.11.7 or newer and that FFmpeg has the libsvtav1 encoder, the libvmaf filter and the 10-bit `yuv420p10le` format. In both modes it checks that FFmpeg can decode AV1 with libdav1d, which validation's decode test needs, unless `validation.decodeTest` is `none`.
 - [docs/immich.md](docs/immich.md) explains Immich setup and each round. [docs/agent-guide.md](docs/agent-guide.md) tells an AI agent how to run VideoOptimiser for a user, including which commands need the user's go-ahead.
 - The release zip includes `docs/`, `.env.example` and `scripts/bootstrap-remote-worker.sh`, so managed Hetzner processing works from a release download.
+- `cleanup` also deletes the staged Immich download of each completed, failed or cancelled Immich job, then its asset folder once empty. A download that an open job still reads, including a retry's, is never deleted, nor is one kept after a failed finalisation.
+- `immich run` downloads again the missing staged copy of an open Immich job, such as one `queue retry` queued after `cleanup`, and checks it against the job's checksum. If Immich no longer returns those bytes, the job fails as `SourceMissing` and the asset is free to be found again.
 - `remote setup` does the one-time managed Hetzner setup. It checks the API token, or prints how to create one and exits `3`. It reuses `remoteSsh.identityFile`, or creates `%USERPROFILE%\.ssh\video-optimiser-hetzner-ed25519` with `ssh-keygen`. It uploads the public key to the Hetzner project unless the project already has it, under any name. Then it shows the `processing:` section it would write, with `mode: "remoteSsh"`, `lifecycle: "hetzner"`, `identityFile` and `sshKeyName` filled in, and asks `[y/N]`. On `y` it backs the config up to `<config>.bak`, replaces only that section, and restores the backup if the result is invalid. It creates no server. [docs/remote-ssh.md](docs/remote-ssh.md) now uses it for setup; the manual steps are under *Doing it by hand*.
 - `--local` and `--remote` on `queue run`, `process` and `immich run` set `processing.mode` for one run, without editing the config; the `Encoding on:` line ends with `(from --local)` or `(from --remote)`. A job started in the other mode is skipped, printed as `Skipped <file>: started on ...`, and resumed by the next run without the flag; it does not count as a failure. Both flags together, or either on another command, exit `2`.
 - `queue run`, `process` and `immich run` first print where encoding runs, before any download or encoding: `Encoding on: this PC.`, the SSH target, a Hetzner server still running from an earlier run, or `a Hetzner server created for this run, billed hourly (tries cx43, cx53, cpx42, ccx33; max EUR 0.30/h).` `doctor` reports the same line as `EncodingLocation` in a new `Processing` category.
@@ -22,13 +24,14 @@
 - New `processing.remoteSsh.hetzner.maxHourlyPrice` skips any server type and location costing more, in EUR per hour including VAT. The default is `0.30`; `null` removes the cap.
 - When no Hetzner server can be created, the error lists each server type, the locations tried for it, and why each failed.
 - `worker status` and `worker create` show the worker's server type and location.
-- `queue run` processes only jobs from the watch roots. Immich jobs run with `immich run`.
+- `queue run` processes only jobs from the watch roots. Immich jobs run with `immich run`, and `queue retry` on an Immich job now says so.
 - `watch.roots` may be empty when `immich.baseUrl` is set, so an Immich-only config passes `config validate` and `doctor`. `queue discover` then says it needs a watch root.
 - The README is rewritten to be shorter and task-first.
 - A managed Hetzner worker now installs ab-av1 0.11.7, the version CI tests, instead of 0.10.4. `doctor` rejects a remote worker with an older ab-av1. A worker created before this change keeps 0.10.4: delete it with `worker delete` and the next run creates a new one.
 
 ### Fixed
 
+- A queued or interrupted job whose original was deleted no longer stays queued forever, failing every run. It fails as `SourceMissing`, and discovery queues the file or Immich asset again once it is back.
 - `queue discover` no longer queues an original again after its job failed or was cancelled, which encoded a failing file again on every run and undid `queue cancel`. It skips the original until the file changes and reports it as "Previously failed or cancelled". Failures caused only by the file not being ready, being ineligible, or lying outside the watch roots still requeue.
 - Creating a managed Hetzner worker from a Windows checkout with Git's `core.autocrlf` no longer sends the bootstrap script with CRLF line endings, which bash on the worker cannot run.
 - `queue retry <job-id>` now queues any failed or cancelled job's original again, not only one whose remote configuration changed.

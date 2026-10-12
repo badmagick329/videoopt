@@ -28,11 +28,13 @@ public sealed class ImmichDiscoveryService(
         var cutoff = _utcNow().AddDays(-settings.Immich.MinimumAgeDays);
         var rulesFingerprint = EligibilityEvaluator.RulesFingerprint(settings.Eligibility);
         var minimumSize = SmallestMinimumFileSize(settings.Eligibility);
+        // Before the history load: a job this fails has ended, so the search below may stage its asset afresh.
+        var (restaged, issues) = await RestageMissingAsync(client, databasePath, settings, first, progress, cancellationToken);
         var history = await ImmichHistory.LoadAsync(jobs, databasePath, cancellationToken);
         var skips = await jobs.ListImmichSkipsAsync(databasePath, cancellationToken);
 
         var queued = new List<JobRecord>();
-        int alreadyQueued = 0, alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, excluded = 0, ineligible = 0, skipped = 0, issues = 0;
+        int alreadyQueued = 0, alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, excluded = 0, ineligible = 0, skipped = 0;
         // Paging can return an asset twice if the library changes between pages; judge each one once.
         var seen = new HashSet<string>(StringComparer.Ordinal);
         await foreach (var asset in client.SearchVideosAsync(cutoff, includeFavorites: !settings.Immich.SkipFavorites, cancellationToken))
@@ -121,7 +123,75 @@ public sealed class ImmichDiscoveryService(
             }
         }
 
-        return new ImmichDiscoveryResult(queued, alreadyQueued, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues);
+        return new ImmichDiscoveryResult(queued, restaged, alreadyQueued, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues);
+    }
+
+    /// <summary>
+    /// Downloads again the staged original of each open job that lost it: a job <c>queue retry</c> created after
+    /// <c>cleanup</c> deleted the copy, or one whose copy was deleted by hand. Such a job could never run, and discovery
+    /// skips an asset with an open job, so nothing else would bring the file back. The download must match the job's
+    /// checksum, so the job converts the bytes it was created for. When Immich no longer returns them, the job fails as
+    /// <c>SourceMissing</c>, which leaves the asset free for discovery. With <paramref name="first"/>, only the oldest
+    /// open job counts, as it is the one the run processes.
+    /// </summary>
+    private async Task<(int Restaged, int Issues)> RestageMissingAsync(IImmichClient client, string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    {
+        int restaged = 0, issues = 0;
+        // Ready jobs no longer read the original, and a job interrupted during finalisation needs it left as it is.
+        var candidates = (await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
+            .Where(job => job.SourceKind == JobSourceKind.Immich && job.Status is not (JobStatus.ReadyToFinalize or JobStatus.Finalizing) && job.ResumeStatus != JobStatus.Finalizing)
+            .OrderBy(job => job.CreatedUtc)
+            .Take(first ? 1 : int.MaxValue);
+        foreach (var job in candidates)
+        {
+            if (File.Exists(job.SourcePath)) continue;
+            if (job.ImmichChecksum is null || !ImmichStaging.IsStagedOriginal(settings.Immich.StagingDirectory, job.ImmichAssetId, job.SourcePath))
+            {
+                issues++;
+                await FailMissingAsync(databasePath, job, "The staged original is missing, and its path is not in the asset's folder under immich.stagingDirectory, so it is not downloaded again.", progress, cancellationToken);
+                continue;
+            }
+
+            var path = Path.GetFullPath(job.SourcePath);
+            var keep = false;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                progress?.Report(new ScanProgress(path, "Downloading", $"Downloading {Path.GetFileName(path)} from Immich again: job {job.Id:N} is open but its staged copy is missing."));
+                await client.DownloadOriginalAsync(job.ImmichAssetId!, path, cancellationToken: cancellationToken);
+                if (!string.Equals(await Sha1Base64Async(path, cancellationToken), job.ImmichChecksum, StringComparison.Ordinal))
+                {
+                    issues++;
+                    await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich asset {job.ImmichAssetId} no longer matches the checksum this job was created for.", progress, cancellationToken);
+                    continue;
+                }
+
+                keep = true;
+                restaged++;
+            }
+            catch (ImmichApiException exception) when (exception.Code == "ImmichRequestFailed")
+            {
+                issues++;
+                await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich did not return asset {job.ImmichAssetId} again: {exception.Message}", progress, cancellationToken);
+            }
+            finally
+            {
+                if (!keep) DeleteStaged(path);
+            }
+        }
+
+        return (restaged, issues);
+    }
+
+    private async Task FailMissingAsync(string databasePath, JobRecord job, string message, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    {
+        job.Status = JobStatus.Failed;
+        job.ResumeStatus = null;
+        job.FailureCategory = QueueService.SourceMissingCategory;
+        job.FailureMessage = message;
+        job.CompletedUtc = _utcNow();
+        await jobs.UpdateAsync(databasePath, job, cancellationToken);
+        progress?.Report(new ScanProgress(job.SourcePath, "Issue", $"Job {job.Id:N} failed: {message}"));
     }
 
     /// <summary>

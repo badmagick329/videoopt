@@ -373,17 +373,119 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         Directory.Exists(Path.Combine(_settings.Immich.StagingDirectory, asset.Id)).Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData(JobStatus.Queued)]
+    [InlineData(JobStatus.Interrupted)]
+    public async Task DownloadsAgainTheMissingStagedOriginalOfAnOpenJob(JobStatus status)
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        var job = await CreateJobAsync(asset, status, staged: false);
+
+        var result = await DiscoverAsync();
+
+        result.Restaged.Should().Be(1);
+        result.AlreadyQueued.Should().Be(1);
+        result.Queued.Should().BeEmpty();
+        _immich.Downloads.Should().Equal(asset.Id);
+        (await File.ReadAllTextAsync(job.SourcePath)).Should().Be("hevc video");
+        (await _repository.GetAsync(_settings.Database.Path, job.Id))!.Status.Should().Be(status);
+    }
+
+    [Fact]
+    public async Task LeavesTheStagedOriginalOfAReadyJobAlone()
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        await CreateJobAsync(asset, JobStatus.ReadyToFinalize, staged: false);
+
+        var result = await DiscoverAsync();
+
+        result.Restaged.Should().Be(0);
+        _immich.Downloads.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FailsAnOpenJobWhoseMissingOriginalImmichNoLongerReturns()
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        var job = await CreateJobAsync(asset, JobStatus.Queued, staged: false);
+        _immich.Remove(asset);
+        _immich.Failures[asset.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.");
+
+        var result = await DiscoverAsync();
+
+        result.Issues.Should().Be(1);
+        var stored = (await _repository.GetAsync(_settings.Database.Path, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Failed);
+        stored.FailureCategory.Should().Be("SourceMissing");
+        Directory.Exists(Path.Combine(_settings.Immich.StagingDirectory, asset.Id)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task FailsAnOpenJobWhoseAssetChangedAndQueuesTheAssetAfresh()
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        var job = await CreateJobAsync(asset with { Checksum = Sha1("hevc earlier video") }, JobStatus.Queued, staged: false);
+
+        var result = await DiscoverAsync();
+
+        result.Restaged.Should().Be(0);
+        result.Issues.Should().Be(1);
+        (await _repository.GetAsync(_settings.Database.Path, job.Id))!.FailureCategory.Should().Be("SourceMissing");
+        var queued = result.Queued.Should().ContainSingle().Subject;
+        queued.ImmichChecksum.Should().Be(asset.Checksum);
+        (await File.ReadAllTextAsync(queued.SourcePath)).Should().Be("hevc video");
+    }
+
+    [Fact]
+    public async Task FirstDownloadsAgainOnlyTheOldestOpenJobsOriginal()
+    {
+        var older = _immich.Add("older.mp4", "hevc older");
+        var newer = _immich.Add("newer.mp4", "hevc newer");
+        await CreateJobAsync(older, JobStatus.Queued, staged: false);
+        await Task.Delay(20);
+        await CreateJobAsync(newer, JobStatus.Queued, staged: false);
+
+        var result = await DiscoverAsync(first: true);
+
+        result.Restaged.Should().Be(1);
+        _immich.Downloads.Should().Equal(older.Id);
+    }
+
+    [Fact]
+    public async Task NeverDownloadsAgainToAPathOutsideTheAssetFolder()
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        var job = await CreateJobAsync(asset, JobStatus.Queued, staged: false);
+        job.SourcePath = Path.Combine(_directory, "elsewhere", "clip.mp4");
+        await _repository.UpdateAsync(_settings.Database.Path, job);
+
+        var result = await DiscoverAsync();
+
+        result.Issues.Should().Be(1);
+        (await _repository.GetAsync(_settings.Database.Path, job.Id))!.FailureCategory.Should().Be("SourceMissing");
+        File.Exists(job.SourcePath).Should().BeFalse();
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private Task<ImmichDiscoveryResult> DiscoverAsync(bool first = false) =>
         new ImmichDiscoveryService(_immich, _repository, _ => new ContentProbe(), new FileFingerprintService(), () => Now)
             .DiscoverAsync(_settings.Database.Path, _settings, first);
 
-    private Task<JobRecord> CreateJobAsync(ImmichAsset asset, JobStatus status, string? failureCategory = null) =>
-        _repository.CreateAsync(_settings.Database.Path, new JobRecord
+    /// <summary>An Immich job for the asset. An open one has its staged copy unless <paramref name="staged"/> is false.</summary>
+    private async Task<JobRecord> CreateJobAsync(ImmichAsset asset, JobStatus status, string? failureCategory = null, bool staged = true)
+    {
+        var path = Path.Combine(_settings.Immich.StagingDirectory, asset.Id, asset.OriginalFileName);
+        if (staged && status is not (JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllTextAsync(path, "staged");
+        }
+
+        return await _repository.CreateAsync(_settings.Database.Path, new JobRecord
         {
             Id = Guid.NewGuid(),
-            SourcePath = Path.Combine(_settings.Immich.StagingDirectory, asset.Id, asset.OriginalFileName),
+            SourcePath = path,
             SourceFingerprint = "fingerprint",
             Status = status,
             FailureCategory = failureCategory,
@@ -391,6 +493,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
             ImmichAssetId = asset.Id,
             ImmichChecksum = asset.Checksum
         });
+    }
 
     private static EligibilityRuleSettings HevcRule() => new() { Codecs = ["hevc"], Resolution = "1080p-1440p", MinimumVideoBitrate = "10Mbps", MinimumFileSize = "5B" };
 

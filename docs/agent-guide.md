@@ -75,7 +75,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `ValidationFailed` | The AV1 failed a check, usually too little saving | Report it. The original stays as it is, and discovery won't queue it again until the file changes. |
 | `StagingFailed`, `CrfSearchFailed`, `EncodeFailed`, `DownloadFailed`, `ProcessingFailed` | A processing step failed | Report `failureMessage`. Run `queue retry <id>` only if the user asks, once the cause is fixed. |
 | `RemoteConfigurationChanged` | The job started under a different processing setup | Report it. `queue retry <id>` starts a fresh job under the current setup, if the user wants. |
-| `Ineligible`, `SourceNotReady`, `SourceOutsideWatchRoot`, `SourceChanged` | The file did not qualify, or changed, when the job ran | Nothing. The next `queue discover` re-checks it. |
+| `Ineligible`, `SourceNotReady`, `SourceOutsideWatchRoot`, `SourceChanged`, `SourceMissing` | The file did not qualify, changed, or was gone when the job ran | Nothing. The next `queue discover` or `immich run` re-checks it. |
 | `FinalizationIncomplete` | An Immich finalisation stopped partway | Gate, then `'y' | video-optimiser immich finalize`. |
 | `FinalizationFailed`, `ManualInterventionRequired` | Replacing a file original failed or was cut off | Stop. Show the user the job, its `sourcePath` and `outputPath`, and let them decide. |
 

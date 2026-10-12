@@ -65,13 +65,9 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
     {
         try
         {
-            // The asset ID comes from the database; only a canonical GUID names a folder directly under the staging root.
-            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(settings.Immich.StagingDirectory));
-            var folder = Path.Combine(root, job.ImmichAssetId!);
-            if (Guid.TryParseExact(job.ImmichAssetId, "D", out _) &&
-                string.Equals(Path.GetDirectoryName(folder), root, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(Path.GetDirectoryName(Path.GetFullPath(job.SourcePath)), folder, StringComparison.OrdinalIgnoreCase))
+            if (ImmichStaging.IsStagedOriginal(settings.Immich.StagingDirectory, job.ImmichAssetId, job.SourcePath))
             {
+                var folder = Path.GetDirectoryName(Path.GetFullPath(job.SourcePath))!;
                 if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
                 return string.Empty;
             }

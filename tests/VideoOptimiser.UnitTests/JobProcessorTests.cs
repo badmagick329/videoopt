@@ -87,6 +87,33 @@ public sealed class JobProcessorTests : IDisposable
         if (expected == JobStatus.Failed) result.Job.FailureCategory.Should().Be("SourceOutsideWatchRoot");
     }
 
+    [Theory]
+    [InlineData(JobStatus.Queued, JobStatus.Failed)]
+    [InlineData(JobStatus.Interrupted, JobStatus.Failed)]
+    [InlineData(JobStatus.ReadyToFinalize, JobStatus.ReadyToFinalize)]
+    public async Task AMissingOriginalFailsItsQueuedOrInterruptedJobSoItIsNotStuck(JobStatus status, JobStatus expected)
+    {
+        var missing = Path.Combine(_directory, "gone.mp4");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var processor = new JobProcessor(
+            repository,
+            new ReadableFiles(),
+            _ => new H264Probe(),
+            new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
+            new FileFingerprintService(),
+            new OutputManifestStore(),
+            new PassingValidator());
+        var databasePath = Path.Combine(_directory, "jobs.db");
+        var job = await repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = missing, SourceFingerprint = "fingerprint", Status = status });
+
+        var result = await processor.ProcessAsync(databasePath, missing, new AppSettings { Database = new DatabaseSettings { Path = databasePath } }, force: false);
+
+        result.ExitCode.Should().Be(ExitCode.ProcessingFailure);
+        var stored = (await repository.GetAsync(databasePath, job.Id))!;
+        stored.Status.Should().Be(expected);
+        if (expected == JobStatus.Failed) stored.FailureCategory.Should().Be("SourceMissing");
+    }
+
     [Fact]
     public async Task ProcessAsyncMarksTheJobInterruptedWhenCancelled()
     {

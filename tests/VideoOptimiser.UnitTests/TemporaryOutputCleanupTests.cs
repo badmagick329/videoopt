@@ -100,7 +100,7 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         File.WriteAllText(unrelated, "data");
         var service = new TemporaryOutputCleanupService(_repository);
 
-        var plan = await service.FindAsync(_databasePath);
+        var plan = await service.FindAsync(_databasePath, string.Empty);
         var result = service.Delete(plan);
 
         plan.Abandoned.Select(file => file.Path).Should().BeEquivalentTo([superseded, completedManifest, partialEncode]);
@@ -118,7 +118,7 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var locked = Write(failed, 1, ".mp4");
         var manifest = Write(failed, 1, ".mp4.manifest.json");
         var service = new TemporaryOutputCleanupService(_repository);
-        var plan = await service.FindAsync(_databasePath);
+        var plan = await service.FindAsync(_databasePath, string.Empty);
 
         TemporaryOutputCleanupResult result;
         using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -131,7 +131,78 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         File.Exists(manifest).Should().BeFalse();
     }
 
+    [Fact]
+    public async Task FindsAndDeletesStagedOriginalsOnlyWhenNoOpenJobReadsThem()
+    {
+        var staging = Path.Combine(_directory, "staging");
+        var failed = await CreateStagedJobAsync(staging, JobStatus.Failed, "EncodeFailed");
+        var cancelled = await CreateStagedJobAsync(staging, JobStatus.Cancelled, "Cancelled");
+        var completed = await CreateStagedJobAsync(staging, JobStatus.Completed, null);
+        var open = await CreateStagedJobAsync(staging, JobStatus.Queued, null);
+        var finalisationFailed = await CreateStagedJobAsync(staging, JobStatus.Failed, "FinalizationFailed");
+        // A retry's queued job shares the failed job's path.
+        var retried = await CreateStagedJobAsync(staging, JobStatus.Failed, "EncodeFailed");
+        await CreateJobAtAsync(retried.SourcePath, JobStatus.Queued, retried.ImmichAssetId);
+        var failedOutput = Path.Combine(Path.GetDirectoryName(failed.SourcePath)!, ".video-optimiser", $"clip.{failed.Id:N}.1.encoding.mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(failedOutput)!);
+        File.WriteAllText(failedOutput, "data");
+        var service = new TemporaryOutputCleanupService(_repository);
+
+        var plan = await service.FindAsync(_databasePath, staging);
+        var result = service.Delete(plan);
+
+        plan.StagedOriginals.Select(file => file.Path).Should().BeEquivalentTo([failed.SourcePath, cancelled.SourcePath, completed.SourcePath]);
+        plan.Abandoned.Select(file => file.Path).Should().Equal(failedOutput);
+        result.Deleted.Should().Be(4);
+        new[] { failed, cancelled, completed }.Should().OnlyContain(job => !Directory.Exists(Path.GetDirectoryName(job.SourcePath)));
+        new[] { open, finalisationFailed, retried }.Should().OnlyContain(job => File.Exists(job.SourcePath));
+    }
+
+    [Fact]
+    public async Task NeverDeletesAStagedOriginalOutsideItsAssetFolderOrWithoutAStagingDirectory()
+    {
+        var staging = Path.Combine(_directory, "staging");
+        var outside = await CreateJobAtAsync(Path.Combine(_directory, "elsewhere", "clip.mp4"), JobStatus.Failed, Guid.NewGuid().ToString());
+        var otherAsset = await CreateJobAtAsync(Path.Combine(staging, Guid.NewGuid().ToString(), "clip.mp4"), JobStatus.Failed, Guid.NewGuid().ToString());
+        var staged = await CreateStagedJobAsync(staging, JobStatus.Failed, "EncodeFailed");
+        var service = new TemporaryOutputCleanupService(_repository);
+
+        var unconfigured = await service.FindAsync(_databasePath, string.Empty);
+        var configured = await service.FindAsync(_databasePath, staging);
+
+        unconfigured.StagedOriginals.Should().BeEmpty();
+        configured.StagedOriginals.Select(file => file.Path).Should().Equal(staged.SourcePath);
+        File.Exists(outside.SourcePath).Should().BeTrue();
+        File.Exists(otherAsset.SourcePath).Should().BeTrue();
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    private async Task<JobRecord> CreateStagedJobAsync(string staging, JobStatus status, string? failureCategory)
+    {
+        var assetId = Guid.NewGuid().ToString();
+        var job = await CreateJobAtAsync(Path.Combine(staging, assetId, "clip.mp4"), status, assetId);
+        job.FailureCategory = failureCategory;
+        await _repository.UpdateAsync(_databasePath, job);
+        return job;
+    }
+
+    /// <summary>An Immich job whose staged file exists at <paramref name="path"/>.</summary>
+    private async Task<JobRecord> CreateJobAtAsync(string path, JobStatus status, string? assetId)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "original");
+        return await _repository.CreateAsync(_databasePath, new JobRecord
+        {
+            Id = Guid.NewGuid(),
+            SourcePath = path,
+            SourceFingerprint = "fingerprint",
+            Status = status,
+            SourceKind = JobSourceKind.Immich,
+            ImmichAssetId = assetId,
+            ImmichChecksum = "checksum"
+        });
+    }
 
     private async Task<JobRecord> CreateJobAsync(JobStatus status, int attempt, JobStatus? resumeStatus = null) =>
         await _repository.CreateAsync(_databasePath, new JobRecord

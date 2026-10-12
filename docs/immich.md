@@ -76,9 +76,10 @@ Then drop `--first` to convert everything that matches, and drop `--local` to en
 
 1. Prints where encoding runs, such as `Encoding on: this PC.`, before downloading anything.
 2. Runs the [re-upload guard](#the-re-upload-guard).
-3. Searches Immich for videos taken before the age cutoff, skipping favourites if configured, and anything already converted, skipped or failed.
-4. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it.
-5. Converts the queue on your PC or remote worker, exactly like `queue run`.
+3. Downloads again the staged copy of any open job that is missing one, such as a job `queue retry` queued after `cleanup` deleted its copy. If Immich no longer has that video, the job fails as `SourceMissing`.
+4. Searches Immich for videos taken before the age cutoff, skipping favourites if configured, and anything already converted, skipped or failed.
+5. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it.
+6. Converts the queue on your PC or remote worker, exactly like `queue run`.
 
 Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes. If a `--first` run stops before converting, run it again: it converts the video it already downloaded and downloads no other.
 
@@ -106,7 +107,7 @@ If it stops partway, run it again: it continues where it left off. Until step 3,
 - **Space comes back later.** Immich keeps trashed originals until it purges its trash (30 days by default, set in Immich's server settings). Offsite backups of Immich keep them until their own retention removes them.
 - **Not carried over:** face names, comments and likes in shared albums, and memories. Immich detects faces again on the new asset.
 - **Changing `eligibility.rules`** makes every earlier "ineligible" decision stale, so each of those videos is downloaded once more on the next run.
-- **Failed or cancelled videos keep their download** in the staging directory. Delete those asset folders by hand when you no longer need them.
+- **Failed or cancelled videos keep their download** in the staging directory until you run `cleanup`, which deletes the download with the job's temporary files and asset folder. A download an open job still needs is never deleted. After `queue retry`, the next `immich run` downloads the video again.
 - **Exit code 10** after `immich run` means some videos failed to convert, or something else needs a look: a guard or search issue, or an asset Immich returned that its filter should have excluded. Read the output.
 
 ## The age rule

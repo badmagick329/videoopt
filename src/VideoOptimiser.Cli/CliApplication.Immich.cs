@@ -48,6 +48,7 @@ internal static partial class CliApplication
 
         var (guard, discovery) = (preparation.Guard, preparation.Discovery);
         Console.WriteLine($"Re-upload guard: checked {guard.Checked} converted originals. Trashed: {guard.Trashed.Count}. Restored: {guard.Restored.Count}. Issues: {guard.Issues.Count}.");
+        if (discovery.Restaged > 0) Console.WriteLine($"Downloaded again: {discovery.Restaged} staged original(s) that open jobs were missing.");
         Console.WriteLine($"Queued: {discovery.Queued.Count}. Already queued: {discovery.AlreadyQueued}. Already converted: {discovery.AlreadyConverted}. Previously failed or cancelled: {discovery.PreviouslyFailed}. Previously skipped: {discovery.PreviouslySkipped}. Ineligible: {discovery.Ineligible}. Skipped: {discovery.Skipped}. Excluded: {discovery.Excluded}. Issues: {discovery.Issues}.");
         if (discovery.Excluded > 0) Console.Error.WriteLine($"Immich's search returned {discovery.Excluded} asset(s) its filter should have left out. They were left alone, but the search may behave differently in this Immich version: check before running again.");
 

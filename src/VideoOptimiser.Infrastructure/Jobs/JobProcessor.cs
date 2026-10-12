@@ -18,7 +18,15 @@ public sealed class JobProcessor(
     public async Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
     {
         var path = Path.GetFullPath(sourcePath);
-        if (!File.Exists(path)) return FailureWithoutJob(ExitCode.ProcessingFailure, $"Original does not exist: {path}");
+        if (!File.Exists(path))
+        {
+            // An open job left as it is would fail the same way on every run, and keep discovery from queueing the file
+            // or asset again once it is back.
+            var orphan = await jobs.FindOpenBySourceAsync(databasePath, path, cancellationToken);
+            if (orphan is not null && orphan.Status is JobStatus.Queued or JobStatus.Interrupted && orphan.ResumeStatus != JobStatus.Finalizing)
+                return await FailAsync(orphan, databasePath, QueueService.SourceMissingCategory, $"Original does not exist: {path}", ExitCode.ProcessingFailure, cancellationToken);
+            return FailureWithoutJob(ExitCode.ProcessingFailure, $"Original does not exist: {path}");
+        }
 
         var fingerprint = await fingerprints.CreateAsync(path, cancellationToken);
         var job = await jobs.FindOpenBySourceAsync(databasePath, path, cancellationToken);

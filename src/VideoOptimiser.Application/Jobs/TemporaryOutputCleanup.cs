@@ -5,16 +5,24 @@ namespace VideoOptimiser.Application.Jobs;
 /// <summary>A file under a <c>.video-optimiser</c> folder that belongs to a job attempt nothing will use again.</summary>
 public sealed record AbandonedTemporaryOutput(string Path, Guid JobId, int Attempt, long SizeBytes, string Reason);
 
-public sealed record TemporaryOutputCleanupPlan(IReadOnlyList<AbandonedTemporaryOutput> Abandoned, IReadOnlyList<string> UnknownJobFiles)
+/// <summary>An Immich job's downloaded original that no job will read again, because the asset's latest job has ended.</summary>
+public sealed record StagedImmichOriginal(string Path, Guid JobId, long SizeBytes, string Reason);
+
+public sealed record TemporaryOutputCleanupPlan(IReadOnlyList<AbandonedTemporaryOutput> Abandoned, IReadOnlyList<StagedImmichOriginal> StagedOriginals, IReadOnlyList<string> UnknownJobFiles)
 {
-    public long TotalBytes => Abandoned.Sum(file => file.SizeBytes);
+    public int Count => Abandoned.Count + StagedOriginals.Count;
+    public long TotalBytes => Abandoned.Sum(file => file.SizeBytes) + StagedOriginals.Sum(file => file.SizeBytes);
 }
 
 public sealed record TemporaryOutputCleanupResult(int Deleted, long DeletedBytes, IReadOnlyList<string> Failures);
 
 public interface ITemporaryOutputCleanupService
 {
-    Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Finds abandoned temporary outputs and, under <paramref name="immichStagingDirectory"/> (empty for none), staged Immich
+    /// originals no open job reads.
+    /// </summary>
+    Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, string immichStagingDirectory, CancellationToken cancellationToken = default);
     TemporaryOutputCleanupResult Delete(TemporaryOutputCleanupPlan plan);
 }
 
