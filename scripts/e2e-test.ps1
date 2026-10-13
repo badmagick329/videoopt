@@ -202,6 +202,19 @@ validation:
     $rediscovered = Invoke-Cli 0 @('queue', 'discover')
     Assert ($rediscovered -cmatch '(?m)^Queued: 0\.' -and $rediscovered -match 'Already converted: 1\.' -and $rediscovered -match 'Previously failed or cancelled: 1\.') "rediscovery should queue nothing: $rediscovered"
 
+    # calibrate reads the finished jobs and the folder without writing: the three conversions count as history because each
+    # job stored the quality settings that chose its CRF, failed clip b does not, and the three AV1 files are summed apart.
+    $databasePath = Join-Path $workDirectory 'jobs.db'
+    $databaseHash = (Get-FileHash -LiteralPath $databasePath).Hash
+    $calibration = & $Executable calibrate --json --config $config | Out-String
+    Assert ($LASTEXITCODE -eq 0) "calibrate --json failed with exit code $LASTEXITCODE."
+    $calibration = $calibration | ConvertFrom-Json
+    Assert ((Get-FileHash -LiteralPath $databasePath).Hash -eq $databaseHash) 'calibrate must leave the job database unchanged.'
+    Assert ($calibration.rules[0].history.converted -eq 3 -and $calibration.rules[0].history.notWorthIt -eq 0) "calibrate should count three conversions: $($calibration.rules[0].history | ConvertTo-Json -Compress)"
+    Assert ($calibration.rules[0].videos -eq 2) "calibrate should find kept original c and failed clip b admitted; got $($calibration.rules[0].videos)."
+    Assert ($calibration.alreadyAv1.videos -eq 3) "calibrate should count three AV1 files; got $($calibration.alreadyAv1.videos)."
+    Assert ($calibration.historyLeftOut.otherSettings -eq 0) "every conversion ran at the current settings; got $($calibration.historyLeftOut.otherSettings) left out."
+
     # queue retry opts clip b back in; cancelling that job leaves it out of the queue again.
     $retried = Invoke-Cli 0 @('queue', 'retry', $jobB.id)
     Assert ($retried -match 'Created fresh queued job ([0-9a-f]{32})') "queue retry should create a job for clip b: $retried"
