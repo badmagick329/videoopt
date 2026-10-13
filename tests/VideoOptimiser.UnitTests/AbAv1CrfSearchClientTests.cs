@@ -123,4 +123,56 @@ public sealed class AbAv1CrfSearchClientTests
 
         CrfSearchOutputParser.Parse(output + Environment.NewLine + error).Should().Be(44);
     }
+
+    [Theory]
+    [InlineData("remote-crf-search.log", 29, "284.87 MiB", 29, "5 minutes")]
+    [InlineData("local-crf-search.stderr.log", 32, "37.07 MiB", 57, "14 seconds")]
+    // A rerun reuses earlier samples and ends such lines with " (cache)", which is not part of the time.
+    [InlineData("local-crf-search.stderr.log", 34, "29.97 MiB", 46, "17 seconds")]
+    public void TryParsePredictionReadsTheChosenCrfsEstimateFromARealLog(string fixture, int crf, string size, int percent, string taking)
+    {
+        CrfSearchOutputParser.TryParsePrediction(AbAv1OutputTests.Fixture(fixture), crf, out var prediction).Should().BeTrue();
+
+        prediction.Should().Be(new CrfPrediction(size, percent, taking));
+    }
+
+    [Fact]
+    public void TryParsePredictionFindsNothingForACrfThatWasNeverEstimated()
+    {
+        CrfSearchOutputParser.TryParsePrediction(AbAv1OutputTests.Fixture("remote-crf-search.log"), 30, out var prediction).Should().BeFalse();
+
+        prediction.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ASuccessfulSearchReportsEveryLineAsToolOutputAndCarriesThePrediction()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.AbAv1.{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(directory, "stdout.txt"), AbAv1OutputTests.Fixture("local-crf-search.stdout.log"));
+            await File.WriteAllTextAsync(Path.Combine(directory, "stderr.txt"), AbAv1OutputTests.Fixture("local-crf-search.stderr.log"));
+            var script = Path.Combine(directory, "ab-av1.cmd");
+            await File.WriteAllTextAsync(script, "@echo off\r\ntype \"%~dp0stdout.txt\"\r\ntype \"%~dp0stderr.txt\" 1>&2\r\nexit /b 0\r\n");
+            var reported = new List<JobProgress>();
+
+            var result = await new AbAv1CrfSearchClient(script).SearchAsync("C:\\video.mp4", new QualitySettings(), new ListProgress(reported));
+
+            result.Crf.Should().Be(32);
+            result.Prediction.Should().Be(new CrfPrediction("37.07 MiB", 57, "14 seconds"));
+            reported.Should().NotBeEmpty().And.OnlyContain(line => line.Kind == JobProgressKind.ToolOutput);
+            reported.Should().Contain(JobProgress.Tool("crf 32 VMAF 93.44 predicted video stream size 37.07 MiB (57%) taking 14 seconds"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class ListProgress(List<JobProgress> lines) : IProgress<JobProgress>
+    {
+        // stdout and stderr are read on separate tasks.
+        public void Report(JobProgress value) { lock (lines) lines.Add(value); }
+    }
 }

@@ -118,8 +118,12 @@ public sealed class RemoteSshProcessingSessionTests
         ]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
-        await session.StageAsync(source, "fingerprint");
+        var progress = new CaptureProgress();
+        await session.StageAsync(source, "fingerprint", progress);
 
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Resuming the upload at 40 B of 100 B..."),
+            JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
         runner.Requests.Should().ContainSingle(request => request.FileName == "sftp" && request.StandardInput!.StartsWith("reput ", StringComparison.Ordinal));
         runner.Requests.SelectMany(request => request.Arguments).Should().NotContain(argument => argument.Contains("rm -f --", StringComparison.Ordinal));
         Directory.Delete(directory, true);
@@ -150,7 +154,7 @@ public sealed class RemoteSshProcessingSessionTests
     }
 
     [Fact]
-    public async Task StageReportsHashUploadAndVerificationProgress()
+    public async Task AFastUploadPrintsOnlyItsStartAndSummaryLines()
     {
         var directory = CreateTemporaryDirectory();
         var source = Path.Combine(directory, "source.mkv");
@@ -163,14 +167,88 @@ public sealed class RemoteSshProcessingSessionTests
             new ExternalProcessResult(0, string.Empty, string.Empty)
         ]);
         var progress = new CaptureProgress();
+        var clock = new FakeClock();
+        var session = CreateSession(Guid.NewGuid(), runner, clock: clock);
+
+        // The checks (CPU, hash, existing upload, verification) and the quick transfer all run inside the first second.
+        await session.StageAsync(source, "fingerprint", progress);
+
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Uploading 100 B to the worker..."),
+            JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
+    public async Task UploadProgressAppearsOnlyAfterTenSecondsThenAtMostOnceEveryTenSeconds()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllBytesAsync(source, new byte[1_048_576]);
+        var clock = new FakeClock();
+        var runner = new UploadRunner(clock, remoteSizes: [262_144, 524_288], finishAtTick: 6);
+        var progress = new CaptureProgress();
+        var session = CreateSession(Guid.NewGuid(), runner, clock: clock);
+
+        await session.StageAsync(source, "fingerprint", progress);
+
+        // Ticks are 5 s apart: nothing at 5 s, the first line at 10 s, nothing at 15 s, the second at 20 s, nothing at 25 s.
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Uploading 1.0 MiB to the worker..."),
+            JobProgress.Detail("25% of 1.0 MiB, 25.6 KiB/s, about 30s left"),
+            JobProgress.Detail("50% of 1.0 MiB, 25.6 KiB/s, about 20s left"),
+            JobProgress.Step("Uploaded 1.0 MiB in 30s, checksum verified."));
+        runner.SizePolls.Should().Be(2, "a poll is an SSH connection, so none is made while no line is due");
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
+    public async Task AnOriginalAlreadyOnTheWorkerIsOneLineAndNoTransfer()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        var bytes = Enumerable.Range(0, 100).Select(value => (byte)value).ToArray();
+        await File.WriteAllBytesAsync(source, bytes);
+        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        var runner = new QueueRunner([
+            new ExternalProcessResult(0, "8 20000000000 100000000000", string.Empty),
+            new ExternalProcessResult(0, $"100 {hash}", string.Empty)
+        ]);
+        var progress = new CaptureProgress();
         var session = CreateSession(Guid.NewGuid(), runner);
 
         await session.StageAsync(source, "fingerprint", progress);
 
-        progress.Messages.Should().Contain(message => message.Contains("hashing local original", StringComparison.Ordinal) && message.Contains("0%", StringComparison.Ordinal));
-        progress.Messages.Should().Contain(message => message.Contains("hashing local original", StringComparison.Ordinal) && message.Contains("100%", StringComparison.Ordinal));
-        progress.Messages.Should().Contain(message => message.Contains("uploading original", StringComparison.Ordinal));
-        progress.Messages.Should().Contain("Staging: verifying the remote original checksum.");
+        progress.Lines.Should().Equal(JobProgress.Step("Already on the worker, checksum verified."));
+        runner.Requests.Should().NotContain(request => request.FileName == "sftp");
+        Directory.Delete(directory, true);
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 3)]
+    public async Task HashingPrintsProgressOnlyWhenItOutlastsTheDelay(bool slow, int minimumLines)
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllBytesAsync(source, new byte[3 * 1_048_576]);
+        var bytes = await File.ReadAllBytesAsync(source);
+        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        var runner = new QueueRunner([
+            new ExternalProcessResult(0, "8 20000000000 100000000000", string.Empty),
+            new ExternalProcessResult(0, $"{bytes.Length} {hash}", string.Empty)
+        ]);
+        var progress = new CaptureProgress();
+        // A clock that moves on every reading makes each read of the file look ten seconds apart.
+        var clock = new FakeClock { StepPerReading = slow ? TimeSpan.FromSeconds(10) : TimeSpan.Zero };
+        var session = CreateSession(Guid.NewGuid(), runner, clock: clock);
+
+        await session.StageAsync(source, "fingerprint", progress);
+
+        var checks = progress.Lines.Where(line => line.Kind == JobProgressKind.Detail).ToArray();
+        checks.Length.Should().BeGreaterThanOrEqualTo(minimumLines);
+        if (!slow) checks.Should().BeEmpty();
+        else checks.Should().OnlyContain(line => line.Text.StartsWith("Checking the checksum: ", StringComparison.Ordinal) && line.Text.EndsWith("% of 3.0 MiB", StringComparison.Ordinal));
         Directory.Delete(directory, true);
     }
 
@@ -181,9 +259,10 @@ public sealed class RemoteSshProcessingSessionTests
         var source = Path.Combine(directory, "source.mkv");
         await File.WriteAllBytesAsync(source, new byte[100]);
         var runner = new FailingSizePollRunner();
-        var session = CreateSession(Guid.NewGuid(), runner);
+        var session = CreateSession(Guid.NewGuid(), runner, clock: new FakeClock { TickLength = TimeSpan.FromSeconds(10) });
 
-        await session.StageAsync(source, "fingerprint");
+        // Progress is what makes the session poll at all, and only a poll that is due: the tick is 10 s, so the first one is.
+        await session.StageAsync(source, "fingerprint", new CaptureProgress());
 
         runner.SftpCompleted.Should().BeTrue();
         runner.VerificationObserved.Should().BeTrue();
@@ -209,6 +288,26 @@ public sealed class RemoteSshProcessingSessionTests
         runner.Requests.Should().HaveCount(2);
         runner.Requests.Should().OnlyContain(request => request.StandardInput == null);
         File.Exists(Path.Combine(directory, ".video-optimiser", $"{session.RemoteWorkspace!.Split('/').Last()}.crf.remote.log")).Should().BeTrue();
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
+    public async Task ACompletedCrfStageCarriesTheChosenCrfsPrediction()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var log = AbAv1OutputTests.Fixture("remote-crf-search.log");
+        var runner = new QueueRunner([
+            new ExternalProcessResult(0, $"completed 0\n\u001e{log}", string.Empty),
+            new ExternalProcessResult(0, log, string.Empty)
+        ]);
+        var session = CreateSession(Guid.NewGuid(), runner, source);
+
+        var result = await session.SearchCrfAsync(source, new QualitySettings());
+
+        result.Crf.Should().Be(29);
+        result.Prediction.Should().Be(new CrfPrediction("284.87 MiB", 29, "5 minutes"));
         Directory.Delete(directory, true);
     }
 
@@ -358,9 +457,86 @@ public sealed class RemoteSshProcessingSessionTests
 
         await session.RetrieveOutputAsync(output, 1, progress);
 
-        progress.Messages.Should().Contain(message => message.Contains("resuming remote output", StringComparison.Ordinal) && message.Contains("5 B", StringComparison.Ordinal));
-        progress.Messages.Should().Contain(message => message.Contains("output verified", StringComparison.Ordinal) && message.Contains("100%", StringComparison.Ordinal));
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Resuming the download at 5 B of 15 B..."),
+            JobProgress.Step("Downloaded 15 B in 0s, checksum verified."));
         File.ReadAllBytes(output).Should().Equal(good);
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
+    public async Task ADownloadPrintsItsStartAndSummaryLinesOnly()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        var output = Path.Combine(directory, "output.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var good = new byte[2 * 1_048_576];
+        var expectedHash = Convert.ToHexString(SHA256.HashData(good)).ToLowerInvariant();
+        var runner = new CallbackRunner(request =>
+        {
+            if (request.FileName == "ssh") return new ExternalProcessResult(0, $"{good.Length}\n{expectedHash}", string.Empty);
+            File.WriteAllBytes(output + ".partial", good);
+            return new ExternalProcessResult(0, string.Empty, string.Empty);
+        });
+        var progress = new CaptureProgress();
+        var clock = new FakeClock { StepPerReading = TimeSpan.Zero };
+        var session = CreateSession(Guid.NewGuid(), runner, source, clock);
+
+        await session.RetrieveOutputAsync(output, 1, progress);
+
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Downloading 2.0 MiB from the worker..."),
+            JobProgress.Step("Downloaded 2.0 MiB in 0s, checksum verified."));
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
+    public async Task ADownloadThatFailsItsChecksumSaysSoAndDownloadsAgain()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        var output = Path.Combine(directory, "output.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var good = Encoding.UTF8.GetBytes("verified-output");
+        var expectedHash = Convert.ToHexString(SHA256.HashData(good)).ToLowerInvariant();
+        var transfers = 0;
+        var runner = new CallbackRunner(request =>
+        {
+            if (request.FileName == "ssh") return new ExternalProcessResult(0, $"{good.Length}\n{expectedHash}", string.Empty);
+            File.WriteAllBytes(output + ".partial", ++transfers == 1 ? Encoding.UTF8.GetBytes("corrupt-output!") : good);
+            return new ExternalProcessResult(0, string.Empty, string.Empty);
+        });
+        var progress = new CaptureProgress();
+        var session = CreateSession(Guid.NewGuid(), runner, source);
+
+        await session.RetrieveOutputAsync(output, 1, progress);
+
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Downloading 15 B from the worker..."),
+            JobProgress.Detail("Checksum mismatch; downloading again."),
+            JobProgress.Step("Downloaded 15 B in 0s, checksum verified."));
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
+    public async Task ALocalOutputThatAlreadyMatchesIsNotDownloadedAgain()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        var output = Path.Combine(directory, "output.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var good = Encoding.UTF8.GetBytes("verified-output");
+        await File.WriteAllBytesAsync(output, good);
+        var expectedHash = Convert.ToHexString(SHA256.HashData(good)).ToLowerInvariant();
+        var runner = new QueueRunner([new ExternalProcessResult(0, $"{good.Length}\n{expectedHash}", string.Empty)]);
+        var progress = new CaptureProgress();
+        var session = CreateSession(Guid.NewGuid(), runner, source);
+
+        await session.RetrieveOutputAsync(output, 1, progress);
+
+        progress.Lines.Should().Equal(JobProgress.Step("Already downloaded, checksum verified."));
+        runner.Requests.Should().ContainSingle();
         Directory.Delete(directory, true);
     }
 
@@ -403,8 +579,9 @@ public sealed class RemoteSshProcessingSessionTests
 
         var action = async () => await session.SearchCrfAsync(source, new QualitySettings());
 
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*exit code 9*");
+        var thrown = (await action.Should().ThrowAsync<AbAv1StageException>().WithMessage("*exit code 9*")).Which;
         var logPath = Path.Combine(directory, ".video-optimiser", $"{session.RemoteWorkspace!.Split('/').Last()}.crf.remote.log");
+        thrown.LogPath.Should().Be(logPath);
         (await File.ReadAllTextAsync(logPath)).Should().Contain("fatal encode error");
         runner.Requests[^1].Arguments[^1].Should().Contain("rm -rf --").And.Contain(session.RemoteWorkspace);
         Directory.Delete(directory, true);
@@ -494,7 +671,7 @@ public sealed class RemoteSshProcessingSessionTests
         Directory.Delete(directory, true);
     }
 
-    private static RemoteSshProcessingSession CreateSession(Guid id, IExternalProcessRunner runner, string sourcePath = "C:\\Videos\\movie.mkv")
+    private static RemoteSshProcessingSession CreateSession(Guid id, IExternalProcessRunner runner, string sourcePath = "C:\\Videos\\movie.mkv", FakeClock? clock = null)
     {
         var settings = new AppSettings
         {
@@ -504,7 +681,8 @@ public sealed class RemoteSshProcessingSessionTests
                 RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser", MinimumCpuCount = 8, MinimumAvailableMemory = "14GiB", MinimumFreeDiskMultiplier = 2.5 }
             }
         };
-        return new RemoteSshProcessingSession(new JobRecord { Id = id, SourcePath = sourcePath }, settings, runner, _ => Task.CompletedTask);
+        clock ??= new FakeClock();
+        return new RemoteSshProcessingSession(new JobRecord { Id = id, SourcePath = sourcePath }, settings, runner, _ => Task.CompletedTask, clock.Read, clock.TickAsync);
     }
 
     private static string CreateTemporaryDirectory()
@@ -578,10 +756,69 @@ public sealed class RemoteSshProcessingSessionTests
         }
     }
 
-    private sealed class CaptureProgress : IProgress<CrfSearchOutput>
+    private sealed class CaptureProgress : IProgress<JobProgress>
     {
-        public List<string> Messages { get; } = [];
+        public List<JobProgress> Lines { get; } = [];
 
-        public void Report(CrfSearchOutput value) => Messages.Add(value.Text);
+        public void Report(JobProgress value) => Lines.Add(value);
+    }
+
+    /// <summary>
+    /// The session's clock and its transfer-poll wait. A tick moves time on by <see cref="TickLength"/> without waiting, so a
+    /// 30 s transfer takes no time to test; <see cref="StepPerReading"/> moves it on every reading, to make hashing look slow.
+    /// </summary>
+    private sealed class FakeClock
+    {
+        private TimeSpan _now;
+
+        public TimeSpan TickLength { get; init; } = TimeSpan.FromSeconds(5);
+        public TimeSpan StepPerReading { get; init; }
+        public int Ticks { get; private set; }
+        public Action<int>? OnTick { get; set; }
+
+        public TimeSpan Read()
+        {
+            _now += StepPerReading;
+            return _now;
+        }
+
+        public async Task TickAsync(CancellationToken cancellationToken)
+        {
+            _now += TickLength;
+            Ticks++;
+            OnTick?.Invoke(Ticks);
+            await Task.Yield();
+        }
+    }
+
+    /// <summary>An SFTP transfer that stays pending until <paramref name="finishAtTick"/>, with the remote partial's size growing per poll.</summary>
+    private sealed class UploadRunner : IExternalProcessRunner
+    {
+        // Continuations run inline, so completing it inside a tick finishes the transfer before the session looks again.
+        private readonly TaskCompletionSource<ExternalProcessResult> _sftp = new();
+        private readonly Queue<long> _remoteSizes;
+
+        public UploadRunner(FakeClock clock, IEnumerable<long> remoteSizes, int finishAtTick)
+        {
+            _remoteSizes = new Queue<long>(remoteSizes);
+            clock.OnTick = tick => { if (tick == finishAtTick) _sftp.TrySetResult(new ExternalProcessResult(0, string.Empty, string.Empty)); };
+        }
+
+        public int SizePolls { get; private set; }
+
+        public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request.FileName == "sftp") return _sftp.Task;
+            var command = request.Arguments[^1];
+            if (command.Contains("nproc", StringComparison.Ordinal)) return Ok("8 20000000000 100000000000");
+            if (command.Contains("else printf", StringComparison.Ordinal))
+            {
+                SizePolls++;
+                return Ok(_remoteSizes.Dequeue().ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            return Ok(string.Empty);
+        }
+
+        private static Task<ExternalProcessResult> Ok(string output) => Task.FromResult(new ExternalProcessResult(0, output, string.Empty));
     }
 }

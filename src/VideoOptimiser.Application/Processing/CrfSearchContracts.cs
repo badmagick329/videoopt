@@ -3,12 +3,27 @@ using VideoOptimiser.Application.Configuration;
 
 namespace VideoOptimiser.Application.Processing;
 
-public sealed record CrfSearchResult(int Crf, string StandardOutput, string StandardError, TimeSpan Duration);
-public sealed record CrfSearchOutput(string Stream, string Text);
+/// <summary>
+/// ab-av1's estimate for the chosen CRF, kept as it printed it: <see cref="Size"/> is its own text (<c>284.87 MiB</c>) and
+/// <see cref="Taking"/> how long the encode should take (<c>5 minutes</c>). Only a search that ran in this process has one;
+/// a job resumed with a stored CRF does not.
+/// </summary>
+public sealed record CrfPrediction(string Size, int Percent, string Taking);
+
+public sealed record CrfSearchResult(int Crf, string StandardOutput, string StandardError, TimeSpan Duration, CrfPrediction? Prediction = null);
+
+/// <summary>
+/// An ab-av1 stage failed for a reason other than "not worth converting". <see cref="LogPath"/> is the kept copy of its full
+/// log, when one could be written, so the job's failure can point at it instead of at a one-line summary.
+/// </summary>
+public sealed class AbAv1StageException(string message, string? logPath, Exception? innerException = null) : InvalidOperationException(message, innerException)
+{
+    public string? LogPath { get; } = logPath;
+}
 
 public interface ICrfSearchClient
 {
-    Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
+    Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default);
     IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings);
 }
 

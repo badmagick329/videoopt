@@ -184,7 +184,7 @@ internal static partial class CliApplication
             CliCommandKind.RemoteSetup => (int)await services.GetRequiredService<IRemoteSetupService>().RunAsync(configuration, ConfirmAsync, new InlineProgress<string>(Console.WriteLine), cancellationToken),
             CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
             CliCommandKind.QueueDiscover => await RunQueueDiscoverAsync(services.GetRequiredService<IQueueService>(), configuration, command.First, cancellationToken),
-            CliCommandKind.QueueRun => await RunQueueRunAsync(services, configuration, command.ModeOverride, cancellationToken),
+            CliCommandKind.QueueRun => await RunQueueRunAsync(services, configuration, command.ConfigurationPath, command.ModeOverride, cancellationToken),
             CliCommandKind.QueueList => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.QueueCancel => await RunQueueCancelAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
             CliCommandKind.QueueRetry => await RunQueueRetryAsync(services.GetRequiredService<IJobRetryService>(), configuration, command.JobId!, cancellationToken),
@@ -193,7 +193,7 @@ internal static partial class CliApplication
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
             CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command, cancellationToken),
             CliCommandKind.Cleanup => await RunCleanupAsync(services.GetRequiredService<ITemporaryOutputCleanupService>(), configuration, command.DryRun, cancellationToken),
-            CliCommandKind.ImmichRun => await RunImmichRunAsync(services, configuration, command.Limit, command.ModeOverride, cancellationToken),
+            CliCommandKind.ImmichRun => await RunImmichRunAsync(services, configuration, command.ConfigurationPath, command.Limit, command.ModeOverride, cancellationToken),
             CliCommandKind.ImmichFinalize => await RunImmichFinalizeAsync(services, configuration, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
@@ -295,8 +295,8 @@ internal static partial class CliApplication
         {
             await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
         }
-        Console.WriteLine($"Processing: {sourcePath}");
-        var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
+        var progress = new JobProgressConsole(Console.Out);
+        progress.Report(JobProgress.Header(1, 1, sourcePath));
         JobProcessingResult result;
         try
         {
@@ -304,25 +304,28 @@ internal static partial class CliApplication
         }
         catch (OperationCanceledException)
         {
-            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, [], interrupted: true, unexpectedFailure: false, processRoute: true, cancellationToken);
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command.ConfigurationPath, managedWork, [], interrupted: true, unexpectedFailure: false, processRoute: true, cancellationToken);
             throw;
         }
         catch
         {
-            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, [], interrupted: false, unexpectedFailure: true, processRoute: true, cancellationToken);
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command.ConfigurationPath, managedWork, [], interrupted: false, unexpectedFailure: true, processRoute: true, cancellationToken);
             throw;
         }
-        // A skipped job already printed its "Not worth converting" line through the progress reporter.
-        if (result.Job.Status != JobStatus.Skipped)
+        // A job that exists ended with an outcome line through the progress reporter. Only a failure before any job was
+        // created (such as a missing original) has nothing else to say it.
+        if (result.Job.Id == Guid.Empty)
         {
             if (result.ExitCode == ExitCode.Success) Console.WriteLine(result.Message);
             else Console.Error.WriteLine(result.Message);
         }
 
         if (result.ExitCode != ExitCode.Success) PrintFailedJobs([ToFailedQueueJob(result.Job, result.Message)]);
+        else if (result.Job.Status == JobStatus.ReadyToFinalize) Console.WriteLine($"Next: review the outputs, then run 'video-optimiser finalize {result.Job.Id:N}'.");
         await ApplyManagedWorkerDeletionPolicyAsync(
             services,
             configuration,
+            command.ConfigurationPath,
             managedWork,
             result.ExitCode == ExitCode.Success ? [] : [ToFailedQueueJob(result.Job, result.Message)],
             result.Job.Status == JobStatus.Interrupted,
@@ -409,15 +412,16 @@ internal static partial class CliApplication
         return (int)ExitCode.Success;
     }
 
-    private static async Task<int> RunQueueRunAsync(IServiceProvider services, LoadedConfiguration configuration, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
+    private static async Task<int> RunQueueRunAsync(IServiceProvider services, LoadedConfiguration configuration, string? explicitConfigPath, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
     {
         if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
         await PrintRunBannerAsync(services, configuration, modeOverride, cancellationToken);
         var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, modeOverridden: modeOverride is not null, cancellationToken);
-        var (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, preparation, (ready, skipped, failures) =>
+        var (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, explicitConfigPath, preparation, (ready, skipped, failures) =>
         {
             Console.WriteLine($"Ready to finalise: {ready}. Not worth converting: {skipped}. Failed: {failures.Length}.");
             PrintFailedJobs(failures);
+            if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser finalize --ready'.");
         }, cancellationToken);
         return (int)QueueExitCode.Calculate(ready, failures.Length);
     }
@@ -465,7 +469,7 @@ internal static partial class CliApplication
     /// Processes prepared jobs, creating a managed worker only when there is work for it. <paramref name="report"/> prints the
     /// outcome before the worker's deletion policy speaks, so its retention messages follow the failures they refer to.
     /// </summary>
-    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
+    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, string? explicitConfigPath, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
         if (preparation.RunnableJobs.Count == 0)
@@ -481,8 +485,8 @@ internal static partial class CliApplication
         {
             await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
         }
-        Console.WriteLine("Running queued jobs.");
-        var progress = new InlineProgress<CrfSearchOutput>(update => Console.WriteLine(update.Text));
+        Console.WriteLine($"Converting {preparation.RunnableJobs.Count} {(preparation.RunnableJobs.Count == 1 ? "video" : "videos")}.");
+        var progress = new JobProgressConsole(Console.Out);
         QueueRunResult result;
         try
         {
@@ -490,18 +494,18 @@ internal static partial class CliApplication
         }
         catch (OperationCanceledException)
         {
-            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, [], interrupted: true, unexpectedFailure: false, processRoute: false, cancellationToken);
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, explicitConfigPath, managedWork, [], interrupted: true, unexpectedFailure: false, processRoute: false, cancellationToken);
             throw;
         }
         catch
         {
-            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, [], interrupted: false, unexpectedFailure: true, processRoute: false, cancellationToken);
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, explicitConfigPath, managedWork, [], interrupted: false, unexpectedFailure: true, processRoute: false, cancellationToken);
             throw;
         }
 
         var failures = preparation.FailedJobs.Concat(result.FailedJobs).ToArray();
         report(result.ReadyToFinalize, result.SkippedJobs.Count, failures);
-        await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, failures, result.Interrupted, unexpectedFailure: false, processRoute: false, cancellationToken);
+        await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, explicitConfigPath, managedWork, failures, result.Interrupted, unexpectedFailure: false, processRoute: false, cancellationToken);
         if (!managedWork && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the server; powering it off still bills.");
@@ -523,7 +527,8 @@ internal static partial class CliApplication
         }
     }
 
-    private static async Task ApplyManagedWorkerDeletionPolicyAsync(IServiceProvider services, LoadedConfiguration configuration, bool workerWasUsed, FailedQueueJob[] failedJobs, bool interrupted, bool unexpectedFailure, bool processRoute, CancellationToken cancellationToken)
+    /// <param name="explicitConfigPath">The <c>--config</c> argument as typed, or null. Only then does the command the user is told to run need it: otherwise the worker's settings are found the same way without it.</param>
+    private static async Task ApplyManagedWorkerDeletionPolicyAsync(IServiceProvider services, LoadedConfiguration configuration, string? explicitConfigPath, bool workerWasUsed, FailedQueueJob[] failedJobs, bool interrupted, bool unexpectedFailure, bool processRoute, CancellationToken cancellationToken)
     {
         var decision = ManagedWorkerDeletionPolicy.Decide(workerWasUsed, configuration.Settings.Processing.RemoteSsh.Hetzner.DeleteAfterRun, failedJobs.Length > 0, interrupted, unexpectedFailure);
         if (decision == ManagedWorkerDeletionDecision.RetainInterrupted)
@@ -538,8 +543,7 @@ internal static partial class CliApplication
         {
             Console.WriteLine();
             Console.WriteLine("Managed Hetzner worker retained so the failed job can be inspected or retried.");
-            Console.WriteLine("Delete it manually when finished:");
-            Console.WriteLine(@".\artifacts\local\video-optimiser.exe worker delete --config .\video-optimiser.yaml");
+            Console.WriteLine($"Delete it when finished: video-optimiser worker delete{(explicitConfigPath is null ? string.Empty : $" --config \"{explicitConfigPath}\"")}");
         }
         var cleanup = services.GetRequiredService<IManagedWorkerCleanupOrchestrator>();
         var progress = new InlineProgress<string>(Console.WriteLine);

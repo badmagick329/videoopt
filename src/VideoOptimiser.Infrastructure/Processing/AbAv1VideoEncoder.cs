@@ -25,7 +25,7 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
         "--enc", "movflags=+faststart+use_metadata_tags"
     ];
 
-    public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var info = new ProcessStartInfo { FileName = executablePath, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
         foreach (var argument in BuildArguments(inputPath, outputPath, crf, settings))
@@ -40,8 +40,8 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
             throw new InvalidOperationException("Could not start ab-av1.");
         }
 
-        var outputTask = ReadLinesAsync(process.StandardOutput, "stdout", progress, cancellationToken);
-        var errorTask = ReadLinesAsync(process.StandardError, "stderr", progress, cancellationToken);
+        var outputTask = ReadLinesAsync(process.StandardOutput, progress, cancellationToken);
+        var errorTask = ReadLinesAsync(process.StandardError, progress, cancellationToken);
         try
         {
             await process.WaitForExitAsync(cancellationToken);
@@ -71,13 +71,13 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
         return new EncodeResult(outputPath, stopwatch.Elapsed);
     }
 
-    private static async Task<string> ReadLinesAsync(StreamReader reader, string stream, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken)
+    private static async Task<string> ReadLinesAsync(StreamReader reader, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         var lines = new List<string>();
         while (await reader.ReadLineAsync(cancellationToken) is { } line)
         {
             lines.Add(line);
-            progress?.Report(new CrfSearchOutput(stream, line));
+            progress?.Report(JobProgress.Tool(line));
         }
 
         return string.Join(Environment.NewLine, lines);

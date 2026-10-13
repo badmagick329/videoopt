@@ -150,7 +150,7 @@ public interface IJobProcessor
         string sourcePath,
         AppSettings settings,
         bool force,
-        IProgress<CrfSearchOutput>? progress = null,
+        IProgress<JobProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }
 
@@ -191,7 +191,7 @@ public interface IQueueService
     /// <param name="modeOverridden">Whether <c>--local</c> or <c>--remote</c> set the mode in <paramref name="settings"/>. The settings
     /// alone cannot say so, and only then is a started job from the other mode skipped instead of failed.</param>
     Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind sourceKind, bool modeOverridden = false, CancellationToken cancellationToken = default);
-    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default);
+    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default);
 }
 
 public interface IJobRetryService

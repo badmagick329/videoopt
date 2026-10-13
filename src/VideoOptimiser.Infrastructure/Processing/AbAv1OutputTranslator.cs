@@ -150,10 +150,17 @@ public sealed partial class AbAv1OutputTranslator
 
     private sealed class TranslatingProgress(AbAv1OutputTranslator translator, IProgress<JobProgress> inner) : IProgress<JobProgress>
     {
+        // A local ab-av1's stdout and stderr are read on separate tasks, and the translator's state (time-report mode,
+        // progress throttle) is not safe to touch from both at once.
+        private readonly object _gate = new();
+
         public void Report(JobProgress value)
         {
             if (value.Kind != JobProgressKind.ToolOutput) { inner.Report(value); return; }
-            foreach (var line in translator.Translate(value.Text)) inner.Report(line);
+            lock (_gate)
+            {
+                foreach (var line in translator.Translate(value.Text)) inner.Report(line);
+            }
         }
     }
 

@@ -25,7 +25,7 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
         "--sample-duration", settings.CrfSearch.SampleDuration
     ];
 
-    public async Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -47,8 +47,8 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
             throw new InvalidOperationException("Could not start ab-av1.");
         }
 
-        var outputTask = ReadLinesAsync(process.StandardOutput, "stdout", progress, cancellationToken);
-        var errorTask = ReadLinesAsync(process.StandardError, "stderr", progress, cancellationToken);
+        var outputTask = ReadLinesAsync(process.StandardOutput, progress, cancellationToken);
+        var errorTask = ReadLinesAsync(process.StandardError, progress, cancellationToken);
         try
         {
             await process.WaitForExitAsync(cancellationToken);
@@ -74,16 +74,18 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
             throw new InvalidOperationException($"ab-av1 crf-search failed with exit code {process.ExitCode}: {AbAv1Output.Summarise(error)}");
         }
 
-        return new CrfSearchResult(CrfSearchOutputParser.Parse(output + Environment.NewLine + error), output, error, started.Elapsed);
+        var combined = output + Environment.NewLine + error;
+        var crf = CrfSearchOutputParser.Parse(combined);
+        return new CrfSearchResult(crf, output, error, started.Elapsed, CrfSearchOutputParser.TryParsePrediction(combined, crf, out var prediction) ? prediction : null);
     }
 
-    private static async Task<string> ReadLinesAsync(StreamReader reader, string stream, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken)
+    private static async Task<string> ReadLinesAsync(StreamReader reader, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         var lines = new List<string>();
         while (await reader.ReadLineAsync(cancellationToken) is { } line)
         {
             lines.Add(line);
-            progress?.Report(new CrfSearchOutput(stream, line));
+            progress?.Report(JobProgress.Tool(line));
         }
 
         return string.Join(Environment.NewLine, lines);
@@ -97,6 +99,20 @@ public static partial class CrfSearchOutputParser
 
     [GeneratedRegex(@"(?im)\bcrf\s+(?<crf>\d+(?:\.0+)?)\s+successful\s*$")]
     private static partial Regex SuccessfulCrfLine();
+
+    // ab-av1 prints the chosen CRF's estimate as a sample_encode INFO line and again, bare, on stdout. A rerun marks lines
+    // that reused earlier samples "(cache)".
+    [GeneratedRegex(@"\bcrf\s+(?<crf>\d+)(?:\.\d+)?\s+VMAF\s+\d+(?:\.\d+)?\s+predicted video stream size\s+(?<size>\d+(?:\.\d+)?\s+\w+)\s+\((?<percent>\d+)%\)\s+taking\s+(?<taking>.+?)(?:\s+\(cache\))?\s*$", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex PredictionLine();
+
+    /// <summary>Reads ab-av1's size and time estimate for <paramref name="crf"/>; false when its output has none.</summary>
+    public static bool TryParsePrediction(string output, int crf, out CrfPrediction? prediction)
+    {
+        var match = PredictionLine().Matches(output)
+            .LastOrDefault(candidate => string.Equals(candidate.Groups["crf"].Value, crf.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal));
+        prediction = match is null ? null : new CrfPrediction(match.Groups["size"].Value, int.Parse(match.Groups["percent"].Value, CultureInfo.InvariantCulture), match.Groups["taking"].Value);
+        return prediction is not null;
+    }
 
     public static int Parse(string output)
     {

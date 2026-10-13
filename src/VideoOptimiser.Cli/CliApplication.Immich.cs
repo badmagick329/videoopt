@@ -12,7 +12,7 @@ using VideoOptimiser.Infrastructure.Jobs;
 /// </summary>
 internal static partial class CliApplication
 {
-    private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, int? limit, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
+    private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, string? explicitConfigPath, int? limit, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
     {
         if (!RequireImmich(configuration) || ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
         // Discovery downloads originals, so the banner comes first.
@@ -56,12 +56,12 @@ internal static partial class CliApplication
         FailedQueueJob[] failures;
         try
         {
-            (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, preparation.Queue, (ready, skipped, failures) =>
+            (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, explicitConfigPath, preparation.Queue, (ready, skipped, failures) =>
             {
                 Console.WriteLine($"Ready to finalise: {ready}. Not worth converting: {skipped}. Failed: {failures.Length}.");
                 PrintFailedJobs(failures);
                 PrintGuardSummary(guard);
-                if (ready > 0) Console.WriteLine("Review the outputs, then run 'video-optimiser immich finalize'.");
+                if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser immich finalize'.");
             }, cancellationToken);
         }
         catch

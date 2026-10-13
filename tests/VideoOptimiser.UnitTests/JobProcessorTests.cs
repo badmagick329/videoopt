@@ -207,14 +207,19 @@ public sealed class JobProcessorTests : IDisposable
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
             Eligibility = Rules()
         };
-        var messages = new List<string>();
+        var reported = new List<JobProgress>();
 
-        var result = await processor.ProcessAsync(databasePath, source, settings, force: false, new SynchronousProgress(update => messages.Add(update.Text)));
+        var result = await processor.ProcessAsync(databasePath, source, settings, force: false, new SynchronousProgress(reported.Add));
 
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
         result.Job.Attempt.Should().Be(2);
         File.Exists(partial).Should().BeFalse();
-        messages.Should().Contain(message => message.Contains("deleted the partial output of interrupted attempt 1"));
+        // The stored CRF skips the search, so there is no search line and no ab-av1 estimate to quote.
+        Steps(reported).Should().Equal(
+            "Deleted the partial output of interrupted attempt 1.",
+            "Encoding at CRF 42...",
+            "Checking the output: streams, duration, savings and decode test...",
+            "Ready to finalise: 100 B → 50 B, 50.0% saved.");
     }
 
     [Fact]
@@ -347,10 +352,10 @@ public sealed class JobProcessorTests : IDisposable
             Quality = new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 }
         };
         var search = new ThrowingCrfSearch(new NoWorthwhileCrfException(new CrfAttempt(31, 97.31, 95), settings.Quality));
-        var reported = new List<string>();
+        var reported = new List<JobProgress>();
         var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
 
-        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(update => reported.Add(update.Text)));
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
 
         result.ExitCode.Should().Be(ExitCode.Success);
         var stored = (await repository.GetAsync(settings.Database.Path, result.Job.Id))!;
@@ -359,7 +364,10 @@ public sealed class JobProcessorTests : IDisposable
         stored.FailureMessage.Should().Be("AV1 would keep 95% of the size at the best quality-passing setting (CRF 31, VMAF 97.3); the limit is 80% (quality.maxEncodedPercent).");
         stored.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings.Quality));
         stored.CompletedUtc.Should().NotBeNull();
-        reported.Should().Contain($"Not worth converting: clip.mp4. {stored.FailureMessage}");
+        // The header names the file, so the outcome line does not repeat it, and nothing follows the outcome line.
+        Steps(reported).Should().Equal(
+            "Finding the best CRF for VMAF 97 (2 test clips of 20s each)...",
+            $"Not worth converting: {stored.FailureMessage}");
     }
 
     [Fact]
@@ -426,11 +434,234 @@ public sealed class JobProcessorTests : IDisposable
         arguments.Should().ContainInConsecutiveOrder("--max-encoded-percent", "70");
     }
 
+    [Fact]
+    public async Task ASuccessfulLocalJobReportsEachStepAndEndsWithItsOutcome()
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("steps.db", new QualitySettings { MinimumVmaf = 97 });
+        var processor = Processor(new PredictedCrfSearch(), new FakeEncoder());
+        var reported = new List<JobProgress>();
+
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize);
+        Steps(reported).Should().Equal(
+            "Finding the best CRF for VMAF 97 (2 test clips of 20s each)...",
+            "Chose CRF 29 in 7m 36s. Expected output: 284.87 MiB (29% of the original).",
+            "Encoding at CRF 29, expected to take about 5 minutes...",
+            "Checking the output: streams, duration, savings and decode test...",
+            "Ready to finalise: 100 B → 50 B, 50.0% saved.");
+        // No staging, hashing or download lines for a local job, and no job header: the caller owns that.
+        reported.Should().NotContain(line => line.Kind == JobProgressKind.Header);
+    }
+
+    [Fact]
+    public async Task TheCrfSummaryDropsTheEstimateWhenAbAv1PrintedNone()
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("noestimate.db", new QualitySettings { MinimumVmaf = 95.5 });
+        var reported = new List<JobProgress>();
+
+        _ = await Processor(new FixedCrfSearch(), new FakeEncoder()).ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        Steps(reported).Take(3).Should().Equal(
+            "Finding the best CRF for VMAF 95.5 (2 test clips of 20s each)...",
+            "Chose CRF 42 in 0s.",
+            "Encoding at CRF 42...");
+    }
+
+    [Fact]
+    public async Task TheValidationLineOmitsTheDecodeTestWhenItIsOff()
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("nodecode.db");
+        settings.Validation.DecodeTest = DecodeTestModes.None;
+        var reported = new List<JobProgress>();
+
+        _ = await Processor(new FixedCrfSearch(), new FakeEncoder()).ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        Steps(reported).Should().Contain("Checking the output: streams, duration, savings...");
+    }
+
+    [Fact]
+    public async Task AbAv1LogLinesReachTheConsoleTranslatedByAFreshTranslatorPerStage()
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("translated.db", new QualitySettings { MinimumVmaf = 97 });
+        var reported = new List<JobProgress>();
+
+        _ = await Processor(new LoggingCrfSearch(), new LoggingEncoder()).ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        reported.Should().NotContain(line => line.Kind == JobProgressKind.ToolOutput);
+        reported.Should().Contain(JobProgress.Detail("CRF 34   VMAF 95.02   size  19%   below target"));
+        reported.Should().Contain(line => line.Kind == JobProgressKind.Step && line.Text.StartsWith("Encoded 99.81 MiB (29% of the original) in ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ACrfSearchFailureKeepsTheFullLogAndNamesItInTheOutcomeAndTheStoredFailure()
+    {
+        var source = Path.Combine(_directory, "broken.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("crflog.db");
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(new FailingLoggingCrfSearch(), new FakeEncoder()).ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        var log = Path.Combine(_directory, ".video-optimiser", $"{result.Job.Id:N}.crf.log");
+        File.ReadAllLines(log).Should().Equal("first ab-av1 line", "Error: ffmpeg exploded");
+        Steps(reported).Should().Equal(
+            "Finding the best CRF for VMAF 95 (2 test clips of 20s each)...",
+            "Failed during the CRF search: ab-av1 crf-search failed with exit code 1: ffmpeg exploded",
+            $"Full log: {log}");
+        result.Job.FailureCategory.Should().Be("CrfSearchFailed");
+        result.Job.FailureMessage.Should().Be($"ab-av1 crf-search failed with exit code 1: ffmpeg exploded Full log: {log}");
+        TemporaryOutputClassifier.TryParse(Path.GetFileName(log), out _, out _).Should().BeFalse("cleanup must never treat a kept log as an abandoned output");
+    }
+
+    [Fact]
+    public async Task AnEncodeFailureKeepsTheLogOfThatAttempt()
+    {
+        var source = Path.Combine(_directory, "broken.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("encodelog.db");
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(new FixedCrfSearch(), new FailingLoggingEncoder()).ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        var log = Path.Combine(_directory, ".video-optimiser", $"{result.Job.Id:N}.encode-1.log");
+        File.ReadAllLines(log).Should().Contain("Error: disk full");
+        Steps(reported).TakeLast(2).Should().Equal("Failed during encoding: ab-av1 encode failed with exit code 1.", $"Full log: {log}");
+        result.Job.FailureMessage.Should().EndWith($"Full log: {log}");
+    }
+
+    [Fact]
+    public async Task AValidationFailureIsTheOutcomeWithItsFailuresJoined()
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("invalid.db");
+        var processor = new JobProcessor(new SqliteJobRepository(new SqliteDatabaseInitializer()), new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new FailingValidator());
+        var reported = new List<JobProgress>();
+
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        result.ExitCode.Should().Be(ExitCode.ValidationFailure);
+        Steps(reported).Last().Should().Be("Failed validation: duration differs; no streams");
+    }
+
+    [Fact]
+    public async Task AnUnreachableWorkerIsTheOutcomeAndSaysToRunTheCommandAgain()
+    {
+        var source = Path.Combine(_directory, "remote.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("unreachable.db");
+        settings.Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } };
+        var processor = new JobProcessor(new SqliteJobRepository(new SqliteDatabaseInitializer()), new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        var reported = new List<JobProgress>();
+
+        _ = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        Steps(reported).Should().Equal("Worker unreachable: Remote unavailable. Run the same command again to resume.");
+    }
+
+    [Fact]
+    public async Task ARerunOfAReadyJobReportsTheExistingMessageAsItsOutcome()
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("again.db");
+        var processor = Processor(new FixedCrfSearch(), new FakeEncoder());
+        var first = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
+        var reported = new List<JobProgress>();
+
+        _ = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        Steps(reported).Should().Equal($"Job {first.Job.Id:N} is already ready to finalise.");
+    }
+
+    private AppSettings Settings(string databaseName, QualitySettings? quality = null) => new()
+    {
+        Database = new DatabaseSettings { Path = Path.Combine(_directory, databaseName) },
+        Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+        Eligibility = Rules(),
+        Quality = quality ?? new QualitySettings()
+    };
+
+    private static JobProcessor Processor(ICrfSearchClient search, IVideoEncoder encoder) => new(
+        new SqliteJobRepository(new SqliteDatabaseInitializer()),
+        new ReadableFiles(),
+        _ => new H264Probe(),
+        new ProcessingSessionFactory(_ => search, _ => encoder, new UnexpectedExternalProcessRunner()),
+        new FileFingerprintService(),
+        new OutputManifestStore(),
+        new PassingValidator());
+
+    private static string[] Steps(IEnumerable<JobProgress> reported) => [.. reported.Where(line => line.Kind == JobProgressKind.Step).Select(line => line.Text)];
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private sealed class SynchronousProgress(Action<CrfSearchOutput> report) : IProgress<CrfSearchOutput>
+    private sealed class PredictedCrfSearch : ICrfSearchClient
     {
-        public void Report(CrfSearchOutput value) => report(value);
+        public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new CrfSearchResult(29, string.Empty, string.Empty, TimeSpan.FromSeconds(456), new CrfPrediction("284.87 MiB", 29, "5 minutes")));
+    }
+
+    private sealed class LoggingCrfSearch : ICrfSearchClient
+    {
+        public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            progress?.Report(JobProgress.Tool("[2026-10-13T10:10:36Z INFO  ab_av1::command::crf_search] crf 34 VMAF 95.02 (19%)"));
+            return Task.FromResult(new CrfSearchResult(29, string.Empty, string.Empty, TimeSpan.Zero));
+        }
+    }
+
+    private sealed class LoggingEncoder : IVideoEncoder
+    {
+        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) => [];
+        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            progress?.Report(JobProgress.Tool("Encoded 99.81 MiB (29%)"));
+            await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
+            return new EncodeResult(outputPath, TimeSpan.Zero);
+        }
+    }
+
+    private sealed class FailingLoggingCrfSearch : ICrfSearchClient
+    {
+        public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            progress?.Report(JobProgress.Tool("first ab-av1 line"));
+            progress?.Report(JobProgress.Tool("Error: ffmpeg exploded"));
+            throw new InvalidOperationException("ab-av1 crf-search failed with exit code 1: ffmpeg exploded");
+        }
+    }
+
+    private sealed class FailingLoggingEncoder : IVideoEncoder
+    {
+        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) => [];
+        public Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            progress?.Report(JobProgress.Tool("Error: disk full"));
+            throw new InvalidOperationException("ab-av1 encode failed with exit code 1.");
+        }
+    }
+
+    private sealed class FailingValidator : IOutputValidationService
+    {
+        public Task<ValidationReport> ValidateAsync(OutputManifest manifest, AppSettings settings, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ValidationReport { Passed = false, Failures = ["duration differs", "no streams"], ValidatedUtc = DateTimeOffset.UtcNow });
+    }
+
+    private sealed class SynchronousProgress(Action<JobProgress> report) : IProgress<JobProgress>
+    {
+        public void Report(JobProgress value) => report(value);
     }
 
     private sealed class ReadableFiles : IFileReadinessService
@@ -448,20 +679,20 @@ public sealed class JobProcessorTests : IDisposable
     private sealed class FixedCrfSearch : ICrfSearchClient
     {
         public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
-        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
     }
 
     private sealed class ThrowingCrfSearch(Exception exception) : ICrfSearchClient
     {
         public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
-        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => throw exception;
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw exception;
     }
 
     private sealed class CapturingCrfSearch : ICrfSearchClient
     {
         public QualitySettings? Received { get; private set; }
         public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
-        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             Received = settings;
             return Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
@@ -471,14 +702,14 @@ public sealed class JobProcessorTests : IDisposable
     private sealed class CancellingCrfSearch : ICrfSearchClient
     {
         public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
-        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => throw new OperationCanceledException();
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new OperationCanceledException();
     }
 
     private sealed class FakeEncoder : IVideoEncoder
     {
         public int CallCount { get; private set; }
         public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) => [];
-        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             CallCount++;
             await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
@@ -508,8 +739,8 @@ public sealed class JobProcessorTests : IDisposable
         public string? RemoteHost => "video-worker";
         public string? RemoteWorkspace => null;
         public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default) => throw new RemoteConnectionException("Remote unavailable.");
-        public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task CancelAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -531,9 +762,9 @@ public sealed class JobProcessorTests : IDisposable
         public string? RemoteHost => "video-worker";
         public string? RemoteWorkspace => null;
         public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
+        public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
 
-        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             if (cancellationStage == CancellationStage.Encoding) throw new OperationCanceledException();
             return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));

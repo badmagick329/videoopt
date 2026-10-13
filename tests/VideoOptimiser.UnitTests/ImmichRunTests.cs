@@ -228,14 +228,14 @@ public sealed class ImmichRunTests : IDisposable
     private sealed class FixedCrfSearch : ICrfSearchClient
     {
         public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
-        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
     }
 
     private sealed class FakeEncoder : IVideoEncoder
     {
         public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) => [];
 
-        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             await File.WriteAllTextAsync(outputPath, $"av1 of {await File.ReadAllTextAsync(inputPath, cancellationToken)}", cancellationToken);
             return new EncodeResult(outputPath, TimeSpan.Zero);

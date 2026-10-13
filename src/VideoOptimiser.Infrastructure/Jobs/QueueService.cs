@@ -182,15 +182,17 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         return new QueuePreparationResult(runnable, failed, skipped);
     }
 
-    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var ready = 0;
         var failed = new List<FailedQueueJob>();
         var skipped = new List<SkippedQueueJob>();
         var interrupted = false;
-        foreach (var job in jobs)
+        for (var index = 0; index < jobs.Count; index++)
         {
+            var job = jobs[index];
             cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(JobProgress.Header(index + 1, jobs.Count, job.SourcePath));
             var result = await processor.ProcessAsync(databasePath, job.SourcePath, settings, force: false, progress, cancellationToken);
             if (result.Job.Status == JobStatus.ReadyToFinalize) ready++;
             else if (result.Job.Status == JobStatus.Skipped) skipped.Add(new SkippedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureMessage ?? result.Message));

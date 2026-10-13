@@ -274,6 +274,26 @@ public sealed class QueueServiceTests : IDisposable
         QueueExitCode.Calculate(result.ReadyToFinalize, result.Failed).Should().Be(ExitCode.Success);
     }
 
+    [Fact]
+    public async Task RunAsyncOpensEachJobWithAHeaderNumberedOutOfTheTotalWithItsSize()
+    {
+        var first = Path.Combine(_directory, "first.mp4");
+        var second = Path.Combine(_directory, "gone.mp4");
+        await File.WriteAllBytesAsync(first, new byte[2048]);
+        var jobs = new[] { first, second }.Select(path => new JobRecord { Id = Guid.NewGuid(), SourcePath = path, Status = JobStatus.Queued }).ToArray();
+        var reported = new List<JobProgress>();
+        var queue = new QueueService(new FixedScanner(), new SqliteJobRepository(new SqliteDatabaseInitializer()), new FileFingerprintService(), new ReportingProcessor());
+
+        _ = await queue.RunAsync(Path.Combine(_directory, "jobs.db"), new AppSettings(), jobs, new ListProgress(reported));
+
+        // Each header precedes its own job's lines, and a missing original gets no size rather than a made-up one.
+        reported.Should().Equal(
+            new JobProgress(JobProgressKind.Header, "[1/2] first.mp4 (2.0 KiB)"),
+            JobProgress.Step("processed first.mp4"),
+            new JobProgress(JobProgressKind.Header, "[2/2] gone.mp4"),
+            JobProgress.Step("processed gone.mp4"));
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private sealed class FixedScanner(params string[] paths) : IFileScanner
@@ -296,7 +316,7 @@ public sealed class QueueServiceTests : IDisposable
 
     private sealed class ResultProcessor(JobProcessingResult result) : IJobProcessor
     {
-        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(result);
+        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(result);
     }
 
     private sealed class NeverPrompts : IInteractiveConfirmation
@@ -305,8 +325,22 @@ public sealed class QueueServiceTests : IDisposable
         public bool Confirm(string prompt) => throw new InvalidOperationException("The user must not be asked when every job succeeded or was skipped.");
     }
 
+    private sealed class ListProgress(List<JobProgress> lines) : IProgress<JobProgress>
+    {
+        public void Report(JobProgress value) => lines.Add(value);
+    }
+
+    private sealed class ReportingProcessor : IJobProcessor
+    {
+        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            progress?.Report(JobProgress.Step($"processed {Path.GetFileName(sourcePath)}"));
+            return Task.FromResult(new JobProcessingResult(new JobRecord { Id = Guid.NewGuid(), SourcePath = sourcePath, Status = JobStatus.ReadyToFinalize }, ExitCode.Success, "ready"));
+        }
+    }
+
     private sealed class NoopProcessor : IJobProcessor
     {
-        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }
