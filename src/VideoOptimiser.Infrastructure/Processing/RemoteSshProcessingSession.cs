@@ -212,7 +212,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             var script = $"#!/usr/bin/env bash\nset +e\numask 077\nmkdir -p -- {Quote(cacheDirectory)}\nexport XDG_CACHE_HOME={Quote(cacheDirectory)}\nprintf '%s\\n' \"$$\" > pid.partial\nmv -f pid.partial pid\n{command} > log 2>&1\ncode=$?\nprintf '%s\\n' \"$code\" > exit-code.partial\nmv -f exit-code.partial exit-code\nexit 0\n";
             var create = await SshAsync($"mkdir -p -- {Quote(stageDirectory)} && umask 077 && cat > {Quote(scriptPath)} && chmod 700 {Quote(scriptPath)}", script, cancellationToken: cancellationToken);
             EnsureSuccess(create, "Remote stage script upload");
-            var launch = await SshAsync($"cd {Quote(stageDirectory)} && nohup setsid bash {Quote(scriptPath)} </dev/null >/dev/null 2>&1 &", cancellationToken: cancellationToken);
+            var launch = await SshAsync(BuildLaunchCommand(stageDirectory, scriptPath), cancellationToken: cancellationToken);
             EnsureSuccess(launch, "Remote stage launch");
             useCurrentState = false;
         }
@@ -244,6 +244,14 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             await _pollDelay(cancellationToken);
         }
     }
+
+    /// <summary>
+    /// The braces put only the stage script in the background. Without them, <c>&amp;</c> backgrounds the whole
+    /// <c>cd … &amp;&amp; nohup …</c> list as a subshell that inherits the SSH channel's output, so the launch's ssh stays
+    /// open until ab-av1 exits and the poll loop then prints the whole stage log at once.
+    /// </summary>
+    internal static string BuildLaunchCommand(string stageDirectory, string scriptPath) =>
+        $"cd -- {Quote(stageDirectory)} && {{ nohup setsid bash {Quote(scriptPath)} </dev/null >/dev/null 2>&1 & }}";
 
     private async Task<(bool Running, int? ExitCode, string Log)> GetStageStateAsync(string stageDirectory, CancellationToken cancellationToken)
     {

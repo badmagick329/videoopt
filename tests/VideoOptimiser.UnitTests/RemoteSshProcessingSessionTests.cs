@@ -260,6 +260,33 @@ public sealed class RemoteSshProcessingSessionTests
     }
 
     [Fact]
+    public async Task FreshStageLaunchBackgroundsOnlyTheScriptSoSshReturnsAtOnce()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var runner = new QueueRunner([
+            new ExternalProcessResult(0, "missing\n\u001e", string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty),
+            new ExternalProcessResult(0, "completed 0\n\u001ecrf 42 successful\n", string.Empty),
+            new ExternalProcessResult(0, "crf 42 successful\n", string.Empty)
+        ]);
+        var session = CreateSession(Guid.NewGuid(), runner, source);
+
+        _ = await session.SearchCrfAsync(source, new QualitySettings());
+
+        // Backgrounding the whole `cd && nohup …` list keeps a subshell on the SSH channel until ab-av1 exits, which
+        // turns live progress into one dump at the end of each stage (VOPT-41). Only the braced script may be backgrounded.
+        var launch = runner.Requests[2].Arguments[^1];
+        launch.Should().Contain("{ nohup setsid bash ");
+        launch.Should().Contain("</dev/null >/dev/null 2>&1 & }");
+        launch.Should().Contain($"cd -- '\"'\"'{session.CrfDirectory}'\"'\"' && ");
+        RemoteSshProcessingSession.BuildLaunchCommand("/w/a b", "/w/a b/run.sh").Should().Be("cd -- '/w/a b' && { nohup setsid bash '/w/a b/run.sh' </dev/null >/dev/null 2>&1 & }");
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
     public async Task ReattachesToCompletedEncodingAndVerifiesItsOutput()
     {
         var directory = CreateTemporaryDirectory();
