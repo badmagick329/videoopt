@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-10-13
 ### Added
 
 - `config init` asks for the quality target: Archive (VMAF 97, indistinguishable from the original), Standard (95, hard to tell apart, the default) or Compact (93, small visible loss, bigger savings). It writes the answer as `quality.minimumVmaf`, with a comment naming the level. `--quality archive|standard|compact` answers it without asking. With redirected input and no flag it uses Standard and says so. `--quality` on another command exits `2`.
