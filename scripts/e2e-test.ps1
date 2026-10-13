@@ -188,7 +188,7 @@ validation:
     # Left behind: the manifests of clips a and c (completed) and clip b's output and manifest (failed).
     $outputFolder = Join-Path $watchRoot '.video-optimiser'
     $preview = Invoke-Cli 0 @('cleanup', '--dry-run')
-    Assert ($preview -match 'Abandoned temporary outputs: 4,') "cleanup --dry-run should list 4 abandoned files: $preview"
+    Assert ($preview -match 'Abandoned temporary outputs: 4\.') "cleanup --dry-run should list 4 abandoned files: $preview"
     Assert (@(Get-ChildItem -LiteralPath $outputFolder -File).Count -eq 4) 'cleanup --dry-run must not delete anything.'
     Invoke-Cli 0 @('cleanup') -InputText 'y' | Out-Null
     Assert (@(Get-ChildItem -LiteralPath $outputFolder -File).Count -eq 0) 'cleanup should delete every abandoned file.'
