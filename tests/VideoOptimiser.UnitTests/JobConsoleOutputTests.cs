@@ -185,7 +185,6 @@ public sealed class JobConsoleOutputTests : IDisposable
             progress?.Report(JobProgress.Step("Downloaded 99.8 MiB in 30s, checksum verified."));
         }
 
-        public Task CancelAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

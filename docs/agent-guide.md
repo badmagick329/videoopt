@@ -106,7 +106,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | What you see | Meaning | Action |
 | --- | --- | --- |
 | A `Skipped <file>: started on ...` line | The job started in the other mode, and `--local` or `--remote` chose this one | Nothing is lost. Run the command without the flag to resume it; a remote resume is gated as paid encoding. |
-| `Interrupted` | Stopped by `Ctrl+C`, a crash or a lost connection | Run the same command again (`queue run`, `immich run` or `process`). It resumes. |
+| `Interrupted` | Stopped by `Ctrl+C`, a crash or a lost connection. A remote CRF search or encode keeps running on the worker | Run the same command again (`queue run`, `immich run` or `process`). It resumes, following a remote stage that is still running or using its result. |
 | `RemoteUnavailable` | The remote worker could not be reached | Run the command again. A Hetzner worker is kept for the resume. |
 | `Skipped`, `NotWorthConverting` | No CRF met both `quality.minimumVmaf` and `quality.maxEncodedPercent`: AV1 would not shrink this video enough. A normal outcome, not a failure | Report `failureMessage`, which names the best setting found. Discovery checks the video again once the file or those quality settings change. |
 | `ValidationFailed` | The AV1 failed a check, usually too little saving | Report it. The original stays as it is, and discovery won't queue it again until the file changes. |
@@ -118,7 +118,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 
 **Failed, cancelled or skipped jobs** stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` queues one again; run it only at the user's request.
 
-**Retained Hetzner worker.** After a remote run with any failed or interrupted job (a skipped one does not count), the server stays up so the work can resume, and it keeps billing. With `deleteAfterRun: false` it stays after every run. `worker status` shows it. Tell the user; deleting it is gated, because outputs not yet downloaded are lost with it.
+**Retained Hetzner worker.** After a remote run with any failed or interrupted job (a skipped one does not count), the server stays up so the work can resume, and it keeps billing. After `Ctrl+C` or a killed command, a CRF search or encode keeps running on it too: the rerun picks it up. With `deleteAfterRun: false` it stays after every run. `worker status` shows it. Tell the user; deleting it is gated, because outputs not yet downloaded are lost with it.
 
 ## Reference
 

@@ -307,10 +307,10 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     [Theory]
-    [InlineData(CancellationStage.Encoding, JobStatus.Queued)]
+    [InlineData(CancellationStage.Encoding, JobStatus.Encoding)]
     [InlineData(CancellationStage.Downloading, JobStatus.Downloading)]
     [InlineData(CancellationStage.Validating, JobStatus.Validating)]
-    public async Task RemoteCancellationRestartsEncodingButPreservesLaterResumableStages(CancellationStage cancellationStage, JobStatus expectedResumeStatus)
+    public async Task CtrlCOnARemoteJobKeepsTheStageItStoppedInForTheRerun(CancellationStage cancellationStage, JobStatus expectedResumeStatus)
     {
         var source = Path.Combine(_directory, $"cancel-{cancellationStage}.mp4");
         await File.WriteAllTextAsync(source, "original video data");
@@ -335,11 +335,47 @@ public sealed class JobProcessorTests : IDisposable
 
         var action = async () => await processor.ProcessAsync(databasePath, source, settings, force: false);
 
-        await action.Should().ThrowAsync<OperationCanceledException>();
+        var interrupted = (await action.Should().ThrowAsync<JobInterruptedException>()).Which;
+        interrupted.Stage.Should().Be(expectedResumeStatus);
+        interrupted.Remote.Should().BeTrue();
         var job = (await repository.ListAsync(databasePath, terminal: false)).Should().ContainSingle().Subject;
         job.Status.Should().Be(JobStatus.Interrupted);
         job.ResumeStatus.Should().Be(expectedResumeStatus);
-        session.CancelCalled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RerunningAnInterruptedRemoteEncodeReattachesToTheSameAttempt()
+    {
+        var source = Path.Combine(_directory, "reattach.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var databasePath = Path.Combine(_directory, "reattach.db");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = databasePath },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules(),
+            Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } }
+        };
+        JobProcessor Processor(IProcessingSession session) => new(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(session), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+
+        var stopped = async () => await Processor(new CancellingRemoteSession(CancellationStage.Encoding)).ProcessAsync(databasePath, source, settings, force: false);
+        await stopped.Should().ThrowAsync<JobInterruptedException>();
+        var rerun = new CancellingRemoteSession(CancellationStage.None);
+        var result = await Processor(rerun).ProcessAsync(databasePath, source, settings, force: false);
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize);
+        rerun.EncodeAttempts.Should().Equal(1);
+        result.Job.Attempt.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(JobStatus.Staging, JobStatus.Encoding, JobStatus.Encoding)]
+    [InlineData(JobStatus.Queued, null, JobStatus.Queued)]
+    [InlineData(JobStatus.Downloading, JobStatus.Encoding, JobStatus.Downloading)]
+    public void AJobStoppedBeforeReachingAStageOfItsOwnKeepsItsEarlierResumePoint(JobStatus current, JobStatus? earlier, JobStatus expected)
+    {
+        JobProcessor.ResumePoint(current, earlier).Should().Be(expected);
     }
 
     [Fact]
@@ -649,13 +685,13 @@ public sealed class JobProcessorTests : IDisposable
         public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task CancelAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     public enum CancellationStage
     {
+        None,
         Encoding,
         Downloading,
         Validating
@@ -663,7 +699,7 @@ public sealed class JobProcessorTests : IDisposable
 
     private sealed class CancellingRemoteSession(CancellationStage cancellationStage) : IProcessingSession
     {
-        public bool CancelCalled { get; private set; }
+        public List<int> EncodeAttempts { get; } = [];
         public bool IsRemote => true;
         public string ExecutionMode => "remoteSsh";
         public string? RemoteHost => "video-worker";
@@ -673,6 +709,7 @@ public sealed class JobProcessorTests : IDisposable
 
         public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
+            EncodeAttempts.Add(attempt);
             if (cancellationStage == CancellationStage.Encoding) throw new OperationCanceledException();
             return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));
         }
@@ -681,12 +718,6 @@ public sealed class JobProcessorTests : IDisposable
         {
             if (cancellationStage == CancellationStage.Downloading) throw new OperationCanceledException();
             await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
-        }
-
-        public Task CancelAsync(CancellationToken cancellationToken = default)
-        {
-            CancelCalled = true;
-            return Task.CompletedTask;
         }
 
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

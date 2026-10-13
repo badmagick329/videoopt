@@ -22,7 +22,6 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     private readonly Func<TimeSpan> _clock;
     private readonly Func<CancellationToken, Task> _transferPollDelay;
     private readonly string _root;
-    private string? _activeStage;
 
     public RemoteSshProcessingSession(JobRecord job, AppSettings settings, IExternalProcessRunner processes)
         : this(job, settings, processes, cancellationToken => Task.Delay(TimeSpan.FromSeconds(10), cancellationToken))
@@ -127,7 +126,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     {
         var arguments = new AbAv1CrfSearchClient("ab-av1").BuildArguments(RemoteSourcePath, settings);
         var elapsed = Stopwatch.StartNew();
-        var log = await RunStageAsync(CrfDirectory, arguments, sourcePath, progress, cancellationToken, failedLog => AbAv1Output.NoWorthwhileCrf(failedLog, settings));
+        var log = await RunStageAsync(CrfDirectory, "CRF search", arguments, sourcePath, progress, cancellationToken, failedLog => AbAv1Output.NoWorthwhileCrf(failedLog, settings));
         elapsed.Stop();
         var crf = CrfSearchOutputParser.Parse(log);
         return new CrfSearchResult(crf, log, string.Empty, elapsed.Elapsed, CrfSearchOutputParser.TryParsePrediction(log, crf, out var prediction) ? prediction : null);
@@ -139,7 +138,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var remoteOutput = $"{directory}/output{Path.GetExtension(outputPath).ToLowerInvariant()}";
         var arguments = new AbAv1VideoEncoder("ab-av1").BuildArguments(RemoteSourcePath, remoteOutput, crf, settings, flacAudioStreams);
         var elapsed = Stopwatch.StartNew();
-        _ = await RunStageAsync(directory, arguments, sourcePath, progress, cancellationToken);
+        _ = await RunStageAsync(directory, "Encode", arguments, sourcePath, progress, cancellationToken);
         elapsed.Stop();
         var check = await SshAsync($"test -s {Quote(remoteOutput)}", cancellationToken: cancellationToken);
         EnsureSuccess(check, "Remote encoded output verification");
@@ -197,14 +196,6 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         SftpAsync($"reget {SftpQuote(remoteOutput)} {SftpQuote(partial)}\n", cancellationToken,
             new TransferMonitor(new ThrottledProgress(progress, _clock, outputLength, partialStart, showRate: true), partialStart, _ => Task.FromResult(File.Exists(partial) ? new FileInfo(partial).Length : 0)));
 
-    public async Task CancelAsync(CancellationToken cancellationToken = default)
-    {
-        if (_activeStage is null) return;
-        var pidFile = $"{_activeStage}/pid";
-        var command = $"i=0; while test ! -s {Quote(pidFile)} && test \"$i\" -lt 3; do sleep 1; i=$((i+1)); done; if test -s {Quote(pidFile)}; then p=$(cat {Quote(pidFile)}); kill -TERM -- -\"$p\" 2>/dev/null || true; i=0; while kill -0 \"$p\" 2>/dev/null && test \"$i\" -lt 10; do sleep 1; i=$((i+1)); done; kill -KILL -- -\"$p\" 2>/dev/null || true; fi";
-        _ = await SshAsync(command, retry: false, cancellationToken: cancellationToken);
-    }
-
     public async Task CleanupAsync(CancellationToken cancellationToken = default)
     {
         var expected = $"{_root}/{_job.Id:N}";
@@ -215,13 +206,27 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
+    /// <summary>
+    /// Launches the stage, or reattaches to one an earlier command left behind: Ctrl+C and a dropped connection both leave
+    /// a launched stage running on the worker.
+    /// </summary>
+    /// <param name="name">The stage as the reattach lines name it, such as <c>Encode</c>.</param>
     /// <param name="interpretFailure">Turns the log of a stage that exited non-zero into a more specific exception than the generic one,
     /// or returns null to keep the generic one.</param>
-    private async Task<string> RunStageAsync(string stageDirectory, IReadOnlyList<string> arguments, string sourcePath, IProgress<JobProgress>? progress, CancellationToken cancellationToken, Func<string, Exception?>? interpretFailure = null)
+    private async Task<string> RunStageAsync(string stageDirectory, string name, IReadOnlyList<string> arguments, string sourcePath, IProgress<JobProgress>? progress, CancellationToken cancellationToken, Func<string, Exception?>? interpretFailure = null)
     {
-        _activeStage = stageDirectory;
         var state = await GetStageStateAsync(stageDirectory, cancellationToken);
         var useCurrentState = true;
+        if (state.Running)
+        {
+            progress?.Report(JobProgress.Step($"{name} still running on the worker; following it..."));
+        }
+        // A stage whose log is already kept locally finished under an earlier command, which saw it end: a rerun after a
+        // stopped download reaches here too, and has nothing new to say about the encode.
+        else if (state.ExitCode is not null && !File.Exists(RetainedLogPath(stageDirectory, sourcePath)))
+        {
+            progress?.Report(JobProgress.Step($"{name} finished on the worker while this command was stopped."));
+        }
         if (state.ExitCode is null && !state.Running)
         {
             var scriptPath = $"{stageDirectory}/run-{Guid.NewGuid():N}.sh";
@@ -250,7 +255,6 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             if (state.ExitCode is { } exitCode)
             {
                 var logPath = await RetainLogAsync(stageDirectory, sourcePath, cancellationToken);
-                _activeStage = null;
                 if (exitCode != 0)
                 {
                     await CleanupAsync(CancellationToken.None);
@@ -285,20 +289,21 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         return (string.Equals(header, "running", StringComparison.Ordinal), null, log);
     }
 
+    private string RetainedLogPath(string stageDirectory, string sourcePath) =>
+        Path.Combine(Path.GetDirectoryName(sourcePath)!, TemporaryOutputClassifier.FolderName, $"{_job.Id:N}.{Path.GetFileName(stageDirectory)}.remote.log");
+
     private async Task<string> RetainLogAsync(string stageDirectory, string sourcePath, CancellationToken cancellationToken)
     {
-        var localDirectory = Path.Combine(Path.GetDirectoryName(sourcePath)!, TemporaryOutputClassifier.FolderName);
-        Directory.CreateDirectory(localDirectory);
-        var stageName = Path.GetFileName(stageDirectory);
-        var destination = Path.Combine(localDirectory, $"{_job.Id:N}.{stageName}.remote.log");
+        var destination = RetainedLogPath(stageDirectory, sourcePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         var result = await SshAsync($"test ! -f {Quote(stageDirectory + "/log")} || cat {Quote(stageDirectory + "/log")}", cancellationToken: cancellationToken);
         await File.WriteAllTextAsync(destination, result.StandardOutput, cancellationToken);
         return destination;
     }
 
-    private async Task<ExternalProcessResult> SshAsync(string command, string? standardInput = null, bool retry = true, CancellationToken cancellationToken = default)
+    private async Task<ExternalProcessResult> SshAsync(string command, string? standardInput = null, CancellationToken cancellationToken = default)
     {
-        var attempts = retry ? 3 : 1;
+        const int attempts = 3;
         for (var attempt = 1; ; attempt++)
         {
             ExternalProcessResult result;

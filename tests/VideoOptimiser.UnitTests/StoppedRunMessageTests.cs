@@ -1,0 +1,62 @@
+using FluentAssertions;
+using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Cli;
+
+namespace VideoOptimiser.UnitTests;
+
+public sealed class StoppedRunMessageTests
+{
+    [Theory]
+    [InlineData(new[] { "process", @"D:\Videos\clip.mov", "--force", "--remote", "--config", @"C:\vo\my.yaml" }, @"process ""D:\Videos\clip.mov"" --force --remote --config ""C:\vo\my.yaml""")]
+    [InlineData(new[] { "queue", "run", "--local" }, "queue run --local")]
+    [InlineData(new[] { "--first", "immich", "run" }, "immich run --first")]
+    [InlineData(new[] { "immich", "run", "--limit", "3" }, "immich run --limit 3")]
+    public void TheRerunCommandKeepsEveryFlagTheUserTyped(string[] args, string expected)
+    {
+        StoppedRunMessage.RerunCommand(CliCommand.Parse(args)).Should().Be(expected);
+    }
+
+    [Fact]
+    public void AStoppedRemoteEncodeSaysItIsStillRunningAndBilledAndHowToContinueOrStopIt()
+    {
+        var command = CliCommand.Parse(["queue", "run", "--config", "my.yaml"]);
+
+        StoppedRunMessage.Lines(Stopped(JobStatus.Encoding), "video-optimiser-1", managed: true, command).Should().Equal(
+            "Stopped watching. The encode of clip.mov is still running on the worker video-optimiser-1.",
+            "The worker is billed hourly until it is deleted.",
+            "To pick it up again: video-optimiser queue run --config \"my.yaml\"",
+            "To stop it instead: video-optimiser worker delete --config \"my.yaml\" (the work in progress is lost)");
+    }
+
+    [Fact]
+    public void AStoppedUploadSaysNothingIsRunningButTheWorkerStaysUp()
+    {
+        StoppedRunMessage.Lines(Stopped(JobStatus.Staging), "video-optimiser-1", managed: true, CliCommand.Parse(["queue", "run"])).Should().Equal(
+            "Stopped. Nothing is running on the worker video-optimiser-1, but it stays up, billed hourly, so the job can resume.",
+            "To resume: video-optimiser queue run",
+            "To delete it instead: video-optimiser worker delete");
+    }
+
+    [Theory]
+    [InlineData(JobStatus.CrfSearching, true, true, "Stopped watching. The CRF search of clip.mov is still running on the worker w.")]
+    [InlineData(JobStatus.Downloading, true, true, "Stopped. The encoded output is waiting on the worker w, which stays up, billed hourly.")]
+    [InlineData(JobStatus.Encoding, false, true, "Stopped. Nothing is running on the worker w, but it stays up, billed hourly, so the job can resume.")]
+    [InlineData(null, false, true, "Stopped. Nothing is running on the worker w, but it stays up, billed hourly, so the job can resume.")]
+    [InlineData(JobStatus.Encoding, true, false, "Stopped watching. The encode of clip.mov is still running on the worker w.")]
+    public void TheFirstLineNamesWhatIsLeftOnTheWorker(JobStatus? stage, bool remote, bool managed, string expected)
+    {
+        StoppedRunMessage.Lines(stage is null ? null : Stopped(stage.Value, remote), "w", managed, CliCommand.Parse(["queue", "run"]))[0].Should().Be(expected);
+    }
+
+    /// <summary>A manual host is neither billed nor deleted by this tool, so it hears only what is running and how to pick it up.</summary>
+    [Theory]
+    [InlineData(JobStatus.Encoding, 2)]
+    [InlineData(JobStatus.Staging, 0)]
+    public void AManualHostGetsOnlyTheLinesThatHoldForIt(JobStatus stage, int count)
+    {
+        StoppedRunMessage.Lines(Stopped(stage), "my-host", managed: false, CliCommand.Parse(["queue", "run"])).Should().HaveCount(count);
+    }
+
+    private static JobInterruptedException Stopped(JobStatus stage, bool remote = true) =>
+        new(new JobRecord { SourcePath = @"D:\Videos\clip.mov" }, stage, remote, CancellationToken.None);
+}

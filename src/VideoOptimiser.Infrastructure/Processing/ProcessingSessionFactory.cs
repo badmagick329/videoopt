@@ -45,7 +45,6 @@ internal sealed class LocalProcessingSession(JobRecord job, ICrfSearchClient crf
     }
 
     public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task CancelAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 

@@ -69,6 +69,18 @@ public sealed class JobRecord
 
 public sealed record JobProcessingResult(JobRecord Job, ExitCode ExitCode, string Message);
 
+/// <summary>
+/// Ctrl+C stopped a job. It carries the job and the stage it stopped in, so the CLI can say what is still running on the
+/// worker: a run of several jobs cannot tell which <see cref="JobStatus.Interrupted"/> job was the one in progress.
+/// </summary>
+public sealed class JobInterruptedException(JobRecord job, JobStatus stage, bool remote, CancellationToken cancellationToken)
+    : OperationCanceledException("Processing was cancelled.", cancellationToken)
+{
+    public JobRecord Job { get; } = job;
+    public JobStatus Stage { get; } = stage;
+    public bool Remote { get; } = remote;
+}
+
 public static class JobStateTransitions
 {
     public static bool IsAllowed(JobStatus current, JobStatus next) => current == next || (current, next) switch

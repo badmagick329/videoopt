@@ -13,9 +13,10 @@ using VideoOptimiser.Infrastructure.Jobs;
 /// </summary>
 internal static partial class CliApplication
 {
-    private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, string? explicitConfigPath, int? limit, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
+    private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         if (!RequireImmich(configuration) || ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
+        var (limit, modeOverride) = (command.Limit, command.ModeOverride);
         // Discovery downloads originals, so the banner comes first.
         await PrintRunBannerAsync(services, configuration, modeOverride, cancellationToken);
         var settings = configuration.Settings;
@@ -55,7 +56,7 @@ internal static partial class CliApplication
         FailedQueueJob[] failures;
         try
         {
-            (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, explicitConfigPath, preparation.Queue, (ready, skipped, failures) =>
+            (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, command, preparation.Queue, (ready, skipped, failures) =>
             {
                 Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
                 PrintFailedJobs(failures);

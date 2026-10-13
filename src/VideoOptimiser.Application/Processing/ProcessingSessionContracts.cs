@@ -20,7 +20,6 @@ public interface IProcessingSession : IAsyncDisposable
     Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default);
     Task RetrieveOutputAsync(string outputPath, int attempt, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)
         => RetrieveOutputAsync(outputPath, attempt, cancellationToken);
-    Task CancelAsync(CancellationToken cancellationToken = default);
     Task CleanupAsync(CancellationToken cancellationToken = default);
 }
 

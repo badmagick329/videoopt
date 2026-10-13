@@ -200,13 +200,15 @@ public sealed class JobProcessor(
         }
         catch (OperationCanceledException)
         {
-            if (session.IsRemote) await session.CancelAsync(CancellationToken.None);
-            job.ResumeStatus = session.IsRemote && job.Status == JobStatus.Encoding ? JobStatus.Queued : job.Status;
+            // Ctrl+C stops only this side. A remote stage runs detached and keeps going: the worker bills hourly whether or not
+            // it is busy, so stopping the stage would only lose the work, and the rerun reattaches to it instead.
+            var stoppedIn = ResumePoint(job.Status, resumeStatus);
+            job.ResumeStatus = stoppedIn;
             job.Status = JobStatus.Interrupted;
             job.FailureCategory = "Interrupted";
             job.FailureMessage = "Processing was cancelled.";
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
-            throw;
+            throw new JobInterruptedException(job, stoppedIn, session.IsRemote, cancellationToken);
         }
         catch (NoWorthwhileCrfException exception)
         {
@@ -214,7 +216,7 @@ public sealed class JobProcessor(
         }
         catch (RemoteConnectionException exception)
         {
-            job.ResumeStatus = job.Status;
+            job.ResumeStatus = ResumePoint(job.Status, resumeStatus);
             job.Status = JobStatus.Interrupted;
             job.FailureCategory = "RemoteUnavailable";
             job.FailureMessage = exception.Message;
@@ -227,6 +229,14 @@ public sealed class JobProcessor(
             return await FailAsync(job, databasePath, stage, exception.Message, ExitCode.ProcessingFailure, progress, cancellationToken, (exception as AbAv1StageException)?.LogPath);
         }
     }
+
+    /// <summary>
+    /// The stage a rerun resumes from. A job stopped before it reached a stage of its own in this run keeps its earlier
+    /// resume point: a remote encode an earlier command left running must be reattached to, and a new attempt would start
+    /// a second encode beside it.
+    /// </summary>
+    internal static JobStatus ResumePoint(JobStatus current, JobStatus? earlier) =>
+        current is JobStatus.Queued or JobStatus.Staging && earlier is { } resume ? resume : current;
 
     /// <summary>The audio-relative indexes of the PCM streams. Browsers do not play PCM copied into MP4, so these are re-encoded to FLAC.</summary>
     private static int[] PcmAudioStreams(MediaInfo media) =>

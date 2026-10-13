@@ -600,43 +600,70 @@ public sealed class RemoteSshProcessingSessionTests
     }
 
     [Fact]
-    public async Task CancellationTargetsTheDetachedProcessGroupWithTermThenKill()
+    public async Task CtrlCDuringAStageLeavesItRunningOnTheWorker()
     {
-        var directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Remote.{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var runner = new QueueRunner([new ExternalProcessResult(0, "running\n\u001e", string.Empty)]);
+        using var cancellation = new CancellationTokenSource();
+        var session = new RemoteSshProcessingSession(new JobRecord { Id = Guid.NewGuid(), SourcePath = source }, CreateSettings(), runner, _ =>
+        {
+            cancellation.Cancel();
+            return Task.FromCanceled(cancellation.Token);
+        });
+
+        var action = async () => await session.EncodeAsync(source, Path.Combine(directory, "output.mkv"), 30, new QualitySettings(), 1, [], cancellationToken: cancellation.Token);
+
+        await action.Should().ThrowAsync<OperationCanceledException>();
+        runner.Requests.Should().ContainSingle();
+        Directory.Delete(directory, true);
+    }
+
+    /// <summary>A rerun says what it found: a stage still running, or one that ended while no command watched it. A stage
+    /// whose log is already kept ended under the command that kept it, such as a rerun after a stopped download.</summary>
+    [Theory]
+    [InlineData("running\n\u001ecrf 42 successful\n", false, "CRF search still running on the worker; following it...")]
+    [InlineData("completed 0\n\u001ecrf 42 successful\n", false, "CRF search finished on the worker while this command was stopped.")]
+    [InlineData("completed 0\n\u001ecrf 42 successful\n", true, null)]
+    public async Task AReattachedStageSaysWhetherItIsStillRunningOrFinishedUnwatched(string state, bool logAlreadyKept, string? expected)
+    {
+        var directory = CreateTemporaryDirectory();
         var source = Path.Combine(directory, "source.mkv");
         await File.WriteAllTextAsync(source, "source");
         var runner = new QueueRunner([
-            new ExternalProcessResult(0, "running\n\u001e", string.Empty),
-            new ExternalProcessResult(0, string.Empty, string.Empty)
+            new ExternalProcessResult(0, state, string.Empty),
+            new ExternalProcessResult(0, "completed 0\n\u001ecrf 42 successful\n", string.Empty),
+            new ExternalProcessResult(0, "crf 42 successful\n", string.Empty)
         ]);
-        var session = CreateSession(Guid.NewGuid(), runner, source);
-        using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
+        var id = Guid.NewGuid();
+        if (logAlreadyKept)
+        {
+            Directory.CreateDirectory(Path.Combine(directory, ".video-optimiser"));
+            await File.WriteAllTextAsync(Path.Combine(directory, ".video-optimiser", $"{id:N}.crf.remote.log"), "crf 42 successful\n");
+        }
+        var progress = new CaptureProgress();
 
-        var action = async () => await session.SearchCrfAsync(source, new QualitySettings(), cancellationToken: cancellation.Token);
-        await action.Should().ThrowAsync<OperationCanceledException>();
-        await session.CancelAsync();
+        _ = await CreateSession(id, runner, source).SearchCrfAsync(source, new QualitySettings(), progress);
 
-        var command = runner.Requests[^1].Arguments[^1];
-        command.Should().Contain("kill -TERM -- -");
-        command.Should().Contain("kill -KILL -- -");
+        progress.Lines.Where(line => line.Kind == JobProgressKind.Step).Select(line => line.Text).Should().Equal(expected is null ? [] : [expected]);
         Directory.Delete(directory, true);
     }
 
     private static RemoteSshProcessingSession CreateSession(Guid id, IExternalProcessRunner runner, string sourcePath = "C:\\Videos\\movie.mkv", FakeClock? clock = null)
     {
-        var settings = new AppSettings
-        {
-            Processing = new ProcessingSettings
-            {
-                Mode = "remoteSsh",
-                RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser", MinimumCpuCount = 8, MinimumAvailableMemory = "14GiB", MinimumFreeDiskMultiplier = 2.5 }
-            }
-        };
         clock ??= new FakeClock();
-        return new RemoteSshProcessingSession(new JobRecord { Id = id, SourcePath = sourcePath }, settings, runner, _ => Task.CompletedTask, clock.Read, clock.TickAsync);
+        return new RemoteSshProcessingSession(new JobRecord { Id = id, SourcePath = sourcePath }, CreateSettings(), runner, _ => Task.CompletedTask, clock.Read, clock.TickAsync);
     }
+
+    private static AppSettings CreateSettings() => new()
+    {
+        Processing = new ProcessingSettings
+        {
+            Mode = "remoteSsh",
+            RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser", MinimumCpuCount = 8, MinimumAvailableMemory = "14GiB", MinimumFreeDiskMultiplier = 2.5 }
+        }
+    };
 
     private static string CreateTemporaryDirectory()
     {

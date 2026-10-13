@@ -207,7 +207,9 @@ With `deleteAfterRun: true`, a clean `process` or `queue run` deletes the server
 
 When it creates a server, the command says setup takes several minutes and prints a `Worker setup: 35%, building SVT-AV1...` line at each stage, with the time spent in a stage if it runs long. SSH refusals while the server boots are expected and stay silent for the first 3 minutes; after that `Still waiting for the worker's SSH` appears at most once a minute. `Worker ready after 7m 36s.` ends the wait. While an original is staged, the command reports local hashing, remote capacity checks, resumable upload bytes/percentage, and checksum verification. Downloads report the same resumable bytes/percentage and verification phases. Slow transfers print an elapsed-time heartbeat every 30 seconds, so `Staging` or `Downloading` does not remain silent.
 
-If the application crashes, the network becomes unreachable, bootstrap times out, or a job is marked `Interrupted`, the worker is retained. Run the same command again to reconnect, resume the remote stage or transfer, and delete the worker after the clean completion. A small recovery file and a worker-specific known-hosts file are stored beside the configured SQLite database; neither contains credentials.
+If the application crashes, the network becomes unreachable, bootstrap times out, or a job is marked `Interrupted`, the worker is retained. Run the same command again to reconnect, resume the remote stage or transfer, and delete the worker after the clean completion.
+
+`Ctrl+C` stops only this PC's side. A CRF search or encode keeps running on the worker, which keeps billing, and the command prints what is still running, the command that picks it up again, and `worker delete` to stop it instead (the work in progress is lost). The rerun follows the stage if it is still running, or uses its result if it finished in the meantime. An upload or download stopped by `Ctrl+C` resumes where it stopped. A small recovery file and a worker-specific known-hosts file are stored beside the configured SQLite database; neither contains credentials.
 
 Inspect or remove a retained worker with:
 
