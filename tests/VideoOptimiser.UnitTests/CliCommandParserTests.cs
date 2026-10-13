@@ -86,6 +86,23 @@ public sealed class CliCommandParserTests
         CliCommand.Parse(args).IsValid.Should().BeFalse();
 
     [Fact]
+    public void ParsesCalibrateWithJsonAndAConfig()
+    {
+        var command = CliCommand.Parse(["calibrate", "--json", "--config", "my.yaml"]);
+
+        command.Kind.Should().Be(CliCommandKind.Calibrate, command.Error);
+        command.Json.Should().BeTrue();
+        command.ConfigurationPath.Should().Be("my.yaml");
+    }
+
+    [Theory]
+    [InlineData("calibrate", "--first")]
+    [InlineData("calibrate", "--force")]
+    [InlineData("calibrate", "extra")]
+    public void RejectsCalibrateWithFlagsMeantForOtherCommands(params string[] args) =>
+        CliCommand.Parse(args).IsValid.Should().BeFalse();
+
+    [Fact]
     public void QueueDiscoverStillAcceptsFirst()
     {
         var command = CliCommand.Parse(["queue", "discover", "--first"]);

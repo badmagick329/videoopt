@@ -5,7 +5,11 @@ using VideoOptimiser.Application.Jobs;
 
 namespace VideoOptimiser.Infrastructure.Jobs;
 
-public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer) : IJobRepository
+/// <summary>
+/// The jobs store. <paramref name="mode"/> is <see cref="SqliteOpenMode.ReadOnly"/> for a reader that must leave the file as
+/// it found it (<c>calibrate</c>), paired with an initializer that migrates nothing; writes then fail.
+/// </summary>
+public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer, SqliteOpenMode mode = SqliteOpenMode.ReadWriteCreate) : IJobRepository
 {
     public async Task<JobRecord?> FindOpenBySourceAsync(string databasePath, string sourcePath, CancellationToken cancellationToken = default)
     {
@@ -158,7 +162,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     private async Task<SqliteConnection> OpenAsync(string databasePath, CancellationToken cancellationToken)
     {
         await databaseInitializer.InitializeAsync(databasePath, cancellationToken);
-        var builder = new SqliteConnectionStringBuilder { DataSource = Path.GetFullPath(databasePath), Mode = SqliteOpenMode.ReadWriteCreate, ForeignKeys = true, Pooling = false };
+        var builder = new SqliteConnectionStringBuilder { DataSource = Path.GetFullPath(databasePath), Mode = mode, ForeignKeys = true, Pooling = false };
         var connection = new SqliteConnection(builder.ToString());
         await connection.OpenAsync(cancellationToken);
         return connection;

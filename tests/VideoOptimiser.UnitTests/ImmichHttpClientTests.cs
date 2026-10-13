@@ -161,12 +161,14 @@ public sealed class ImmichHttpClientTests : IDisposable
     {
         var pages = new Queue<string>([
             $$$"""{"assets":{"items":[{{{AssetJson}}}],"nextCursor":"cursor-2","nextPage":null}}""",
-            """{"assets":{"items":[{"id":"asset-2","checksum":"c2","originalFileName":"b.mp4","type":"VIDEO","visibility":"archive","fileCreatedAt":"2025-06-01T00:00:00Z","fileModifiedAt":"2025-06-01T00:00:00Z","localDateTime":"2025-06-01T00:00:00Z","duration":null}],"nextCursor":null}}"""]);
+            """{"assets":{"items":[{"id":"asset-2","checksum":"c2","originalFileName":"b.mp4","type":"VIDEO","visibility":"archive","fileCreatedAt":"2025-06-01T00:00:00Z","fileModifiedAt":"2025-06-01T00:00:00Z","localDateTime":"2025-06-01T00:00:00Z","duration":null,"width":2160,"height":3840}],"nextCursor":null}}"""]);
         var handler = new FakeHandler(_ => FakeHandler.JsonResponse(HttpStatusCode.OK, pages.Dequeue()));
 
         var assets = await CreateClient(handler).SearchVideosAsync(new DateTimeOffset(2026, 7, 14, 1, 0, 0, TimeSpan.FromHours(1)), includeFavorites: false).ToListAsync();
 
         assets.Select(asset => asset.Id).Should().Equal("asset-1", "asset-2");
+        // calibrate bands an undownloaded asset by these; Immich reports them as displayed, so portrait is taller than wide.
+        assets.Select(asset => (asset.Width, asset.Height)).Should().Equal((null, null), (2160, 3840));
         handler.Requests.Should().HaveCount(2).And.OnlyContain(request => request.Method == HttpMethod.Post && request.Uri.AbsolutePath == "/api/search/metadata");
         var first = JsonNode.Parse(handler.Requests[0].Body)!;
         first["filter"]!.ToJsonString(Unescaped).Should().Be(

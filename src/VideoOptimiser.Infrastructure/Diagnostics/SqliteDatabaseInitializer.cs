@@ -5,6 +5,9 @@ namespace VideoOptimiser.Infrastructure.Diagnostics;
 
 public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
 {
+    /// <summary>The newest migration below. <see cref="SqliteSchemaCheck"/> refuses a database without it; raise both together.</summary>
+    public const int CurrentVersion = 8;
+
     public async Task InitializeAsync(string databasePath, CancellationToken cancellationToken = default)
     {
         var fullPath = Path.GetFullPath(databasePath);

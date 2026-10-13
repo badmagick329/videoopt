@@ -148,6 +148,25 @@ eligibility:
 - Only files whose extension is in `eligibility.extensions` are scanned: `.mkv`, `.mp4`, `.mov` and `.m4v` by default.
 - Discovery never queues a video too small to save `savings.minimumBytesSaved` (100 MiB by default).
 
+## Tune your rules
+
+`calibrate` shows how well your rules fit your library. It reads the watch folders, Immich and the job history, and changes nothing.
+
+```powershell
+.\video-optimiser.exe calibrate --config .\video-optimiser.yaml
+```
+
+- **Admitted by your rules:** what each rule lets in now, and what earlier runs found for videos like those: how many converted and what they saved, and how many were not worth converting and at what bitrate.
+- **Kept out by your rules:** videos no rule admits, grouped by codec, resolution and bitrate.
+- **Suggestions:**
+  - a higher `minimumVideoBitrate` when a rule's lower-bitrate videos were never worth converting;
+  - a new rule when kept-out videos converted well;
+  - a typical file to test from the largest groups never tried.
+
+  A suggestion based on earlier runs needs at least 3 results.
+
+Only results at your current quality settings count, because a video that converts at VMAF 95 may not at 97. Videos converted before `calibrate` existed recorded no settings, so they are left out. Immich reports no codec until a video is downloaded, so Immich videos no run has opened are listed by resolution and bitrate only.
+
 ## Choose what happens to originals
 
 `original.action` decides what `finalize` does:
@@ -178,6 +197,7 @@ All commands take `--config <path>`.
 | `process <file> [--force] [--local \| --remote]` | Convert one file now. `--force` skips the rules and the watch-folder check. |
 | `status`, `history` | Open jobs, and finished jobs. Add `--json` for scripts. |
 | `queue list [--json]` | Open jobs only. |
+| `calibrate [--json]` | Show what each eligibility rule admits and keeps out, what earlier runs found, and suggested changes. Reads only. |
 | `queue cancel <job-id>`, `queue cancel --all` | Cancel one job, or every queued and interrupted job. |
 | `queue retry <job-id>` | Queue a failed, cancelled or skipped (not worth converting) video again. |
 | `validate <job-id>` | Re-run the checks on a job's output. |

@@ -55,7 +55,11 @@ public sealed class JobRecord
     public decimal? PercentageSaved { get; set; }
     public string? FailureCategory { get; set; }
     public string? FailureMessage { get; set; }
-    /// <summary>Set when the job ends <see cref="JobStatus.Skipped"/>: the <see cref="Processing.QualityFingerprint"/> of the settings that skipped it.</summary>
+    /// <summary>
+    /// The <see cref="Processing.QualityFingerprint"/> of the settings that judged the video: set when the CRF search chooses
+    /// a CRF, or when the job ends <see cref="JobStatus.Skipped"/>. Null on jobs converted before calibrate, which therefore
+    /// leaves them out of its history.
+    /// </summary>
     public string? QualityFingerprint { get; set; }
     /// <summary>Set from the probe that queued the job, and again from the one each run makes. Null on jobs from before migration 8 that no probe cache entry matched.</summary>
     public VideoFacts? VideoFacts { get; set; }

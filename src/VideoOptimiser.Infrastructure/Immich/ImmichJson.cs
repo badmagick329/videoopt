@@ -109,6 +109,9 @@ internal sealed class AssetDto
     public DateTimeOffset LocalDateTime { get; init; }
     // Milliseconds since v3; older servers sent "H:MM:SS.fff", which this client does not support.
     public long? Duration { get; init; }
+    // As displayed, so a portrait phone video is taller than wide; calibrate needs only the pixel count.
+    public int? Width { get; init; }
+    public int? Height { get; init; }
     public ExifDto? ExifInfo { get; init; }
     public List<TagDto>? Tags { get; init; }
 }

@@ -231,7 +231,8 @@ public sealed class ImmichDiscoveryService(
     /// Why an asset the search returned must not be converted, or null for a candidate. This repeats the search filter on
     /// purpose: a wrong match ends with an original in Immich's trash, so the server's filter is not trusted alone.
     /// </summary>
-    private static string? Exclusion(ImmichAsset asset, DateTimeOffset cutoff, bool skipFavorites)
+    // Internal for calibrate, whose Immich population must be the assets this discovery would judge.
+    internal static string? Exclusion(ImmichAsset asset, DateTimeOffset cutoff, bool skipFavorites)
     {
         if (!string.Equals(asset.Type, ImmichValues.Video, StringComparison.Ordinal)) return $"is a {asset.Type}, not a video";
         if (asset.FileCreatedAt >= cutoff) return "is newer than the age gate";
@@ -300,7 +301,7 @@ public sealed class ImmichDiscoveryService(
     }
 
     /// <summary>Earlier Immich jobs, read once per run because every repository call re-runs the database initialiser.</summary>
-    private sealed class ImmichHistory
+    internal sealed class ImmichHistory
     {
         public HashSet<string> OpenAssets { get; } = new(StringComparer.Ordinal);
         private readonly HashSet<string> _convertedAssets = new(StringComparer.Ordinal);

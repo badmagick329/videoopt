@@ -8,7 +8,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 
 | Class | Commands | What to do |
 | --- | --- | --- |
-| Read-only | `doctor`, `status`, `history`, `queue list`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `process --dry-run` | Run freely. Add `--json` where offered. `doctor` may create the job database and the Immich staging folder. |
+| Read-only | `doctor`, `status`, `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `process --dry-run` | Run freely. Add `--json` where offered. `doctor` may create the job database and the Immich staging folder. |
 | Working | `queue discover`, `queue run`, `process`, `immich run`, `validate`, `queue cancel`, `queue retry` | Run when the user's request covers it. They change only the job database and temporary files. The one exception: `immich run`'s re-upload guard moves converted originals the phone uploaded again back to Immich's trash, which is the intended outcome. |
 | Gated | `finalize`, `immich finalize`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Gate first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
 
@@ -65,6 +65,14 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
 5. **Finalise.** After the go-ahead, `'y' | video-optimiser immich finalize`. Done when it prints `Finalised: N.` with no `Failed:` count and exits `0`. If it stops partway, running it again continues; that rerun needs the gate too.
 
 `finalize --ready` also finalises ready Immich jobs. Use `immich finalize` for Immich jobs, so the user sees capture dates before the prompt.
+
+## Workflow: tuning the rules
+
+Use this when the user asks why videos are not converted, or whether their rules fit their library.
+
+1. **Report.** `calibrate --json`. It writes nothing and downloads nothing; with Immich configured it searches the library, which takes seconds. Exit `1` with `... is from an older version of video-optimiser` means run `status` once, then `calibrate` again.
+2. **Explain.** Per rule, give `videos`, `bytes` and `history`. Then give the largest `keptOut` groups. `codecUnknown` groups are Immich videos no run has downloaded; their bitrate includes audio. When `historyLeftOut.otherSettings` is large, say that conversions from other or unrecorded quality settings are not counted.
+3. **Propose.** Quote each suggestion's `text`. Rule changes are the user's to choose: propose the YAML, then apply it once they agree. A `testOne` suggestion's `command` is a `process --force`, a Working command that converts one file and stops before replacing it; on a paid remote config it passes the paid-encoding gate. An Immich `testOne` has no command; name the file to the user.
 
 ## Reading run output
 
@@ -127,7 +135,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | Code | Meaning |
 | --- | --- |
 | `0` | Success, or a confirmation answered "no" |
-| `1` | General failure, including a `doctor` failure outside configuration and dependencies |
+| `1` | General failure, including a `doctor` failure outside configuration and dependencies, and `calibrate` on a database an older version wrote |
 | `2` | Invalid arguments |
 | `3` | Invalid configuration, or an Immich API key that is missing, rejected or lacks a permission |
 | `4` | Missing or unusable media tool (`doctor`) |
@@ -136,7 +144,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `7` | The output failed validation, including an output ffprobe cannot read (`validate`, `process`), or `finalize <job-id>` named a job that is not ready |
 | `8` | `finalize <job-id>` failed, or `immich finalize` failed for every job |
 | `9` | Cancelled with `Ctrl+C` |
-| `10` | Partial success: some jobs failed (any failure in `finalize --ready`), or `queue discover`, `immich run` or `cleanup` hit issues; read the output |
+| `10` | Partial success: some jobs failed (any failure in `finalize --ready`), or `queue discover`, `immich run`, `cleanup` or `calibrate` hit issues; read the output |
 
 ### Job statuses
 
@@ -163,3 +171,17 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `updatedUtc` | Last change, ISO 8601 |
 
 `doctor --json` prints `configurationPath`, `exitCode` and `diagnostics`, an array of `{ category, status, code, message }` where `status` is `Pass`, `Warning` or `Fail`.
+
+`calibrate --json` prints one object. Bitrates are whole Mbps; sizes are bytes.
+
+| Field | Value |
+| --- | --- |
+| `minimumVmaf` | The quality target the history was filtered to |
+| `rules` | Per rule in config order: `number`, `codecs`, `resolution`, `minimumVideoBitrate`, `minimumFileSize`, `videos`, `bytes`, `history` |
+| `keptOut` | Groups no rule admits, largest first: `codec`, `resolution`, `minimumMbps`, `maximumMbps`, `videos`, `bytes`, `history`. `resolution` `null` is unknown; `minimumMbps` `null` is an unknown bitrate; `maximumMbps` `null` alone is the 100+ band |
+| `codecUnknown` | Immich videos never downloaded, grouped the same way without `codec` or `history`; their bitrate includes audio |
+| `alreadyAv1` | `{ videos, bytes }` already AV1 or already converted |
+| `historyLeftOut` | `{ otherSettings, noVideoFacts }`: results not counted |
+| `suggestions` | Each has `kind` and `text`. `raiseMinimumBitrate`: `rule`, `minimumVideoBitrate`. `addRule`: `codec`, `resolution`, `minimumVideoBitrate`. `testOne`: `codec`, `resolution`, `minimumMbps`, `maximumMbps`, `path` and `command` for a file, or `immichAssetId` for an Immich video |
+
+`history` is `null` when nothing was tried, or `{ converted, convertedBitrateMbps, savedPercent, notWorthIt, notWorthItBitrateMbps }` with each range `{ min, max }` or `null`. It counts only completed and skipped jobs whose quality settings match the current config.

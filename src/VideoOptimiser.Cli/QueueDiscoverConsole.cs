@@ -18,6 +18,9 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
     private DateTimeOffset? _lastLineAt;
     private string? _issueFolder;
 
+    /// <summary>Whether any line was printed, so a report that follows knows to set itself apart with a blank line.</summary>
+    public bool WroteLines { get; private set; }
+
     public void Report(ScanProgress update)
     {
         lock (_gate)
@@ -25,6 +28,7 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
             if (update.Stage == "Issue")
             {
                 ReportIssue(update);
+                WroteLines = true;
                 return;
             }
 
@@ -34,6 +38,7 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
             if (now - _lastLineAt < ProgressInterval) return;
             _lastLineAt = now;
             output.WriteLine($"Checked {update.FilesChecked} files so far ({update.Probed} probed with ffprobe)...");
+            WroteLines = true;
         }
     }
 

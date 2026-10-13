@@ -60,7 +60,9 @@ public sealed record ImmichAsset(
     DateTimeOffset LocalDateTime,
     long? DurationMilliseconds,
     ImmichExif Exif,
-    IReadOnlyList<string> TagIds);
+    IReadOnlyList<string> TagIds,
+    int? Width = null,
+    int? Height = null);
 
 public sealed record ImmichExif(
     long? FileSizeInBytes,

@@ -279,7 +279,9 @@ public sealed class ImmichHttpClient : IImmichClient
             asset.LocalDateTime,
             asset.Duration,
             new ImmichExif(exif?.FileSizeInByte, exif?.DateTimeOriginal, exif?.Latitude, exif?.Longitude, exif?.Description, exif?.Rating, exif?.Make, exif?.Model),
-            asset.Tags?.Select(tag => tag.Id).ToList() ?? []);
+            asset.Tags?.Select(tag => tag.Id).ToList() ?? [],
+            asset.Width,
+            asset.Height);
     }
 
     private Task<T> SendJsonAsync<T>(HttpMethod method, string path, HttpContent? content, string? permission, JsonTypeInfo<T> responseType, CancellationToken cancellationToken) =>

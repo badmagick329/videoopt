@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
 using VideoOptimiser.Application.Immich;
@@ -10,6 +11,7 @@ using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Domain;
+using VideoOptimiser.Infrastructure.Calibration;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Diagnostics;
 using VideoOptimiser.Infrastructure.Immich;
@@ -144,6 +146,9 @@ internal static partial class CliApplication
         builder.Services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
         builder.Services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
         builder.Services.AddSingleton<IJobRepository, SqliteJobRepository>();
+        // calibrate promises to write nothing, so it gets its own read-only store and a probe cache that never saves.
+        builder.Services.AddSingleton<ICalibrationService>(services => CalibrationService.ReadOnly(
+            services.GetRequiredService<IFileReadinessService>(), services.GetRequiredService<Func<string, IMediaProbe>>(), services.GetRequiredService<IImmichClientFactory>()));
         builder.Services.AddSingleton<Func<string, IMediaDecodeTester>>(services => ffmpegPath => new FfmpegDecodeTester(ffmpegPath, services.GetRequiredService<IExternalProcessRunner>()));
         builder.Services.AddSingleton<IOutputValidationService, OutputValidationService>();
         builder.Services.AddSingleton<IJobProcessor, JobProcessor>();
@@ -209,6 +214,7 @@ internal static partial class CliApplication
             CliCommandKind.Cleanup => await RunCleanupAsync(services.GetRequiredService<ITemporaryOutputCleanupService>(), configuration, command.DryRun, cancellationToken),
             CliCommandKind.ImmichRun => await RunImmichRunAsync(services, configuration, command, cancellationToken),
             CliCommandKind.ImmichFinalize => await RunImmichFinalizeAsync(services, configuration, cancellationToken),
+            CliCommandKind.Calibrate => await RunCalibrateAsync(services, configuration, command.Json, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -746,6 +752,40 @@ internal static partial class CliApplication
         return result.Failures.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
+    /// <summary>
+    /// <c>calibrate</c>: what the rules admit and keep out, and suggestions. Scan issues end in <see cref="ExitCode.PartialSuccess"/>,
+    /// as for <c>queue discover</c>, because the report is missing the videos they left out.
+    /// </summary>
+    private static async Task<int> RunCalibrateAsync(IServiceProvider services, LoadedConfiguration configuration, bool json, CancellationToken cancellationToken)
+    {
+        if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
+        // With --json, stdout carries the JSON alone; an agent has no use for progress lines.
+        var scanProgress = json ? null : new QueueDiscoverConsole(Console.Out);
+        var immichProgress = json ? null : new ImmichSearchConsole(Console.Out);
+        CalibrationRun run;
+        try
+        {
+            run = await services.GetRequiredService<ICalibrationService>().RunAsync(configuration.Settings, scanProgress, immichProgress, cancellationToken);
+        }
+        catch (DatabaseOutdatedException exception)
+        {
+            WriteError($"{Path.GetFileName(exception.DatabasePath)} is from an older version of video-optimiser. Run 'video-optimiser status' once to upgrade it, then run calibrate again.");
+            return (int)ExitCode.GeneralFailure;
+        }
+
+        if (json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(CalibrateConsole.ToJson(run.Report), CliJsonContext.Default.CalibrationJsonOutput));
+        }
+        else
+        {
+            if (scanProgress!.WroteLines || immichProgress!.WroteLines) Console.WriteLine();
+            CalibrateConsole.Write(Console.Out, run.Report);
+        }
+
+        return run.ScanIssues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
+    }
+
     internal const string Usage = """
 Usage:
   video-optimiser config init [--config <path>] [--quality archive|standard|compact]
@@ -766,6 +806,7 @@ Usage:
   video-optimiser queue retry <job-id> [--config <path>]
   video-optimiser status [--config <path>] [--json]
   video-optimiser history [--config <path>] [--json]
+  video-optimiser calibrate [--config <path>] [--json]
   video-optimiser validate <job-id> [--config <path>]
   video-optimiser finalize <job-id> [--config <path>]
   video-optimiser finalize --ready [--config <path>]
@@ -802,7 +843,8 @@ internal enum CliCommandKind
     Finalize,
     Cleanup,
     ImmichRun,
-    ImmichFinalize
+    ImmichFinalize,
+    Calibrate
 }
 
 internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null)
@@ -900,6 +942,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["queue", "retry", _] => CliCommandKind.QueueRetry,
             ["status"] => CliCommandKind.Status,
             ["history"] => CliCommandKind.History,
+            ["calibrate"] => CliCommandKind.Calibrate,
             ["validate", _] => CliCommandKind.Validate,
             ["finalize"] or ["finalize", _] => CliCommandKind.Finalize,
             ["cleanup"] => CliCommandKind.Cleanup,
@@ -913,9 +956,9 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("Unknown or incomplete command.");
         }
 
-        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.QueueList or CliCommandKind.Status or CliCommandKind.History))
+        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.QueueList or CliCommandKind.Status or CliCommandKind.History or CliCommandKind.Calibrate))
         {
-            return Invalid("--json is only supported by doctor, scan, status, and history.");
+            return Invalid("--json is only supported by doctor, queue list, status, history and calibrate.");
         }
 
         if (first && kind is not (CliCommandKind.QueueDiscover or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue discover and immich run.");

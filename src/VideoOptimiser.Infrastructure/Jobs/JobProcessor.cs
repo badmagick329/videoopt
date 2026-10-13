@@ -146,6 +146,8 @@ public sealed class JobProcessor(
                 progress?.Report(JobProgress.Step($"Finding the best CRF for VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)}{saving} ({samples})..."));
                 var crfResult = await session.SearchCrfAsync(path, quality, Translating(progress, AbAv1Stage.CrfSearch, quality), cancellationToken);
                 job.Crf = crfResult.Crf;
+                // The settings that chose this CRF, so calibrate counts the eventual conversion only under them.
+                job.QualityFingerprint = QualityFingerprint.Compute(settings);
                 prediction = crfResult.Prediction;
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
                 progress?.Report(JobProgress.Step(prediction is null

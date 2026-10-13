@@ -4,7 +4,11 @@ using VideoOptimiser.Application.Scanning;
 
 namespace VideoOptimiser.Infrastructure.Scanning;
 
-public sealed class SqliteMediaProbeCache(IDatabaseInitializer databaseInitializer) : IMediaProbeCache
+/// <summary>
+/// ffprobe results keyed by path. <paramref name="mode"/> is <see cref="SqliteOpenMode.ReadOnly"/> for a reader that must
+/// leave the file as it found it (<c>calibrate</c>), paired with an initializer that migrates nothing; stores then fail.
+/// </summary>
+public sealed class SqliteMediaProbeCache(IDatabaseInitializer databaseInitializer, SqliteOpenMode mode = SqliteOpenMode.ReadWriteCreate) : IMediaProbeCache
 {
     public const int CacheSchemaVersion = 1;
 
@@ -101,7 +105,7 @@ public sealed class SqliteMediaProbeCache(IDatabaseInitializer databaseInitializ
         var builder = new SqliteConnectionStringBuilder
         {
             DataSource = Path.GetFullPath(databasePath),
-            Mode = SqliteOpenMode.ReadWriteCreate,
+            Mode = mode,
             ForeignKeys = true,
             Pooling = false
         };

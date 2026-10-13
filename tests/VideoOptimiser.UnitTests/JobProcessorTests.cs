@@ -507,6 +507,21 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task AJobStoresTheQualitySettingsThatChoseItsCrf()
+    {
+        // calibrate counts a conversion only under the settings that judged it, so a converted job must carry them too.
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = Settings("fingerprint.db", new QualitySettings { MinimumVmaf = 97 });
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+
+        var result = await Processor(new PredictedCrfSearch(), new FakeEncoder()).ProcessAsync(settings.Database.Path, source, settings, force: false);
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize);
+        (await repository.GetAsync(settings.Database.Path, result.Job.Id))!.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings));
+    }
+
+    [Fact]
     public async Task TheCrfSummaryDropsTheEstimateWhenAbAv1PrintedNone()
     {
         var source = Path.Combine(_directory, "movie.mp4");
