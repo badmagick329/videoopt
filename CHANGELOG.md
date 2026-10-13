@@ -39,6 +39,7 @@
 - `queue retry <job-id>` now queues any failed or cancelled job's original again, not only one whose remote configuration changed.
 - Remote CRF search and encoding print ab-av1's progress while it runs. Before, the SSH command that started each stage stayed open until the stage ended, so its whole log appeared at once when the step was over.
 - The AV1 output now keeps the original's container metadata: its capture date (`creation_time`), GPS location, and phone make and model (`com.android.*`). Before, every converted file lost them, so photo libraries dated it by the conversion and dropped it from the map. Files already converted stay without them.
+- In a watched folder, `finalize` now gives the installed AV1 the original's Date created and Date modified, for `delete`, `archive` and `keep`. Before, the AV1 showed the time of the conversion, so it sorted as a new file in Explorer and in photo libraries. The archived original keeps its own dates. If the dates cannot be set, the AV1 is still installed and `finalize` ends with a warning. On Linux and macOS only Date modified is copied. Files already finalised keep the dates they have.
 
 ## [0.5.0] - 2026-10-12
 ### Added

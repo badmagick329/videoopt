@@ -95,10 +95,13 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
     }
 
-    private static string Describe(string sourcePath, FileInstallation installation) =>
-        installation.ArchivedOriginalPath is { } archived ? $"Finalisation complete. Original archived to {archived}."
-        : installation.InstalledPath != sourcePath ? $"Finalisation complete. Original kept; AV1 installed as {installation.InstalledPath}."
-        : "Finalisation complete. Original deleted.";
+    private static string Describe(string sourcePath, FileInstallation installation)
+    {
+        var message = installation.ArchivedOriginalPath is { } archived ? $"Finalisation complete. Original archived to {archived}."
+            : installation.InstalledPath != sourcePath ? $"Finalisation complete. Original kept; AV1 installed as {installation.InstalledPath}."
+            : "Finalisation complete. Original deleted.";
+        return installation.Warning is { } warning ? $"{message} Warning: {warning}" : message;
+    }
 }
 
 /// <summary>A finalisation that running again cannot fix: the original no longer matches what was converted.</summary>

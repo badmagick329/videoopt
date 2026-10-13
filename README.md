@@ -148,6 +148,8 @@ eligibility:
 
 `archiveDirectory` can be a folder name, such as `Archive`, created beside each original, or a full path that collects every original in one place. Nothing is ever overwritten: a taken name gets a number, as in `movie (2).mp4`.
 
+The AV1 takes the original's Date created and Date modified, so it sorts where the original did.
+
 ## Commands
 
 All commands take `--config <path>`.
