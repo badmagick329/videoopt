@@ -17,4 +17,8 @@
     </PackageReference>
     <PackageReference Include="FluentAssertions" Version="7.2.2" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Real ab-av1 logs, read by the tests that parse and translate ab-av1 output. -->
+    <None Update="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

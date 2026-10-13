@@ -1,2 +1,3 @@
 # cloud-init and the worker run these with bash, which fails on CRLF.
 *.sh text eol=lf
+tests/VideoOptimiser.UnitTests/Fixtures/** -text

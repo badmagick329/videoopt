@@ -14,8 +14,9 @@ public static partial class AbAv1Output
 {
     private const string NoSuitableCrf = "Failed to find a suitable crf";
 
-    // Only the crf_search summary lines end in "(P%)"; sample_encode lines for the same CRF continue with "predicted ...".
-    [GeneratedRegex(@"\bcrf\s+(?<crf>\d+)\s+VMAF\s+(?<vmaf>\d+(?:\.\d+)?)\s+\((?<percent>\d+(?:\.\d+)?)%\)")]
+    // Only crf_search's line is an attempt's verdict. sample_encode's per-sample lines ("sample 2/2 crf 32 VMAF 97.39 (82%)")
+    // share its shape, and one sample can pass the VMAF while the attempt as a whole does not.
+    [GeneratedRegex(@"::crf_search\]\s+crf\s+(?<crf>\d+)\s+VMAF\s+(?<vmaf>\d+(?:\.\d+)?)\s+\((?<percent>\d+(?:\.\d+)?)%\)")]
     private static partial Regex AttemptLine();
 
     /// <summary>

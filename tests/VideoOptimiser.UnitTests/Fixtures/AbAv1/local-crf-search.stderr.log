@@ -1,0 +1,28 @@
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] encoding sample 1/2 crf 34
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] sample 1/2 crf 34 VMAF 92.35 (46%) (cache)
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] encoding sample 2/2 crf 34
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] sample 2/2 crf 34 VMAF 92.76 (46%) (cache)
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] crf 34 VMAF 92.55 predicted video stream size 29.97 MiB (46%) taking 17 seconds (cache)
+[2026-10-13T11:17:50Z INFO  ab_av1::command::crf_search] crf 34 VMAF 92.55 (46%) (cache)
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] encoding sample 1/2 crf 18
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] sample 1/2 crf 18 VMAF 97.29 (136%) (cache)
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] encoding sample 2/2 crf 18
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] sample 2/2 crf 18 VMAF 97.61 (138%) (cache)
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] crf 18 VMAF 97.45 predicted video stream size 89.69 MiB (137%) taking 16 seconds (cache)
+[2026-10-13T11:17:50Z INFO  ab_av1::command::crf_search] crf 18 VMAF 97.45 (137%) (cache)
+[2026-10-13T11:17:50Z INFO  ab_av1::command::sample_encode] encoding sample 1/2 crf 33
+[2026-10-13T11:17:52Z INFO  ab_av1::vmaf] vmaf src.sample23+300f.av1.crf33.10.mp4 vs reference src.sample23+300f.mkv
+[2026-10-13T11:17:58Z INFO  ab_av1::command::sample_encode] sample 1/2 crf 33 VMAF 92.75 (50%)
+[2026-10-13T11:17:58Z INFO  ab_av1::command::sample_encode] encoding sample 2/2 crf 33
+[2026-10-13T11:18:00Z INFO  ab_av1::vmaf] vmaf src.sample56+300f.av1.crf33.10.mp4 vs reference src.sample56+300f.mkv
+[2026-10-13T11:18:05Z INFO  ab_av1::command::sample_encode] sample 2/2 crf 33 VMAF 92.87 (50%)
+[2026-10-13T11:18:05Z INFO  ab_av1::command::sample_encode] crf 33 VMAF 92.81 predicted video stream size 32.60 MiB (50%) taking 15 seconds
+[2026-10-13T11:18:05Z INFO  ab_av1::command::crf_search] crf 33 VMAF 92.81 (50%)
+[2026-10-13T11:18:05Z INFO  ab_av1::command::sample_encode] encoding sample 1/2 crf 32
+[2026-10-13T11:18:06Z INFO  ab_av1::vmaf] vmaf src.sample23+300f.av1.crf32.10.mp4 vs reference src.sample23+300f.mkv
+[2026-10-13T11:18:12Z INFO  ab_av1::command::sample_encode] sample 1/2 crf 32 VMAF 93.36 (57%)
+[2026-10-13T11:18:12Z INFO  ab_av1::command::sample_encode] encoding sample 2/2 crf 32
+[2026-10-13T11:18:14Z INFO  ab_av1::vmaf] vmaf src.sample56+300f.av1.crf32.10.mp4 vs reference src.sample56+300f.mkv
+[2026-10-13T11:18:19Z INFO  ab_av1::command::sample_encode] sample 2/2 crf 32 VMAF 93.52 (56%)
+[2026-10-13T11:18:19Z INFO  ab_av1::command::sample_encode] crf 32 VMAF 93.44 predicted video stream size 37.07 MiB (57%) taking 14 seconds
+[2026-10-13T11:18:19Z INFO  ab_av1::command::crf_search] crf 32 successful
