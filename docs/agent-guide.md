@@ -34,7 +34,7 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 
 **Remote setup.** `remote setup` is the one-time Hetzner setup. It uploads an SSH key to the user's Hetzner project before it asks anything, so gate even its first run. Without input it then prints the `processing:` section it would write, changes no file and exits `0`. Show the user that section; after their go-ahead, run `'y' | video-optimiser remote setup`. A rerun reuses the uploaded key, rewrites only the `processing:` section and keeps the old file as `<config>.bak`. Exit `3` after `No Hetzner API token was found.` means the user must create the token and add it to `.env` themselves; never ask for its value.
 
-**Where encoding runs.** Take the encoding location from VideoOptimiser, not from your reading of the config. `doctor` reports it as `EncodingLocation` under `Processing`, and `queue run`, `process` and `immich run` print the same `Encoding on: ...` line first, before any download or encoding. Quote it at the paid-encoding gate. If a run's line differs from what the user expects, stop the run before its next line.
+**Where encoding runs.** Take the encoding location from VideoOptimiser, not from your reading of the config. `doctor` reports it as `EncodingLocation` under `Processing`, and `queue run`, `process` and `immich run` print the same `Encoding on ...` line first, before any download or encoding. Quote it at the paid-encoding gate. If a run's line differs from what the user expects, stop the run before its next line.
 
 **Prompts.** `finalize --ready`, `immich finalize` and `cleanup` ask `[y/N]` on standard input, as do `queue run`, `process`, `immich run` and `worker create` when they would create a Hetzner server, and `remote setup` before it writes the config. After the user approves, pipe the answer: `'y' | video-optimiser finalize --ready`. With no input, the command cancels and exits `0`. `finalize <job-id>` does not prompt, so gate it all the same. With redirected input, a failed Hetzner run never asks whether to delete the worker; it keeps it.
 
@@ -51,7 +51,7 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 2. **Convert.** `queue run`. Done when it exits. A video can take an hour or more on a PC; run it in the background if your harness allows, and check progress with `status --json`. Exit `0`: every job is ready. Exit `10`: some failed. Exit `6`: all failed.
 3. **Report.** From `status --json`, list each `ReadyToFinalize` job's `sourcePath`, `outputPath` and `percentageSaved`, and each failed job's `failureCategory` and `failureMessage`. Ask the user to watch the outputs.
 4. **Gate.** Say what `original.action` will do to each original: `delete`, `archive` or `keep`.
-5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` or `Failed  <file>: <message>` per job, then `Finalised: N. Failed: N.`, then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed, so check `status --json`.
+5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` or `Failed  <file>: <message>` per job, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out), then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed, so check `status --json`.
 
 ## Workflow: Immich
 
@@ -59,16 +59,16 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
 
 1. **Phone.** Ask the user whether they have run the Immich app's "Free up space" since the last round, with a cutoff no older than `immich.minimumAgeDays`, and emptied the phone's trash. Only the user can do this. Wait for their answer.
 2. **Convert.** `immich run`, with `--first` on a user's first round and `--limit <n>` when the user names a round size. Before a paid remote round, ask the user for that size. Done when it exits. If it lists re-uploaded originals, pass that list to the user exactly as printed: they must delete those files from the phone. Exit `10` also covers guard or search issues; quote those lines.
-   Discovery downloads each candidate to check it, so many `[n] <file>  <date>, <size>  skipped: <reason>` lines are normal: each rejected download is deleted at once and never fetched again. `Your eligibility rules changed since the last run, ...` is also normal after the rules change. Report the summary to the user: `Found X of N after checking M videos; ...` and `Most common reason: <reason> (<count>). To include those, change eligibility.rules.` A video that fails its checksum or probe prints `issue: ...` and is tried again on the next run.
+   Discovery downloads each candidate to check it, so many `[n] <file>  <date>  <codec> <resolution> <bitrate>  <size>  skip: <reason>` lines are normal: a rejected download is deleted and skipped in future runs. `queued: fits rule N` and `skip: rule N needs ...` number the rules from 1 in `eligibility.rules` order. `Your eligibility rules changed since the last run, ...` is normal after a rules change. Report the summary to the user: `Found X of N after checking M. Skipped K: <reasons>.` and, when present, `Not downloaded: ...`. A video that fails its checksum or probe prints `issue: ...` and is tried again on the next run. The re-upload guard prints only when it finds a converted original in Immich again.
 3. **Report.** As in the folders workflow; filter `status --json` to `"source": "immich"`. Each `outputPath` is under `immich.stagingDirectory`.
 4. **Gate.** Each AV1 is uploaded as a new Immich asset and each original goes to Immich's trash.
-5. **Finalise.** After the go-ahead, `'y' | video-optimiser immich finalize`. Done when it prints `Finalised: N. Failed: 0.` and exits `0`. If it stops partway, running it again continues; that rerun needs the gate too.
+5. **Finalise.** After the go-ahead, `'y' | video-optimiser immich finalize`. Done when it prints `Finalised: N.` with no `Failed:` count and exits `0`. If it stops partway, running it again continues; that rerun needs the gate too.
 
 `finalize --ready` also finalises ready Immich jobs. Use `immich finalize` for Immich jobs, so the user sees capture dates before the prompt.
 
 ## Reading run output
 
-`queue run`, `process` and `immich run` print one block per job, then a summary and a `Next:` line when something is ready:
+`queue run`, `process` and `immich run` print one block per job, then a tally of the non-zero outcomes (`Ready to finalise: 4. Not worth converting: 1.`, or `Nothing to finalise.`) and a `Next:` line when something is ready:
 
 ```text
 [2/5] PXL_20250531_041434717.mp4 (1002.4 MiB)
@@ -77,17 +77,17 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
       Finding the best CRF for VMAF 97 (2 test clips of 20s each)...
         CRF 34   VMAF 95.02   size  19%   below target
         CRF 29   VMAF 97.13   size  29%   passes, chosen
-      Chose CRF 29 in 7m 36s. Expected output: 284.87 MiB (29% of the original).
+      Chose CRF 29 in 7m 36s. Expected output: 284.9 MiB (29% of the original).
       Encoding at CRF 29, expected to take about 5 minutes...
         20%, 54 fps, about 1m 06s left
-      Encoded 285.10 MiB (29% of the original) in 5m 02s.
+      Encoded 285.1 MiB (29% of the original) in 5m 02s.
       Downloading 285.1 MiB from the worker...
       Downloaded 285.1 MiB in 30s, checksum verified.
       Checking the output: streams, duration, savings and decode test...
       Ready to finalise: 1002.4 MiB -> 287.3 MiB, 71.3% saved.
 ```
 
-The upload and download lines appear only on a remote worker. The last line of each block is the job's outcome:
+The upload and download lines appear only on a remote worker. On a terminal the output is coloured; redirected output is plain text. If your harness runs commands in a terminal and you see escape codes such as `ESC[32m`, set `NO_COLOR=1`. The last line of each block is the job's outcome:
 
 | Outcome line | Job status |
 | --- | --- |
@@ -97,7 +97,7 @@ The upload and download lines appear only on a remote worker. The last line of e
 | `Failed during the upload`, `the CRF search`, `encoding` or `the download: …`, then `Full log: <path>` | `Failed`; the full ab-av1 log stays at that path |
 | `Worker unreachable: … Run the same command again to resume.` | `Interrupted` |
 
-**Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints a progress line about every 15 seconds and states its expected length when it starts. A running job that prints nothing new for 15 minutes is stuck: report it with the job's last lines and `status --json`.
+**Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints a progress line about every 15 seconds and states its expected length when it starts; its progress lines add `about <time> left` only after 30 seconds and 5 percentage points, so early lines without it are normal. A running job that prints nothing new for 15 minutes is stuck: report it with the job's last lines and `status --json`.
 
 ## Recovery
 
