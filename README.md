@@ -146,7 +146,9 @@ eligibility:
 | --- | --- | --- |
 | `delete` (default) | Deleted | Takes the original's name and place |
 | `archive` | Moved to `original.archiveDirectory` | Takes the original's name and place |
-| `keep` | Left where it is | Saved beside it as `<name>.av1<extension>` |
+| `keep` | Left where it is | Saved beside it as `<name>.av1.mp4` or `<name>.av1.mkv` |
+
+The AV1 is always an `.mp4` or `.mkv`. FFmpeg cannot write AV1 into `.mov` or `.m4v`, so originals with those extensions, and `.mp4` ones, give an `.mp4`; every other extension gives an `.mkv`, which holds any subtitle the original has. So `IMG_0897.MOV` becomes `IMG_0897.MP4`, and anything that tracked the old path, such as an editing catalogue or a media server's watch history, loses it. PCM audio is re-encoded to FLAC, which is lossless (32-bit float PCM becomes 24-bit) and plays in browsers; other audio is copied.
 
 `archiveDirectory` can be a folder name, such as `Archive`, created beside each original, or a full path that collects every original in one place. Nothing is ever overwritten: a taken name gets a number, as in `movie (2).mp4`.
 
