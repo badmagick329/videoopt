@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-10-13
 ### Added
 
 - `quality.maxEncodedPercent` (default `80`, a whole number from 1 to 100) is the largest share of the original's size the AV1 output may have. It is passed to ab-av1 as `--max-encoded-percent`, which used to rely on ab-av1's own default of 80. `config init` writes it.
