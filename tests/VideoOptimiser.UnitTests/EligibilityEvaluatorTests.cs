@@ -94,6 +94,64 @@ public sealed class EligibilityEvaluatorTests : IDisposable
         changed.Should().OnlyHaveUniqueItems().And.NotContain(baseline);
     }
 
+    [Fact]
+    public void DescribeMismatchNamesTheCodecWhenNoRuleWantsIt()
+    {
+        var settings = new EligibilitySettings { Rules = [Rule(["hevc"], "1080p-1440p", "10Mbps", "5B"), Rule(["vp9", "av1"], "4k+", "10Mbps", "5B")] };
+
+        var mismatch = EligibilityEvaluator.DescribeMismatch(1_000, Described("h264", 1920, 1080, 20_000_000), settings);
+
+        mismatch.Text.Should().Be("codec h264 (rules want hevc/vp9/av1)");
+        mismatch.Key.Should().Be("codec h264");
+    }
+
+    [Fact]
+    public void DescribeMismatchListsEveryFailureOfTheOnlyRuleWithTheRealValues()
+    {
+        var settings = new EligibilitySettings { Rules = [Rule(["hevc"], "1080p-1440p", "10Mbps", "500MiB")] };
+
+        var mismatch = EligibilityEvaluator.DescribeMismatch(100L * 1024 * 1024, Described("hevc", 1280, 720, 6_500_000), settings);
+
+        mismatch.Text.Should().Be("bitrate 6.5Mbps below 10Mbps; resolution 1280x720 outside 1080p-1440p; size 100.0 MiB below 500MiB");
+        mismatch.Key.Should().Be("bitrate below 10Mbps; resolution outside 1080p-1440p; size below 500MiB");
+    }
+
+    [Fact]
+    public void DescribeMismatchDescribesTheClosestRuleAndNumbersItWhenThereAreSeveral()
+    {
+        // Rule 1 fails on resolution and bitrate, rule 2 only on bitrate: rule 2 is the one worth telling the user about.
+        var settings = new EligibilitySettings { Rules = [Rule(["hevc"], "4k+", "20Mbps", "1B"), Rule(["hevc"], "1080p-1440p", "10Mbps", "1B"), Rule(["h264"], "1080p-1440p", "1Mbps", "1B")] };
+
+        var mismatch = EligibilityEvaluator.DescribeMismatch(1_000, Described("hevc", 1920, 1080, 8_000_000), settings);
+
+        mismatch.Text.Should().Be("bitrate 8Mbps below 10Mbps (rule 2)");
+        mismatch.Key.Should().Be("bitrate below 10Mbps (rule 2)");
+    }
+
+    [Fact]
+    public void DescribeMismatchSaysWhenFfprobeReportedNoBitrate()
+    {
+        var settings = new EligibilitySettings { Rules = [Rule(["hevc"], "1080p-1440p", "10Mbps", "1B")] };
+
+        var mismatch = EligibilityEvaluator.DescribeMismatch(1_000, Described("hevc", 1920, 1080, null), settings);
+
+        mismatch.Text.Should().Be("bitrate unknown (needs 10Mbps)");
+        mismatch.Key.Should().Be("bitrate unknown");
+    }
+
+    [Fact]
+    public void DescribeMismatchAgreesWithIsEligibleAboutWhichFilesFail()
+    {
+        var rule = Rule(["h264"], "1080p-1440p", "8Mbps", "1B");
+        foreach (var media in new[] { Described("hevc", 1920, 1080, 9_000_000), Described("h264", 1280, 720, 9_000_000), Described("h264", 1920, 1080, 7_999_999) })
+        {
+            IsEligible(rule, media).Should().BeFalse();
+            EligibilityEvaluator.DescribeMismatch(10, media, new EligibilitySettings { Rules = [rule] }).Text.Should().NotBe("did not match");
+        }
+    }
+
+    private static MediaInfo Described(string codec, int width, int height, long? bitrate) => new(codec, 1, 1, 0, 0, 60, null, width, height, bitrate);
+
     private static EligibilityRuleSettings Rule(List<string> codecs, string resolution, string bitrate, string size) =>
         new() { Codecs = codecs, Resolution = resolution, MinimumVideoBitrate = bitrate, MinimumFileSize = size };
 

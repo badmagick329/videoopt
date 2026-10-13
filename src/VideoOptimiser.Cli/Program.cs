@@ -345,23 +345,11 @@ internal static partial class CliApplication
             return (int)ExitCode.InvalidConfiguration;
         }
 
-        var progress = new InlineProgress<ScanProgress>(update => Console.WriteLine(FormatScanProgress(update)));
-        var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, progress, cancellationToken);
-        foreach (var path in result.QueuedPaths) Console.WriteLine($"Queued  {path}");
-        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Already converted: {result.AlreadyConverted}. Previously failed or cancelled: {result.PreviouslyFailed}. Previously skipped: {result.PreviouslySkipped}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");
-        if (result.PreviouslyFailed > 0) Console.WriteLine("Failed or cancelled originals stay out of the queue until they change. 'history' lists their jobs; 'queue retry <job-id>' queues one again.");
-        if (result.PreviouslySkipped > 0) Console.WriteLine("Skipped originals (AV1 would not save enough) are checked again when the file or the quality settings change; 'queue retry <job-id>' queues one now.");
+        Console.WriteLine($"Scanning {OutputWords.Count(configuration.Settings.Watch.Roots.Count, "watch root", "watch roots")} for videos to convert; files not seen before are probed with ffprobe.");
+        var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, new QueueDiscoverConsole(Console.Out), cancellationToken);
+        QueueDiscoverConsole.WriteSummary(Console.Out, result);
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
-
-    private static string FormatScanProgress(ScanProgress update) =>
-        update.Stage == "Issue"
-            ? string.IsNullOrWhiteSpace(update.Path)
-                ? $"{update.Stage}: {update.Message}"
-                : $"{update.Stage}: {update.Path} — {update.Message}"
-            : string.IsNullOrWhiteSpace(update.Path)
-            ? $"{update.Stage}: {update.Message}"
-            : $"{update.Stage}: {update.Path}";
 
     private static async Task<int> RunQueueCancelAsync(IJobRepository repository, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
@@ -657,19 +645,21 @@ internal static partial class CliApplication
             .Where(job => job.Status == JobStatus.ReadyToFinalize || FinalizationService.IsInterruptedImmichFinalization(job))
             .ToArray();
         if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
-        foreach (var job in ready) Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
+        foreach (var job in ready) Console.WriteLine(FinalizationConsole.DescribeReady(job));
         if (ready.Any(job => job.SourceKind == JobSourceKind.File)) Console.WriteLine(DescribeOriginalAction(configuration.Settings.Original));
         if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) Console.WriteLine("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
         Console.Write("Finalise these jobs? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
-        var failures = 0;
+        var report = new FinalizationConsole(Console.Out, Console.Error);
+        var failed = new List<(JobRecord Job, string Message)>();
         foreach (var job in ready)
         {
             var result = await finalizer.FinalizeAsync(configuration.Settings.Database.Path, job.Id, configuration.Settings, cancellationToken);
-            (result.ExitCode == ExitCode.Success ? Console.Out : Console.Error).WriteLine($"{job.Id:N}: {result.Message}");
-            if (result.ExitCode != ExitCode.Success) failures++;
+            if (!report.Outcome(job, result)) failed.Add((job, result.Message));
         }
-        return failures == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
+
+        report.Summary(ready.Length, failed);
+        return failed.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
     private static string DescribeOriginalAction(OriginalSettings original) => original.Action.ToLowerInvariant() switch
@@ -687,8 +677,7 @@ internal static partial class CliApplication
         var plan = await cleanup.FindAsync(settings.Database.Path, settings.Immich.IsConfigured ? settings.Immich.StagingDirectory : string.Empty, cancellationToken);
         foreach (var path in plan.UnknownJobFiles) Console.WriteLine($"Skipped  {path} (its job is not in this database)");
         if (plan.Count == 0) { Console.WriteLine("No abandoned temporary outputs or staged Immich originals found."); return (int)ExitCode.Success; }
-        foreach (var file in plan.Abandoned) Console.WriteLine($"{HumanReadableValues.FormatSize(file.SizeBytes),10}  {file.Path} ({file.Reason})");
-        foreach (var file in plan.StagedOriginals) Console.WriteLine($"{HumanReadableValues.FormatSize(file.SizeBytes),10}  {file.Path} ({file.Reason})");
+        CleanupReport.WriteFiles(Console.Out, plan);
         Console.WriteLine($"Abandoned temporary outputs: {plan.Abandoned.Count}. Staged Immich originals: {plan.StagedOriginals.Count}. Total: {HumanReadableValues.FormatSize(plan.TotalBytes)}.");
         if (plan.StagedOriginals.Count > 0) Console.WriteLine("Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.");
         if (dryRun) return (int)ExitCode.Success;

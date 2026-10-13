@@ -239,7 +239,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         var skip = (await _repository.ListImmichSkipsAsync(_settings.Database.Path))[asset.Id];
         skip.Checksum.Should().Be(asset.Checksum);
         skip.RulesFingerprint.Should().Be(EligibilityEvaluator.RulesFingerprint(_settings.Eligibility));
-        skip.Reason.Should().Contain("codec is h264");
+        skip.Reason.Should().Be("codec h264 (rules want hevc)");
         skip.RecordedUtc.Should().Be(Now);
     }
 
@@ -567,11 +567,110 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         File.Exists(job.SourcePath).Should().BeFalse();
     }
 
+    [Fact]
+    public async Task AnnouncesEachDownloadBeforeItStartsAndSettlesItWithItsOutcome()
+    {
+        _immich.Add("notes.txt", "hevc notes");
+        _immich.Add("a-h264.mp4", "h264 video");
+        var corrupt = _immich.Add("b-bad-checksum.mp4", "hevc video");
+        _immich.Replace(corrupt with { Checksum = "not-the-checksum" });
+        var gone = _immich.Add("c-gone.mp4", "hevc gone");
+        _immich.Failures[gone.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.");
+        _immich.Add("d-good.mp4", "hevc good");
+        var events = new List<ImmichDiscoveryProgress>();
+
+        var result = await DiscoverAsync(limit: 3, new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+
+        // notes.txt needs no download, so it is counted and never listed.
+        result.Ineligible.Should().Be(1);
+        events.Should().Equal(
+            new ImmichDiscoveryProgress.Started(3, 0, 0),
+            new ImmichDiscoveryProgress.CandidateDownloading(1, "a-h264.mp4", Old.DateTime, 10),
+            new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "codec h264 (rules want hevc)", null, 0),
+            new ImmichDiscoveryProgress.CandidateDownloading(2, "b-bad-checksum.mp4", Old.DateTime, 10),
+            new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Issue, "the download does not match Immich's checksum", "it will be tried again next run", 0),
+            new ImmichDiscoveryProgress.CandidateDownloading(3, "c-gone.mp4", Old.DateTime, 9),
+            new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Issue, "Immich answered 404", "it will be tried again next run", 0),
+            new ImmichDiscoveryProgress.CandidateDownloading(4, "d-good.mp4", Old.DateTime, 9),
+            new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1));
+    }
+
+    [Fact]
+    public async Task TalliesSkipsByReasonWithoutTheFilesValuesAndCountsOnlyJudgedVideosAsChecked()
+    {
+        _immich.Add("a.mp4", "h264 one");
+        _immich.Add("b.mp4", "h264 two");
+        _immich.Add("c.mp4", "vp9 three");
+        _immich.Add("d.mp4", "hevc four");
+        var gone = _immich.Add("e.mp4", "hevc gone");
+        _immich.Failures[gone.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.");
+
+        var result = await DiscoverAsync();
+
+        result.SkipReasons.Should().Equal(new SkipReasonCount("codec h264", 2), new SkipReasonCount("codec vp9", 1));
+        result.Skipped.Should().Be(3);
+        result.Checked.Should().Be(4);
+        result.Issues.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task StartsByCountingOpenJobsAndSkipsRecordedUnderOtherRules()
+    {
+        var open = _immich.Add("open.mp4", "hevc open");
+        await CreateJobAsync(open, JobStatus.Queued);
+        var stale = _immich.Add("stale.mp4", "h264 stale");
+        var current = _immich.Add("current.mp4", "h264 current");
+        await _repository.PutImmichSkipAsync(_settings.Database.Path, new ImmichSkipRecord(stale.Id, stale.Checksum, "an-older-rules-fingerprint", "codec h264", Now));
+        await _repository.PutImmichSkipAsync(_settings.Database.Path, new ImmichSkipRecord(current.Id, current.Checksum, EligibilityEvaluator.RulesFingerprint(_settings.Eligibility), "codec h264", Now));
+        var events = new List<ImmichDiscoveryProgress>();
+
+        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+
+        events.First().Should().Be(new ImmichDiscoveryProgress.Started(null, 1, 1));
+        events.OfType<ImmichDiscoveryProgress.CandidateDownloading>().Select(candidate => candidate.FileName).Should().Equal("stale.mp4");
+    }
+
+    [Fact]
+    public async Task ReportsARestagedDownloadAndAFailedOne()
+    {
+        var restored = _immich.Add("restored.mp4", "hevc restored");
+        var vanished = _immich.Add("vanished.mp4", "hevc vanished");
+        var first = await CreateJobAsync(restored, JobStatus.Queued, staged: false);
+        var second = await CreateJobAsync(vanished, JobStatus.Queued, staged: false);
+        _immich.Failures[vanished.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.");
+        var events = new List<ImmichDiscoveryProgress>();
+
+        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+
+        events.Take(4).Should().Equal(
+            new ImmichDiscoveryProgress.Restaging("restored.mp4", first.Id),
+            new ImmichDiscoveryProgress.Restaged("restored.mp4", null),
+            new ImmichDiscoveryProgress.Restaging("vanished.mp4", second.Id),
+            new ImmichDiscoveryProgress.Restaged("vanished.mp4", "Immich did not return the video again (Immich answered 404); the job is marked failed"));
+    }
+
+    [Fact]
+    public async Task ReportsAnExcludedAssetByNameWithTheReasonAndAssetId()
+    {
+        var asset = _immich.Add("favourite.mp4", "hevc video");
+        _immich.Replace(asset with { IsFavorite = true });
+        var events = new List<ImmichDiscoveryProgress>();
+
+        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+
+        events.Should().Contain(new ImmichDiscoveryProgress.AssetExcluded("favourite.mp4", asset.Id, "is a favourite"));
+    }
+
+    private sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private Task<ImmichDiscoveryResult> DiscoverAsync(int? limit = null) =>
+    private Task<ImmichDiscoveryResult> DiscoverAsync(int? limit = null, IProgress<ImmichDiscoveryProgress>? progress = null) =>
         new ImmichDiscoveryService(_immich, _repository, _ => new ContentProbe(), new FileFingerprintService(), () => Now)
-            .DiscoverAsync(_settings.Database.Path, _settings, limit);
+            .DiscoverAsync(_settings.Database.Path, _settings, limit, progress);
 
     /// <summary>An Immich job for the asset. An open one has its staged copy unless <paramref name="staged"/> is false.</summary>
     private async Task<JobRecord> CreateJobAsync(ImmichAsset asset, JobStatus status, string? failureCategory = null, bool staged = true)

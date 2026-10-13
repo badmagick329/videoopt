@@ -42,7 +42,12 @@ public sealed record ScanItem(
 
 public sealed record ScanIssue(string Path, string Message);
 
-public sealed record ScanProgress(string Path, string Stage, string Message);
+/// <summary>
+/// A scan event: an <c>Issue</c> with its message, or a <c>Checked</c> tick after each file with the running
+/// <paramref name="FilesChecked"/> and <paramref name="Probed"/> counts. Ticks carry counts rather than text so the caller
+/// decides how often to print them.
+/// </summary>
+public sealed record ScanProgress(string Path, string Stage, string Message, int FilesChecked = 0, int Probed = 0);
 
 public sealed record ScanReport(
     IReadOnlyList<ScanItem> Items,

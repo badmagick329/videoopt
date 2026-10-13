@@ -21,6 +21,9 @@ public sealed class FileScanner(
         var issues = new List<ScanIssue>();
         var cacheHits = 0;
         var realProbes = 0;
+        var filesChecked = 0;
+        // After every file so a caller can throttle by time; the scan cannot know how often the user wants to hear.
+        void ReportChecked(string path) => progress?.Report(new ScanProgress(path, "Checked", string.Empty, ++filesChecked, realProbes));
         var cacheByPath = new Dictionary<string, MediaProbeCacheEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in await mediaProbeCache.LoadAllAsync(settings.Database.Path, cancellationToken))
         {
@@ -70,12 +73,14 @@ public sealed class FileScanner(
                     if (IsWithinExcludedDirectory(canonicalPath, settings.Eligibility.ExcludedDirectories))
                     {
                         items.Add(new ScanItem(canonicalPath, ScanItemStatus.Ineligible, "File is in an excluded directory."));
+                        ReportChecked(canonicalPath);
                         continue;
                     }
 
                     if (IsWithinArchiveDirectory(canonicalPath, settings.Original.ArchiveDirectory))
                     {
                         items.Add(new ScanItem(canonicalPath, ScanItemStatus.Ineligible, "File is in the archive directory."));
+                        ReportChecked(canonicalPath);
                         continue;
                     }
 
@@ -83,6 +88,7 @@ public sealed class FileScanner(
                     items.Add(evaluation.Item);
                     cacheHits += evaluation.CacheHit ? 1 : 0;
                     realProbes += evaluation.RealProbe ? 1 : 0;
+                    ReportChecked(canonicalPath);
                     if (stopAfterFirstEligible &&
                         evaluation.Item.Status == ScanItemStatus.Eligible &&
                         (openSourcePaths is null || !openSourcePaths.Contains(canonicalPath)))
@@ -150,7 +156,6 @@ public sealed class FileScanner(
 
             var sourceSizeBytes = info.Length;
             var sourceLastWriteUtcTicks = info.LastWriteTimeUtc.Ticks;
-            progress?.Report(new ScanProgress(path, "Probing", "Running ffprobe."));
             var mediaInfo = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
             info.Refresh();
             if (!info.Exists || info.Length != sourceSizeBytes || info.LastWriteTimeUtc.Ticks != sourceLastWriteUtcTicks)

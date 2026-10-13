@@ -66,7 +66,7 @@ public sealed class ImmichReuploadGuard(IImmichClientFactory clients, IJobReposi
                     // restore that never happened.
                     if (asset.IsTrashed || !string.Equals(asset.Checksum, check.Checksum, StringComparison.Ordinal)) continue;
                     restored.Add(hit);
-                    progress?.Report(new ScanProgress(hit.OriginalFileName, "Restored", $"The converted original {hit.OriginalFileName} ({hit.TakenLocal:yyyy-MM-dd HH:mm}) is out of Immich's trash, so both versions exist. Left alone."));
+                    progress?.Report(new ScanProgress(hit.OriginalFileName, "Restored", $"{hit.OriginalFileName} (taken {hit.TakenLocal:yyyy-MM-dd HH:mm}) is a converted original that is out of Immich's trash, so both versions exist; the guard left it alone."));
                     continue;
                 }
 
@@ -119,7 +119,7 @@ public sealed class ImmichReuploadGuard(IImmichClientFactory clients, IJobReposi
         void Trashed(ImmichReuploadHit hit)
         {
             trashed.Add(hit);
-            progress?.Report(new ScanProgress(hit.OriginalFileName, "Trashed", $"The phone uploaded the converted original {hit.OriginalFileName} ({hit.TakenLocal:yyyy-MM-dd HH:mm}) again; it is back in Immich's trash. Delete it from the phone."));
+            progress?.Report(new ScanProgress(hit.OriginalFileName, "Trashed", $"{hit.OriginalFileName} (taken {hit.TakenLocal:yyyy-MM-dd HH:mm}) is a converted original the phone uploaded again; it is back in Immich's trash. Delete it from the phone."));
         }
     }
 

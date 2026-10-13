@@ -434,7 +434,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
 
-        messages.Should().Contain("Worker bootstrap 42% — Building FFmpeg.");
+        messages.Should().Contain("Worker setup: 42%, building FFmpeg...");
     }
 
     [Fact]
@@ -457,7 +457,55 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
 
-        messages.Should().Contain("Worker bootstrap 60% — Building FFmpeg (elapsed 1m 0s).");
+        messages.Should().Contain("Worker setup: 60%, building FFmpeg (1m 00s in this step)...");
+    }
+
+    [Fact]
+    public async Task SshFailuresWhileTheServerBootsAreSilentForThreeMinutesThenReportedOncePerMinute()
+    {
+        using var fixture = new Fixture();
+        // A new server refuses SSH while it boots: 24 checks, 15 s apart, fail for 6 minutes before it answers.
+        for (var attempt = 0; attempt < 24; attempt++)
+            fixture.Processes.Results.Enqueue(new ExternalProcessResult(255, string.Empty, "ssh: connect to host 203.0.113.42 port 22: Connection refused"));
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        using var lifecycle = fixture.CreateLifecycle(
+            utcNow: clock.Now,
+            delay: (_, _) =>
+            {
+                clock.Advance(TimeSpan.FromSeconds(15));
+                return Task.CompletedTask;
+            });
+        var messages = new List<string>();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
+
+        messages.Where(message => message.StartsWith("Still waiting", StringComparison.Ordinal)).Should().Equal(
+            "Still waiting for the worker's SSH (3m 00s): ssh: connect to host 203.0.113.42 port 22: Connection refused",
+            "Still waiting for the worker's SSH (4m 00s): ssh: connect to host 203.0.113.42 port 22: Connection refused",
+            "Still waiting for the worker's SSH (5m 00s): ssh: connect to host 203.0.113.42 port 22: Connection refused");
+        messages.Should().NotContain(message => message.Contains("retrying", StringComparison.Ordinal));
+        messages.Should().Contain("Worker ready after 6m 00s.");
+        messages.Should().NotContain(message => message.Contains("Managed worker bootstrap completed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ANewWorkerIsToldItWillTakeSeveralMinutesBeforeTheFirstProgressLine()
+    {
+        using var fixture = new Fixture();
+        fixture.Processes.Results.Enqueue(new ExternalProcessResult(0, "percent=35\nstage=Building SVT-AV1\n", string.Empty));
+        using var lifecycle = fixture.CreateLifecycle();
+        var messages = new List<string>();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
+
+        var announcement = messages.FindIndex(message => message.StartsWith("Setting up the worker: it builds libvmaf, SVT-AV1 and FFmpeg from source and installs ab-av1, which takes several minutes.", StringComparison.Ordinal));
+        announcement.Should().BeGreaterThan(-1);
+        messages.IndexOf("Worker setup: 35%, building SVT-AV1...").Should().BeGreaterThan(announcement);
+
+        using var again = fixture.CreateLifecycle();
+        var reuse = new List<string>();
+        await again.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(reuse.Add));
+        reuse.Should().NotContain(message => message.StartsWith("Setting up the worker", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -22,7 +22,7 @@ public sealed class ImmichDiscoveryService(
 {
     private readonly Func<DateTimeOffset> _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
 
-    public async Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ImmichDiscoveryProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var client = clients.Create(settings.Immich);
         var cutoff = _utcNow().AddDays(-settings.Immich.MinimumAgeDays);
@@ -33,9 +33,14 @@ public sealed class ImmichDiscoveryService(
         var (restaged, issues) = await RestageMissingAsync(client, databasePath, settings, limit, progress, cancellationToken);
         var history = await ImmichHistory.LoadAsync(jobs, databasePath, cancellationToken);
         var skips = await jobs.ListImmichSkipsAsync(databasePath, cancellationToken);
+        // Said up front because each of these is downloaded again: the user would otherwise see a long run of downloads
+        // for videos an earlier run already judged.
+        var staleSkips = skips.Values.Count(skip => !string.Equals(skip.RulesFingerprint, rulesFingerprint, StringComparison.Ordinal));
+        progress?.Report(new ImmichDiscoveryProgress.Started(limit, history.OpenAssets.Count, staleSkips));
 
         var queued = new List<JobRecord>();
-        int alreadyQueued = 0, alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, excluded = 0, ineligible = 0, skipped = 0;
+        int alreadyQueued = 0, alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, excluded = 0, ineligible = 0, skipped = 0, candidates = 0;
+        var skipReasons = new Dictionary<string, int>(StringComparer.Ordinal);
         // Paging can return an asset twice if the library changes between pages; judge each one once.
         var seen = new HashSet<string>(StringComparer.Ordinal);
         await foreach (var asset in client.SearchVideosAsync(cutoff, includeFavorites: !settings.Immich.SkipFavorites, cancellationToken))
@@ -48,7 +53,7 @@ public sealed class ImmichDiscoveryService(
             if (Exclusion(asset, cutoff, settings.Immich.SkipFavorites) is { } exclusion)
             {
                 excluded++;
-                progress?.Report(new ScanProgress(asset.OriginalFileName, "Excluded", $"Immich returned asset {asset.Id}, which {exclusion}; leaving it alone."));
+                progress?.Report(new ImmichDiscoveryProgress.AssetExcluded(asset.OriginalFileName, asset.Id, exclusion));
                 continue;
             }
 
@@ -68,7 +73,7 @@ public sealed class ImmichDiscoveryService(
             if (StagedPath(settings.Immich.StagingDirectory, asset) is not { } stagedPath)
             {
                 issues++;
-                progress?.Report(new ScanProgress(asset.OriginalFileName, "Issue", $"Asset {asset.Id} has an ID or file name that cannot be staged safely."));
+                progress?.Report(new ImmichDiscoveryProgress.AssetIssue(asset.OriginalFileName, $"asset {asset.Id} has an ID or file name that cannot be staged safely; it is left alone"));
                 continue;
             }
 
@@ -78,23 +83,25 @@ public sealed class ImmichDiscoveryService(
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(stagedPath)!);
-                progress?.Report(new ScanProgress(stagedPath, "Downloading", $"Downloading {asset.OriginalFileName} from Immich."));
+                progress?.Report(new ImmichDiscoveryProgress.CandidateDownloading(++candidates, asset.OriginalFileName, asset.LocalDateTime.DateTime, asset.Exif.FileSizeInBytes));
                 await client.DownloadOriginalAsync(asset.Id, stagedPath, cancellationToken: cancellationToken);
 
                 // The checksum is the job's identity and what the re-upload guard matches on, so it must describe these bytes.
                 if (!string.Equals(await Sha1Base64Async(stagedPath, cancellationToken), asset.Checksum, StringComparison.Ordinal))
                 {
                     issues++;
-                    progress?.Report(new ScanProgress(stagedPath, "Issue", $"The download of asset {asset.Id} does not match its Immich checksum."));
+                    progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Issue, "the download does not match Immich's checksum", RetryNextRun, 0));
                     continue;
                 }
 
-                progress?.Report(new ScanProgress(stagedPath, "Probing", "Running ffprobe."));
                 var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(stagedPath, cancellationToken);
-                if (!EligibilityEvaluator.IsEligible(new FileInfo(stagedPath), media, settings.Eligibility, out var reason))
+                if (!EligibilityEvaluator.IsEligible(new FileInfo(stagedPath), media, settings.Eligibility, out _))
                 {
-                    await jobs.PutImmichSkipAsync(databasePath, new ImmichSkipRecord(asset.Id, asset.Checksum, rulesFingerprint, reason, _utcNow()), cancellationToken);
+                    var mismatch = EligibilityEvaluator.DescribeMismatch(new FileInfo(stagedPath).Length, media, settings.Eligibility);
+                    await jobs.PutImmichSkipAsync(databasePath, new ImmichSkipRecord(asset.Id, asset.Checksum, rulesFingerprint, mismatch.Text, _utcNow()), cancellationToken);
                     skipped++;
+                    skipReasons[mismatch.Key] = skipReasons.GetValueOrDefault(mismatch.Key) + 1;
+                    progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, mismatch.Text, null, 0));
                     continue;
                 }
 
@@ -111,6 +118,7 @@ public sealed class ImmichDiscoveryService(
                 JobCompatibility.Apply(job, JobCompatibility.ExpectedBinding(job.Id, settings));
                 queued.Add(await jobs.CreateAsync(databasePath, job, cancellationToken));
                 keepStaged = true;
+                progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, queued.Count + alreadyQueued));
             }
             // Failures of this one asset: Immich refused the request, or ffprobe could not read the file. Anything else
             // (Immich unreachable, a rejected key, a missing ffprobe, a full or unwritable staging disk) would fail every
@@ -118,7 +126,7 @@ public sealed class ImmichDiscoveryService(
             catch (Exception exception) when (exception is ImmichApiException { Code: "ImmichRequestFailed" } or MediaProbeException)
             {
                 issues++;
-                progress?.Report(new ScanProgress(stagedPath, "Issue", exception.Message));
+                progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Issue, exception.Message.TrimEnd('.'), RetryNextRun, 0));
             }
             finally
             {
@@ -126,8 +134,12 @@ public sealed class ImmichDiscoveryService(
             }
         }
 
-        return new ImmichDiscoveryResult(queued, restaged, alreadyQueued, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues);
+        return new ImmichDiscoveryResult(queued, restaged, alreadyQueued, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues,
+            [.. skipReasons.OrderByDescending(pair => pair.Value).ThenBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => new SkipReasonCount(pair.Key, pair.Value))]);
     }
+
+    // An issue is not recorded as a skip, so the next run downloads the video again.
+    private const string RetryNextRun = "it will be tried again next run";
 
     /// <summary>
     /// Downloads again the staged original of each open job that lost it: a job <c>queue retry</c> created after
@@ -137,7 +149,7 @@ public sealed class ImmichDiscoveryService(
     /// <c>SourceMissing</c>, which leaves the asset free for discovery. With a <paramref name="limit"/>, only that many of
     /// the oldest open jobs count, as they are the ones the run processes.
     /// </summary>
-    private async Task<(int Restaged, int Issues)> RestageMissingAsync(IImmichClient client, string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    private async Task<(int Restaged, int Issues)> RestageMissingAsync(IImmichClient client, string databasePath, AppSettings settings, int? limit, IProgress<ImmichDiscoveryProgress>? progress, CancellationToken cancellationToken)
     {
         int restaged = 0, issues = 0;
         // Ready jobs no longer read the original, and a job interrupted during finalisation needs it left as it is.
@@ -151,7 +163,8 @@ public sealed class ImmichDiscoveryService(
             if (job.ImmichChecksum is null || !ImmichStaging.IsStagedOriginal(settings.Immich.StagingDirectory, job.ImmichAssetId, job.SourcePath))
             {
                 issues++;
-                await FailMissingAsync(databasePath, job, "The staged original is missing, and its path is not in the asset's folder under immich.stagingDirectory, so it is not downloaded again.", progress, cancellationToken);
+                await FailMissingAsync(databasePath, job, "The staged original is missing, and its path is not in the asset's folder under immich.stagingDirectory, so it is not downloaded again.", cancellationToken);
+                progress?.Report(new ImmichDiscoveryProgress.AssetIssue(Path.GetFileName(job.SourcePath), $"job {job.Id:N} is open but its staged copy is missing and cannot be downloaded again; the job is marked failed"));
                 continue;
             }
 
@@ -160,22 +173,25 @@ public sealed class ImmichDiscoveryService(
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                progress?.Report(new ScanProgress(path, "Downloading", $"Downloading {Path.GetFileName(path)} from Immich again: job {job.Id:N} is open but its staged copy is missing."));
+                progress?.Report(new ImmichDiscoveryProgress.Restaging(Path.GetFileName(path), job.Id));
                 await client.DownloadOriginalAsync(job.ImmichAssetId!, path, cancellationToken: cancellationToken);
                 if (!string.Equals(await Sha1Base64Async(path, cancellationToken), job.ImmichChecksum, StringComparison.Ordinal))
                 {
                     issues++;
-                    await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich asset {job.ImmichAssetId} no longer matches the checksum this job was created for.", progress, cancellationToken);
+                    await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich asset {job.ImmichAssetId} no longer matches the checksum this job was created for.", cancellationToken);
+                    progress?.Report(new ImmichDiscoveryProgress.Restaged(Path.GetFileName(path), "the download no longer matches the checksum this job was created for; the job is marked failed"));
                     continue;
                 }
 
                 keep = true;
                 restaged++;
+                progress?.Report(new ImmichDiscoveryProgress.Restaged(Path.GetFileName(path), null));
             }
             catch (ImmichApiException exception) when (exception.Code == "ImmichRequestFailed")
             {
                 issues++;
-                await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich did not return asset {job.ImmichAssetId} again: {exception.Message}", progress, cancellationToken);
+                await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich did not return asset {job.ImmichAssetId} again: {exception.Message}", cancellationToken);
+                progress?.Report(new ImmichDiscoveryProgress.Restaged(Path.GetFileName(path), $"Immich did not return the video again ({exception.Message.TrimEnd('.')}); the job is marked failed"));
             }
             finally
             {
@@ -186,7 +202,7 @@ public sealed class ImmichDiscoveryService(
         return (restaged, issues);
     }
 
-    private async Task FailMissingAsync(string databasePath, JobRecord job, string message, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    private async Task FailMissingAsync(string databasePath, JobRecord job, string message, CancellationToken cancellationToken)
     {
         job.Status = JobStatus.Failed;
         job.ResumeStatus = null;
@@ -194,7 +210,6 @@ public sealed class ImmichDiscoveryService(
         job.FailureMessage = message;
         job.CompletedUtc = _utcNow();
         await jobs.UpdateAsync(databasePath, job, cancellationToken);
-        progress?.Report(new ScanProgress(job.SourcePath, "Issue", $"Job {job.Id:N} failed: {message}"));
     }
 
     /// <summary>

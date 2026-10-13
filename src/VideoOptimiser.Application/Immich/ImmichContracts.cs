@@ -150,7 +150,8 @@ public interface IImmichClientFactory
 /// <summary>
 /// What one Immich discovery run did. <see cref="Excluded"/> counts search results the client-side re-check rejected, which
 /// means Immich's filter let through an asset it should not have. <see cref="Ineligible"/> counts assets rejected without a
-/// download (extension or size); <see cref="Skipped"/> counts those downloaded, probed and recorded as Immich skips.
+/// download (extension or size); <see cref="Skipped"/> counts those downloaded, probed and recorded as Immich skips, and
+/// <see cref="SkipReasons"/> tallies them by <see cref="Scanning.EligibilityMismatch.Key"/>, most common first.
 /// <see cref="Restaged"/> counts open jobs whose missing staged original was downloaded again.
 /// </summary>
 public sealed record ImmichDiscoveryResult(
@@ -163,7 +164,14 @@ public sealed record ImmichDiscoveryResult(
     int Excluded,
     int Ineligible,
     int Skipped,
-    int Issues);
+    int Issues,
+    IReadOnlyList<SkipReasonCount> SkipReasons)
+{
+    /// <summary>Videos downloaded and judged against the rules this run: those queued and those skipped. Issues were not judged.</summary>
+    public int Checked => Queued.Count + Skipped;
+}
+
+public sealed record SkipReasonCount(string Reason, int Count);
 
 public interface IImmichDiscoveryService
 {
@@ -172,7 +180,7 @@ public interface IImmichDiscoveryService
     /// <paramref name="limit"/>, it stops once that many Immich jobs are open, counting those already open. Assets that need
     /// a download to judge are downloaded under <see cref="ImmichSettings.StagingDirectory"/>.
     /// </summary>
-    Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
+    Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ImmichDiscoveryProgress>? progress = null, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -217,7 +225,7 @@ public interface IImmichRunService
     /// Runs the re-upload guard, then Immich discovery, then prepares the open Immich jobs for processing. Processing is left
     /// to the caller, which owns the remote worker's lifecycle.
     /// </summary>
-    Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ScanProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default);
+    Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichDiscoveryProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

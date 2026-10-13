@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Cli;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Scanning;
@@ -24,13 +25,9 @@ internal static partial class CliApplication
         var guardProgress = new InlineProgress<ScanProgress>(update =>
         {
             guardReports.Add(update);
-            Console.WriteLine(FormatGuardReport(update));
+            Console.WriteLine(ReuploadGuardReport.FormatProgress(update));
         });
-        var discoveryProgress = new InlineProgress<ScanProgress>(update =>
-        {
-            if (update.Stage == "Excluded") Console.Error.WriteLine($"EXCLUDED {update.Path}: {update.Message}");
-            else Console.WriteLine(FormatScanProgress(update));
-        });
+        var discoveryProgress = new ImmichDiscoveryConsole(Console.Out, Console.Error);
 
         Console.WriteLine("Checking converted originals for re-uploads, then searching Immich for videos to convert.");
         ImmichRunPreparation preparation;
@@ -38,18 +35,21 @@ internal static partial class CliApplication
         {
             preparation = await services.GetRequiredService<IImmichRunService>().PrepareAsync(settings.Database.Path, settings, limit, guardProgress, discoveryProgress, modeOverridden: modeOverride is not null, cancellationToken);
         }
-        catch when (guardReports.Count > 0)
+        catch
         {
+            // A download that Ctrl+C or an error cut short leaves its line open; the message that follows needs its own.
+            discoveryProgress.FinishLine();
+            if (guardReports.Count == 0) throw;
             Console.WriteLine();
             Console.WriteLine("Before the run ended, the re-upload guard reported:");
-            foreach (var report in guardReports) Console.WriteLine(FormatGuardReport(report));
+            foreach (var report in guardReports) Console.WriteLine(ReuploadGuardReport.FormatProgress(report));
             throw;
         }
 
         var (guard, discovery) = (preparation.Guard, preparation.Discovery);
-        Console.WriteLine($"Re-upload guard: checked {guard.Checked} converted originals. Trashed: {guard.Trashed.Count}. Restored: {guard.Restored.Count}. Issues: {guard.Issues.Count}.");
-        if (discovery.Restaged > 0) Console.WriteLine($"Downloaded again: {discovery.Restaged} staged original(s) that open jobs were missing.");
-        Console.WriteLine($"Queued: {discovery.Queued.Count}. Already queued: {discovery.AlreadyQueued}. Already converted: {discovery.AlreadyConverted}. Previously failed or cancelled: {discovery.PreviouslyFailed}. Previously skipped: {discovery.PreviouslySkipped}. Ineligible: {discovery.Ineligible}. Skipped: {discovery.Skipped}. Excluded: {discovery.Excluded}. Issues: {discovery.Issues}.");
+        Console.WriteLine(ReuploadGuardReport.Summary(guard));
+        Console.WriteLine();
+        foreach (var line in ImmichDiscoveryConsole.Summary(discovery, limit)) Console.WriteLine(line);
         if (discovery.Excluded > 0) Console.Error.WriteLine($"Immich's search returned {discovery.Excluded} asset(s) its filter should have left out. They were left alone, but the search may behave differently in this Immich version: check before running again.");
 
         int ready;
@@ -117,22 +117,16 @@ internal static partial class CliApplication
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
 
         var finalizer = services.GetRequiredService<IFinalizationService>();
+        var report = new FinalizationConsole(Console.Out, Console.Error);
         var failed = new List<(JobRecord Job, string Message)>();
         foreach (var job in ready)
         {
             var result = await finalizer.FinalizeAsync(settings.Database.Path, job.Id, settings, cancellationToken);
-            if (result.ExitCode == ExitCode.Success)
-            {
-                Console.WriteLine($"Done    {Path.GetFileName(job.SourcePath)}: {result.Message}");
-                continue;
-            }
-
-            failed.Add((job, result.Message));
-            Console.Error.WriteLine($"Failed  {Path.GetFileName(job.SourcePath)}: {result.Message}");
+            if (!report.Outcome(job, result)) failed.Add((job, result.Message));
         }
 
-        Console.WriteLine($"Finalised: {ready.Length - failed.Count}. Failed: {failed.Count}.");
-        foreach (var (job, message) in failed) Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}  {message}");
+        report.Summary(ready.Length, failed);
+        if (failed.Count == 0) await PrintTrashRetentionAsync(client, cancellationToken);
         return failed.Count == 0 ? (int)ExitCode.Success
             : failed.Count < ready.Length ? (int)ExitCode.PartialSuccess
             : (int)ExitCode.FinalisationFailure;
@@ -145,8 +139,21 @@ internal static partial class CliApplication
         return false;
     }
 
-    private static string FormatGuardReport(ScanProgress update) =>
-        update.Stage == "Issue" ? $"RE-UPLOAD GUARD ISSUE: {update.Message}" : $"{update.Stage.ToUpperInvariant()}: {update.Message}";
+    /// <summary>
+    /// Tells the user when the originals stop being recoverable and when the space comes back. Left out when Immich does not
+    /// answer: the finalisation is done, and this line only explains.
+    /// </summary>
+    private static async Task PrintTrashRetentionAsync(IImmichClient client, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var trash = await client.GetTrashSettingsAsync(cancellationToken);
+            Console.WriteLine($"Immich keeps the originals in its trash for {OutputWords.Count(trash.Days, "day", "days")}; space comes back when it empties.");
+        }
+        catch (ImmichApiException exception) when (exception.Code == "ImmichRequestFailed")
+        {
+        }
+    }
 
     private static void PrintGuardSummary(ImmichReuploadGuardResult guard)
     {

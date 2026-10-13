@@ -78,7 +78,7 @@ Then use `--limit <n>` for a round of at most `n` videos, such as `--limit 5`, o
 2. Runs the [re-upload guard](#the-re-upload-guard).
 3. Downloads again the staged copy of any open job that is missing one, such as a job `queue retry` queued after `cleanup` deleted its copy. If Immich no longer has that video, the job fails as `SourceMissing`.
 4. Searches Immich for videos taken before the age cutoff, skipping favourites if configured, and anything already converted, skipped or failed. A video whose conversion would not save enough (`quality.maxEncodedPercent`, default `80`) ends as `Not worth converting` and counts under "Previously skipped" on later runs.
-5. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it.
+5. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it. A video that doesn't match is deleted at once, so most downloads you see go by without leaving a file. Each downloaded candidate gets one line with its capture date, size and outcome (`queued`, `skipped: codec h264 (rules want hevc)` or `issue: ...`). The search ends with how many videos it found, the most common reason videos were skipped, and a count for everything it left alone without a download.
 6. Converts the queue on your PC or remote worker, exactly like `queue run`.
 
 Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes. If a `--first` or `--limit` run stops before converting, run it again with the same flag: videos already downloaded count toward the limit, so it converts those first and downloads only enough new ones to reach it.

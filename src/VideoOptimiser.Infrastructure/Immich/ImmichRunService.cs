@@ -12,7 +12,7 @@ namespace VideoOptimiser.Infrastructure.Immich;
 /// </summary>
 public sealed class ImmichRunService(IImmichClientFactory clients, IImmichReuploadGuard guard, IImmichDiscoveryService discovery, IQueueService queue) : IImmichRunService
 {
-    public async Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ScanProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
+    public async Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichDiscoveryProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
     {
         await ImmichTrash.RequireOnAsync(clients.Create(settings.Immich), cancellationToken);
         var guarded = await guard.CheckAsync(databasePath, settings, guardProgress, cancellationToken);
