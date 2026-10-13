@@ -63,6 +63,39 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
 
 `finalize --ready` also finalises ready Immich jobs. Use `immich finalize` for Immich jobs, so the user sees capture dates before the prompt.
 
+## Reading run output
+
+`queue run`, `process` and `immich run` print one block per job, then a summary and a `Next:` line when something is ready:
+
+```text
+[2/5] PXL_20250531_041434717.mp4 (1002.4 MiB)
+      Uploading 1002.4 MiB to the worker...
+      Uploaded 1002.4 MiB in 23s, checksum verified.
+      Finding the best CRF for VMAF 97 (2 test clips of 20s each)...
+        CRF 34   VMAF 95.02   size  19%   below target
+        CRF 29   VMAF 97.13   size  29%   passes, chosen
+      Chose CRF 29 in 7m 36s. Expected output: 284.87 MiB (29% of the original).
+      Encoding at CRF 29, expected to take about 5 minutes...
+        20%, 54 fps, about 1m 06s left
+      Encoded 285.10 MiB (29% of the original) in 5m 02s.
+      Downloading 285.1 MiB from the worker...
+      Downloaded 285.1 MiB in 30s, checksum verified.
+      Checking the output: streams, duration, savings and decode test...
+      Ready to finalise: 1002.4 MiB → 287.3 MiB, 71.3% saved.
+```
+
+The upload and download lines appear only on a remote worker. The last line of each block is the job's outcome:
+
+| Outcome line | Job status |
+| --- | --- |
+| `Ready to finalise: …` | `ReadyToFinalize` |
+| `Not worth converting: …` | `Skipped` |
+| `Failed validation: …` | `Failed`, `ValidationFailed` |
+| `Failed during the upload`, `the CRF search`, `encoding` or `the download: …`, then `Full log: <path>` | `Failed`; the full ab-av1 log stays at that path |
+| `Worker unreachable: … Run the same command again to resume.` | `Interrupted` |
+
+**Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints a progress line about every 15 seconds and states its expected length when it starts. A running job that prints nothing new for 15 minutes is stuck: report it with the job's last lines and `status --json`.
+
 ## Recovery
 
 Match the job's `status` and `failureCategory` from `status --json` or `history --json`:
