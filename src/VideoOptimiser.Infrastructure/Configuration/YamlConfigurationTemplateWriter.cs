@@ -145,8 +145,6 @@ quality:
   # Output pixel format.
   pixelFormat: "yuv420p10le"
   crfSearch:
-    # Whether CRF search runs before encoding.
-    enabled: true
     # Inclusive CRF search range.
     minCrf: 18
     maxCrf: 50

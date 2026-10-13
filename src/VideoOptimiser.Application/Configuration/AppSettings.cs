@@ -207,7 +207,6 @@ public sealed class QualitySettings
 [YamlSerializable]
 public sealed class CrfSearchSettings
 {
-    [YamlMember(Alias = "enabled")] public bool Enabled { get; set; } = true;
     [YamlMember(Alias = "minCrf")] public int MinCrf { get; set; } = 18;
     [YamlMember(Alias = "maxCrf")] public int MaxCrf { get; set; } = 50;
     [YamlMember(Alias = "sampleCount")] public int SampleCount { get; set; } = 5;

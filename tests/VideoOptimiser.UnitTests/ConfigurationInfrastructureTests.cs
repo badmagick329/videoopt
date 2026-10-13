@@ -168,6 +168,24 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsyncRejectsTheRemovedCrfSearchSwitch()
+    {
+        // Nothing ever read it: CRF search always ran, so false silently did nothing.
+        var configPath = Path.Combine(_directory, "crf-search-enabled.yaml");
+        await File.WriteAllTextAsync(configPath, """
+            version: 1
+            quality:
+              crfSearch:
+                enabled: false
+            """);
+
+        var load = () => new YamlConfigurationLoader().LoadAsync(configPath);
+
+        (await load.Should().ThrowAsync<InvalidDataException>())
+            .WithMessage("Unknown setting 'quality.crfSearch.enabled' at line 4, column 5. Check its spelling, or remove it if it is no longer supported.");
+    }
+
+    [Fact]
     public async Task LoadAsyncAcceptsTheConfigInitTemplate()
     {
         var configPath = Path.Combine(_directory, "template.yaml");
