@@ -172,10 +172,20 @@ public sealed class EligibilityRuleSettings
 public sealed class QualitySettings
 {
     [YamlMember(Alias = "minimumVmaf")] public double MinimumVmaf { get; set; } = 95;
+    // ab-av1 rejects a CRF whose output would exceed this share of the original, so a video that cannot shrink this far is skipped rather than converted.
+    [YamlMember(Alias = "maxEncodedPercent")] public int MaxEncodedPercent { get; set; } = 80;
     [YamlMember(Alias = "preset")] public int Preset { get; set; } = 6;
     [YamlMember(Alias = "encoder")] public string Encoder { get; set; } = "libsvtav1";
     [YamlMember(Alias = "pixelFormat")] public string PixelFormat { get; set; } = "yuv420p10le";
     [YamlMember(Alias = "crfSearch")] public CrfSearchSettings CrfSearch { get; set; } = new();
+
+    /// <summary>A copy with the sample count the search will use. Cloned rather than rebuilt field by field, so a new setting cannot be dropped.</summary>
+    public QualitySettings WithSampleCount(int sampleCount)
+    {
+        var copy = (QualitySettings)MemberwiseClone();
+        copy.CrfSearch = CrfSearch.WithSampleCount(sampleCount);
+        return copy;
+    }
 }
 
 [YamlSerializable]
@@ -186,6 +196,13 @@ public sealed class CrfSearchSettings
     [YamlMember(Alias = "maxCrf")] public int MaxCrf { get; set; } = 50;
     [YamlMember(Alias = "sampleCount")] public int SampleCount { get; set; } = 5;
     [YamlMember(Alias = "sampleDuration")] public string SampleDuration { get; set; } = "20s";
+
+    public CrfSearchSettings WithSampleCount(int sampleCount)
+    {
+        var copy = (CrfSearchSettings)MemberwiseClone();
+        copy.SampleCount = sampleCount;
+        return copy;
+    }
 }
 
 [YamlSerializable]

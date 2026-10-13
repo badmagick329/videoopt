@@ -56,9 +56,9 @@ internal static partial class CliApplication
         FailedQueueJob[] failures;
         try
         {
-            (ready, failures) = await ProcessPreparedJobsAsync(services, configuration, preparation.Queue, (ready, failures) =>
+            (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, preparation.Queue, (ready, skipped, failures) =>
             {
-                Console.WriteLine($"Ready to finalise: {ready}. Failed: {failures.Length}.");
+                Console.WriteLine($"Ready to finalise: {ready}. Not worth converting: {skipped}. Failed: {failures.Length}.");
                 PrintFailedJobs(failures);
                 PrintGuardSummary(guard);
                 if (ready > 0) Console.WriteLine("Review the outputs, then run 'video-optimiser immich finalize'.");

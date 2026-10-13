@@ -333,6 +333,99 @@ public sealed class JobProcessorTests : IDisposable
         session.CancelCalled.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task AJobWhoseCrfSearchFindsNothingWorthwhileEndsSkippedNotFailedAndReportsIt()
+    {
+        var source = Path.Combine(_directory, "clip.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "skipped.db") },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules(),
+            Quality = new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 }
+        };
+        var search = new ThrowingCrfSearch(new NoWorthwhileCrfException(new CrfAttempt(31, 97.31, 95), settings.Quality));
+        var reported = new List<string>();
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(update => reported.Add(update.Text)));
+
+        result.ExitCode.Should().Be(ExitCode.Success);
+        var stored = (await repository.GetAsync(settings.Database.Path, result.Job.Id))!;
+        stored.Status.Should().Be(JobStatus.Skipped);
+        stored.FailureCategory.Should().Be("NotWorthConverting");
+        stored.FailureMessage.Should().Be("AV1 would keep 95% of the size at the best quality-passing setting (CRF 31, VMAF 97.3); the limit is 80% (quality.maxEncodedPercent).");
+        stored.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings.Quality));
+        stored.CompletedUtc.Should().NotBeNull();
+        reported.Should().Contain($"Not worth converting: clip.mp4. {stored.FailureMessage}");
+    }
+
+    [Fact]
+    public async Task AJobWhoseCrfSearchFindsNoQualityPassingCrfSaysWhichRangeMissedTheVmaf()
+    {
+        var source = Path.Combine(_directory, "noisy.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "novmaf.db") },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules(),
+            Quality = new QualitySettings { MinimumVmaf = 97 }
+        };
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => new ThrowingCrfSearch(new NoWorthwhileCrfException(null, settings.Quality)), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
+
+        result.Job.Status.Should().Be(JobStatus.Skipped);
+        result.Job.FailureMessage.Should().Be("No CRF from 18 to 50 reached VMAF 97.");
+    }
+
+    [Fact]
+    public async Task AnOrdinaryCrfSearchErrorStillFailsTheJob()
+    {
+        var source = Path.Combine(_directory, "broken.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "failed.db") },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules()
+        };
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => new ThrowingCrfSearch(new InvalidOperationException("ab-av1 exploded")), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
+
+        result.ExitCode.Should().Be(ExitCode.ProcessingFailure);
+        result.Job.Status.Should().Be(JobStatus.Failed);
+        result.Job.FailureCategory.Should().Be("CrfSearchFailed");
+        result.Job.QualityFingerprint.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task TheConfiguredMaxEncodedPercentReachesTheCrfSearchArguments()
+    {
+        var source = Path.Combine(_directory, "limit.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "limit.db") },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules(),
+            Quality = new QualitySettings { MaxEncodedPercent = 70 }
+        };
+        var search = new CapturingCrfSearch();
+        var processor = new JobProcessor(new SqliteJobRepository(new SqliteDatabaseInitializer()), new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+
+        _ = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
+
+        var arguments = new AbAv1CrfSearchClient("ab-av1").BuildArguments(source, search.Received!);
+        arguments.Should().ContainInConsecutiveOrder("--max-encoded-percent", "70");
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private sealed class SynchronousProgress(Action<CrfSearchOutput> report) : IProgress<CrfSearchOutput>
@@ -356,6 +449,23 @@ public sealed class JobProcessorTests : IDisposable
     {
         public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
         public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
+    }
+
+    private sealed class ThrowingCrfSearch(Exception exception) : ICrfSearchClient
+    {
+        public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => throw exception;
+    }
+
+    private sealed class CapturingCrfSearch : ICrfSearchClient
+    {
+        public QualitySettings? Received { get; private set; }
+        public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default)
+        {
+            Received = settings;
+            return Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
+        }
     }
 
     private sealed class CancellingCrfSearch : ICrfSearchClient

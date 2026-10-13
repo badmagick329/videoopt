@@ -15,7 +15,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
             SELECT * FROM jobs
             WHERE source_path = $sourcePath COLLATE NOCASE
               AND source_fingerprint = $sourceFingerprint
-              AND status NOT IN ($completed, $failed, $cancelled)
+              AND status NOT IN ($completed, $failed, $cancelled, $skipped)
             ORDER BY created_utc DESC LIMIT 1;
             """;
         command.Parameters.AddWithValue("$sourcePath", sourcePath);
@@ -23,6 +23,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
         command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
+        command.Parameters.AddWithValue("$skipped", (int)JobStatus.Skipped);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
@@ -31,11 +32,12 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM jobs WHERE source_path = $sourcePath COLLATE NOCASE AND status NOT IN ($completed, $failed, $cancelled) ORDER BY created_utc DESC LIMIT 1;";
+        command.CommandText = "SELECT * FROM jobs WHERE source_path = $sourcePath COLLATE NOCASE AND status NOT IN ($completed, $failed, $cancelled, $skipped) ORDER BY created_utc DESC LIMIT 1;";
         command.Parameters.AddWithValue("$sourcePath", sourcePath);
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
         command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
+        command.Parameters.AddWithValue("$skipped", (int)JobStatus.Skipped);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
@@ -74,11 +76,12 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = terminal
-            ? "SELECT * FROM jobs WHERE status IN ($completed, $failed, $cancelled) ORDER BY updated_utc DESC;"
-            : "SELECT * FROM jobs WHERE status NOT IN ($completed, $failed, $cancelled) ORDER BY updated_utc DESC;";
+            ? "SELECT * FROM jobs WHERE status IN ($completed, $failed, $cancelled, $skipped) ORDER BY updated_utc DESC;"
+            : "SELECT * FROM jobs WHERE status NOT IN ($completed, $failed, $cancelled, $skipped) ORDER BY updated_utc DESC;";
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
         command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
+        command.Parameters.AddWithValue("$skipped", (int)JobStatus.Skipped);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var jobs = new List<JobRecord>();
         while (await reader.ReadAsync(cancellationToken)) jobs.Add(Read(reader));
@@ -109,11 +112,12 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM jobs WHERE immich_asset_id = $assetId AND status NOT IN ($completed, $failed, $cancelled) ORDER BY created_utc DESC LIMIT 1;";
+        command.CommandText = "SELECT * FROM jobs WHERE immich_asset_id = $assetId AND status NOT IN ($completed, $failed, $cancelled, $skipped) ORDER BY created_utc DESC LIMIT 1;";
         command.Parameters.AddWithValue("$assetId", assetId);
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
         command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
+        command.Parameters.AddWithValue("$skipped", (int)JobStatus.Skipped);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
@@ -181,8 +185,8 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var command = connection.CreateCommand();
         command.CommandText = insert
-            ? """INSERT INTO jobs (id, source_path, source_fingerprint, status, resume_status, attempt, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc, execution_mode, remote_host, remote_workspace, source_kind, immich_asset_id, immich_checksum, immich_new_asset_id) VALUES ($id, $sourcePath, $sourceFingerprint, $status, $resumeStatus, $attempt, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc, $executionMode, $remoteHost, $remoteWorkspace, $sourceKind, $immichAssetId, $immichChecksum, $immichNewAssetId);"""
-            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc, execution_mode = $executionMode, remote_host = $remoteHost, remote_workspace = $remoteWorkspace, source_kind = $sourceKind, immich_asset_id = $immichAssetId, immich_checksum = $immichChecksum, immich_new_asset_id = $immichNewAssetId WHERE id = $id;""";
+            ? """INSERT INTO jobs (id, source_path, source_fingerprint, status, resume_status, attempt, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc, execution_mode, remote_host, remote_workspace, source_kind, immich_asset_id, immich_checksum, immich_new_asset_id, quality_fingerprint) VALUES ($id, $sourcePath, $sourceFingerprint, $status, $resumeStatus, $attempt, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc, $executionMode, $remoteHost, $remoteWorkspace, $sourceKind, $immichAssetId, $immichChecksum, $immichNewAssetId, $qualityFingerprint);"""
+            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc, execution_mode = $executionMode, remote_host = $remoteHost, remote_workspace = $remoteWorkspace, source_kind = $sourceKind, immich_asset_id = $immichAssetId, immich_checksum = $immichChecksum, immich_new_asset_id = $immichNewAssetId, quality_fingerprint = $qualityFingerprint WHERE id = $id;""";
         Add(command, "$id", job.Id.ToString("N"));
         Add(command, "$sourcePath", job.SourcePath);
         Add(command, "$sourceFingerprint", job.SourceFingerprint);
@@ -208,6 +212,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         Add(command, "$immichAssetId", job.ImmichAssetId);
         Add(command, "$immichChecksum", job.ImmichChecksum);
         Add(command, "$immichNewAssetId", job.ImmichNewAssetId);
+        Add(command, "$qualityFingerprint", job.QualityFingerprint);
         _ = await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -248,7 +253,8 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         SourceKind = ParseSourceKind(reader.GetString(reader.GetOrdinal("source_kind"))),
         ImmichAssetId = NullableString(reader, "immich_asset_id"),
         ImmichChecksum = NullableString(reader, "immich_checksum"),
-        ImmichNewAssetId = NullableString(reader, "immich_new_asset_id")
+        ImmichNewAssetId = NullableString(reader, "immich_new_asset_id"),
+        QualityFingerprint = NullableString(reader, "quality_fingerprint")
     };
 
     private static string SourceKindText(JobSourceKind kind) => kind switch

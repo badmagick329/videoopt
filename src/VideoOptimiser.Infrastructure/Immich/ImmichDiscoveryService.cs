@@ -27,6 +27,7 @@ public sealed class ImmichDiscoveryService(
         var client = clients.Create(settings.Immich);
         var cutoff = _utcNow().AddDays(-settings.Immich.MinimumAgeDays);
         var rulesFingerprint = EligibilityEvaluator.RulesFingerprint(settings.Eligibility);
+        var qualityFingerprint = QualityFingerprint.Compute(settings.Quality);
         var minimumSize = SmallestMinimumFileSize(settings.Eligibility);
         // Before the history load: a job this fails has ended, so the search below may stage its asset afresh.
         var (restaged, issues) = await RestageMissingAsync(client, databasePath, settings, limit, progress, cancellationToken);
@@ -53,6 +54,7 @@ public sealed class ImmichDiscoveryService(
 
             if (history.OpenAssets.Contains(asset.Id)) { alreadyQueued++; continue; }
             if (history.IsConverted(asset)) { alreadyConverted++; continue; }
+            if (history.IsSettledSkip(asset, qualityFingerprint)) { previouslySkipped++; continue; }
             if (history.IsSettledFailure(asset)) { previouslyFailed++; continue; }
             if (skips.TryGetValue(asset.Id, out var skip) && skip.IsCurrent(asset.Checksum, rulesFingerprint)) { previouslySkipped++; continue; }
 
@@ -308,6 +310,16 @@ public sealed class ImmichDiscoveryService(
         /// </summary>
         public bool IsConverted(ImmichAsset asset) =>
             _convertedAssets.Contains(asset.Id) || _convertedChecksums.Contains(asset.Checksum) || _replacements.Contains(asset.Id);
+
+        /// <summary>
+        /// The asset's latest job was skipped as not worth converting, under the quality settings in force now. Changing them
+        /// makes the asset a candidate again; only then could AV1 pass.
+        /// </summary>
+        public bool IsSettledSkip(ImmichAsset asset, string qualityFingerprint) =>
+            _latestTerminal.TryGetValue(asset.Id, out var job) &&
+            job.Status == JobStatus.Skipped &&
+            string.Equals(job.ImmichChecksum, asset.Checksum, StringComparison.Ordinal) &&
+            string.Equals(job.QualityFingerprint, qualityFingerprint, StringComparison.Ordinal);
 
         /// <summary>
         /// The asset's latest job failed or was cancelled while the asset was unchanged, so converting it again would repeat

@@ -15,6 +15,8 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
         "--pix-format", settings.PixelFormat,
         "--preset", settings.Preset.ToString(CultureInfo.InvariantCulture),
         "--min-vmaf", settings.MinimumVmaf.ToString(CultureInfo.InvariantCulture),
+        // Passed explicitly so the setting, not ab-av1's default, decides when a video is not worth converting.
+        "--max-encoded-percent", settings.MaxEncodedPercent.ToString(CultureInfo.InvariantCulture),
         "--min-crf", settings.CrfSearch.MinCrf.ToString(CultureInfo.InvariantCulture),
         "--max-crf", settings.CrfSearch.MaxCrf.ToString(CultureInfo.InvariantCulture),
         // CRFs are whole numbers throughout (jobs, manifests, encode). ab-av1 0.11 defaults svt-av1 to quarter steps.
@@ -66,13 +68,14 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
         started.Stop();
         if (process.ExitCode != 0)
         {
-            throw new InvalidOperationException($"ab-av1 crf-search failed with exit code {process.ExitCode}: {FirstLine(error)}");
+            var log = output + Environment.NewLine + error;
+            // Not a failure: no CRF both met the VMAF and shrank the video enough, and a retry would end the same way.
+            if (AbAv1Output.NoWorthwhileCrf(log, settings) is { } noWorthwhileCrf) throw noWorthwhileCrf;
+            throw new InvalidOperationException($"ab-av1 crf-search failed with exit code {process.ExitCode}: {AbAv1Output.Summarise(error)}");
         }
 
         return new CrfSearchResult(CrfSearchOutputParser.Parse(output + Environment.NewLine + error), output, error, started.Elapsed);
     }
-
-    private static string FirstLine(string value) => value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "No error output.";
 
     private static async Task<string> ReadLinesAsync(StreamReader reader, string stream, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken)
     {

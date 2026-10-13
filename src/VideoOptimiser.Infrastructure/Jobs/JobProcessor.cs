@@ -106,7 +106,7 @@ public sealed class JobProcessor(
             if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return await FailAsync(job, databasePath, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles, cancellationToken);
 
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.SampleCount);
-            var quality = WithSampleCount(settings.Quality, sampleCount);
+            var quality = settings.Quality.WithSampleCount(sampleCount);
             if (session.IsRemote)
             {
                 stage = "StagingFailed";
@@ -196,6 +196,10 @@ public sealed class JobProcessor(
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
             throw;
         }
+        catch (NoWorthwhileCrfException exception)
+        {
+            return await SkipAsync(job, databasePath, settings, exception, path, progress, cancellationToken);
+        }
         catch (RemoteConnectionException exception)
         {
             job.ResumeStatus = job.Status;
@@ -248,19 +252,27 @@ public sealed class JobProcessor(
         return new JobProcessingResult(job, exitCode, message);
     }
 
+    /// <summary>
+    /// Ends the job as skipped: AV1 cannot meet the quality bar and the size limit together. The fingerprint lets discovery
+    /// check the video again once those settings change. The remote stage has already cleaned its workspace on the way out.
+    /// </summary>
+    private async Task<JobProcessingResult> SkipAsync(JobRecord job, string databasePath, AppSettings settings, NoWorthwhileCrfException exception, string path, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken)
+    {
+        job.Status = JobStatus.Skipped;
+        job.FailureCategory = NotWorthConvertingCategory;
+        job.FailureMessage = exception.Message;
+        job.QualityFingerprint = QualityFingerprint.Compute(settings.Quality);
+        job.CompletedUtc = DateTimeOffset.UtcNow;
+        await jobs.UpdateAsync(databasePath, job, cancellationToken);
+        progress?.Report(new CrfSearchOutput("skipped", $"Not worth converting: {Path.GetFileName(path)}. {exception.Message}"));
+        return new JobProcessingResult(job, ExitCode.Success, exception.Message);
+    }
+
+    internal const string NotWorthConvertingCategory = "NotWorthConverting";
+
     private static bool IsWithinRoot(string sourcePath, string rootPath)
     {
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath)) + Path.DirectorySeparatorChar;
         return sourcePath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
     }
-
-    private static QualitySettings WithSampleCount(QualitySettings source, int sampleCount) => new()
-    {
-        MinimumVmaf = source.MinimumVmaf,
-        Preset = source.Preset,
-        Encoder = source.Encoder,
-        PixelFormat = source.PixelFormat,
-        CrfSearch = new CrfSearchSettings { Enabled = source.CrfSearch.Enabled, MinCrf = source.CrfSearch.MinCrf, MaxCrf = source.CrfSearch.MaxCrf, SampleCount = sampleCount, SampleDuration = source.CrfSearch.SampleDuration }
-    };
-
 }

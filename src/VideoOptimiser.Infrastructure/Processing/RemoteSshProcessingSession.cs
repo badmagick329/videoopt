@@ -110,7 +110,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     {
         var arguments = new AbAv1CrfSearchClient("ab-av1").BuildArguments(RemoteSourcePath, settings);
         var elapsed = Stopwatch.StartNew();
-        var log = await RunStageAsync(CrfDirectory, arguments, sourcePath, progress, cancellationToken);
+        var log = await RunStageAsync(CrfDirectory, arguments, sourcePath, progress, cancellationToken, failedLog => AbAv1Output.NoWorthwhileCrf(failedLog, settings));
         elapsed.Stop();
         return new CrfSearchResult(CrfSearchOutputParser.Parse(log), log, string.Empty, elapsed.Elapsed);
     }
@@ -199,7 +199,9 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private async Task<string> RunStageAsync(string stageDirectory, IReadOnlyList<string> arguments, string sourcePath, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken)
+    /// <param name="interpretFailure">Turns the log of a stage that exited non-zero into a more specific exception than the generic one,
+    /// or returns null to keep the generic one.</param>
+    private async Task<string> RunStageAsync(string stageDirectory, IReadOnlyList<string> arguments, string sourcePath, IProgress<CrfSearchOutput>? progress, CancellationToken cancellationToken, Func<string, Exception?>? interpretFailure = null)
     {
         _activeStage = stageDirectory;
         var state = await GetStageStateAsync(stageDirectory, cancellationToken);
@@ -236,7 +238,9 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 if (exitCode != 0)
                 {
                     await CleanupAsync(CancellationToken.None);
-                    throw new InvalidOperationException($"Remote processing stage failed with exit code {exitCode}.");
+                    if (interpretFailure?.Invoke(state.Log) is { } specific) throw specific;
+                    var reason = AbAv1Output.LastErrorLine(state.Log);
+                    throw new InvalidOperationException($"Remote processing stage failed with exit code {exitCode}{(reason is null ? "." : $": {reason}")}");
                 }
                 return state.Log;
             }

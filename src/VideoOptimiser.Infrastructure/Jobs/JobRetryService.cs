@@ -4,7 +4,7 @@ using VideoOptimiser.Application.Jobs;
 namespace VideoOptimiser.Infrastructure.Jobs;
 
 /// <summary>
-/// The explicit opt-in that requeues a failed or cancelled original, which discovery otherwise leaves alone while the file is
+/// The explicit opt-in that requeues a failed, cancelled or skipped original, which discovery otherwise leaves alone while the file is
 /// unchanged. The replacement starts from scratch rather than resuming, so it never reuses the earlier output or workspace.
 /// </summary>
 public sealed class JobRetryService(IJobRepository jobs) : IJobRetryService
@@ -13,9 +13,9 @@ public sealed class JobRetryService(IJobRepository jobs) : IJobRetryService
     {
         var original = await jobs.GetAsync(databasePath, jobId, cancellationToken);
         if (original is null) return new JobRetryResult(null, "Job was not found.");
-        if (original.Status is not (JobStatus.Failed or JobStatus.Cancelled))
+        if (original.Status is not (JobStatus.Failed or JobStatus.Cancelled or JobStatus.Skipped))
         {
-            return new JobRetryResult(null, "Only failed or cancelled jobs can be retried.");
+            return new JobRetryResult(null, "Only failed, cancelled or skipped jobs can be retried.");
         }
         var openJob = await jobs.FindOpenBySourceAsync(databasePath, original.SourcePath, cancellationToken);
         if (openJob is not null)

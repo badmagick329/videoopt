@@ -312,13 +312,11 @@ internal static partial class CliApplication
             await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, [], interrupted: false, unexpectedFailure: true, processRoute: true, cancellationToken);
             throw;
         }
-        if (result.ExitCode == ExitCode.Success)
+        // A skipped job already printed its "Not worth converting" line through the progress reporter.
+        if (result.Job.Status != JobStatus.Skipped)
         {
-            Console.WriteLine(result.Message);
-        }
-        else
-        {
-            Console.Error.WriteLine(result.Message);
+            if (result.ExitCode == ExitCode.Success) Console.WriteLine(result.Message);
+            else Console.Error.WriteLine(result.Message);
         }
 
         if (result.ExitCode != ExitCode.Success) PrintFailedJobs([ToFailedQueueJob(result.Job, result.Message)]);
@@ -347,8 +345,9 @@ internal static partial class CliApplication
         var progress = new InlineProgress<ScanProgress>(update => Console.WriteLine(FormatScanProgress(update)));
         var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, progress, cancellationToken);
         foreach (var path in result.QueuedPaths) Console.WriteLine($"Queued  {path}");
-        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Already converted: {result.AlreadyConverted}. Previously failed or cancelled: {result.PreviouslyFailed}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");
+        Console.WriteLine($"Queued: {result.QueuedPaths.Count}. Already queued: {result.AlreadyQueued}. Already converted: {result.AlreadyConverted}. Previously failed or cancelled: {result.PreviouslyFailed}. Previously skipped: {result.PreviouslySkipped}. Cache hits: {result.CacheHits}. Real probes: {result.RealProbes}. Issues: {result.Issues}.");
         if (result.PreviouslyFailed > 0) Console.WriteLine("Failed or cancelled originals stay out of the queue until they change. 'history' lists their jobs; 'queue retry <job-id>' queues one again.");
+        if (result.PreviouslySkipped > 0) Console.WriteLine("Skipped originals (AV1 would not save enough) are checked again when the file or the quality settings change; 'queue retry <job-id>' queues one now.");
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
@@ -415,9 +414,9 @@ internal static partial class CliApplication
         if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
         await PrintRunBannerAsync(services, configuration, modeOverride, cancellationToken);
         var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, modeOverridden: modeOverride is not null, cancellationToken);
-        var (ready, failures) = await ProcessPreparedJobsAsync(services, configuration, preparation, (ready, failures) =>
+        var (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, preparation, (ready, skipped, failures) =>
         {
-            Console.WriteLine($"Ready to finalise: {ready}. Failed: {failures.Length}.");
+            Console.WriteLine($"Ready to finalise: {ready}. Not worth converting: {skipped}. Failed: {failures.Length}.");
             PrintFailedJobs(failures);
         }, cancellationToken);
         return (int)QueueExitCode.Calculate(ready, failures.Length);
@@ -466,13 +465,13 @@ internal static partial class CliApplication
     /// Processes prepared jobs, creating a managed worker only when there is work for it. <paramref name="report"/> prints the
     /// outcome before the worker's deletion policy speaks, so its retention messages follow the failures they refer to.
     /// </summary>
-    private static async Task<(int Ready, FailedQueueJob[] Failures)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, QueuePreparationResult preparation, Action<int, FailedQueueJob[]> report, CancellationToken cancellationToken)
+    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
         if (preparation.RunnableJobs.Count == 0)
         {
-            report(0, [.. preparation.FailedJobs]);
-            return (0, [.. preparation.FailedJobs]);
+            report(0, 0, [.. preparation.FailedJobs]);
+            return (0, 0, [.. preparation.FailedJobs]);
         }
 
         var queue = services.GetRequiredService<IQueueService>();
@@ -501,13 +500,13 @@ internal static partial class CliApplication
         }
 
         var failures = preparation.FailedJobs.Concat(result.FailedJobs).ToArray();
-        report(result.ReadyToFinalize, failures);
+        report(result.ReadyToFinalize, result.SkippedJobs.Count, failures);
         await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, managedWork, failures, result.Interrupted, unexpectedFailure: false, processRoute: false, cancellationToken);
         if (!managedWork && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the server; powering it off still bills.");
         }
-        return (result.ReadyToFinalize, failures);
+        return (result.ReadyToFinalize, result.SkippedJobs.Count, failures);
     }
 
     private static FailedQueueJob ToFailedQueueJob(JobRecord job, string message) => new(job.Id, job.SourcePath, job.FailureCategory ?? "ProcessingFailed", job.FailureMessage ?? message);

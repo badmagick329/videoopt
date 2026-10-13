@@ -77,7 +77,7 @@ Then use `--limit <n>` for a round of at most `n` videos, such as `--limit 5`, o
 1. Prints where encoding runs, such as `Encoding on: this PC.`, before downloading anything.
 2. Runs the [re-upload guard](#the-re-upload-guard).
 3. Downloads again the staged copy of any open job that is missing one, such as a job `queue retry` queued after `cleanup` deleted its copy. If Immich no longer has that video, the job fails as `SourceMissing`.
-4. Searches Immich for videos taken before the age cutoff, skipping favourites if configured, and anything already converted, skipped or failed.
+4. Searches Immich for videos taken before the age cutoff, skipping favourites if configured, and anything already converted, skipped or failed. A video whose conversion would not save enough (`quality.maxEncodedPercent`, default `80`) ends as `Not worth converting` and counts under "Previously skipped" on later runs.
 5. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it.
 6. Converts the queue on your PC or remote worker, exactly like `queue run`.
 
@@ -108,8 +108,9 @@ If it stops partway, run it again: it continues where it left off. Until step 3,
 - **Space comes back later.** Immich keeps trashed originals until it purges its trash (30 days by default, set in Immich's server settings). Offsite backups of Immich keep them until their own retention removes them.
 - **Not carried over:** face names, comments and likes in shared albums, and memories. Immich detects faces again on the new asset.
 - **Changing `eligibility.rules`** makes every earlier "ineligible" decision stale, so each of those videos is downloaded once more on the next run.
-- **Failed or cancelled videos keep their download** in the staging directory until you run `cleanup`, which deletes the download with the job's temporary files and asset folder. A download an open job still needs is never deleted. After `queue retry`, the next `immich run` downloads the video again.
-- **Exit code 10** after `immich run` means some videos failed to convert, or something else needs a look: a guard or search issue, or an asset Immich returned that its filter should have excluded. Read the output.
+- **Changing the quality bar checks skipped videos again.** A video that ended `Not worth converting` is left alone while `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat` and `crfSearch.minCrf`/`maxCrf` stay the same; changing any of them, or the video's file, downloads it again on the next run. It is not a failure: it does not change the exit code, and `immich run` ends with `Ready to finalise: N. Not worth converting: N. Failed: N.`
+- **Failed, cancelled or skipped videos keep their download** in the staging directory until you run `cleanup`, which deletes the download with the job's temporary files and asset folder. A download an open job still needs is never deleted. After `queue retry`, the next `immich run` downloads the video again.
+- **Exit code 10** after `immich run` means some videos failed to convert (not videos that were not worth converting), or something else needs a look: a guard or search issue, or an asset Immich returned that its filter should have excluded. Read the output.
 
 ## The age rule
 

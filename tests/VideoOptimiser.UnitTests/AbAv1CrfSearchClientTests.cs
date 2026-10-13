@@ -1,5 +1,6 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Infrastructure.Processing;
 
 namespace VideoOptimiser.UnitTests;
@@ -22,7 +23,77 @@ public sealed class AbAv1CrfSearchClientTests
 
         arguments.Should().Equal(
             "crf-search", "--input", "C:\\video.mp4", "--encoder", "libsvtav1", "--pix-format", "yuv420p10le",
-            "--preset", "6", "--min-vmaf", "95", "--min-crf", "18", "--max-crf", "50", "--crf-increment", "1", "--samples", "5", "--sample-duration", "20s");
+            "--preset", "6", "--min-vmaf", "95", "--max-encoded-percent", "80", "--min-crf", "18", "--max-crf", "50", "--crf-increment", "1", "--samples", "5", "--sample-duration", "20s");
+    }
+
+    [Fact]
+    public async Task SearchThrowsTheSkipExceptionWithTheSmallestQualityPassingAttemptWhenNoCrfIsSmallEnough()
+    {
+        const string stderr = """
+            [2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] crf 28 VMAF 98.47 (122%)
+            [2026-10-13T10:56:02Z INFO  ab_av1::command::sample_encode] crf 31 VMAF 97.31 predicted video stream size 418.66 MiB (95%) taking 2 minutes
+            [2026-10-13T10:56:02Z INFO  ab_av1::command::crf_search] crf 31 VMAF 97.31 (95%)
+            [2026-10-13T10:56:45Z INFO  ab_av1::command::crf_search] crf 32 VMAF 96.64 (86%)
+            Error: Failed to find a suitable crf
+            """;
+
+        var thrown = (await FluentActions.Awaiting(() => SearchFailingWithAsync(stderr, new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 })).Should().ThrowAsync<NoWorthwhileCrfException>()).Which;
+
+        thrown.Best.Should().Be(new CrfAttempt(31, 97.31, 95));
+        thrown.Message.Should().Be("AV1 would keep 95% of the size at the best quality-passing setting (CRF 31, VMAF 97.3); the limit is 80% (quality.maxEncodedPercent).");
+    }
+
+    [Fact]
+    public async Task SearchThrowsTheSkipExceptionWithoutABestAttemptWhenNoCrfReachedTheVmaf()
+    {
+        const string stderr = """
+            [2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] crf 18 VMAF 91.20 (60%)
+            Error: Failed to find a suitable crf
+            """;
+
+        var thrown = (await FluentActions.Awaiting(() => SearchFailingWithAsync(stderr, new QualitySettings { MinimumVmaf = 97 })).Should().ThrowAsync<NoWorthwhileCrfException>()).Which;
+
+        thrown.Best.Should().BeNull();
+        thrown.Message.Should().Be("No CRF from 18 to 50 reached VMAF 97.");
+    }
+
+    [Fact]
+    public async Task SearchReportsTheErrorLineNotTheFirstInfoLineForOtherFailures()
+    {
+        const string stderr = """
+            [2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] encoding sample 1/5
+            Error: ffmpeg encode: Invalid data found when processing input
+            """;
+
+        await FluentActions.Awaiting(() => SearchFailingWithAsync(stderr, new QualitySettings()))
+            .Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("ab-av1 crf-search failed with exit code 1: ffmpeg encode: Invalid data found when processing input");
+    }
+
+    [Fact]
+    public async Task SearchReportsTheLastLineWhenThereIsNoErrorLine()
+    {
+        await FluentActions.Awaiting(() => SearchFailingWithAsync("first line\nsecond line\n", new QualitySettings()))
+            .Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*: second line");
+    }
+
+    // A script stands in for ab-av1: it writes the log to stderr as ab-av1 does and exits 1.
+    private static async Task SearchFailingWithAsync(string stderr, QualitySettings settings)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.AbAv1.{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(directory, "stderr.txt"), stderr);
+            var script = Path.Combine(directory, "ab-av1.cmd");
+            await File.WriteAllTextAsync(script, "@echo off\r\ntype \"%~dp0stderr.txt\" 1>&2\r\nexit /b 1\r\n");
+            _ = await new AbAv1CrfSearchClient(script).SearchAsync("C:\\video.mp4", settings);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]

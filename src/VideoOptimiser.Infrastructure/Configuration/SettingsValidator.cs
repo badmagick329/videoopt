@@ -79,6 +79,7 @@ public sealed class SettingsValidator : ISettingsValidator
         }
         ValidateSize(settings.Savings.MinimumBytesSaved, "savings.minimumBytesSaved", diagnostics);
         AddWhen(settings.Quality.MinimumVmaf is < 0 or > 100, "InvalidVmaf", "quality.minimumVmaf must be between 0 and 100.");
+        AddWhen(settings.Quality.MaxEncodedPercent is < 1 or > 100, "InvalidMaxEncodedPercent", "quality.maxEncodedPercent must be a whole number between 1 and 100.");
         AddWhen(settings.Quality.Preset < 0, "InvalidPreset", "quality.preset cannot be negative.");
         AddWhen(settings.Quality.CrfSearch.MinCrf > settings.Quality.CrfSearch.MaxCrf, "InvalidCrfRange", "quality.crfSearch.minCrf cannot exceed maxCrf.");
         AddWhen(settings.Quality.CrfSearch.SampleCount < 1, "InvalidSampleCount", "quality.crfSearch.sampleCount must be at least 1.");

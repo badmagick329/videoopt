@@ -24,9 +24,12 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version = 6;";
+        command.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version = 7;";
         var count = Convert.ToInt64(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
         count.Should().Be(1);
+
+        command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name = 'quality_fingerprint';";
+        Convert.ToInt64(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture).Should().Be(1);
 
         command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'jobs';";
         var jobsTableCount = Convert.ToInt64(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);

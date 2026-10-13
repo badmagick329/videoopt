@@ -152,6 +152,18 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsyncReadsMaxEncodedPercentAndDefaultsItToEighty()
+    {
+        var configured = Path.Combine(_directory, "max-encoded.yaml");
+        await File.WriteAllTextAsync(configured, "version: 1\nquality:\n  maxEncodedPercent: 70\n");
+        var defaulted = Path.Combine(_directory, "max-encoded-default.yaml");
+        await File.WriteAllTextAsync(defaulted, "version: 1\nquality:\n  minimumVmaf: 96\n");
+
+        (await new YamlConfigurationLoader().LoadAsync(configured)).Settings.Quality.MaxEncodedPercent.Should().Be(70);
+        (await new YamlConfigurationLoader().LoadAsync(defaulted)).Settings.Quality.MaxEncodedPercent.Should().Be(80);
+    }
+
+    [Fact]
     public async Task LoadAsyncReadsServerTypesAndANullPriceCap()
     {
         var configPath = Path.Combine(_directory, "server-types.yaml");
@@ -229,6 +241,7 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         loaded.Settings.Processing.RemoteSsh.Hetzner.Locations.Should().Equal("hel1", "fsn1", "nbg1");
         loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().Equal("cx43", "cx53", "cpx42", "ccx33");
         loaded.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice.Should().Be(0.30m);
+        loaded.Settings.Quality.MaxEncodedPercent.Should().Be(80);
     }
 
     [Fact]
@@ -252,7 +265,7 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         await writer.WriteAsync(destination);
         var contents = await File.ReadAllTextAsync(destination);
         contents.Should().Contain("roots:").And.Contain("# Folders searched by queue discover.").And.Contain("action: \"delete\"").And.Contain("locations: [\"hel1\", \"fsn1\", \"nbg1\"]");
-        contents.Should().Contain("mode: \"local\"").And.Contain("lifecycle: \"manual\"").And.Contain("serverTypes: [\"cx43\", \"cx53\", \"cpx42\", \"ccx33\"]").And.Contain("maxHourlyPrice: 0.30").And.Contain("workingDirectory: \"/var/tmp/video-optimiser\"").And.Contain("sshPath: \"ssh\"");
+        contents.Should().Contain("mode: \"local\"").And.Contain("lifecycle: \"manual\"").And.Contain("serverTypes: [\"cx43\", \"cx53\", \"cpx42\", \"ccx33\"]").And.Contain("maxEncodedPercent: 80").And.Contain("maxHourlyPrice: 0.30").And.Contain("workingDirectory: \"/var/tmp/video-optimiser\"").And.Contain("sshPath: \"ssh\"");
 
         var action = () => writer.WriteAsync(destination);
         await action.Should().ThrowAsync<InvalidOperationException>();

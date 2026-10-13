@@ -208,6 +208,72 @@ public sealed class QueueServiceTests : IDisposable
         result.PreviouslyFailed.Should().Be(0);
     }
 
+    [Theory]
+    [InlineData("same", true)]
+    [InlineData("minimumVmaf", false)]
+    [InlineData("maxEncodedPercent", false)]
+    [InlineData("sampleCount", true)]
+    public async Task DiscoverAsyncSettlesASkippedOriginalOnlyWhileTheQualityBarIsUnchanged(string change, bool stillSettled)
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "source");
+        var fingerprints = new FileFingerprintService();
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
+        await repository.CreateAsync(settings.Database.Path, new JobRecord
+        {
+            Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = await fingerprints.CreateAsync(source), Status = JobStatus.Skipped,
+            FailureCategory = "NotWorthConverting", QualityFingerprint = QualityFingerprint.Compute(settings.Quality)
+        });
+        switch (change)
+        {
+            case "minimumVmaf": settings.Quality.MinimumVmaf = 93; break;
+            case "maxEncodedPercent": settings.Quality.MaxEncodedPercent = 90; break;
+            case "sampleCount": settings.Quality.CrfSearch.SampleCount = 9; break;
+        }
+        var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor());
+
+        var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
+
+        result.PreviouslySkipped.Should().Be(stillSettled ? 1 : 0);
+        result.PreviouslyFailed.Should().Be(0);
+        result.QueuedPaths.Should().BeEquivalentTo(stillSettled ? [] : new[] { source });
+    }
+
+    [Fact]
+    public async Task RunAsyncCountsASkippedJobAsSkippedNotFailedAndExitsSuccessfully()
+    {
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var skipped = new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "a.mp4"), Status = JobStatus.Skipped, FailureCategory = "NotWorthConverting", FailureMessage = "AV1 would keep 95%." };
+        var queue = new QueueService(new FixedScanner(), repository, new FileFingerprintService(), new ResultProcessor(new JobProcessingResult(skipped, ExitCode.Success, "AV1 would keep 95%.")));
+
+        var result = await queue.RunAsync(Path.Combine(_directory, "jobs.db"), new AppSettings(), [skipped]);
+
+        result.ReadyToFinalize.Should().Be(0);
+        result.FailedJobs.Should().BeEmpty();
+        result.SkippedJobs.Should().ContainSingle().Which.Should().Be(new SkippedQueueJob(skipped.Id, skipped.SourcePath, "AV1 would keep 95%."));
+        result.ExitCode.Should().Be(ExitCode.Success);
+    }
+
+    [Fact]
+    public async Task ARoundWhoseOnlyNonSuccessIsSkippedDeletesTheManagedWorkerWithoutAskingAndExitsZero()
+    {
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var skipped = new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "a.mp4"), Status = JobStatus.Skipped, FailureMessage = "AV1 would keep 95%." };
+        var queue = new QueueService(new FixedScanner(), repository, new FileFingerprintService(), new ResultProcessor(new JobProcessingResult(skipped, ExitCode.Success, "skipped")));
+        var result = await queue.RunAsync(Path.Combine(_directory, "jobs.db"), new AppSettings(), [skipped]);
+        var deleted = false;
+
+        var cleanup = await ManagedWorkerDeletionPolicy.ApplyAsync(
+            workerWasUsed: true, deleteAfterRun: true, hasFailures: result.Failed > 0, result.Interrupted, unexpectedFailure: false,
+            new NeverPrompts(), _ => { deleted = true; return Task.CompletedTask; });
+
+        cleanup.Deleted.Should().BeTrue();
+        cleanup.Prompted.Should().BeFalse();
+        deleted.Should().BeTrue();
+        QueueExitCode.Calculate(result.ReadyToFinalize, result.Failed).Should().Be(ExitCode.Success);
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private sealed class FixedScanner(params string[] paths) : IFileScanner
@@ -226,6 +292,17 @@ public sealed class QueueServiceTests : IDisposable
                 [new ScanItem(alreadyOpen, ScanItemStatus.Eligible, "Eligible"), new ScanItem(next, ScanItemStatus.Eligible, "Eligible"), new ScanItem(later, ScanItemStatus.Eligible, "Eligible")],
                 []));
         }
+    }
+
+    private sealed class ResultProcessor(JobProcessingResult result) : IJobProcessor
+    {
+        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<CrfSearchOutput>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(result);
+    }
+
+    private sealed class NeverPrompts : IInteractiveConfirmation
+    {
+        public bool IsAvailable => true;
+        public bool Confirm(string prompt) => throw new InvalidOperationException("The user must not be asked when every job succeeded or was skipped.");
     }
 
     private sealed class NoopProcessor : IJobProcessor

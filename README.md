@@ -3,7 +3,7 @@
 Shrink big videos by converting them to AV1 at the same visual quality. Nothing is replaced until you review the result and say so.
 
 - **Finds** videos worth shrinking in your folders or your [Immich](https://immich.app) library, using rules you set: codec, resolution, bitrate and file size. Any codec FFmpeg can read works.
-- **Converts** each one with [ab-av1](https://github.com/alexheretic/ab-av1), which picks the smallest file that still scores VMAF 95 or higher (you can change the target).
+- **Converts** each one with [ab-av1](https://github.com/alexheretic/ab-av1), which picks the smallest file that still scores VMAF 95 or higher (you can change the target). A video that cannot shrink below 80% of its size at that quality is skipped as not worth converting (`quality.maxEncodedPercent`).
 - **Checks** every output (codec, duration, streams, a decode test, real savings) before it can replace anything.
 - **Waits** for you: the original stays untouched until you run `finalize`.
 
@@ -88,6 +88,8 @@ The commands below assume you run them there, with the config file beside the ex
 
 When one video works, drop `--first` to queue everything that matches your rules.
 
+A video AV1 would not shrink enough ends as `Not worth converting: <file>. <why>`, with the best quality setting it found. That is not a failure: the run exits `0` and a managed Hetzner server is deleted without asking. The video is checked again when the file changes, or when you change `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat` or the CRF range under `quality`. Raise `quality.maxEncodedPercent` (default `80`) to accept smaller savings; `queue retry <job-id>` queues one now.
+
 > **Tip:** set `VIDEO_OPTIMISER_CONFIG` to the config's full path and you can leave out `--config`. Without either, the app looks for `%ProgramData%\VideoOptimiser\config.yaml`, then `video-optimiser.yaml` in the current folder.
 
 ## Choose where encoding runs
@@ -165,7 +167,7 @@ All commands take `--config <path>`.
 | `status`, `history` | Open jobs, and finished jobs. Add `--json` for scripts. |
 | `queue list [--json]` | Open jobs only. |
 | `queue cancel <job-id>`, `queue cancel --all` | Cancel one job, or every queued and interrupted job. |
-| `queue retry <job-id>` | Queue a failed or cancelled video again. |
+| `queue retry <job-id>` | Queue a failed, cancelled or skipped (not worth converting) video again. |
 | `validate <job-id>` | Re-run the checks on a job's output. |
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one after a single confirmation. |
 | `cleanup [--dry-run]` | Delete temporary files and staged Immich downloads no job will use again. |
@@ -180,7 +182,7 @@ Exit code `0` means success. Scripts and agents can find every exit code in [doc
 
 - Originals are only read until you finalise.
 - `finalize` moves the original aside first, puts the AV1 in place, and moves the original back if anything fails.
-- A video that failed or was cancelled is not queued again until the file changes, or you run `queue retry`.
+- A video that failed, was cancelled or was skipped as not worth converting is not queued again until the file changes (a skipped one also when the quality settings change), or you run `queue retry`.
 - Temporary outputs live in a `.video-optimiser` folder beside each original. `cleanup` removes the ones no job needs, and the downloaded copies of Immich videos whose job has ended.
 - The job database (`jobs.db` by default) tracks every job, so a crash or `Ctrl+C` never loses track of a file.
 - Secrets (the Hetzner token, the Immich API key) load from environment variables or a `.env` file, never from the YAML. Copy `.env.example` to `.env` to start.

@@ -411,6 +411,48 @@ public sealed class RemoteSshProcessingSessionTests
     }
 
     [Fact]
+    public async Task ACrfStageThatFoundNoWorthwhileCrfThrowsTheSkipExceptionAndStillCleansTheWorkspace()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var runner = new QueueRunner([
+            new ExternalProcessResult(0, $"completed 1\n\u001e{NoWorthwhileCrfLog.Text}", string.Empty),
+            new ExternalProcessResult(0, NoWorthwhileCrfLog.Text, string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty)
+        ]);
+        var session = CreateSession(Guid.NewGuid(), runner, source);
+
+        var action = async () => await session.SearchCrfAsync(source, new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 });
+
+        var thrown = (await action.Should().ThrowAsync<NoWorthwhileCrfException>()).Which;
+        thrown.Best.Should().Be(new CrfAttempt(31, 97.31, 95));
+        File.Exists(Path.Combine(directory, ".video-optimiser", $"{session.RemoteWorkspace!.Split('/').Last()}.crf.remote.log")).Should().BeTrue();
+        runner.Requests[^1].Arguments[^1].Should().Contain("rm -rf --").And.Contain(session.RemoteWorkspace);
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
+    public async Task AnotherFailedRemoteStageReportsTheErrorLineOfItsLog()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        const string log = "[2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] starting\nError: ffmpeg exited with status 1\nCommand exited with non-zero status 1\n\tExit status: 1\n";
+        var runner = new QueueRunner([
+            new ExternalProcessResult(0, $"completed 1\n\u001e{log}", string.Empty),
+            new ExternalProcessResult(0, log, string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty)
+        ]);
+        var session = CreateSession(Guid.NewGuid(), runner, source);
+
+        var action = async () => await session.SearchCrfAsync(source, new QualitySettings());
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote processing stage failed with exit code 1: ffmpeg exited with status 1");
+        Directory.Delete(directory, true);
+    }
+
+    [Fact]
     public async Task RepeatedSsh255BecomesRemoteConnectionFailure()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Remote.{Guid.NewGuid():N}");
@@ -470,6 +512,21 @@ public sealed class RemoteSshProcessingSessionTests
         var directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Remote.{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         return directory;
+    }
+
+    private static class NoWorthwhileCrfLog
+    {
+        public const string Text = """
+            [2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] crf 28 VMAF 98.47 (122%)
+            [2026-10-13T10:56:02Z INFO  ab_av1::command::sample_encode] crf 31 VMAF 97.31 predicted video stream size 418.66 MiB (95%) taking 2 minutes
+            [2026-10-13T10:56:02Z INFO  ab_av1::command::crf_search] crf 31 VMAF 97.31 (95%)
+            [2026-10-13T10:56:45Z INFO  ab_av1::command::crf_search] crf 32 VMAF 96.64 (86%)
+            Error: Failed to find a suitable crf
+            Command exited with non-zero status 1
+            	Command being timed: "ab-av1 crf-search --input /var/tmp/video-optimiser/8f62/source.mp4 --encoder libsvtav1"
+            	Exit status: 1
+
+            """;
     }
 
     private sealed class QueueRunner(IEnumerable<ExternalProcessResult> results) : IExternalProcessRunner

@@ -13,7 +13,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         var open = new HashSet<string>(
             (await jobs.ListAsync(databasePath, terminal: false, cancellationToken)).Select(job => Path.GetFullPath(job.SourcePath)),
             StringComparer.OrdinalIgnoreCase);
-        var settled = await FindSettledOriginalsAsync(databasePath, open, cancellationToken);
+        var settled = await FindSettledOriginalsAsync(databasePath, open, QualityFingerprint.Compute(settings.Quality), cancellationToken);
         var openSourcePaths = first ? open : null;
         var report = await scanner.ScanAsync(
             settings.Watch.Roots,
@@ -29,6 +29,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         var issues = report.Issues.Count;
         var alreadyConverted = 0;
         var previouslyFailed = 0;
+        var previouslySkipped = 0;
         foreach (var item in report.Items.Where(item => item.Status == ScanItemStatus.Eligible))
         {
             if (first && queued.Count > 0)
@@ -39,6 +40,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             if (settled.TryGetValue(Path.GetFullPath(item.Path), out var outcome))
             {
                 if (outcome == JobStatus.Completed) alreadyConverted++;
+                else if (outcome == JobStatus.Skipped) previouslySkipped++;
                 else previouslyFailed++;
                 continue;
             }
@@ -74,7 +76,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             }
         }
 
-        return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes, alreadyConverted, previouslyFailed);
+        return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes, alreadyConverted, previouslyFailed, previouslySkipped);
     }
 
     /// <summary>
@@ -90,17 +92,20 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
     /// Originals discovery leaves alone because their latest job settled them, mapped to that job's status. A completed job
     /// means <c>original.action: keep</c> left the original in place; a failed or cancelled one means converting it again
     /// would repeat the same encode and fail the same way, or undo the user's cancel, so only <c>queue retry</c> requeues it.
+    /// A skipped job (AV1 would not save enough) settles its original only while <paramref name="qualityFingerprint"/> still
+    /// matches the one that skipped it: changing the quality bar checks the video again.
     /// Either way the file is still eligible, and a matching fingerprint proves it is the one that job saw; a changed file
     /// is queued as normal. The size check first skips the fingerprint read for paths that <c>delete</c> or <c>archive</c>
     /// replaced. Paths with an open job are left to the open-job count.
     /// </summary>
-    private async Task<Dictionary<string, JobStatus>> FindSettledOriginalsAsync(string databasePath, HashSet<string> open, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, JobStatus>> FindSettledOriginalsAsync(string databasePath, HashSet<string> open, string qualityFingerprint, CancellationToken cancellationToken)
     {
         var settled = new Dictionary<string, JobStatus>(StringComparer.OrdinalIgnoreCase);
         var latestJobs = (await jobs.ListAsync(databasePath, terminal: true, cancellationToken))
             .GroupBy(job => Path.GetFullPath(job.SourcePath), StringComparer.OrdinalIgnoreCase)
             .Select(group => group.MaxBy(job => job.CreatedUtc)!)
-            .Where(job => !open.Contains(Path.GetFullPath(job.SourcePath)) && !RequeuedFailureCategories.Contains(job.FailureCategory ?? string.Empty));
+            .Where(job => !open.Contains(Path.GetFullPath(job.SourcePath)) && !RequeuedFailureCategories.Contains(job.FailureCategory ?? string.Empty))
+            .Where(job => job.Status != JobStatus.Skipped || job.QualityFingerprint == qualityFingerprint);
         foreach (var job in latestJobs)
         {
             var file = new FileInfo(job.SourcePath);
@@ -181,12 +186,14 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
     {
         var ready = 0;
         var failed = new List<FailedQueueJob>();
+        var skipped = new List<SkippedQueueJob>();
         var interrupted = false;
         foreach (var job in jobs)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var result = await processor.ProcessAsync(databasePath, job.SourcePath, settings, force: false, progress, cancellationToken);
             if (result.Job.Status == JobStatus.ReadyToFinalize) ready++;
+            else if (result.Job.Status == JobStatus.Skipped) skipped.Add(new SkippedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureMessage ?? result.Message));
             else if (result.ExitCode != ExitCode.Success)
             {
                 failed.Add(new FailedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureCategory ?? "ProcessingFailed", result.Job.FailureMessage ?? result.Message));
@@ -194,6 +201,6 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             }
         }
 
-        return new QueueRunResult(ready, failed, interrupted, QueueExitCode.Calculate(ready, failed.Count));
+        return new QueueRunResult(ready, failed, skipped, interrupted, QueueExitCode.Calculate(ready, failed.Count));
     }
 }

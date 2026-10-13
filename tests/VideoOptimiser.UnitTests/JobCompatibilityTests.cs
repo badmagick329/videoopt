@@ -349,8 +349,9 @@ public sealed class JobCompatibilityTests : IDisposable
     [InlineData(JobStatus.Failed, "ValidationFailed", true)]
     [InlineData(JobStatus.Failed, "CrfSearchFailed", true)]
     [InlineData(JobStatus.Cancelled, "Cancelled", true)]
+    [InlineData(JobStatus.Skipped, "NotWorthConverting", true)]
     [InlineData(JobStatus.Completed, null, false)]
-    public async Task RetryRequeuesAnyFailedOrCancelledJobWithItsFingerprint(JobStatus status, string? category, bool retried)
+    public async Task RetryRequeuesAnyFailedCancelledOrSkippedJobWithItsFingerprint(JobStatus status, string? category, bool retried)
     {
         var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
         var settings = ManagedSettings();
@@ -362,7 +363,7 @@ public sealed class JobCompatibilityTests : IDisposable
 
         result.Succeeded.Should().Be(retried);
         if (retried) result.Replacement!.SourceFingerprint.Should().Be("source");
-        else result.Error.Should().Be("Only failed or cancelled jobs can be retried.");
+        else result.Error.Should().Be("Only failed, cancelled or skipped jobs can be retried.");
     }
 
     [Fact]

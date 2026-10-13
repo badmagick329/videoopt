@@ -5,6 +5,7 @@ using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Infrastructure.Diagnostics;
 using VideoOptimiser.Infrastructure.Immich;
@@ -179,6 +180,46 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
         await CreateJobAsync(asset with { Checksum = "earlier-checksum" }, JobStatus.Failed, "EncodeFailed");
+
+        var result = await DiscoverAsync();
+
+        result.Queued.Should().ContainSingle();
+    }
+
+    [Theory]
+    [InlineData("same", true)]
+    [InlineData("minimumVmaf", false)]
+    [InlineData("maxEncodedPercent", false)]
+    [InlineData("preset", false)]
+    [InlineData("sampleDuration", true)]
+    public async Task CountsASkippedAssetAsPreviouslySkippedOnlyWhileTheQualityBarIsUnchanged(string change, bool stillSettled)
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        var skipped = await CreateJobAsync(asset, JobStatus.Skipped, "NotWorthConverting");
+        skipped.QualityFingerprint = QualityFingerprint.Compute(_settings.Quality);
+        await _repository.UpdateAsync(_settings.Database.Path, skipped);
+        switch (change)
+        {
+            case "minimumVmaf": _settings.Quality.MinimumVmaf = 93; break;
+            case "maxEncodedPercent": _settings.Quality.MaxEncodedPercent = 90; break;
+            case "preset": _settings.Quality.Preset = 4; break;
+            case "sampleDuration": _settings.Quality.CrfSearch.SampleDuration = "30s"; break;
+        }
+
+        var result = await DiscoverAsync();
+
+        result.PreviouslySkipped.Should().Be(stillSettled ? 1 : 0);
+        result.PreviouslyFailed.Should().Be(0);
+        result.Queued.Should().HaveCount(stillSettled ? 0 : 1);
+    }
+
+    [Fact]
+    public async Task QueuesASkippedAssetAgainWhenItsChecksumChanged()
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        var skipped = await CreateJobAsync(asset with { Checksum = "earlier-checksum" }, JobStatus.Skipped, "NotWorthConverting");
+        skipped.QualityFingerprint = QualityFingerprint.Compute(_settings.Quality);
+        await _repository.UpdateAsync(_settings.Database.Path, skipped);
 
         var result = await DiscoverAsync();
 
@@ -536,7 +577,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     private async Task<JobRecord> CreateJobAsync(ImmichAsset asset, JobStatus status, string? failureCategory = null, bool staged = true)
     {
         var path = Path.Combine(_settings.Immich.StagingDirectory, asset.Id, asset.OriginalFileName);
-        if (staged && status is not (JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled))
+        if (staged && status is not (JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Skipped))
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, "staged");

@@ -69,6 +69,37 @@ public sealed class SqliteJobRepositoryTests : IDisposable
     }
 
     [Fact]
+    public async Task ASkippedJobIsTerminalAndKeepsItsQualityFingerprint()
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        job.Status = JobStatus.CrfSearching;
+        await _repository.UpdateAsync(_databasePath, job);
+        job.Status = JobStatus.Skipped;
+        job.FailureCategory = "NotWorthConverting";
+        job.QualityFingerprint = "0123456789abcdef";
+        await _repository.UpdateAsync(_databasePath, job);
+
+        (await _repository.GetAsync(_databasePath, job.Id))!.QualityFingerprint.Should().Be("0123456789abcdef");
+        (await _repository.ListAsync(_databasePath, terminal: true)).Should().ContainSingle(listed => listed.Id == job.Id).Which.IsTerminal.Should().BeTrue();
+        (await _repository.ListAsync(_databasePath, terminal: false)).Should().NotContain(listed => listed.Id == job.Id);
+        (await _repository.FindOpenBySourceAsync(_databasePath, job.SourcePath)).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(JobStatus.Queued)]
+    [InlineData(JobStatus.Encoding)]
+    [InlineData(JobStatus.Validating)]
+    public async Task OnlyACrfSearchCanEndSkipped(JobStatus from)
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(from));
+        job.Status = JobStatus.Skipped;
+
+        var action = async () => await _repository.UpdateAsync(_databasePath, job);
+
+        await action.Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact]
     public async Task PersistsImmichIdentity()
     {
         var job = await _repository.CreateAsync(_databasePath, NewImmichJob("asset-1", JobStatus.Queued));

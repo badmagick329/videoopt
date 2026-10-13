@@ -112,6 +112,12 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
                 """, cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (6, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
+        if (!await HasMigrationAsync(connection, 7, cancellationToken))
+        {
+            // The quality settings that skipped a job as not worth converting; discovery checks the video again once they change.
+            await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN quality_fingerprint TEXT NULL;", cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (7, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 

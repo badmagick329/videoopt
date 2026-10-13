@@ -14,6 +14,20 @@ public sealed class SettingsValidatorTests
         diagnostics.Select(diagnostic => diagnostic.Code).Should().Contain("WatchRootsRequired");
     }
 
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    [InlineData(80, true)]
+    [InlineData(100, true)]
+    [InlineData(101, false)]
+    public void ValidateRequiresMaxEncodedPercentToBeAWholeNumberFromOneToOneHundred(int percent, bool valid)
+    {
+        var settings = CreateValidSettings();
+        settings.Quality.MaxEncodedPercent = percent;
+
+        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Contains("InvalidMaxEncodedPercent").Should().Be(!valid);
+    }
+
     [Fact]
     public void ValidateAcceptsAnImmichOnlySetupWithoutWatchRoots()
     {

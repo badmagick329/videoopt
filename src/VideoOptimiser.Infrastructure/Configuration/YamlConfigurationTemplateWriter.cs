@@ -126,6 +126,9 @@ eligibility:
 quality:
   # Minimum visual quality target used by CRF search.
   minimumVmaf: 95
+  # Largest share of the original size the AV1 output may keep. A video that cannot shrink this far at the
+  # minimum VMAF is skipped as not worth converting, and checked again when the quality settings change.
+  maxEncodedPercent: 80
   # SVT-AV1 preset; lower is slower and generally more efficient.
   preset: 6
   # AV1 encoder passed to ab-av1.

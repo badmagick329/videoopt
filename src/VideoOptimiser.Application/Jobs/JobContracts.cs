@@ -18,7 +18,9 @@ public enum JobStatus
     Interrupted = 8,
     Cancelled = 9,
     Staging = 10,
-    Downloading = 11
+    Downloading = 11,
+    /// <summary>Ended without converting because AV1 would not save enough. Terminal, and not a failure.</summary>
+    Skipped = 12
 }
 
 /// <summary>Where a job's original came from. Stored as <c>file</c> or <c>immich</c>.</summary>
@@ -53,6 +55,8 @@ public sealed class JobRecord
     public decimal? PercentageSaved { get; set; }
     public string? FailureCategory { get; set; }
     public string? FailureMessage { get; set; }
+    /// <summary>Set when the job ends <see cref="JobStatus.Skipped"/>: the <see cref="Processing.QualityFingerprint"/> of the settings that skipped it.</summary>
+    public string? QualityFingerprint { get; set; }
     public DateTimeOffset CreatedUtc { get; set; }
     public DateTimeOffset UpdatedUtc { get; set; }
     public DateTimeOffset? CompletedUtc { get; set; }
@@ -60,7 +64,7 @@ public sealed class JobRecord
     public string? RemoteHost { get; set; }
     public string? RemoteWorkspace { get; set; }
 
-    public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled;
+    public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Skipped;
 }
 
 public sealed record JobProcessingResult(JobRecord Job, ExitCode ExitCode, string Message);
@@ -72,7 +76,8 @@ public static class JobStateTransitions
         // A resumed local job skips the stages it already finished: encoding when its CRF is known, validation when its output is.
         (JobStatus.Queued, JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted or JobStatus.Cancelled) => true,
         (JobStatus.Staging, JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
-        (JobStatus.CrfSearching, JobStatus.Encoding or JobStatus.Failed or JobStatus.Interrupted) => true,
+        // Skipped is only ever decided by the CRF search: no CRF both met the VMAF and shrank the video enough.
+        (JobStatus.CrfSearching, JobStatus.Encoding or JobStatus.Skipped or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Encoding, JobStatus.Downloading or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Downloading, JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Validating, JobStatus.ReadyToFinalize or JobStatus.Failed or JobStatus.Interrupted) => true,
@@ -95,7 +100,7 @@ public interface IJobRepository
     Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default);
     Task MarkActiveJobsInterruptedAsync(string databasePath, CancellationToken cancellationToken = default);
 
-    /// <summary>The newest job for the asset that is not completed, failed or cancelled.</summary>
+    /// <summary>The newest job for the asset that is not completed, failed, cancelled or skipped.</summary>
     Task<JobRecord?> FindOpenByImmichAssetAsync(string databasePath, string assetId, CancellationToken cancellationToken = default);
 
     /// <summary>Completed Immich jobs, oldest first. The re-upload guard looks for their original checksums coming back.</summary>
@@ -149,14 +154,17 @@ public interface IJobProcessor
         CancellationToken cancellationToken = default);
 }
 
-public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0);
+public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0, int PreviouslySkipped = 0);
 public sealed record FailedQueueJob(Guid Id, string SourcePath, string FailureCategory, string FailureMessage);
+
+/// <summary>A job that ended <see cref="JobStatus.Skipped"/>. Not a failure: it changes neither the exit code nor the managed worker's deletion.</summary>
+public sealed record SkippedQueueJob(Guid Id, string SourcePath, string Message);
 
 /// <param name="SkippedJobs">Started jobs left untouched because <c>--local</c> or <c>--remote</c> chose the other mode; see
 /// <see cref="JobCompatibility.IsBoundToOtherMode"/>. They are neither runnable nor failed.</param>
 public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs);
 
-public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, bool Interrupted, ExitCode ExitCode)
+public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<SkippedQueueJob> SkippedJobs, bool Interrupted, ExitCode ExitCode)
 {
     public int Failed => FailedJobs.Count;
 }
