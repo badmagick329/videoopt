@@ -95,8 +95,8 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `3` | Invalid configuration, or an Immich API key that is missing, rejected or lacks a permission |
 | `4` | Missing or unusable media tool (`doctor`) |
 | `5` | `process` on a file the rules exclude; add `--force` to convert it anyway |
-| `6` | Processing failed for every job, or an Immich request failed |
-| `7` | The output failed validation (`validate`, `process`), or `finalize <job-id>` named a job that is not ready |
+| `6` | Processing failed for every job, an Immich request failed, or ffprobe could not read an original (`validate`) |
+| `7` | The output failed validation, including an output ffprobe cannot read (`validate`, `process`), or `finalize <job-id>` named a job that is not ready |
 | `8` | `finalize <job-id>` failed, or `immich finalize` failed for every job |
 | `9` | Cancelled with `Ctrl+C` |
 | `10` | Partial success: some jobs failed (any failure in `finalize --ready`), or `queue discover`, `immich run` or `cleanup` hit issues; read the output |
