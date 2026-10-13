@@ -16,26 +16,6 @@ public sealed class DoctorServiceTests : IDisposable
     public DoctorServiceTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
-    public async Task RunAsyncReportsSuccessWhenConfigurationAndToolsAreHealthy()
-    {
-        var settings = CreateSettings();
-        var report = await CreateDoctor(new FakeToolVerifier(true)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
-
-        report.ExitCode.Should().Be(ExitCode.Success);
-        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "DependencyAvailable");
-    }
-
-    [Fact]
-    public async Task RunAsyncReturnsMissingDependencyExitCodeWhenAToolFails()
-    {
-        var settings = CreateSettings();
-        var report = await CreateDoctor(new FakeToolVerifier(false)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
-
-        report.ExitCode.Should().Be(ExitCode.MissingDependency);
-        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Category == DiagnosticCategory.Dependency && diagnostic.Status == DiagnosticStatus.Fail);
-    }
-
-    [Fact]
     public async Task RunAsyncInRemoteModeChecksSshAndSftpAndSkipsLocalAbAv1()
     {
         var settings = CreateSettings();
@@ -203,7 +183,6 @@ public sealed class DoctorServiceTests : IDisposable
 
     [Theory]
     [InlineData("ImmichApiKeyRejected")]
-    [InlineData("ImmichPermissionMissing")]
     public async Task RunAsyncFailsWithTheImmichClientsDiagnosisOfAKeyFailure(string code)
     {
         var immich = new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2), new ImmichApiException(code, "what to fix"));

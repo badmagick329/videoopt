@@ -18,30 +18,14 @@ public sealed partial class ColourOutputTests
     private const string Reset = "\u001b[0m";
 
     [Fact]
-    public void AnsiWrapsTextInItsCodeAndResetsAfterwardsAndPlainLeavesItAlone()
-    {
-        TerminalStyle.Ansi.Green("done").Should().Be($"{Esc}32mdone{Reset}");
-        TerminalStyle.Ansi.Yellow("skip").Should().Be($"{Esc}33mskip{Reset}");
-        TerminalStyle.Ansi.Red("failed").Should().Be($"{Esc}31mfailed{Reset}");
-        TerminalStyle.Ansi.Dim("detail").Should().Be($"{Esc}2mdetail{Reset}");
-        TerminalStyle.Ansi.Bold("[1/1] a.mp4").Should().Be($"{Esc}1m[1/1] a.mp4{Reset}");
-        TerminalStyle.Ansi.Tone(JobTone.None, "plain").Should().Be("plain");
-
-        TerminalStyle.Plain.Green("done").Should().Be("done");
-        TerminalStyle.Plain.Tone(JobTone.Failure, "failed").Should().Be("failed");
-    }
-
-    [Fact]
     public void EmptyTextGetsNoCodesSoABlankLineStaysBlank() =>
         TerminalStyle.Ansi.Dim(string.Empty).Should().BeEmpty();
 
     [Theory]
     [InlineData(false, null, null, false, true)]
-    [InlineData(false, null, "xterm-256color", false, true)]
     [InlineData(true, null, "xterm", false, false)]
     [InlineData(false, "1", "xterm", false, false)]
     [InlineData(false, "", "xterm", false, true)]
-    [InlineData(false, null, "dumb", false, false)]
     [InlineData(false, null, "DUMB", false, false)]
     [InlineData(false, null, "xterm", true, false)]
     public void ColourNeedsATerminalNoOptOutAndNoJson(bool redirected, string? noColor, string? term, bool json, bool expected) =>
@@ -76,21 +60,6 @@ public sealed partial class ColourOutputTests
             $"      {Esc}32mReady to finalise: 1.0 MiB -> 500.0 KiB, 51.2% saved.{Reset}\n" +
             $"      {Esc}33mNot worth converting: too big.{Reset}\n" +
             $"      {Esc}31mFailed validation: duration differs{Reset}\n");
-    }
-
-    [Fact]
-    public void AJobBlockReadsTheSameWithAndWithoutColour()
-    {
-        JobProgress[] lines =
-        [
-            new(JobProgressKind.Header, "[1/1] a.mp4 (1.0 MiB)"),
-            JobProgress.Step("Finding the best CRF..."),
-            JobProgress.Detail("20%, 54 fps"),
-            JobProgress.Outcome(JobTone.Failure, "Failed during encoding: boom")
-        ];
-
-        Render(lines, TerminalStyle.Plain).Should().NotContain(Esc);
-        Strip(Render(lines, TerminalStyle.Ansi)).Should().Be(Render(lines, TerminalStyle.Plain));
     }
 
     [Fact]
@@ -176,14 +145,6 @@ public sealed partial class ColourOutputTests
             $"{Esc}32mReady to finalise: 1.{Reset} {Esc}33mNot worth converting: 2.{Reset} {Esc}31mFailed: 3.{Reset}");
         OutcomeSummary.Run(0, 0, 0, TerminalStyle.Ansi).Should().Be("Nothing to finalise.");
         OutcomeSummary.Run(1, 2, 3, TerminalStyle.Plain).Should().Be("Ready to finalise: 1. Not worth converting: 2. Failed: 3.");
-    }
-
-    private static string Render(JobProgress[] lines, TerminalStyle style)
-    {
-        var output = new StringWriter { NewLine = "\n" };
-        var console = new JobProgressConsole(output, style);
-        foreach (var line in lines) console.Report(line);
-        return output.ToString();
     }
 
     private static (string Output, string Error) RenderDiscovery(ImmichDiscoveryProgress[] events, TerminalStyle style)

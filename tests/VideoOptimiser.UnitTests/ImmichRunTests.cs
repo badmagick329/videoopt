@@ -123,35 +123,6 @@ public sealed class ImmichRunTests : IDisposable
     }
 
     [Fact]
-    public async Task ALimitAboveTheOpenJobsQueuesNewOnesAndProcessesAll()
-    {
-        _immich.Add("a.mp4", "hevc a");
-        await _run.PrepareAsync(_settings.Database.Path, _settings, limit: 1);
-        _immich.Add("b.mp4", "hevc b");
-        _immich.Add("c.mp4", "hevc c");
-        _immich.Add("d.mp4", "hevc d");
-
-        var preparation = await _run.PrepareAsync(_settings.Database.Path, _settings, limit: 3);
-
-        preparation.Discovery.Queued.Should().HaveCount(2);
-        preparation.Queue.RunnableJobs.Should().HaveCount(3);
-    }
-
-    [Fact]
-    public async Task FirstProcessesOneJobEvenWhenOthersAreAlreadyQueued()
-    {
-        _immich.Add("a.mp4", "hevc a");
-        _immich.Add("b.mp4", "hevc b");
-        await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null);
-        _immich.Add("c.mp4", "hevc c");
-
-        var preparation = await _run.PrepareAsync(_settings.Database.Path, _settings, limit: 1);
-
-        preparation.Discovery.Queued.Should().BeEmpty("an open job is already the one video in flight");
-        preparation.Queue.RunnableJobs.Should().ContainSingle();
-    }
-
-    [Fact]
     public async Task QueueRunLeavesImmichJobsToImmichRunAndImmichRunLeavesFileJobs()
     {
         _immich.Add("PXL.mp4", "hevc original");

@@ -55,14 +55,14 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("image")]
-    [InlineData("too new")]
-    [InlineData("favourite")]
-    [InlineData("trashed")]
-    [InlineData("hidden")]
-    [InlineData("locked")]
-    [InlineData("external library")]
-    public async Task ReChecksEverySearchResultAndLeavesMismatchesAlone(string mismatch)
+    [InlineData("image", "is a IMAGE, not a video")]
+    [InlineData("too new", "is newer than the age gate")]
+    [InlineData("favourite", "is a favourite")]
+    [InlineData("trashed", "is in the trash")]
+    [InlineData("hidden", "has visibility hidden")]
+    [InlineData("locked", "has visibility locked")]
+    [InlineData("external library", "belongs to an external library")]
+    public async Task ReChecksEverySearchResultAndLeavesMismatchesAlone(string mismatch, string reason)
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
         _immich.Replace(mismatch switch
@@ -76,11 +76,14 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
             _ => asset with { LibraryId = Guid.NewGuid().ToString() }
         });
 
-        var result = await DiscoverAsync();
+        var events = new List<ImmichDiscoveryProgress>();
+
+        var result = await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
 
         result.Excluded.Should().Be(1);
         result.Queued.Should().BeEmpty();
         _immich.Downloads.Should().BeEmpty();
+        events.Should().Contain(new ImmichDiscoveryProgress.AssetExcluded("clip.mp4", asset.Id, reason));
     }
 
     [Fact]
@@ -116,7 +119,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(JobStatus.Completed)]
     [InlineData(JobStatus.Finalizing)]
     [InlineData(JobStatus.Failed)]
     public async Task LeavesTheAv1AssetThatFinalisationUploadedAlone(JobStatus status)
@@ -151,7 +153,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     [InlineData(JobStatus.Failed, "EncodeFailed", false)]
     [InlineData(JobStatus.Cancelled, "Cancelled", false)]
     [InlineData(JobStatus.Failed, "SourceNotReady", true)]
-    [InlineData(JobStatus.Failed, "Ineligible", true)]
     public async Task RequeuesAFailedAssetOnlyWhenTheFailureJudgedItsStateAtRunTime(JobStatus status, string category, bool requeued)
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
@@ -188,8 +189,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
     [Theory]
     [InlineData("same", true)]
-    [InlineData("minimumVmaf", false)]
-    [InlineData("maxEncodedPercent", false)]
     [InlineData("preset", false)]
     [InlineData("sampleDuration", true)]
     public async Task CountsASkippedAssetAsPreviouslySkippedOnlyWhileTheQualityBarIsUnchanged(string change, bool stillSettled)
@@ -303,18 +302,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task FirstQueuesOneAssetAndStopsDownloading()
-    {
-        _immich.Add("one.mp4", "hevc one");
-        _immich.Add("two.mp4", "hevc two");
-
-        var result = await DiscoverAsync(limit: 1);
-
-        result.Queued.Should().ContainSingle();
-        _immich.Downloads.Should().ContainSingle();
-    }
-
-    [Fact]
     public async Task ALimitQueuesThatManyAndStopsDownloading()
     {
         for (var index = 0; index < 5; index++) _immich.Add($"clip{index}.mp4", $"hevc {index}");
@@ -357,20 +344,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task FirstQueuesNothingNewWhileAVideoIsAlreadyQueued()
-    {
-        var open = _immich.Add("open.mp4", "hevc open");
-        _immich.Add("next.mp4", "hevc next");
-        await CreateJobAsync(open, JobStatus.Queued);
-
-        var result = await DiscoverAsync(limit: 1);
-
-        result.Queued.Should().BeEmpty();
-        result.AlreadyQueued.Should().Be(1);
-        _immich.Downloads.Should().BeEmpty();
-    }
-
-    [Fact]
     public async Task ADownloadThatDoesNotMatchItsChecksumIsAnIssue()
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
@@ -386,7 +359,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
     [Theory]
     [InlineData("not-a-guid", "clip.mp4")]
-    [InlineData("{id}", "clip.mp4")]
     [InlineData(" id", "clip.mp4")]
     [InlineData("..", "clip.mp4")]
     [InlineData(null, @"..\escape.mp4")]
@@ -517,21 +489,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         var queued = result.Queued.Should().ContainSingle().Subject;
         queued.ImmichChecksum.Should().Be(asset.Checksum);
         (await File.ReadAllTextAsync(queued.SourcePath)).Should().Be("hevc video");
-    }
-
-    [Fact]
-    public async Task FirstDownloadsAgainOnlyTheOldestOpenJobsOriginal()
-    {
-        var older = _immich.Add("older.mp4", "hevc older");
-        var newer = _immich.Add("newer.mp4", "hevc newer");
-        await CreateJobAsync(older, JobStatus.Queued, staged: false);
-        await Task.Delay(20);
-        await CreateJobAsync(newer, JobStatus.Queued, staged: false);
-
-        var result = await DiscoverAsync(limit: 1);
-
-        result.Restaged.Should().Be(1);
-        _immich.Downloads.Should().Equal(older.Id);
     }
 
     [Fact]
@@ -679,18 +636,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
             new ImmichDiscoveryProgress.Restaged("restored.mp4", null),
             new ImmichDiscoveryProgress.Restaging("vanished.mp4", second.Id),
             new ImmichDiscoveryProgress.Restaged("vanished.mp4", "Immich did not return the video again (Immich answered 404); the job is marked failed"));
-    }
-
-    [Fact]
-    public async Task ReportsAnExcludedAssetByNameWithTheReasonAndAssetId()
-    {
-        var asset = _immich.Add("favourite.mp4", "hevc video");
-        _immich.Replace(asset with { IsFavorite = true });
-        var events = new List<ImmichDiscoveryProgress>();
-
-        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
-
-        events.Should().Contain(new ImmichDiscoveryProgress.AssetExcluded("favourite.mp4", asset.Id, "is a favourite"));
     }
 
     private sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>

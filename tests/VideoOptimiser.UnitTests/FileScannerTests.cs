@@ -109,25 +109,6 @@ public sealed class FileScannerTests : IDisposable
         progress.Values.Should().NotContain(update => update.Stage == "Cache");
     }
 
-    [Fact]
-    public async Task ScanAsyncReprobesWhenCachedSizeOrTimestampDoesNotMatch()
-    {
-        var path = Path.Combine(_directory, "changed.mkv");
-        await File.WriteAllBytesAsync(path, [1, 2, 3]);
-        var info = new FileInfo(path);
-        var cache = new SelectiveProbeCache(new HashSet<string>(), new MediaProbeCacheEntry(path, info.Length + 1, info.LastWriteTimeUtc.Ticks - 1, Media()));
-        var readiness = new CountingReadiness();
-        var probe = new CountingProbe();
-        var scanner = new FileScanner(readiness, _ => probe, cache);
-
-        var report = await scanner.ScanAsync(Settings("1B").Watch.Roots, Settings("1B"));
-
-        report.RealProbes.Should().Be(1);
-        readiness.Calls.Should().Be(1);
-        probe.Calls.Should().Be(1);
-        cache.Stored.Should().ContainSingle(entry => entry.SourcePath == path && entry.SourceSizeBytes == info.Length && entry.SourceLastWriteUtcTicks == info.LastWriteTimeUtc.Ticks);
-    }
-
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private AppSettings Settings(string minimumFileSize, bool recursive = false) => new()

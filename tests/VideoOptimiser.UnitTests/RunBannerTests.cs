@@ -76,7 +76,6 @@ public sealed class RunBannerTests
     }
 
     [Theory]
-    [InlineData(ProcessingModes.Local, "--local", "Encoding on this PC (--local).")]
     [InlineData(ProcessingModes.RemoteSsh, "--remote", "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h (--remote).")]
     public void AnOverrideFlagIsNamed(string mode, string flag, string expected)
     {

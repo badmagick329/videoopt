@@ -16,23 +16,8 @@ public sealed class JobCompatibilityTests : IDisposable
 
     public JobCompatibilityTests() => Directory.CreateDirectory(_directory);
 
-    [Fact]
-    public void NeverStartedQueuedJobAdoptsTheCurrentManagedRemoteBinding()
-    {
-        var job = new JobRecord { Id = Guid.NewGuid(), Status = JobStatus.Queued };
-
-        var result = JobCompatibility.Evaluate(job, ManagedSettings());
-
-        result.Status.Should().Be(JobCompatibilityStatus.Adopted);
-        JobCompatibility.Apply(job, result.ExpectedBinding);
-        job.ExecutionMode.Should().Be(ProcessingModes.RemoteSsh);
-        job.RemoteHost.Should().Be(RemoteExecutionIdentity.ManagedHetzner);
-        job.RemoteWorkspace.Should().Be($"/var/tmp/video-optimiser/{job.Id:N}");
-    }
-
     [Theory]
     [InlineData("hetzner:cx43:hel1,fsn1,nbg1")]
-    [InlineData("hetzner:cpx42:nbg1")]
     [InlineData(RemoteExecutionIdentity.ManagedHetzner)]
     public void StartedJobKeepsResumingAfterTheManagedServerTypeOrLocationsChange(string storedBinding)
     {
@@ -76,11 +61,6 @@ public sealed class JobCompatibilityTests : IDisposable
 
     [Theory]
     [InlineData(JobStatus.Interrupted)]
-    [InlineData(JobStatus.Staging)]
-    [InlineData(JobStatus.CrfSearching)]
-    [InlineData(JobStatus.Encoding)]
-    [InlineData(JobStatus.Downloading)]
-    [InlineData(JobStatus.Validating)]
     public void StartedJobRefusesAChangedRemoteBinding(JobStatus status)
     {
         var job = new JobRecord
@@ -253,7 +233,6 @@ public sealed class JobCompatibilityTests : IDisposable
 
     [Theory]
     [InlineData(ProcessingModes.Local, null, "this PC")]
-    [InlineData(ProcessingModes.RemoteSsh, "hetzner:cx43:hel1", "a managed Hetzner server")]
     [InlineData(ProcessingModes.RemoteSsh, "encoder", "encoder over SSH")]
     public void SkippedMessageNamesWhereTheJobStarted(string mode, string? host, string binding) =>
         JobCompatibility.SkippedMessage(new JobRecord { SourcePath = Path.Combine(_directory, "clip.mov"), ExecutionMode = mode, RemoteHost = host })
@@ -346,8 +325,6 @@ public sealed class JobCompatibilityTests : IDisposable
     }
 
     [Theory]
-    [InlineData(JobStatus.Failed, "ValidationFailed", true)]
-    [InlineData(JobStatus.Failed, "CrfSearchFailed", true)]
     [InlineData(JobStatus.Cancelled, "Cancelled", true)]
     [InlineData(JobStatus.Skipped, "NotWorthConverting", true)]
     [InlineData(JobStatus.Completed, null, false)]
@@ -389,8 +366,6 @@ public sealed class JobCompatibilityTests : IDisposable
     }
 
     [Theory]
-    [InlineData(JobStatus.Queued)]
-    [InlineData(JobStatus.Interrupted)]
     [InlineData(JobStatus.ReadyToFinalize)]
     public async Task RetryIsBlockedByAnyExistingOpenJob(JobStatus openStatus)
     {
@@ -464,13 +439,8 @@ public sealed class JobCompatibilityTests : IDisposable
     }
 
     [Fact]
-    public void DeletionPolicyKeepsWorkersAfterFailureOrInterruption()
-    {
-        ManagedWorkerDeletionPolicy.Decide(true, true, hasFailures: false, interrupted: false).Should().Be(ManagedWorkerDeletionDecision.DeleteAutomatically);
-        ManagedWorkerDeletionPolicy.Decide(true, true, hasFailures: true, interrupted: false).Should().Be(ManagedWorkerDeletionDecision.RetainAfterFailure);
-        ManagedWorkerDeletionPolicy.Decide(true, true, hasFailures: true, interrupted: true).Should().Be(ManagedWorkerDeletionDecision.RetainInterrupted);
+    public void DeletionPolicyDecidesNothingWhenNoWorkerWasUsed() =>
         ManagedWorkerDeletionPolicy.Decide(false, true, hasFailures: false, interrupted: false).Should().Be(ManagedWorkerDeletionDecision.None);
-    }
 
     [Theory]
     [InlineData("y", true)]

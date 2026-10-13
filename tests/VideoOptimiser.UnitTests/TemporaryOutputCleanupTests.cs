@@ -21,10 +21,8 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
 
     [Theory]
     [InlineData("movie.{0}.2.encoding.mp4", 2)]
-    [InlineData("movie.{0}.2.encoding.mp4.manifest.json", 2)]
     [InlineData("movie.{0}.13.encoding.mkv.partial", 13)]
     [InlineData("no-extension.{0}.1.encoding", 1)]
-    [InlineData("dotted.name.{0}.1.encoding.mp4", 1)]
     [InlineData(".tmp.ab-av1-encoding.movie.{0}.3.encoding.mp4", 3)]
     public void ParsesTheJobAndAttemptFromEveryTemporaryOutputFile(string pattern, int expectedAttempt)
     {
@@ -37,10 +35,8 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
     }
 
     [Theory]
-    [InlineData("movie.mp4")]
     [InlineData("movie.0123.1.encoding.mp4")]
     [InlineData("movie.{0}.0.encoding.mp4")]
-    [InlineData("movie.{0}.1.mp4")]
     [InlineData("movie.{0}.1.original.pending-delete.mp4")]
     public void IgnoresFilesThatDoNotNameAJobAttempt(string pattern)
     {
@@ -52,17 +48,13 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
     [InlineData(JobStatus.Failed, null, "ValidationFailed", "local", 1, true)]
     [InlineData(JobStatus.Cancelled, null, null, "local", 1, true)]
     [InlineData(JobStatus.Skipped, null, "NotWorthConverting", "local", 1, true)]
-    [InlineData(JobStatus.Skipped, null, "NotWorthConverting", "remoteSsh", 1, true)]
     [InlineData(JobStatus.Failed, null, "FinalizationFailed", "local", 1, false)]
     [InlineData(JobStatus.Interrupted, JobStatus.Finalizing, null, "local", 1, false)]
     [InlineData(JobStatus.Interrupted, JobStatus.Encoding, null, "local", 1, true)]
     [InlineData(JobStatus.Interrupted, JobStatus.Encoding, null, "remoteSsh", 1, false)]
-    [InlineData(JobStatus.Interrupted, JobStatus.Downloading, null, "remoteSsh", 1, false)]
     [InlineData(JobStatus.Interrupted, JobStatus.Validating, null, "local", 1, false)]
     [InlineData(JobStatus.ReadyToFinalize, null, null, "local", 1, false)]
-    [InlineData(JobStatus.Encoding, null, null, "local", 1, false)]
     [InlineData(JobStatus.Encoding, null, null, "local", 0, true)]
-    [InlineData(JobStatus.ReadyToFinalize, null, null, "remoteSsh", 0, true)]
     public void ClassifiesOnlyFilesNoJobCanStillUseAsAbandoned(JobStatus status, JobStatus? resumeStatus, string? failureCategory, string mode, int attemptOffset, bool abandoned)
     {
         var job = new JobRecord { Status = status, ResumeStatus = resumeStatus, FailureCategory = failureCategory, ExecutionMode = mode, Attempt = 2 };

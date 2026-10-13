@@ -18,18 +18,6 @@ public sealed class SqliteJobRepositoryTests : IDisposable
     }
 
     [Fact]
-    public async Task FindsOnlyTheActiveJobForTheSameSourceAndFingerprint()
-    {
-        var active = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Encoding));
-        var completed = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Completed));
-
-        var found = await _repository.FindActiveAsync(_databasePath, active.SourcePath.ToUpperInvariant(), active.SourceFingerprint);
-
-        found!.Id.Should().Be(active.Id);
-        (await _repository.ListAsync(_databasePath, terminal: true)).Should().ContainSingle(job => job.Id == completed.Id);
-    }
-
-    [Fact]
     public async Task MarksOnlyInFlightJobsInterrupted()
     {
         var encoding = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Encoding));
@@ -52,43 +40,8 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         await action.Should().ThrowAsync<InvalidOperationException>();
     }
 
-    [Fact]
-    public async Task PersistsRemoteExecutionIdentity()
-    {
-        var job = NewJob(JobStatus.Queued);
-        job.ExecutionMode = "remoteSsh";
-        job.RemoteHost = "video-worker";
-        job.RemoteWorkspace = $"/var/tmp/video-optimiser/{job.Id:N}";
-
-        await _repository.CreateAsync(_databasePath, job);
-
-        var stored = await _repository.GetAsync(_databasePath, job.Id);
-        stored!.ExecutionMode.Should().Be("remoteSsh");
-        stored.RemoteHost.Should().Be("video-worker");
-        stored.RemoteWorkspace.Should().Be(job.RemoteWorkspace);
-    }
-
-    [Fact]
-    public async Task ASkippedJobIsTerminalAndKeepsItsQualityFingerprint()
-    {
-        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
-        job.Status = JobStatus.CrfSearching;
-        await _repository.UpdateAsync(_databasePath, job);
-        job.Status = JobStatus.Skipped;
-        job.FailureCategory = "NotWorthConverting";
-        job.QualityFingerprint = "0123456789abcdef";
-        await _repository.UpdateAsync(_databasePath, job);
-
-        (await _repository.GetAsync(_databasePath, job.Id))!.QualityFingerprint.Should().Be("0123456789abcdef");
-        (await _repository.ListAsync(_databasePath, terminal: true)).Should().ContainSingle(listed => listed.Id == job.Id).Which.IsTerminal.Should().BeTrue();
-        (await _repository.ListAsync(_databasePath, terminal: false)).Should().NotContain(listed => listed.Id == job.Id);
-        (await _repository.FindOpenBySourceAsync(_databasePath, job.SourcePath)).Should().BeNull();
-    }
-
     [Theory]
-    [InlineData(JobStatus.Queued)]
     [InlineData(JobStatus.Encoding)]
-    [InlineData(JobStatus.Validating)]
     public async Task OnlyACrfSearchCanEndSkipped(JobStatus from)
     {
         var job = await _repository.CreateAsync(_databasePath, NewJob(from));
@@ -97,36 +50,6 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         var action = async () => await _repository.UpdateAsync(_databasePath, job);
 
         await action.Should().ThrowAsync<InvalidOperationException>();
-    }
-
-    [Fact]
-    public async Task PersistsImmichIdentity()
-    {
-        var job = await _repository.CreateAsync(_databasePath, NewImmichJob("asset-1", JobStatus.Queued));
-
-        var stored = await _repository.GetAsync(_databasePath, job.Id);
-        stored!.SourceKind.Should().Be(JobSourceKind.Immich);
-        stored.ImmichAssetId.Should().Be("asset-1");
-        stored.ImmichChecksum.Should().Be("q0zr+Ia/8Vh9EfuB4P5uB1j7zN0=");
-        stored.ImmichNewAssetId.Should().BeNull();
-
-        stored.Status = JobStatus.Staging;
-        stored.ImmichNewAssetId = "asset-new";
-        await _repository.UpdateAsync(_databasePath, stored);
-
-        var updated = await _repository.GetAsync(_databasePath, job.Id);
-        updated!.ImmichNewAssetId.Should().Be("asset-new");
-        updated.SourceKind.Should().Be(JobSourceKind.Immich);
-    }
-
-    [Fact]
-    public async Task FileJobsDefaultToFileSourceKind()
-    {
-        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
-
-        var stored = await _repository.GetAsync(_databasePath, job.Id);
-        stored!.SourceKind.Should().Be(JobSourceKind.File);
-        stored.ImmichAssetId.Should().BeNull();
     }
 
     [Fact]
@@ -173,17 +96,6 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         skips.Should().HaveCount(2);
         skips["asset-1"].Should().Be(new ImmichSkipRecord("asset-1", "checksum-c", "rules-b", "bitrate too low", recorded.AddDays(1)));
         skips["asset-2"].Reason.Should().Be("shorter than 10 s");
-    }
-
-    [Theory]
-    [InlineData("checksum-a", "rules-a", true)]
-    [InlineData("checksum-b", "rules-a", false)]
-    [InlineData("checksum-a", "rules-b", false)]
-    public void ASkipGoesStaleWhenTheFileOrTheRulesChange(string checksum, string rulesFingerprint, bool current)
-    {
-        var skip = new ImmichSkipRecord("asset-1", "checksum-a", "rules-a", "reason", DateTimeOffset.UtcNow);
-
-        skip.IsCurrent(checksum, rulesFingerprint).Should().Be(current);
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);

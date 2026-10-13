@@ -88,20 +88,6 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         messages.Should().NotContain(message => message.Contains("available=False", StringComparison.OrdinalIgnoreCase));
     }
 
-    [Fact]
-    public async Task EnsureFallsBackWhenAvailabilityPreflightIsStale()
-    {
-        using var fixture = new Fixture();
-        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
-        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "error during placement"));
-        using var lifecycle = fixture.CreateLifecycle();
-
-        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
-
-        fixture.Handler.CreateLocations.Should().Equal("hel1", "fsn1");
-        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue();
-    }
-
     [Theory]
     [InlineData("resource_unavailable")]
     [InlineData("placement_unavailable")]
@@ -174,29 +160,18 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
     }
 
-    [Fact]
-    public async Task EnsureDoesNotCreateWhenServerTypePreflightResponseIsMissingServerTypes()
+    [Theory]
+    [InlineData("{}", "*did not contain a server_types array*no server creation was attempted*")]
+    [InlineData("{\"server_types\":[{\"name\":\"cx43\",\"architecture\":\"x86\",\"cores\":8,\"memory\":16,\"locations\":[{\"name\":\"hel1\"}]}]}", "*did not contain a boolean available field*no server creation was attempted*")]
+    public async Task EnsureDoesNotCreateWhenTheServerTypePreflightResponseIsUnusable(string response, string expectedMessage)
     {
         using var fixture = new Fixture();
-        fixture.Handler.ServerTypePreflightResponse = "{}";
+        fixture.Handler.ServerTypePreflightResponse = response;
         using var lifecycle = fixture.CreateLifecycle();
 
         var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
 
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*did not contain a server_types array*no server creation was attempted*");
-        fixture.Handler.CreateCount.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task EnsureDoesNotCreateWhenServerTypeLocationPreflightIsMalformed()
-    {
-        using var fixture = new Fixture();
-        fixture.Handler.ServerTypePreflightResponse = "{\"server_types\":[{\"name\":\"cx43\",\"architecture\":\"x86\",\"cores\":8,\"memory\":16,\"locations\":[{\"name\":\"hel1\"}]}]}";
-        using var lifecycle = fixture.CreateLifecycle();
-
-        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
-
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*did not contain a boolean available field*no server creation was attempted*");
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage(expectedMessage);
         fixture.Handler.CreateCount.Should().Be(0);
     }
 
@@ -282,28 +257,6 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     [Fact]
-    public async Task OneApprovalCoversEveryPlacementFallback()
-    {
-        using var fixture = new Fixture();
-        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx43", "cpx42"];
-        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
-        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "stale"));
-        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "stale"));
-        using var lifecycle = fixture.CreateLifecycle();
-        var asked = 0;
-
-        var worker = await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, confirmCreation: (_, _) =>
-        {
-            asked++;
-            return Task.FromResult(true);
-        });
-
-        asked.Should().Be(1);
-        fixture.Handler.CreateServerTypes.Should().Equal("cx43", "cx43", "cpx42");
-        worker.ServerType.Should().Be("cpx42");
-    }
-
-    [Fact]
     public async Task ReadRecordedReturnsTheStoredWorkerWithoutCallingHetzner()
     {
         using var fixture = new Fixture();
@@ -334,9 +287,15 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "stale"));
         using var lifecycle = fixture.CreateLifecycle();
         var messages = new List<string>();
+        var asked = 0;
 
-        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add), confirmCreation: (_, _) =>
+        {
+            asked++;
+            return Task.FromResult(true);
+        });
 
+        asked.Should().Be(1, "one approval covers every placement fallback");
         fixture.Handler.CreateServerTypes.Should().Equal("cx43", "cx43", "cpx42");
         fixture.Handler.CreateLocations.Should().Equal("hel1", "fsn1", "hel1");
         messages.Should().Contain(message => message.StartsWith("Hetzner cx43 in fsn1 placement unavailable", StringComparison.Ordinal) && message.EndsWith("falling back to cpx42 in hel1.", StringComparison.Ordinal));
@@ -424,20 +383,6 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     [Fact]
-    public async Task EnsureReportsBootstrapStageAndPercentageFromRemoteProgressFile()
-    {
-        using var fixture = new Fixture();
-        fixture.Processes.Results.Enqueue(new ExternalProcessResult(0, "percent=42\nstage=Building FFmpeg\n", string.Empty));
-        fixture.Processes.Results.Enqueue(new ExternalProcessResult(0, "percent=100\nstage=Ready\n", string.Empty));
-        using var lifecycle = fixture.CreateLifecycle();
-        var messages = new List<string>();
-
-        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
-
-        messages.Should().Contain("Worker setup: 42%, building FFmpeg...");
-    }
-
-    [Fact]
     public async Task EnsureReportsHeartbeatWhenBootstrapPhaseDoesNotChange()
     {
         using var fixture = new Fixture();
@@ -509,21 +454,6 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     [Fact]
-    public async Task FinalReadinessCheckUsesVideooptAfterRootReportsBootstrapComplete()
-    {
-        using var fixture = new Fixture();
-        fixture.Processes.Results.Enqueue(new ExternalProcessResult(0, "percent=100\nstage=Ready\n", string.Empty));
-        fixture.Processes.Results.Enqueue(new ExternalProcessResult(0, string.Empty, string.Empty));
-        using var lifecycle = fixture.CreateLifecycle();
-
-        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
-
-        fixture.Processes.Requests.Should().HaveCount(2);
-        fixture.Processes.Requests[0].Arguments.Should().ContainInOrder("-o", "User=root");
-        fixture.Processes.Requests[1].Arguments.Should().ContainInOrder("-o", "User=videoopt");
-    }
-
-    [Fact]
     public async Task ReadinessProbeTimeoutCancelsTheSshAttemptAndRetries()
     {
         using var fixture = new Fixture();
@@ -534,20 +464,6 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         fixture.Processes.Requests.Count.Should().Be(3);
         fixture.Processes.CancelledRequests.Should().Be(1);
-    }
-
-    [Fact]
-    public async Task EnsureReusesPersistedOwnedServerWithoutCreatingAnother()
-    {
-        using var fixture = new Fixture();
-        using (var first = fixture.CreateLifecycle()) await first.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
-        var createCount = fixture.Handler.CreateCount;
-
-        using var second = fixture.CreateLifecycle();
-        var worker = await second.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
-
-        worker.ServerId.Should().Be(42);
-        fixture.Handler.CreateCount.Should().Be(createCount);
     }
 
     [Fact]

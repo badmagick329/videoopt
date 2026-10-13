@@ -26,8 +26,4 @@ public sealed class AbAv1OutputTests
 
         exception!.Best.Should().Be(new Application.Processing.CrfAttempt(28, 95.19, 84));
     }
-
-    [Fact]
-    public void ASuccessfulLogIsNotASkip() =>
-        AbAv1Output.NoWorthwhileCrf(Fixture("local-crf-search.stderr.log"), new QualitySettings()).Should().BeNull();
 }

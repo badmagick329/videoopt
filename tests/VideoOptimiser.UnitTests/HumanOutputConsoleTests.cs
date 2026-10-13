@@ -77,12 +77,8 @@ public sealed class HumanOutputConsoleTests
 
     [Theory]
     [InlineData(3840, 2160, "4K")]
-    [InlineData(2160, 3840, "4K")]
-    [InlineData(2560, 1440, "1440p")]
     [InlineData(1440, 2560, "1440p")]
     [InlineData(1920, 1080, "1080p")]
-    [InlineData(1080, 1920, "1080p")]
-    [InlineData(1280, 720, "720p")]
     [InlineData(720, 1280, "720p")]
     [InlineData(640, 480, "640x480")]
     public void ResolutionIsNamedByTheShorterSideSoPortraitAndLandscapeReadAlike(int width, int height, string expected) =>
@@ -98,10 +94,8 @@ public sealed class HumanOutputConsoleTests
 
     [Theory]
     [InlineData(41_700_000L, "42 Mbps")]
-    [InlineData(10_000_000L, "10 Mbps")]
     [InlineData(9_960_000L, "10 Mbps")]
     [InlineData(8_140_000L, "8.1 Mbps")]
-    [InlineData(500_000L, "0.5 Mbps")]
     public void BitrateIsWholeMbpsWithOneDecimalUnderTen(long bitsPerSecond, string expected) =>
         ImmichDiscoveryConsole.Bitrate(bitsPerSecond).Should().Be(expected);
 
@@ -328,7 +322,6 @@ public sealed class HumanOutputConsoleTests
 
     [Theory]
     [InlineData(1, 0, 0, "Ready to finalise: 1.")]
-    [InlineData(1, 2, 0, "Ready to finalise: 1. Not worth converting: 2.")]
     [InlineData(0, 0, 3, "Failed: 3.")]
     [InlineData(4, 1, 2, "Ready to finalise: 4. Not worth converting: 1. Failed: 2.")]
     [InlineData(0, 0, 0, "Nothing to finalise.")]

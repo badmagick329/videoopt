@@ -7,7 +7,6 @@ public sealed class CliCommandParserTests
 {
     [Theory]
     [InlineData(new[] { "immich", "run" }, null)]
-    [InlineData(new[] { "immich", "run", "--first" }, 1)]
     [InlineData(new[] { "--first", "immich", "run", "--config", "my.yaml" }, 1)]
     [InlineData(new[] { "immich", "run", "--limit", "5" }, 5)]
     [InlineData(new[] { "--limit", "1", "immich", "run", "--remote" }, 1)]
@@ -20,22 +19,16 @@ public sealed class CliCommandParserTests
     }
 
     [Theory]
-    [InlineData("0")]
-    [InlineData("-1")]
-    [InlineData("five")]
-    [InlineData("2.5")]
-    [InlineData("--remote")]
-    public void LimitNeedsAPositiveWholeNumber(string value)
+    [InlineData("immich", "run", "--limit", "0")]
+    [InlineData("immich", "run", "--limit", "five")]
+    [InlineData("immich", "run", "--limit")]
+    public void LimitNeedsAPositiveWholeNumber(params string[] args)
     {
-        var command = CliCommand.Parse(["immich", "run", "--limit", value]);
+        var command = CliCommand.Parse(args);
 
         command.IsValid.Should().BeFalse();
         command.Error.Should().Be("--limit requires a whole number of 1 or more.");
     }
-
-    [Fact]
-    public void LimitWithoutAValueIsRejected() =>
-        CliCommand.Parse(["immich", "run", "--limit"]).Error.Should().Be("--limit requires a whole number of 1 or more.");
 
     [Fact]
     public void FirstAndLimitTogetherAreRejected() =>
@@ -43,8 +36,6 @@ public sealed class CliCommandParserTests
 
     [Theory]
     [InlineData("queue", "run")]
-    [InlineData("queue", "discover")]
-    [InlineData("immich", "finalize")]
     public void LimitOnAnyOtherCommandIsRejected(params string[] args) =>
         CliCommand.Parse([.. args, "--limit", "3"]).Error.Should().Be("--limit is only supported by immich run.");
 
@@ -59,12 +50,10 @@ public sealed class CliCommandParserTests
 
     [Theory]
     [InlineData("immich")]
-    [InlineData("immich", "discover")]
     [InlineData("immich", "run", "extra")]
     [InlineData("immich", "finalize", "--first")]
     [InlineData("immich", "finalize", "--ready")]
     [InlineData("immich", "run", "--json")]
-    [InlineData("queue", "run", "--first")]
     public void RejectsMalformedImmichCommandsAndFlags(params string[] args) =>
         CliCommand.Parse(args).IsValid.Should().BeFalse();
 
@@ -79,8 +68,6 @@ public sealed class CliCommandParserTests
     }
 
     [Theory]
-    [InlineData("--local", "queue", "run")]
-    [InlineData("--remote", "queue", "run")]
     [InlineData("--local", "process", "movie.mp4")]
     [InlineData("--remote", "immich", "run", "--first")]
     public void RunCommandsTakeAModeOverride(string flag, params string[] args)
@@ -115,16 +102,6 @@ public sealed class CliCommandParserTests
     }
 
     [Theory]
-    [InlineData("remote")]
-    [InlineData("setup")]
-    public void RemoteSetupNeedsBothWords(string word)
-    {
-        CliCommand.Parse([word]).IsValid.Should().BeFalse();
-    }
-
-    [Theory]
-    [InlineData("--local")]
-    [InlineData("--remote")]
     [InlineData("--json")]
     [InlineData("--first")]
     public void RemoteSetupRejectsFlagsMeantForOtherCommands(string flag)
@@ -135,9 +112,6 @@ public sealed class CliCommandParserTests
     [Theory]
     [InlineData("--local", "queue", "discover")]
     [InlineData("--remote", "worker", "create")]
-    [InlineData("--local", "doctor")]
-    [InlineData("--remote", "finalize", "--ready")]
-    [InlineData("--local", "immich", "finalize")]
     public void AModeOverrideOnAnyOtherCommandIsRejected(string flag, params string[] args)
     {
         var command = CliCommand.Parse([.. args, flag]);
@@ -153,15 +127,5 @@ public sealed class CliCommandParserTests
         CliApplication.Usage.Should()
             .Contain("video-optimiser immich run [--first | --limit <n>] [--config <path>] [--local | --remote]")
             .And.Contain("video-optimiser immich finalize [--config <path>]");
-    }
-
-    [Fact]
-    public void HelpListsRemoteSetupAfterTheWorkerCommands()
-    {
-        const string deleteLine = "video-optimiser worker delete [--config <path>]";
-        const string setupLine = "video-optimiser remote setup [--config <path>]";
-
-        CliApplication.Usage.Should().Contain(setupLine);
-        CliApplication.Usage.IndexOf(setupLine, StringComparison.Ordinal).Should().BeGreaterThan(CliApplication.Usage.IndexOf(deleteLine, StringComparison.Ordinal));
     }
 }

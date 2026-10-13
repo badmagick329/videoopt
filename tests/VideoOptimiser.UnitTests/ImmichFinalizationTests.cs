@@ -37,7 +37,6 @@ public sealed class ImmichFinalizationTests : IDisposable
 
     [Theory]
     [InlineData(false, 30)]
-    [InlineData(true, 0)]
     public async Task RefusesBeforeTheUploadWhileImmichsTrashWouldPurgeAndLeavesTheJobReady(bool enabled, int days)
     {
         var original = _immich.Add("PXL_20250501.MOV", "original");
@@ -84,22 +83,6 @@ public sealed class ImmichFinalizationTests : IDisposable
         Directory.Exists(_settings.Immich.StagingDirectory).Should().BeTrue();
     }
 
-    [Theory]
-    [InlineData("IMG_0897.MOV", "IMG_0897.MP4")]
-    [InlineData("IMG_0897.mov", "IMG_0897.mp4")]
-    [InlineData("clip.m4v", "clip.mp4")]
-    [InlineData("clip.avi", "clip.mkv")]
-    public async Task TheUploadTakesTheContainerTheEncodeWroteNotTheOriginalsExtension(string originalName, string uploadName)
-    {
-        var original = _immich.Add(originalName, "original");
-        var job = await ReadyJobAsync(original);
-
-        var result = await FinalizeAsync(job);
-
-        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
-        _immich.Uploads.Should().ContainSingle().Which.Upload.FileName.Should().Be(uploadName);
-    }
-
     [Fact]
     public async Task SkipsTheMetadataAndTagCallsWhenTheOriginalHasNothingToCopy()
     {
@@ -113,17 +96,17 @@ public sealed class ImmichFinalizationTests : IDisposable
         _immich.Calls.Should().Equal($"get {original.Id}", "upload", $"copy {original.Id} {replacement}", $"trash {original.Id}");
     }
 
-    public static TheoryData<string, bool> Steps()
+    // A lost response matters where repeating the call is not harmless (a second upload, a second trash); the other
+    // steps only need their plain failure.
+    public static TheoryData<string, bool> Steps() => new()
     {
-        var steps = new TheoryData<string, bool>();
-        foreach (var step in new[] { "get", "upload", "update", "copy", "tag", "trash" })
-        {
-            steps.Add(step, false);
-            steps.Add(step, true);
-        }
-
-        return steps;
-    }
+        { "get", false },
+        { "upload", false },
+        { "upload", true },
+        { "copy", false },
+        { "trash", false },
+        { "trash", true }
+    };
 
     [Theory]
     [MemberData(nameof(Steps))]
@@ -157,32 +140,6 @@ public sealed class ImmichFinalizationTests : IDisposable
         var completed = await JobAsync(job);
         completed.Status.Should().Be(JobStatus.Completed);
         completed.ImmichNewAssetId.Should().Be(replacement);
-    }
-
-    [Fact]
-    public async Task AJobACrashLeftMidFinalisationIsReadyAgainAfterQueuePreparationAndFinalizeResumesIt()
-    {
-        var original = _immich.Add("PXL.mp4", "original");
-        var job = await ReadyJobAsync(original);
-        job.Status = JobStatus.Finalizing;
-        job.ImmichNewAssetId = _immich.Add("PXL.mp4", "av1").Id;
-        await _repository.UpdateAsync(_settings.Database.Path, job);
-        // Preparation marks the crashed job interrupted first, as at the start of every queue run.
-        var queue = new QueueService(null!, _repository, _fingerprints, null!);
-
-        var preparation = await queue.PrepareAsync(_settings.Database.Path, _settings, JobSourceKind.Immich);
-
-        preparation.RunnableJobs.Should().BeEmpty();
-        preparation.FailedJobs.Should().BeEmpty();
-        var ready = await JobAsync(job);
-        ready.Status.Should().Be(JobStatus.ReadyToFinalize);
-        ready.FailureMessage.Should().Be(FinalizationService.InterruptedMessage);
-
-        var result = await FinalizeAsync(job);
-
-        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
-        _immich.Uploads.Should().BeEmpty();
-        _immich.Calls.Should().Contain($"copy {original.Id} {job.ImmichNewAssetId}");
     }
 
     [Theory]

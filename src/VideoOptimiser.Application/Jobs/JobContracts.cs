@@ -92,7 +92,6 @@ public static class JobStateTransitions
 
 public interface IJobRepository
 {
-    Task<JobRecord?> FindActiveAsync(string databasePath, string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default);
     Task<JobRecord?> FindOpenBySourceAsync(string databasePath, string sourcePath, CancellationToken cancellationToken = default);
     Task<JobRecord?> GetAsync(string databasePath, Guid id, CancellationToken cancellationToken = default);
     Task<JobRecord> CreateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);

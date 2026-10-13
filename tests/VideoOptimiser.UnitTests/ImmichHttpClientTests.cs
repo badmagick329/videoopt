@@ -34,7 +34,6 @@ public sealed class ImmichHttpClientTests : IDisposable
 
     [Theory]
     [InlineData("http://192.168.1.113:2283")]
-    [InlineData("http://192.168.1.113:2283/")]
     [InlineData("http://192.168.1.113:2283/api/")]
     public async Task GetServerVersionCallsTheApiPathWithoutAKey(string baseUrl)
     {

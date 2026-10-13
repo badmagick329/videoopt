@@ -35,18 +35,15 @@ public sealed class ProbeFailureReportingTests : IDisposable
             ""));
     }
 
-    [Fact]
-    public async Task FfprobeMediaProbeReportsANonZeroExitAsAProbeFailureNotInvalidData()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FfprobeProbesReportANonZeroExitAsAProbeFailureNotInvalidData(bool timelineProbe)
     {
-        var action = () => new FfprobeMediaProbe(_ffprobe).ProbeAsync(Path.Combine(_directory, "truncated.mp4"));
-
-        (await action.Should().ThrowAsync<MediaProbeException>()).WithMessage($"ffprobe exited with 1: {MoovAtomMessage}");
-    }
-
-    [Fact]
-    public async Task FfprobeMediaTimelineProbeReportsANonZeroExitAsAProbeFailureNotInvalidData()
-    {
-        var action = () => new FfprobeMediaTimelineProbe(_ffprobe).ProbeAsync(Path.Combine(_directory, "truncated.mp4"));
+        var path = Path.Combine(_directory, "truncated.mp4");
+        Func<Task> action = timelineProbe
+            ? () => new FfprobeMediaTimelineProbe(_ffprobe).ProbeAsync(path)
+            : () => new FfprobeMediaProbe(_ffprobe).ProbeAsync(path);
 
         (await action.Should().ThrowAsync<MediaProbeException>()).WithMessage($"ffprobe exited with 1: {MoovAtomMessage}");
     }

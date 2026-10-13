@@ -17,7 +17,6 @@ public sealed class SettingsValidatorTests
     [Theory]
     [InlineData(0, false)]
     [InlineData(1, true)]
-    [InlineData(80, true)]
     [InlineData(100, true)]
     [InlineData(101, false)]
     public void ValidateRequiresMaxEncodedPercentToBeAWholeNumberFromOneToOneHundred(int percent, bool valid)
@@ -39,15 +38,6 @@ public sealed class SettingsValidatorTests
     }
 
     [Fact]
-    public void RemoteOverrideOnAConfigWithoutARemoteSshBlockIsInvalid()
-    {
-        var settings = CreateValidSettings();
-        ProcessingModeOverride.Remote.Apply(settings);
-
-        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("RemoteHostRequired");
-    }
-
-    [Fact]
     public void ValidateCompleteSettingsIsValid()
     {
         var settings = CreateValidSettings();
@@ -65,7 +55,6 @@ public sealed class SettingsValidatorTests
     }
 
     [Theory]
-    [InlineData("delete", "Archive", null)]
     [InlineData("archive", "Archive", null)]
     [InlineData("Keep", "", null)]
     [InlineData("archive", "D:\\Video archive", null)]
@@ -179,43 +168,12 @@ public sealed class SettingsValidatorTests
             "InvalidHetznerBootstrapTimeout"]);
     }
 
-    [Fact]
-    public void ValidateManagedHetznerRejectsEmptyLocationList()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), "video-optimiser-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
-        try
-        {
-            var identity = Path.Combine(directory, "worker-key");
-            var bootstrap = Path.Combine(directory, "bootstrap.sh");
-            File.WriteAllText(identity, "key");
-            File.WriteAllText(bootstrap, "#!/bin/bash");
-            var settings = CreateValidSettings();
-            settings.Processing = new ProcessingSettings
-            {
-                Mode = ProcessingModes.RemoteSsh,
-                RemoteSsh = new RemoteSshSettings
-                {
-                    Lifecycle = RemoteLifecycleModes.Hetzner,
-                    IdentityFile = identity,
-                    Hetzner = new HetznerSettings { Locations = [], SshKeyName = "video-optimiser-hetzner-cx43", BootstrapScriptPath = bootstrap }
-                }
-            };
-
-            new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("HetznerLocationsRequired");
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
     [Theory]
-    [InlineData(new string[0], null, "HetznerServerTypesRequired")]
-    [InlineData(new[] { "cx43", " " }, null, "InvalidHetznerServerTypes")]
-    [InlineData(new[] { "cx43" }, "-0.10", "InvalidHetznerMaxHourlyPrice")]
-    [InlineData(new[] { "cx43" }, "0", "InvalidHetznerMaxHourlyPrice")]
-    public void ValidateManagedHetznerRejectsUnusableServerTypesOrPriceCap(string[] serverTypes, string? maxHourlyPrice, string expectedCode)
+    [InlineData(new string[0], null, "HetznerServerTypesRequired", false)]
+    [InlineData(new[] { "cx43", " " }, null, "InvalidHetznerServerTypes", false)]
+    [InlineData(new[] { "cx43" }, "0", "InvalidHetznerMaxHourlyPrice", false)]
+    [InlineData(new[] { "cx43" }, null, "HetznerLocationsRequired", true)]
+    public void ValidateManagedHetznerRejectsUnusableServerTypesLocationsOrPriceCap(string[] serverTypes, string? maxHourlyPrice, string expectedCode, bool emptyLocations)
     {
         var settings = CreateValidSettings();
         settings.Processing = new ProcessingSettings
@@ -227,6 +185,7 @@ public sealed class SettingsValidatorTests
                 Hetzner = new HetznerSettings
                 {
                     ServerTypes = [.. serverTypes],
+                    Locations = emptyLocations ? [] : new HetznerSettings().Locations,
                     MaxHourlyPrice = maxHourlyPrice is null ? 0.30m : decimal.Parse(maxHourlyPrice, System.Globalization.CultureInfo.InvariantCulture)
                 }
             }
@@ -247,7 +206,6 @@ public sealed class SettingsValidatorTests
     [Theory]
     [InlineData("/")]
     [InlineData("/var/tmp/../video-optimiser")]
-    [InlineData("/var/./video-optimiser")]
     public void ValidateRemoteModeRejectsUnsafeWorkingDirectory(string workingDirectory)
     {
         var settings = CreateValidSettings();

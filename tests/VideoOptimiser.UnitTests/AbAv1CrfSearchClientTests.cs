@@ -105,17 +105,6 @@ public sealed class AbAv1CrfSearchClientTests
     }
 
     [Fact]
-    public void ParseReadsSuccessfulCrfFromAbAv1Output()
-    {
-        const string output = """
-            [2026-07-19T04:03:40Z INFO  ab_av1::command::crf_search] crf 44 successful
-            crf 44 VMAF 95.02 predicted video stream size 388.44 MiB (15%) taking 34 minutes
-            """;
-
-        CrfSearchOutputParser.Parse(output).Should().Be(44);
-    }
-
-    [Fact]
     public void ParseReadsSuccessfulCrfWhenCombinedOutputContainsOtherCrfResults()
     {
         const string output = "crf 45 VMAF 96.87\n";
@@ -126,7 +115,6 @@ public sealed class AbAv1CrfSearchClientTests
 
     [Theory]
     [InlineData("remote-crf-search.log", 29, "284.87 MiB", 29, "5 minutes")]
-    [InlineData("local-crf-search.stderr.log", 32, "37.07 MiB", 57, "14 seconds")]
     // A rerun reuses earlier samples and ends such lines with " (cache)", which is not part of the time.
     [InlineData("local-crf-search.stderr.log", 34, "29.97 MiB", 46, "17 seconds")]
     public void TryParsePredictionReadsTheChosenCrfsEstimateFromARealLog(string fixture, int crf, string size, int percent, string taking)

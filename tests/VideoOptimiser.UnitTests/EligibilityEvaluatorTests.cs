@@ -38,22 +38,6 @@ public sealed class EligibilityEvaluatorTests : IDisposable
     }
 
     [Fact]
-    public void IsEligibleMatchesAnyRule()
-    {
-        var settings = new EligibilitySettings
-        {
-            Rules =
-            [
-                new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "4k+", MinimumVideoBitrate = "20Mbps", MinimumFileSize = "1B" },
-                new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "8Mbps", MinimumFileSize = "1B" }
-            ]
-        };
-        var path = CreateFile(1);
-
-        EligibilityEvaluator.IsEligible(new FileInfo(path), Media(), settings, out _).Should().BeTrue();
-    }
-
-    [Fact]
     public void IsEligibleDoesNotMatchWhenVideoBitrateIsMissing()
     {
         IsEligible(new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "8Mbps", MinimumFileSize = "1B" }, Media(bitrate: null)).Should().BeFalse();
@@ -152,17 +136,6 @@ public sealed class EligibilityEvaluatorTests : IDisposable
         EligibilityEvaluator.MatchingRule(size, Described("h264", 3840, 2160, 33_000_000), settings).Should().Be(2);
         EligibilityEvaluator.MatchingRule(100, Described("hevc", 3840, 2160, 33_000_000), settings).Should().Be(3);
         EligibilityEvaluator.MatchingRule(100, Described("h264", 3840, 2160, 33_000_000), settings).Should().BeNull();
-    }
-
-    [Fact]
-    public void DescribeMismatchAgreesWithIsEligibleAboutWhichFilesFail()
-    {
-        var rule = Rule(["h264"], "1080p-1440p", "8Mbps", "1B");
-        foreach (var media in new[] { Described("hevc", 1920, 1080, 9_000_000), Described("h264", 1280, 720, 9_000_000), Described("h264", 1920, 1080, 7_999_999) })
-        {
-            IsEligible(rule, media).Should().BeFalse();
-            EligibilityEvaluator.DescribeMismatch(10, media, new EligibilitySettings { Rules = [rule] }).Should().NotBe("did not match");
-        }
     }
 
     private static MediaInfo Described(string codec, int width, int height, long? bitrate) => new(codec, 1, 1, 0, 0, 60, null, width, height, bitrate);

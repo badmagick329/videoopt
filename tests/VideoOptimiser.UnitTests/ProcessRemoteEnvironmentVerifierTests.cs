@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Domain;
@@ -47,49 +48,22 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
         diagnostics.Should().Contain(diagnostic => diagnostic.Code == "RemoteDiskSpaceAvailable" && diagnostic.Message.Contains("2.5x", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public void ParseProbeOutputRequiresLibdav1dSoftwareAv1Decoder()
+    [Theory]
+    [InlineData("video-optimiser-doctor:ffmpeg_libdav1d=0", "RemoteAv1DecoderUnavailable", "Remote FFmpeg does not expose the required libdav1d software AV1 decoder; AV1 decoding of originals and CRF search cannot run remotely.")]
+    [InlineData("video-optimiser-doctor:ab_av1_version=0.9.3", "RemoteAbAv1VersionInsufficient", "Remote ab-av1 version 0.9.3 is too old; minimum required version is 0.11.7.")]
+    [InlineData("video-optimiser-doctor:ab_av1_version=", "RemoteAbAv1VersionUnavailable", "Remote ab-av1 version could not be determined; minimum required version is 0.11.7.")]
+    public void ParseProbeOutputFailsWhenTheRemoteDecoderOrAbAv1VersionIsUnusable(string probeLine, string expectedCode, string expectedMessage)
     {
-        var output = HealthyProbeOutput()
-            .Replace("video-optimiser-doctor:ffmpeg_libdav1d=1", "video-optimiser-doctor:ffmpeg_libdav1d=0", StringComparison.Ordinal);
+        var key = probeLine[..(probeLine.IndexOf('=', StringComparison.Ordinal) + 1)];
+        var output = Regex.Replace(HealthyProbeOutput(), "^" + Regex.Escape(key) + ".*$", probeLine, RegexOptions.Multiline);
         var settings = new RemoteSshSettings { Host = "video-worker", MinimumCpuCount = 8, MinimumAvailableMemory = "16GiB" };
 
         var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(output, settings, 16L * 1024 * 1024 * 1024);
 
         diagnostics.Should().ContainSingle(diagnostic =>
-            diagnostic.Code == "RemoteAv1DecoderUnavailable" &&
+            diagnostic.Code == expectedCode &&
             diagnostic.Status == DiagnosticStatus.Fail &&
-            diagnostic.Message == "Remote FFmpeg does not expose the required libdav1d software AV1 decoder; AV1 decoding of originals and CRF search cannot run remotely.");
-    }
-
-    [Fact]
-    public void ParseProbeOutputRejectsAbAv1OlderThanMinimumVersion()
-    {
-        var output = HealthyProbeOutput()
-            .Replace("video-optimiser-doctor:ab_av1_version=0.11.7", "video-optimiser-doctor:ab_av1_version=0.9.3", StringComparison.Ordinal);
-        var settings = new RemoteSshSettings { Host = "video-worker", MinimumCpuCount = 8, MinimumAvailableMemory = "16GiB" };
-
-        var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(output, settings, 16L * 1024 * 1024 * 1024);
-
-        diagnostics.Should().ContainSingle(diagnostic =>
-            diagnostic.Code == "RemoteAbAv1VersionInsufficient" &&
-            diagnostic.Status == DiagnosticStatus.Fail &&
-            diagnostic.Message == "Remote ab-av1 version 0.9.3 is too old; minimum required version is 0.11.7.");
-    }
-
-    [Fact]
-    public void ParseProbeOutputRejectsMissingAbAv1Version()
-    {
-        var output = HealthyProbeOutput()
-            .Replace("video-optimiser-doctor:ab_av1_version=0.11.7", "video-optimiser-doctor:ab_av1_version=", StringComparison.Ordinal);
-        var settings = new RemoteSshSettings { Host = "video-worker", MinimumCpuCount = 8, MinimumAvailableMemory = "16GiB" };
-
-        var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(output, settings, 16L * 1024 * 1024 * 1024);
-
-        diagnostics.Should().ContainSingle(diagnostic =>
-            diagnostic.Code == "RemoteAbAv1VersionUnavailable" &&
-            diagnostic.Status == DiagnosticStatus.Fail &&
-            diagnostic.Message == "Remote ab-av1 version could not be determined; minimum required version is 0.11.7.");
+            diagnostic.Message == expectedMessage);
     }
 
     private static string HealthyProbeOutput() => """

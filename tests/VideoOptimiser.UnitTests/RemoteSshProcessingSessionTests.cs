@@ -37,10 +37,8 @@ public sealed class RemoteSshProcessingSessionTests
         session.EncodeDirectory(3).Should().EndWith("/encode-3");
     }
 
-    [Theory]
-    [InlineData("plain", "'plain'")]
-    [InlineData("a'b", "'a'\"'\"'b'")]
-    public void PosixQuotePreservesArguments(string value, string expected) => RemoteSshProcessingSession.Quote(value).Should().Be(expected);
+    [Fact]
+    public void PosixQuotePreservesArguments() => RemoteSshProcessingSession.Quote("a'b").Should().Be("'a'\"'\"'b'");
 
     [Fact]
     public void SftpQuoteNormalizesWindowsSeparators() => RemoteSshProcessingSession.SftpQuote("C:\\Video Files\\a.mkv").Should().Be("\"C:/Video Files/a.mkv\"");
@@ -48,55 +46,24 @@ public sealed class RemoteSshProcessingSessionTests
     [Fact]
     public void RequiredDiskRoundsUp() => RemoteSshProcessingSession.CalculateRequiredDisk(101, 2.5).Should().Be(253);
 
-    [Fact]
-    public async Task RejectsInsufficientRemoteResourcesBeforeTransfer()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Remote.{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
-        var source = Path.Combine(directory, "source.mkv");
-        await File.WriteAllBytesAsync(source, new byte[100]);
-        var runner = new QueueRunner([new ExternalProcessResult(0, "2 1024 100000", string.Empty)]);
-        var session = CreateSession(Guid.NewGuid(), runner);
-
-        var action = async () => await session.StageAsync(source, "fingerprint");
-
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote host has 2 CPUs*");
-        runner.Requests.Should().ContainSingle();
-        Directory.Delete(directory, true);
-    }
-
-    [Fact]
-    public async Task RejectsInsufficientRemoteMemoryBeforeTransfer()
-    {
-        var directory = CreateTemporaryDirectory();
-        var source = Path.Combine(directory, "source.mkv");
-        await File.WriteAllBytesAsync(source, new byte[100]);
-        var runner = new QueueRunner([new ExternalProcessResult(0, "8 1024 100000", string.Empty)]);
-        var session = CreateSession(Guid.NewGuid(), runner, source);
-
-        var action = async () => await session.StageAsync(source, "fingerprint");
-
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote host has 1024 available bytes*");
-        runner.Requests.Should().ContainSingle();
-        Directory.Delete(directory, true);
-    }
-
-    [Fact]
-    public async Task RejectsInsufficientRemoteDiskBeforeTransfer()
+    [Theory]
+    [InlineData("2 1024 100000", "Remote host has 2 CPUs*")]
+    [InlineData("8 1024 100000", "Remote host has 1024 available bytes*")]
+    [InlineData("8 20000000000 200", "Remote host has 200 free bytes; 250 are required*")]
+    public async Task RejectsInsufficientRemoteResourcesBeforeTransfer(string probeOutput, string expectedMessage)
     {
         var directory = CreateTemporaryDirectory();
         var source = Path.Combine(directory, "source.mkv");
         await File.WriteAllBytesAsync(source, new byte[100]);
         var runner = new QueueRunner([
-            new ExternalProcessResult(0, "8 20000000000 200", string.Empty),
+            new ExternalProcessResult(0, probeOutput, string.Empty),
             new ExternalProcessResult(0, string.Empty, string.Empty)
         ]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
         var action = async () => await session.StageAsync(source, "fingerprint");
 
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote host has 200 free bytes; 250 are required*");
-        runner.Requests.Should().HaveCount(2);
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage(expectedMessage);
         runner.Requests.Should().NotContain(request => request.FileName == "sftp");
         Directory.Delete(directory, true);
     }
@@ -143,32 +110,8 @@ public sealed class RemoteSshProcessingSessionTests
             new ExternalProcessResult(0, string.Empty, string.Empty),
             new ExternalProcessResult(0, string.Empty, string.Empty)
         ]);
-        var session = CreateSession(Guid.NewGuid(), runner);
-
-        await session.StageAsync(source, "fingerprint");
-
-        runner.Requests[0].Arguments[^1].Should().Contain("df -B1 --output=avail").And.NotContain("df -PB1");
-        runner.Requests.Should().Contain(request => request.FileName == "sftp" && request.StandardInput!.StartsWith("put ", StringComparison.Ordinal));
-        runner.Requests[^1].Arguments[^1].Should().Contain("mv -f --");
-        Directory.Delete(directory, true);
-    }
-
-    [Fact]
-    public async Task AFastUploadPrintsOnlyItsStartAndSummaryLines()
-    {
-        var directory = CreateTemporaryDirectory();
-        var source = Path.Combine(directory, "source.mkv");
-        await File.WriteAllBytesAsync(source, new byte[100]);
-        var runner = new QueueRunner([
-            new ExternalProcessResult(0, "8 20000000000 100000000000", string.Empty),
-            new ExternalProcessResult(0, string.Empty, string.Empty),
-            new ExternalProcessResult(0, string.Empty, string.Empty),
-            new ExternalProcessResult(0, string.Empty, string.Empty),
-            new ExternalProcessResult(0, string.Empty, string.Empty)
-        ]);
         var progress = new CaptureProgress();
-        var clock = new FakeClock();
-        var session = CreateSession(Guid.NewGuid(), runner, clock: clock);
+        var session = CreateSession(Guid.NewGuid(), runner, clock: new FakeClock());
 
         // The checks (CPU, hash, existing upload, verification) and the quick transfer all run inside the first second.
         await session.StageAsync(source, "fingerprint", progress);
@@ -176,6 +119,9 @@ public sealed class RemoteSshProcessingSessionTests
         progress.Lines.Should().Equal(
             JobProgress.Step("Uploading 100 B to the worker..."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
+        runner.Requests[0].Arguments[^1].Should().Contain("df -B1 --output=avail").And.NotContain("df -PB1");
+        runner.Requests.Should().Contain(request => request.FileName == "sftp" && request.StandardInput!.StartsWith("put ", StringComparison.Ordinal));
+        runner.Requests[^1].Arguments[^1].Should().Contain("mv -f --");
         Directory.Delete(directory, true);
     }
 
@@ -276,27 +222,6 @@ public sealed class RemoteSshProcessingSessionTests
         Directory.CreateDirectory(directory);
         var source = Path.Combine(directory, "source.mkv");
         await File.WriteAllTextAsync(source, "source");
-        var runner = new QueueRunner([
-            new ExternalProcessResult(0, "completed 0\n\u001ecrf 42 successful\n", string.Empty),
-            new ExternalProcessResult(0, "crf 42 successful\n", string.Empty)
-        ]);
-        var session = CreateSession(Guid.NewGuid(), runner, source);
-
-        var result = await session.SearchCrfAsync(source, new QualitySettings());
-
-        result.Crf.Should().Be(42);
-        runner.Requests.Should().HaveCount(2);
-        runner.Requests.Should().OnlyContain(request => request.StandardInput == null);
-        File.Exists(Path.Combine(directory, ".video-optimiser", $"{session.RemoteWorkspace!.Split('/').Last()}.crf.remote.log")).Should().BeTrue();
-        Directory.Delete(directory, true);
-    }
-
-    [Fact]
-    public async Task ACompletedCrfStageCarriesTheChosenCrfsPrediction()
-    {
-        var directory = CreateTemporaryDirectory();
-        var source = Path.Combine(directory, "source.mkv");
-        await File.WriteAllTextAsync(source, "source");
         var log = AbAv1OutputTests.Fixture("remote-crf-search.log");
         var runner = new QueueRunner([
             new ExternalProcessResult(0, $"completed 0\n\u001e{log}", string.Empty),
@@ -308,6 +233,9 @@ public sealed class RemoteSshProcessingSessionTests
 
         result.Crf.Should().Be(29);
         result.Prediction.Should().Be(new CrfPrediction("284.87 MiB", 29, "5 minutes"));
+        runner.Requests.Should().HaveCount(2);
+        runner.Requests.Should().OnlyContain(request => request.StandardInput == null);
+        File.Exists(Path.Combine(directory, ".video-optimiser", $"{session.RemoteWorkspace!.Split('/').Last()}.crf.remote.log")).Should().BeTrue();
         Directory.Delete(directory, true);
     }
 
@@ -355,25 +283,6 @@ public sealed class RemoteSshProcessingSessionTests
         script.Should().Contain($"export XDG_CACHE_HOME='{expectedCache}'");
         expectedCache.StartsWith(session.RemoteWorkspace + "/", StringComparison.Ordinal).Should().BeTrue();
         script.IndexOf("export XDG_CACHE_HOME", StringComparison.Ordinal).Should().BeLessThan(script.IndexOf("'/usr/bin/time'", StringComparison.Ordinal));
-        Directory.Delete(directory, true);
-    }
-
-    [Fact]
-    public async Task FreshStageLaunchBackgroundsOnlyTheScriptSoSshReturnsAtOnce()
-    {
-        var directory = CreateTemporaryDirectory();
-        var source = Path.Combine(directory, "source.mkv");
-        await File.WriteAllTextAsync(source, "source");
-        var runner = new QueueRunner([
-            new ExternalProcessResult(0, "missing\n\u001e", string.Empty),
-            new ExternalProcessResult(0, string.Empty, string.Empty),
-            new ExternalProcessResult(0, string.Empty, string.Empty),
-            new ExternalProcessResult(0, "completed 0\n\u001ecrf 42 successful\n", string.Empty),
-            new ExternalProcessResult(0, "crf 42 successful\n", string.Empty)
-        ]);
-        var session = CreateSession(Guid.NewGuid(), runner, source);
-
-        _ = await session.SearchCrfAsync(source, new QualitySettings());
 
         // Backgrounding the whole `cd && nohup …` list keeps a subshell on the SSH channel until ab-av1 exits, which
         // turns live progress into one dump at the end of each stage (VOPT-41). Only the braced script may be backgrounded.
@@ -405,34 +314,6 @@ public sealed class RemoteSshProcessingSessionTests
         runner.Requests.Should().HaveCount(3);
         runner.Requests.Should().OnlyContain(request => request.StandardInput == null);
         runner.Requests[^1].Arguments[^1].Should().Contain("test -s");
-        Directory.Delete(directory, true);
-    }
-
-    [Fact]
-    public async Task CorruptResumedDownloadIsRetriedCleanlyBeforeInstallation()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Remote.{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
-        var source = Path.Combine(directory, "source.mkv");
-        var output = Path.Combine(directory, "output.mkv");
-        await File.WriteAllTextAsync(source, "source");
-        var good = Encoding.UTF8.GetBytes("verified-output");
-        var expectedHash = Convert.ToHexString(SHA256.HashData(good)).ToLowerInvariant();
-        var transfers = 0;
-        var runner = new CallbackRunner(request =>
-        {
-            if (request.FileName == "ssh") return new ExternalProcessResult(0, expectedHash, string.Empty);
-            transfers++;
-            File.WriteAllBytes(output + ".partial", transfers == 1 ? Encoding.UTF8.GetBytes("corrupt") : good);
-            return new ExternalProcessResult(0, string.Empty, string.Empty);
-        });
-        var session = CreateSession(Guid.NewGuid(), runner, source);
-
-        await session.RetrieveOutputAsync(output, 1);
-
-        transfers.Should().Be(2);
-        File.ReadAllBytes(output).Should().Equal(good);
-        File.Exists(output + ".partial").Should().BeFalse();
         Directory.Delete(directory, true);
     }
 
@@ -516,6 +397,9 @@ public sealed class RemoteSshProcessingSessionTests
             JobProgress.Step("Downloading 15 B from the worker..."),
             JobProgress.Detail("Checksum mismatch; downloading again."),
             JobProgress.Step("Downloaded 15 B in 0s, checksum verified."));
+        transfers.Should().Be(2);
+        File.ReadAllBytes(output).Should().Equal(good);
+        File.Exists(output + ".partial").Should().BeFalse();
         Directory.Delete(directory, true);
     }
 

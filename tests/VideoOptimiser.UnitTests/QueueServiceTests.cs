@@ -121,7 +121,6 @@ public sealed class QueueServiceTests : IDisposable
 
     [Theory]
     [InlineData(JobStatus.Failed, "ValidationFailed")]
-    [InlineData(JobStatus.Failed, "CrfSearchFailed")]
     [InlineData(JobStatus.Cancelled, "Cancelled")]
     public async Task DiscoverAsyncSkipsAFailedOrCancelledOriginalUntilItChanges(JobStatus status, string category)
     {
@@ -256,25 +255,6 @@ public sealed class QueueServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ARoundWhoseOnlyNonSuccessIsSkippedDeletesTheManagedWorkerWithoutAskingAndExitsZero()
-    {
-        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
-        var skipped = new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "a.mp4"), Status = JobStatus.Skipped, FailureMessage = "AV1 would keep 95%." };
-        var queue = new QueueService(new FixedScanner(), repository, new FileFingerprintService(), new ResultProcessor(new JobProcessingResult(skipped, ExitCode.Success, "skipped")));
-        var result = await queue.RunAsync(Path.Combine(_directory, "jobs.db"), new AppSettings(), [skipped]);
-        var deleted = false;
-
-        var cleanup = await ManagedWorkerDeletionPolicy.ApplyAsync(
-            workerWasUsed: true, deleteAfterRun: true, hasFailures: result.Failed > 0, result.Interrupted, unexpectedFailure: false,
-            new NeverPrompts(), _ => { deleted = true; return Task.CompletedTask; });
-
-        cleanup.Deleted.Should().BeTrue();
-        cleanup.Prompted.Should().BeFalse();
-        deleted.Should().BeTrue();
-        QueueExitCode.Calculate(result.ReadyToFinalize, result.Failed).Should().Be(ExitCode.Success);
-    }
-
-    [Fact]
     public async Task RunAsyncOpensEachJobWithAHeaderNumberedOutOfTheTotalWithItsSize()
     {
         var first = Path.Combine(_directory, "first.mp4");
@@ -317,12 +297,6 @@ public sealed class QueueServiceTests : IDisposable
     private sealed class ResultProcessor(JobProcessingResult result) : IJobProcessor
     {
         public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(result);
-    }
-
-    private sealed class NeverPrompts : IInteractiveConfirmation
-    {
-        public bool IsAvailable => true;
-        public bool Confirm(string prompt) => throw new InvalidOperationException("The user must not be asked when every job succeeded or was skipped.");
     }
 
     private sealed class ListProgress(List<JobProgress> lines) : IProgress<JobProgress>

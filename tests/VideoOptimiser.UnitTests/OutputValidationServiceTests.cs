@@ -74,40 +74,17 @@ public sealed class OutputValidationServiceTests : IDisposable
         result.Failures.Should().Contain("Output video packet count differs from the original.");
     }
 
-    [Fact]
-    public async Task ValidateAsyncPassesEqualZeroBasedTimelines()
-    {
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            new MediaTimeline(0, 149.069, 3_577, 2.251));
-
-        result.Passed.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task ValidateAsyncFailsSafelyWhenPacketTimingCannotBeRead()
-    {
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            null);
-
-        result.Passed.Should().BeFalse();
-        result.Failures.Should().Contain("Output media timeline could not be validated.");
-    }
-
-    [Fact]
-    public async Task ValidateAsyncFailsSafelyWhenStreamMetadataIsMalformed()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ValidateAsyncFailsSafelyWhenTheOutputTimelineCannotBeRead(bool malformedStreamMetadata)
     {
         var manifest = await CreateManifestAsync();
         var result = await ValidateAsync(
             manifest,
             new MediaTimeline(0, 149.069, 3_577, 2.251),
             null,
-            new JsonException("Malformed stream metadata."));
+            malformedStreamMetadata ? new JsonException("Malformed stream metadata.") : null);
 
         result.Passed.Should().BeFalse();
         result.Failures.Should().Contain("Output media timeline could not be validated.");

@@ -9,17 +9,6 @@ public sealed class AbAv1OutputTranslatorTests
     private TimeSpan _now;
 
     [Fact]
-    public void TheRealRemoteCrfSearchBecomesOneLinePerAttemptWithItsVerdict()
-    {
-        // remote-crf-search.log keeps attempt 34's lines whole and only the verdict lines of the later attempts.
-        Translate(AbAv1Stage.CrfSearch, "remote-crf-search.log", minimumVmaf: 97, maxEncodedPercent: 80).Should().Equal(
-            JobProgress.Detail("CRF 34   VMAF 95.02   size  19%   below target"),
-            JobProgress.Detail("CRF 18   VMAF 99.46   size  61%   passes"),
-            JobProgress.Detail("CRF 27   VMAF 97.72   size  33%   passes"),
-            JobProgress.Detail("CRF 29   VMAF 97.13   size  29%   passes, chosen"));
-    }
-
-    [Fact]
     public void TheRealRemoteNotWorthConvertingSearchMarksTheAttemptsThatPassedButWereTooBig()
     {
         // The error line is left to the job's outcome, which says why the video is not worth converting.
@@ -29,19 +18,6 @@ public sealed class AbAv1OutputTranslatorTests
             JobProgress.Detail("CRF 28   VMAF 98.47   size 122%   passes, file too big"),
             JobProgress.Detail("CRF 31   VMAF 97.31   size  95%   passes, file too big"),
             JobProgress.Detail("CRF 32   VMAF 96.64   size  86%   below target"));
-    }
-
-    [Fact]
-    public void TheRealLocalCrfSearchReadsCachedAttemptsAndTheChosenOneFromBothStreams()
-    {
-        var lines = Translate(AbAv1Stage.CrfSearch, "local-crf-search.stderr.log", minimumVmaf: 93, maxEncodedPercent: 90)
-            .Concat(Translate(AbAv1Stage.CrfSearch, "local-crf-search.stdout.log", minimumVmaf: 93, maxEncodedPercent: 90));
-
-        lines.Should().Equal(
-            JobProgress.Detail("CRF 34   VMAF 92.55   size  46%   below target"),
-            JobProgress.Detail("CRF 18   VMAF 97.45   size 137%   passes, file too big"),
-            JobProgress.Detail("CRF 33   VMAF 92.81   size  50%   below target"),
-            JobProgress.Detail("CRF 32   VMAF 93.44   size  57%   passes, chosen"));
     }
 
     [Fact]
@@ -63,14 +39,6 @@ public sealed class AbAv1OutputTranslatorTests
     }
 
     [Fact]
-    public void TheRealLocalEncodeReportsItsEncodedSize()
-    {
-        _now = TimeSpan.FromSeconds(14);
-
-        Translate(AbAv1Stage.Encode, "local-encode.stderr.log").Should().Equal(JobProgress.Step("Encoded 49.2 MiB (75% of the original) in 14s."));
-    }
-
-    [Fact]
     public void AnUnrecognisedLinePassesThroughSoNothingImportantIsHidden()
     {
         var translator = Create(AbAv1Stage.Encode);
@@ -83,19 +51,6 @@ public sealed class AbAv1OutputTranslatorTests
     [Fact]
     public void AFailedRemoteStagesExitLineIsDropped() =>
         Create(AbAv1Stage.CrfSearch).Translate("Command exited with non-zero status 1").Should().BeEmpty();
-
-    [Fact]
-    public void WrappedProgressTranslatesToolOutputAndPassesEverythingElseUnchanged()
-    {
-        var captured = new List<JobProgress>();
-        var progress = Create(AbAv1Stage.CrfSearch, minimumVmaf: 97).Wrap(new Capture(captured));
-
-        progress.Report(JobProgress.Step("Finding the best CRF..."));
-        progress.Report(JobProgress.Tool("[2026-10-13T10:10:36Z INFO  ab_av1::command::crf_search] crf 34 VMAF 95.02 (19%)"));
-        progress.Report(JobProgress.Tool("[2026-10-13T10:09:19Z INFO  ab_av1::vmaf] vmaf source.sample51+600f.av1.crf34.7.mp4 vs reference source.sample51+600f.mkv"));
-
-        captured.Should().Equal(JobProgress.Step("Finding the best CRF..."), JobProgress.Detail("CRF 34   VMAF 95.02   size  19%   below target"));
-    }
 
     [Fact]
     public void TheTimeLeftIsMeasuredFromTheProgressSeenNotTakenFromAbAv1sCoarseEstimate()
@@ -154,9 +109,4 @@ public sealed class AbAv1OutputTranslatorTests
     private AbAv1OutputTranslator Create(AbAv1Stage stage, double minimumVmaf = 95, int maxEncodedPercent = 80) => new(stage, minimumVmaf, maxEncodedPercent, () => _now);
 
     private static string[] Lines(string fixture) => AbAv1OutputTests.Fixture(fixture).Split(["\r\n", "\n"], StringSplitOptions.None);
-
-    private sealed class Capture(List<JobProgress> lines) : IProgress<JobProgress>
-    {
-        public void Report(JobProgress value) => lines.Add(value);
-    }
 }

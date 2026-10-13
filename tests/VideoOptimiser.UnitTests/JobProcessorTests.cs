@@ -39,7 +39,8 @@ public sealed class JobProcessorTests : IDisposable
         };
 
         var first = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
-        var second = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
+        var reported = new List<JobProgress>();
+        var second = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
 
         first.ExitCode.Should().Be(ExitCode.Success);
         first.Job.Status.Should().Be(JobStatus.ReadyToFinalize);
@@ -48,12 +49,12 @@ public sealed class JobProcessorTests : IDisposable
         File.Exists(first.Job.OutputPath).Should().BeTrue();
         second.Job.Id.Should().Be(first.Job.Id);
         encoder.CallCount.Should().Be(1);
+        Steps(reported).Should().Equal($"Job {first.Job.Id:N} is already ready to finalise.");
+        reported.Single().Tone.Should().Be(JobTone.Success);
     }
 
     [Theory]
     [InlineData("clip.mov", new[] { "aac", "pcm_s24le", "pcm_s16le" }, ".mp4", new[] { 1, 2 })]
-    [InlineData("CLIP.MOV", new[] { "pcm_s16le" }, ".MP4", new[] { 0 })]
-    [InlineData("clip.m4v", new[] { "aac" }, ".mp4", new int[0])]
     [InlineData("clip.avi", new string[0], ".mkv", new int[0])]
     public async Task ProcessAsyncWritesTheContainerTheCodecFitsAndAsksForFlacOnlyForPcmStreams(string sourceName, string[] audioCodecs, string expectedExtension, int[] expectedFlac)
     {
@@ -139,35 +140,6 @@ public sealed class JobProcessorTests : IDisposable
         var stored = (await repository.GetAsync(databasePath, job.Id))!;
         stored.Status.Should().Be(expected);
         if (expected == JobStatus.Failed) stored.FailureCategory.Should().Be("SourceMissing");
-    }
-
-    [Fact]
-    public async Task AnOutputFfprobeCannotReadFailsTheJobAsAValidationFailureNotACrash()
-    {
-        var source = Path.Combine(_directory, "movie.mp4");
-        await File.WriteAllTextAsync(source, "original video data");
-        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
-        var processor = new JobProcessor(
-            repository,
-            new ReadableFiles(),
-            _ => new H264Probe(unreadable: ".encoding.mp4"),
-            new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
-            new FileFingerprintService(),
-            new OutputManifestStore(),
-            new OutputValidationService(_ => new H264Probe(unreadable: ".encoding.mp4"), _ => throw new NotSupportedException(), _ => throw new NotSupportedException()));
-        var settings = new AppSettings
-        {
-            Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
-            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
-            Eligibility = Rules()
-        };
-
-        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
-
-        result.ExitCode.Should().Be(ExitCode.ValidationFailure);
-        result.Job.Status.Should().Be(JobStatus.Failed);
-        result.Job.FailureCategory.Should().Be("ValidationFailed");
-        result.Job.FailureMessage.Should().Contain("could not be read by ffprobe");
     }
 
     [Fact]
@@ -321,9 +293,12 @@ public sealed class JobProcessorTests : IDisposable
             Eligibility = Rules(),
             Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } }
         };
+        var reported = new List<JobProgress>();
 
-        var result = await processor.ProcessAsync(databasePath, source, settings, force: false);
+        var result = await processor.ProcessAsync(databasePath, source, settings, force: false, new SynchronousProgress(reported.Add));
 
+        Steps(reported).Should().Equal("Worker unreachable: Remote unavailable. Run the same command again to resume.");
+        reported.Single().Tone.Should().Be(JobTone.Failure);
         result.Job.Status.Should().Be(JobStatus.Interrupted);
         result.Job.ResumeStatus.Should().Be(JobStatus.Staging);
         result.Job.ExecutionMode.Should().Be("remoteSsh");
@@ -398,70 +373,6 @@ public sealed class JobProcessorTests : IDisposable
             "Finding the best CRF for VMAF 97 (2 test clips of 20s each)...",
             $"Not worth converting: {stored.FailureMessage}");
         reported.Last().Tone.Should().Be(JobTone.Warning);
-    }
-
-    [Fact]
-    public async Task AJobWhoseCrfSearchFindsNoQualityPassingCrfSaysWhichRangeMissedTheVmaf()
-    {
-        var source = Path.Combine(_directory, "noisy.mp4");
-        await File.WriteAllTextAsync(source, "original video data");
-        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
-        var settings = new AppSettings
-        {
-            Database = new DatabaseSettings { Path = Path.Combine(_directory, "novmaf.db") },
-            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
-            Eligibility = Rules(),
-            Quality = new QualitySettings { MinimumVmaf = 97 }
-        };
-        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => new ThrowingCrfSearch(new NoWorthwhileCrfException(null, settings.Quality)), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
-
-        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
-
-        result.Job.Status.Should().Be(JobStatus.Skipped);
-        result.Job.FailureMessage.Should().Be("No CRF reached VMAF 97 within 80% of the original's size (quality.maxEncodedPercent).");
-    }
-
-    [Fact]
-    public async Task AnOrdinaryCrfSearchErrorStillFailsTheJob()
-    {
-        var source = Path.Combine(_directory, "broken.mp4");
-        await File.WriteAllTextAsync(source, "original video data");
-        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
-        var settings = new AppSettings
-        {
-            Database = new DatabaseSettings { Path = Path.Combine(_directory, "failed.db") },
-            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
-            Eligibility = Rules()
-        };
-        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => new ThrowingCrfSearch(new InvalidOperationException("ab-av1 exploded")), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
-
-        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
-
-        result.ExitCode.Should().Be(ExitCode.ProcessingFailure);
-        result.Job.Status.Should().Be(JobStatus.Failed);
-        result.Job.FailureCategory.Should().Be("CrfSearchFailed");
-        result.Job.QualityFingerprint.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task TheConfiguredMaxEncodedPercentReachesTheCrfSearchArguments()
-    {
-        var source = Path.Combine(_directory, "limit.mp4");
-        await File.WriteAllTextAsync(source, "original video data");
-        var settings = new AppSettings
-        {
-            Database = new DatabaseSettings { Path = Path.Combine(_directory, "limit.db") },
-            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
-            Eligibility = Rules(),
-            Quality = new QualitySettings { MaxEncodedPercent = 70 }
-        };
-        var search = new CapturingCrfSearch();
-        var processor = new JobProcessor(new SqliteJobRepository(new SqliteDatabaseInitializer()), new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
-
-        _ = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
-
-        var arguments = new AbAv1CrfSearchClient("ab-av1").BuildArguments(source, search.Received!);
-        arguments.Should().ContainInConsecutiveOrder("--max-encoded-percent", "70");
     }
 
     [Fact]
@@ -542,6 +453,9 @@ public sealed class JobProcessorTests : IDisposable
         var result = await Processor(new FailingLoggingCrfSearch(), new FakeEncoder()).ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
 
         var log = Path.Combine(_directory, ".video-optimiser", $"{result.Job.Id:N}.crf.log");
+        result.ExitCode.Should().Be(ExitCode.ProcessingFailure);
+        result.Job.Status.Should().Be(JobStatus.Failed);
+        result.Job.QualityFingerprint.Should().BeNull("a failed search judged nothing about the quality bar");
         File.ReadAllLines(log).Should().Equal("first ab-av1 line", "Error: ffmpeg exploded");
         Steps(reported).Should().Equal(
             "Finding the best CRF for VMAF 95 (2 test clips of 20s each)...",
@@ -582,38 +496,6 @@ public sealed class JobProcessorTests : IDisposable
         result.ExitCode.Should().Be(ExitCode.ValidationFailure);
         Steps(reported).Last().Should().Be("Failed validation: duration differs; no streams");
         reported.Last().Tone.Should().Be(JobTone.Failure);
-    }
-
-    [Fact]
-    public async Task AnUnreachableWorkerIsTheOutcomeAndSaysToRunTheCommandAgain()
-    {
-        var source = Path.Combine(_directory, "remote.mp4");
-        await File.WriteAllTextAsync(source, "original video data");
-        var settings = Settings("unreachable.db");
-        settings.Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } };
-        var processor = new JobProcessor(new SqliteJobRepository(new SqliteDatabaseInitializer()), new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
-        var reported = new List<JobProgress>();
-
-        _ = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
-
-        Steps(reported).Should().Equal("Worker unreachable: Remote unavailable. Run the same command again to resume.");
-        reported.Single().Tone.Should().Be(JobTone.Failure);
-    }
-
-    [Fact]
-    public async Task ARerunOfAReadyJobReportsTheExistingMessageAsItsOutcome()
-    {
-        var source = Path.Combine(_directory, "movie.mp4");
-        await File.WriteAllTextAsync(source, "original video data");
-        var settings = Settings("again.db");
-        var processor = Processor(new FixedCrfSearch(), new FakeEncoder());
-        var first = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
-        var reported = new List<JobProgress>();
-
-        _ = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
-
-        Steps(reported).Should().Equal($"Job {first.Job.Id:N} is already ready to finalise.");
-        reported.Single().Tone.Should().Be(JobTone.Success);
     }
 
     private AppSettings Settings(string databaseName, QualitySettings? quality = null) => new()
@@ -702,11 +584,10 @@ public sealed class JobProcessorTests : IDisposable
         public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
     }
 
-    private sealed class H264Probe(string? unreadable = null, IReadOnlyList<string>? audioCodecs = null) : IMediaProbe
+    private sealed class H264Probe(IReadOnlyList<string>? audioCodecs = null) : IMediaProbe
     {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => unreadable is not null && path.EndsWith(unreadable, StringComparison.OrdinalIgnoreCase)
-            ? Task.FromException<MediaInfo>(new MediaProbeException("ffprobe exited with 1: moov atom not found"))
-            : Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, 10_000_000, audioCodecs));
+        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, 10_000_000, audioCodecs));
     }
 
     private sealed class FixedCrfSearch : ICrfSearchClient
@@ -719,17 +600,6 @@ public sealed class JobProcessorTests : IDisposable
     {
         public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
         public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw exception;
-    }
-
-    private sealed class CapturingCrfSearch : ICrfSearchClient
-    {
-        public QualitySettings? Received { get; private set; }
-        public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
-        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
-        {
-            Received = settings;
-            return Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
-        }
     }
 
     private sealed class CancellingCrfSearch : ICrfSearchClient

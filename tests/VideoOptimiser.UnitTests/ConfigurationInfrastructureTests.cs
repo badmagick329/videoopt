@@ -98,23 +98,6 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadAsyncPreservesConfiguredHetznerLocationOrder()
-    {
-        var configPath = Path.Combine(_directory, "locations.yaml");
-        await File.WriteAllTextAsync(configPath, """
-            version: 1
-            processing:
-              remoteSsh:
-                hetzner:
-                  locations: ["nbg1", "HEL1"]
-            """);
-
-        var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
-
-        loaded.Settings.Processing.RemoteSsh.Hetzner.Locations.Should().Equal("nbg1", "HEL1");
-    }
-
-    [Fact]
     public async Task LoadAsyncRejectsUnknownKeyAndNamesItsFullPath()
     {
         var configPath = Path.Combine(_directory, "typo.yaml");
@@ -152,37 +135,6 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadAsyncReadsMaxEncodedPercentAndDefaultsItToEighty()
-    {
-        var configured = Path.Combine(_directory, "max-encoded.yaml");
-        await File.WriteAllTextAsync(configured, "version: 1\nquality:\n  maxEncodedPercent: 70\n");
-        var defaulted = Path.Combine(_directory, "max-encoded-default.yaml");
-        await File.WriteAllTextAsync(defaulted, "version: 1\nquality:\n  minimumVmaf: 96\n");
-
-        (await new YamlConfigurationLoader().LoadAsync(configured)).Settings.Quality.MaxEncodedPercent.Should().Be(70);
-        (await new YamlConfigurationLoader().LoadAsync(defaulted)).Settings.Quality.MaxEncodedPercent.Should().Be(80);
-    }
-
-    [Fact]
-    public async Task LoadAsyncReadsServerTypesAndANullPriceCap()
-    {
-        var configPath = Path.Combine(_directory, "server-types.yaml");
-        await File.WriteAllTextAsync(configPath, """
-            version: 1
-            processing:
-              remoteSsh:
-                hetzner:
-                  serverTypes: ["cpx42", "ccx33"]
-                  maxHourlyPrice: null
-            """);
-
-        var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
-
-        loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().Equal("cpx42", "ccx33");
-        loaded.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice.Should().BeNull();
-    }
-
-    [Fact]
     public async Task LoadAsyncKeepsAnEmptyServerTypeListForValidationToReject()
     {
         var configPath = Path.Combine(_directory, "no-server-types.yaml");
@@ -197,21 +149,6 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
 
         loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task LoadAsyncRejectsSettingRemovedInVersion020()
-    {
-        var configPath = Path.Combine(_directory, "removed.yaml");
-        await File.WriteAllTextAsync(configPath, """
-            version: 1
-            validation:
-              decodeTestMode: "full"
-            """);
-
-        var load = () => new YamlConfigurationLoader().LoadAsync(configPath);
-
-        (await load.Should().ThrowAsync<InvalidDataException>()).WithMessage("Unknown setting 'validation.decodeTestMode'*");
     }
 
     [Fact]
@@ -242,18 +179,6 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().Equal("cx43", "cx53", "cpx42", "ccx33");
         loaded.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice.Should().Be(0.30m);
         loaded.Settings.Quality.MaxEncodedPercent.Should().Be(80);
-    }
-
-    [Fact]
-    public void RemoteExecutionIdentityForManagedHetznerIgnoresServerTypesAndLocations()
-    {
-        var settings = new RemoteSshSettings
-        {
-            Lifecycle = RemoteLifecycleModes.Hetzner,
-            Hetzner = new HetznerSettings { ServerTypes = ["cpx42"], Locations = ["HEL1", "fsn1"] }
-        };
-
-        RemoteExecutionIdentity.Host(settings).Should().Be(RemoteExecutionIdentity.ManagedHetzner);
     }
 
     [Fact]

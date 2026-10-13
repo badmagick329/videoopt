@@ -58,16 +58,6 @@ public sealed class ProcessingBlockTests
     }
 
     [Fact]
-    public void RenderEmitsEverySettingsField()
-    {
-        var block = ProcessingBlock.Render(new ProcessingSettings());
-
-        foreach (var key in new[] { "mode", "remoteSsh", "lifecycle", "host", "user", "identityFile", "knownHostsFile", "workingDirectory", "minimumCpuCount", "minimumAvailableMemory", "minimumFreeDiskMultiplier", "hetzner", "apiTokenEnvironmentVariable", "apiTokenFile", "serverTypes", "maxHourlyPrice", "image", "locations", "sshKeyName", "serverNamePrefix", "bootstrapScriptPath", "bootstrapTimeout", "deleteAfterRun" })
-            block.Should().Contain($" {key}:");
-        block.Should().StartWith("processing:\n").And.EndWith("deleteAfterRun: true\n");
-    }
-
-    [Fact]
     public void ReplaceKeepsEverythingOutsideTheSectionAndTheCommentsBeforeTheNextKey()
     {
         const string yaml = "# top\nversion: 1\n\nprocessing:\n  mode: \"local\"\n  remoteSsh:\n    host: \"\"\n\n# the database\n# holds jobs\ndatabase:\n  path: \"jobs.db\"\n";

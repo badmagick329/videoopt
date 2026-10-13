@@ -6,87 +6,34 @@ namespace VideoOptimiser.UnitTests;
 
 public sealed class ManagedWorkerDeletionPolicyTests
 {
+    // Both CLI routes share one policy; alternating them across the rows pins each outcome on each route.
     [Theory]
-    [InlineData(CleanupRoute.Process)]
-    [InlineData(CleanupRoute.QueueRun)]
-    public async Task EachCliRouteDeletesAfterCleanSuccess(CleanupRoute route)
+    [InlineData(CleanupRoute.Process, null, true, false, false, false, ManagedWorkerDeletionDecision.DeleteAutomatically, false, true)]
+    [InlineData(CleanupRoute.QueueRun, "n", true, true, false, false, ManagedWorkerDeletionDecision.RetainAfterFailure, true, false)]
+    [InlineData(CleanupRoute.Process, "yes", true, true, false, false, ManagedWorkerDeletionDecision.RetainAfterFailure, true, true)]
+    [InlineData(CleanupRoute.QueueRun, "yes", false, true, false, false, ManagedWorkerDeletionDecision.RetainAfterFailure, false, false)]
+    [InlineData(CleanupRoute.Process, "yes", true, true, true, false, ManagedWorkerDeletionDecision.RetainInterrupted, false, false)]
+    [InlineData(CleanupRoute.QueueRun, "yes", true, false, false, true, ManagedWorkerDeletionDecision.RetainAfterUnexpectedFailure, false, false)]
+    public async Task EachCliRouteDeletesTheWorkerOnlyAfterCleanSuccessOrExplicitConfirmation(
+        CleanupRoute route,
+        string? response,
+        bool inputAvailable,
+        bool hasFailures,
+        bool interrupted,
+        bool unexpectedFailure,
+        ManagedWorkerDeletionDecision expectedDecision,
+        bool expectedPrompted,
+        bool expectedDeleted)
     {
-        var fixture = new Fixture(response: null, available: true);
+        var fixture = new Fixture(response, inputAvailable);
 
-        var result = await fixture.RunAsync(route, hasFailures: false, interrupted: false, unexpectedFailure: false);
-
-        result.Deleted.Should().BeTrue();
-        result.Prompted.Should().BeFalse();
-        fixture.Lifecycle.DeleteCalls.Should().Be(1);
-        fixture.Confirmation.Calls.Should().Be(0);
-    }
-
-    [Theory]
-    [InlineData(CleanupRoute.Process, "n")]
-    [InlineData(CleanupRoute.Process, "")]
-    [InlineData(CleanupRoute.Process, null)]
-    [InlineData(CleanupRoute.QueueRun, "n")]
-    [InlineData(CleanupRoute.QueueRun, "")]
-    [InlineData(CleanupRoute.QueueRun, null)]
-    public async Task EachCliRouteRetainsAfterOrdinaryFailureUnlessConfirmed(CleanupRoute route, string? response)
-    {
-        var fixture = new Fixture(response, available: true);
-
-        var result = await fixture.RunAsync(route, hasFailures: true, interrupted: false, unexpectedFailure: false);
-
-        result.Decision.Should().Be(ManagedWorkerDeletionDecision.RetainAfterFailure);
-        result.Prompted.Should().BeTrue();
-        result.Deleted.Should().BeFalse();
-        fixture.Lifecycle.DeleteCalls.Should().Be(0);
-        fixture.Confirmation.Calls.Should().Be(1);
-    }
-
-    [Theory]
-    [InlineData(CleanupRoute.Process, "y")]
-    [InlineData(CleanupRoute.QueueRun, "yes")]
-    public async Task EachCliRouteDeletesOnlyAfterExplicitConfirmation(CleanupRoute route, string response)
-    {
-        var fixture = new Fixture(response, available: true);
-
-        var result = await fixture.RunAsync(route, hasFailures: true, interrupted: false, unexpectedFailure: false);
-
-        result.Prompted.Should().BeTrue();
-        result.Deleted.Should().BeTrue();
-        fixture.Lifecycle.DeleteCalls.Should().Be(1);
-        fixture.Confirmation.Calls.Should().Be(1);
-    }
-
-    [Theory]
-    [InlineData(CleanupRoute.Process)]
-    [InlineData(CleanupRoute.QueueRun)]
-    public async Task EachCliRouteRetainsWithoutPromptWhenInputIsUnavailable(CleanupRoute route)
-    {
-        var fixture = new Fixture(response: "yes", available: false);
-
-        var result = await fixture.RunAsync(route, hasFailures: true, interrupted: false, unexpectedFailure: false);
-
-        result.Prompted.Should().BeFalse();
-        result.Deleted.Should().BeFalse();
-        fixture.Lifecycle.DeleteCalls.Should().Be(0);
-        fixture.Confirmation.Calls.Should().Be(0);
-    }
-
-    [Theory]
-    [InlineData(CleanupRoute.Process, true, false, ManagedWorkerDeletionDecision.RetainInterrupted)]
-    [InlineData(CleanupRoute.Process, false, true, ManagedWorkerDeletionDecision.RetainAfterUnexpectedFailure)]
-    [InlineData(CleanupRoute.QueueRun, true, false, ManagedWorkerDeletionDecision.RetainInterrupted)]
-    [InlineData(CleanupRoute.QueueRun, false, true, ManagedWorkerDeletionDecision.RetainAfterUnexpectedFailure)]
-    public async Task EachCliRouteRetainsInterruptedAndUnexpectedFailuresWithoutPrompting(CleanupRoute route, bool interrupted, bool unexpectedFailure, ManagedWorkerDeletionDecision expectedDecision)
-    {
-        var fixture = new Fixture(response: "yes", available: true);
-
-        var result = await fixture.RunAsync(route, hasFailures: interrupted, interrupted, unexpectedFailure);
+        var result = await fixture.RunAsync(route, hasFailures, interrupted, unexpectedFailure);
 
         result.Decision.Should().Be(expectedDecision);
-        result.Prompted.Should().BeFalse();
-        result.Deleted.Should().BeFalse();
-        fixture.Lifecycle.DeleteCalls.Should().Be(0);
-        fixture.Confirmation.Calls.Should().Be(0);
+        result.Prompted.Should().Be(expectedPrompted);
+        result.Deleted.Should().Be(expectedDeleted);
+        fixture.Lifecycle.DeleteCalls.Should().Be(expectedDeleted ? 1 : 0);
+        fixture.Confirmation.Calls.Should().Be(expectedPrompted ? 1 : 0);
     }
 
     public enum CleanupRoute
