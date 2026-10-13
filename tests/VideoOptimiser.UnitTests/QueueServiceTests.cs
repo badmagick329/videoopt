@@ -30,7 +30,8 @@ public sealed class QueueServiceTests : IDisposable
 
         first.QueuedPaths.Should().ContainSingle();
         second.AlreadyQueued.Should().Be(1);
-        (await repository.ListAsync(settings.Database.Path, terminal: false)).Should().ContainSingle(job => job.Status == JobStatus.Queued);
+        var job = (await repository.ListAsync(settings.Database.Path, terminal: false)).Should().ContainSingle(job => job.Status == JobStatus.Queued).Subject;
+        job.VideoFacts.Should().Be(new VideoFacts("h264", 1920, 1080, 22_000_000, 90.5, 6));
     }
 
     [Fact]
@@ -280,9 +281,14 @@ public sealed class QueueServiceTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
+    /// <summary>An eligible item as the real scanner gives it: with the probe it was judged on and the file's size.</summary>
+    private static ScanItem Eligible(string path) => new(path, ScanItemStatus.Eligible, "Eligible", 6, ScannedMedia);
+
+    private static readonly MediaInfo ScannedMedia = new("h264", 1, 1, 0, 0, 90.5, 6, 1920, 1080, 22_000_000);
+
     private sealed class FixedScanner(params string[] paths) : IFileScanner
     {
-        public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool stopAfterFirstEligible = false, IReadOnlySet<string>? openSourcePaths = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new ScanReport(paths.Select(path => new ScanItem(path, ScanItemStatus.Eligible, "Eligible")).ToArray(), []));
+        public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool stopAfterFirstEligible = false, IReadOnlySet<string>? openSourcePaths = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new ScanReport(paths.Select(Eligible).ToArray(), []));
     }
 
     private sealed class FirstAwareScanner(string alreadyOpen, string next, string later) : IFileScanner
@@ -293,7 +299,7 @@ public sealed class QueueServiceTests : IDisposable
         {
             ReceivedOpenPaths = openSourcePaths;
             return Task.FromResult(new ScanReport(
-                [new ScanItem(alreadyOpen, ScanItemStatus.Eligible, "Eligible"), new ScanItem(next, ScanItemStatus.Eligible, "Eligible"), new ScanItem(later, ScanItemStatus.Eligible, "Eligible")],
+                [Eligible(alreadyOpen), Eligible(next), Eligible(later)],
                 []));
         }
     }

@@ -118,6 +118,40 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
             await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN quality_fingerprint TEXT NULL;", cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (7, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
+        if (!await HasMigrationAsync(connection, 8, cancellationToken))
+        {
+            // Video facts on the row itself: the probe cache is keyed by path, and an Immich job's path is a staged copy that
+            // cleanup deletes. The backfill copies a job's facts from the cache only while the cache still describes the
+            // original: the cached file was last written before the job was created, and a validated job's source size
+            // matches. A path whose original was later replaced, as finalisation does with its AV1, holds a newer file.
+            // Ticks count 100 ns from 0001-01-01, which is Julian day 1721425.5.
+            await ExecuteAsync(connection, """
+                ALTER TABLE jobs ADD COLUMN video_codec TEXT NULL;
+                ALTER TABLE jobs ADD COLUMN video_width INTEGER NULL;
+                ALTER TABLE jobs ADD COLUMN video_height INTEGER NULL;
+                ALTER TABLE jobs ADD COLUMN video_bitrate INTEGER NULL;
+                ALTER TABLE jobs ADD COLUMN video_duration_seconds REAL NULL;
+                ALTER TABLE jobs ADD COLUMN video_size_bytes INTEGER NULL;
+                ALTER TABLE immich_skipped_assets ADD COLUMN video_codec TEXT NULL;
+                ALTER TABLE immich_skipped_assets ADD COLUMN video_width INTEGER NULL;
+                ALTER TABLE immich_skipped_assets ADD COLUMN video_height INTEGER NULL;
+                ALTER TABLE immich_skipped_assets ADD COLUMN video_bitrate INTEGER NULL;
+                ALTER TABLE immich_skipped_assets ADD COLUMN video_duration_seconds REAL NULL;
+                ALTER TABLE immich_skipped_assets ADD COLUMN video_size_bytes INTEGER NULL;
+                UPDATE jobs
+                SET video_codec = cache.primary_video_codec,
+                    video_width = cache.primary_video_width,
+                    video_height = cache.primary_video_height,
+                    video_bitrate = cache.primary_video_bitrate,
+                    video_duration_seconds = cache.duration_seconds,
+                    video_size_bytes = cache.source_size_bytes
+                FROM media_probe_cache AS cache
+                WHERE cache.source_path = jobs.source_path
+                  AND cache.source_last_write_utc_ticks / 864000000000.0 + 1721425.5 < julianday(jobs.created_utc)
+                  AND (jobs.source_size_bytes IS NULL OR jobs.source_size_bytes = cache.source_size_bytes);
+                """, cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (8, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 

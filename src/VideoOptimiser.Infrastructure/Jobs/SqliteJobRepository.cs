@@ -117,17 +117,18 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT asset_id, checksum, rules_fingerprint, reason, recorded_utc FROM immich_skipped_assets;";
+        command.CommandText = "SELECT * FROM immich_skipped_assets;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var skips = new Dictionary<string, ImmichSkipRecord>(StringComparer.Ordinal);
         while (await reader.ReadAsync(cancellationToken))
         {
             var skip = new ImmichSkipRecord(
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.GetString(3),
-                DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture));
+                reader.GetString(reader.GetOrdinal("asset_id")),
+                reader.GetString(reader.GetOrdinal("checksum")),
+                reader.GetString(reader.GetOrdinal("rules_fingerprint")),
+                reader.GetString(reader.GetOrdinal("reason")),
+                DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("recorded_utc")), CultureInfo.InvariantCulture),
+                ReadVideoFacts(reader));
             skips[skip.AssetId] = skip;
         }
 
@@ -139,10 +140,13 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO immich_skipped_assets (asset_id, checksum, rules_fingerprint, reason, recorded_utc)
-            VALUES ($assetId, $checksum, $rulesFingerprint, $reason, $recordedUtc)
-            ON CONFLICT(asset_id) DO UPDATE SET checksum = excluded.checksum, rules_fingerprint = excluded.rules_fingerprint, reason = excluded.reason, recorded_utc = excluded.recorded_utc;
+            INSERT INTO immich_skipped_assets (asset_id, checksum, rules_fingerprint, reason, recorded_utc, video_codec, video_width, video_height, video_bitrate, video_duration_seconds, video_size_bytes)
+            VALUES ($assetId, $checksum, $rulesFingerprint, $reason, $recordedUtc, $videoCodec, $videoWidth, $videoHeight, $videoBitrate, $videoDurationSeconds, $videoSizeBytes)
+            ON CONFLICT(asset_id) DO UPDATE SET checksum = excluded.checksum, rules_fingerprint = excluded.rules_fingerprint, reason = excluded.reason, recorded_utc = excluded.recorded_utc,
+                video_codec = excluded.video_codec, video_width = excluded.video_width, video_height = excluded.video_height, video_bitrate = excluded.video_bitrate,
+                video_duration_seconds = excluded.video_duration_seconds, video_size_bytes = excluded.video_size_bytes;
             """;
+        AddVideoFacts(command, skip.VideoFacts);
         command.Parameters.AddWithValue("$assetId", skip.AssetId);
         command.Parameters.AddWithValue("$checksum", skip.Checksum);
         command.Parameters.AddWithValue("$rulesFingerprint", skip.RulesFingerprint);
@@ -164,8 +168,8 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var command = connection.CreateCommand();
         command.CommandText = insert
-            ? """INSERT INTO jobs (id, source_path, source_fingerprint, status, resume_status, attempt, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc, execution_mode, remote_host, remote_workspace, source_kind, immich_asset_id, immich_checksum, immich_new_asset_id, quality_fingerprint) VALUES ($id, $sourcePath, $sourceFingerprint, $status, $resumeStatus, $attempt, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc, $executionMode, $remoteHost, $remoteWorkspace, $sourceKind, $immichAssetId, $immichChecksum, $immichNewAssetId, $qualityFingerprint);"""
-            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc, execution_mode = $executionMode, remote_host = $remoteHost, remote_workspace = $remoteWorkspace, source_kind = $sourceKind, immich_asset_id = $immichAssetId, immich_checksum = $immichChecksum, immich_new_asset_id = $immichNewAssetId, quality_fingerprint = $qualityFingerprint WHERE id = $id;""";
+            ? """INSERT INTO jobs (id, source_path, source_fingerprint, status, resume_status, attempt, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc, execution_mode, remote_host, remote_workspace, source_kind, immich_asset_id, immich_checksum, immich_new_asset_id, quality_fingerprint, video_codec, video_width, video_height, video_bitrate, video_duration_seconds, video_size_bytes) VALUES ($id, $sourcePath, $sourceFingerprint, $status, $resumeStatus, $attempt, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc, $executionMode, $remoteHost, $remoteWorkspace, $sourceKind, $immichAssetId, $immichChecksum, $immichNewAssetId, $qualityFingerprint, $videoCodec, $videoWidth, $videoHeight, $videoBitrate, $videoDurationSeconds, $videoSizeBytes);"""
+            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc, execution_mode = $executionMode, remote_host = $remoteHost, remote_workspace = $remoteWorkspace, source_kind = $sourceKind, immich_asset_id = $immichAssetId, immich_checksum = $immichChecksum, immich_new_asset_id = $immichNewAssetId, quality_fingerprint = $qualityFingerprint, video_codec = $videoCodec, video_width = $videoWidth, video_height = $videoHeight, video_bitrate = $videoBitrate, video_duration_seconds = $videoDurationSeconds, video_size_bytes = $videoSizeBytes WHERE id = $id;""";
         Add(command, "$id", job.Id.ToString("N"));
         Add(command, "$sourcePath", job.SourcePath);
         Add(command, "$sourceFingerprint", job.SourceFingerprint);
@@ -192,8 +196,25 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         Add(command, "$immichChecksum", job.ImmichChecksum);
         Add(command, "$immichNewAssetId", job.ImmichNewAssetId);
         Add(command, "$qualityFingerprint", job.QualityFingerprint);
+        AddVideoFacts(command, job.VideoFacts);
         _ = await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private static void AddVideoFacts(SqliteCommand command, VideoFacts? facts)
+    {
+        Add(command, "$videoCodec", facts?.Codec);
+        Add(command, "$videoWidth", facts?.Width);
+        Add(command, "$videoHeight", facts?.Height);
+        Add(command, "$videoBitrate", facts?.Bitrate);
+        Add(command, "$videoDurationSeconds", facts?.DurationSeconds);
+        Add(command, "$videoSizeBytes", facts?.SizeBytes);
+    }
+
+    // The codec and size are always written together, so a row with either missing predates migration 8.
+    private static VideoFacts? ReadVideoFacts(SqliteDataReader reader) =>
+        NullableString(reader, "video_codec") is { } codec && NullableLong(reader, "video_size_bytes") is { } size
+            ? new VideoFacts(codec, NullableInt(reader, "video_width"), NullableInt(reader, "video_height"), NullableLong(reader, "video_bitrate"), NullableDouble(reader, "video_duration_seconds"), size)
+            : null;
 
     private static async Task<JobStatus?> GetStatusAsync(SqliteConnection connection, Guid id, CancellationToken cancellationToken)
     {
@@ -233,7 +254,8 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         ImmichAssetId = NullableString(reader, "immich_asset_id"),
         ImmichChecksum = NullableString(reader, "immich_checksum"),
         ImmichNewAssetId = NullableString(reader, "immich_new_asset_id"),
-        QualityFingerprint = NullableString(reader, "quality_fingerprint")
+        QualityFingerprint = NullableString(reader, "quality_fingerprint"),
+        VideoFacts = ReadVideoFacts(reader)
     };
 
     private static string SourceKindText(JobSourceKind kind) => kind switch
@@ -254,6 +276,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     private static string? NullableString(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetString(reader.GetOrdinal(column));
     private static int? NullableInt(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetInt32(reader.GetOrdinal(column));
     private static long? NullableLong(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetInt64(reader.GetOrdinal(column));
+    private static double? NullableDouble(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetDouble(reader.GetOrdinal(column));
     private static bool? NullableBool(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetInt32(reader.GetOrdinal(column)) != 0;
     private static decimal? NullableDecimal(SqliteDataReader reader, string column) => NullableString(reader, column) is { } value ? decimal.Parse(value, CultureInfo.InvariantCulture) : null;
 }

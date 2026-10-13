@@ -34,7 +34,8 @@ public sealed class JobRetryService(IJobRepository jobs) : IJobRetryService
             // Discovery and finalisation know an Immich job by its asset, not by the staged path.
             SourceKind = original.SourceKind,
             ImmichAssetId = original.ImmichAssetId,
-            ImmichChecksum = original.ImmichChecksum
+            ImmichChecksum = original.ImmichChecksum,
+            VideoFacts = original.VideoFacts
         };
         JobCompatibility.Apply(replacement, JobCompatibility.ExpectedBinding(replacement.Id, settings));
         await jobs.CreateAsync(databasePath, replacement, cancellationToken);

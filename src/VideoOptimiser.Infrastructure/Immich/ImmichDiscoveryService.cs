@@ -73,8 +73,10 @@ public sealed class ImmichDiscoveryService(
                 ineligible++;
                 // A stale skip this check settles without a download would otherwise stay stale for good, and every later run
                 // would announce it as one to check again.
+                // Facts probed from the same bytes still hold; nothing was downloaded to replace them.
                 if (skip is not null)
-                    await jobs.PutImmichSkipAsync(databasePath, new ImmichSkipRecord(asset.Id, asset.Checksum, rulesFingerprint, "too small or not a listed file type", _utcNow()), cancellationToken);
+                    await jobs.PutImmichSkipAsync(databasePath, new ImmichSkipRecord(asset.Id, asset.Checksum, rulesFingerprint, "too small or not a listed file type", _utcNow(),
+                        string.Equals(skip.Checksum, asset.Checksum, StringComparison.Ordinal) ? skip.VideoFacts : null), cancellationToken);
                 continue;
             }
 
@@ -106,10 +108,11 @@ public sealed class ImmichDiscoveryService(
                 // The size of the bytes just probed, which is what the rules were judged on.
                 var downloadedBytes = new FileInfo(stagedPath).Length;
                 var facts = new CandidateFacts(media.PrimaryVideoCodec, media.PrimaryVideoWidth, media.PrimaryVideoHeight, media.PrimaryVideoBitrate, downloadedBytes);
+                var videoFacts = VideoFacts.From(media, downloadedBytes);
                 if (EligibilityEvaluator.MatchingRule(downloadedBytes, media, settings.Eligibility) is not { } rule)
                 {
                     var reason = EligibilityEvaluator.DescribeMismatch(downloadedBytes, media, settings.Eligibility);
-                    await jobs.PutImmichSkipAsync(databasePath, new ImmichSkipRecord(asset.Id, asset.Checksum, rulesFingerprint, reason, _utcNow()), cancellationToken);
+                    await jobs.PutImmichSkipAsync(databasePath, new ImmichSkipRecord(asset.Id, asset.Checksum, rulesFingerprint, reason, _utcNow(), videoFacts), cancellationToken);
                     skipped++;
                     skipReasons[reason] = skipReasons.GetValueOrDefault(reason) + 1;
                     progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, reason, null, 0, facts));
@@ -124,7 +127,8 @@ public sealed class ImmichDiscoveryService(
                     Status = JobStatus.Queued,
                     SourceKind = JobSourceKind.Immich,
                     ImmichAssetId = asset.Id,
-                    ImmichChecksum = asset.Checksum
+                    ImmichChecksum = asset.Checksum,
+                    VideoFacts = videoFacts
                 };
                 JobCompatibility.Apply(job, JobCompatibility.ExpectedBinding(job.Id, settings));
                 queued.Add(await jobs.CreateAsync(databasePath, job, cancellationToken));

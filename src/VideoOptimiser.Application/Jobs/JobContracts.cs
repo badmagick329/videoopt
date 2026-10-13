@@ -57,6 +57,8 @@ public sealed class JobRecord
     public string? FailureMessage { get; set; }
     /// <summary>Set when the job ends <see cref="JobStatus.Skipped"/>: the <see cref="Processing.QualityFingerprint"/> of the settings that skipped it.</summary>
     public string? QualityFingerprint { get; set; }
+    /// <summary>Set from the probe that queued the job, and again from the one each run makes. Null on jobs from before migration 8 that no probe cache entry matched.</summary>
+    public VideoFacts? VideoFacts { get; set; }
     public DateTimeOffset CreatedUtc { get; set; }
     public DateTimeOffset UpdatedUtc { get; set; }
     public DateTimeOffset? CompletedUtc { get; set; }
@@ -128,9 +130,10 @@ public interface IJobRepository
 /// <summary>
 /// An Immich asset that discovery downloaded and found ineligible, kept so later runs skip it without downloading it again.
 /// <see cref="RulesFingerprint"/> identifies the eligibility settings that rejected it, so changing the rules lets the
-/// asset be checked again.
+/// asset be checked again. <see cref="VideoFacts"/> is null when the asset was ruled out without a download, and on
+/// skips recorded before migration 8.
 /// </summary>
-public sealed record ImmichSkipRecord(string AssetId, string Checksum, string RulesFingerprint, string Reason, DateTimeOffset RecordedUtc)
+public sealed record ImmichSkipRecord(string AssetId, string Checksum, string RulesFingerprint, string Reason, DateTimeOffset RecordedUtc, VideoFacts? VideoFacts = null)
 {
     /// <summary>False once the asset's file or the eligibility rules have changed since the skip was recorded.</summary>
     public bool IsCurrent(string checksum, string rulesFingerprint) =>

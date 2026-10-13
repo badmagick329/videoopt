@@ -100,6 +100,44 @@ public sealed class SqliteJobRepositoryTests : IDisposable
     }
 
     [Fact]
+    public async Task AReplacedImmichSkipTakesTheNewVideoFactsOrNone()
+    {
+        var recorded = new DateTimeOffset(2026, 10, 12, 9, 30, 0, TimeSpan.Zero);
+        var facts = new VideoFacts("h264", 1920, 1080, 22_000_000, 31.5, 86_000_000);
+        var newer = new VideoFacts("hevc", 3840, 2160, 40_000_000, 62, 300_000_000);
+        await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-1", "checksum-a", "rules-a", "no rule for h264", recorded, facts));
+        await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-1", "checksum-d", "rules-b", "no rule for hevc", recorded, newer));
+        await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-2", "checksum-b", "rules-a", "no rule for h264", recorded, facts));
+        await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-2", "checksum-c", "rules-b", "too small or not a listed file type", recorded));
+
+        var skips = await _repository.ListImmichSkipsAsync(_databasePath);
+
+        skips["asset-1"].VideoFacts.Should().Be(newer);
+        skips["asset-2"].VideoFacts.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(JobSourceKind.File)]
+    [InlineData(JobSourceKind.Immich)]
+    public async Task AJobKeepsItsVideoFactsThroughCreateAndUpdate(JobSourceKind kind)
+    {
+        var job = kind == JobSourceKind.File ? NewJob(JobStatus.Queued) : NewImmichJob("asset-1", JobStatus.Queued);
+        job.VideoFacts = new VideoFacts("hevc", 3840, 2160, null, 12.25, 52_428_800);
+        await _repository.CreateAsync(_databasePath, job);
+        (await _repository.GetAsync(_databasePath, job.Id))!.VideoFacts.Should().Be(job.VideoFacts);
+
+        job.VideoFacts = new VideoFacts("h264", 1920, 1080, 18_000_000, 40, 90_000_000);
+        job.Status = JobStatus.CrfSearching;
+        await _repository.UpdateAsync(_databasePath, job);
+
+        (await _repository.GetAsync(_databasePath, job.Id))!.VideoFacts.Should().Be(job.VideoFacts);
+    }
+
+    [Fact]
+    public async Task AJobWithoutVideoFactsReadsBackWithout() =>
+        (await _repository.GetAsync(_databasePath, (await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued))).Id))!.VideoFacts.Should().BeNull();
+
+    [Fact]
     public async Task ARowWithAnUnknownSourceKindIsRefusedRatherThanReadAsAFile()
     {
         // A newer version may have written the kind; reading it as "file" would treat an Immich staged copy as a user's original.

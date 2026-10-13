@@ -64,6 +64,8 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
                     SourcePath = Path.GetFullPath(item.Path),
                     SourceFingerprint = await fingerprints.CreateAsync(item.Path, cancellationToken),
                     Status = JobStatus.Queued,
+                    // An eligible item always carries the probe it was judged on, cached or fresh.
+                    VideoFacts = VideoFacts.From(item.MediaInfo!, item.SizeBytes!.Value),
                     ExecutionMode = remote ? "remoteSsh" : "local",
                     RemoteHost = remote ? RemoteExecutionIdentity.Host(settings.Processing.RemoteSsh) : null,
                     RemoteWorkspace = remote ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{id:N}" : null

@@ -48,6 +48,8 @@ public sealed class JobProcessorTests : IDisposable
         first.Job.Crf.Should().Be(42);
         first.Job.ValidationPassed.Should().BeTrue();
         File.Exists(first.Job.OutputPath).Should().BeTrue();
+        // process creates its job without a probe; the run's own probe supplies the facts.
+        (await repository.GetAsync(settings.Database.Path, first.Job.Id))!.VideoFacts.Should().Be(new VideoFacts("h264", 1920, 1080, 10_000_000, 120, "original video data".Length));
         second.Job.Id.Should().Be(first.Job.Id);
         encoder.CallCount.Should().Be(1);
         Steps(reported).Should().Equal($"Job {first.Job.Id:N} is already ready to finalise.");

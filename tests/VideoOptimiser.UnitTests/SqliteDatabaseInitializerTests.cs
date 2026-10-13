@@ -24,7 +24,7 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version = 7;";
+        command.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version = 8;";
         var count = Convert.ToInt64(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
         count.Should().Be(1);
 
@@ -55,6 +55,8 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
                     source_path TEXT NOT NULL,
                     source_fingerprint TEXT NOT NULL,
                     status INTEGER NOT NULL,
+                    source_size_bytes INTEGER NULL,
+                    created_utc TEXT NOT NULL,
                     updated_utc TEXT NOT NULL
                 );
                 INSERT INTO schema_migrations(version, applied_utc) VALUES (1, '2026-01-01T00:00:00.0000000+00:00');
@@ -77,9 +79,9 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
     }
 
     [Fact]
-    public async Task InitializeAsyncKeepsMigrationFiveJobsAsFileJobs()
+    public async Task InitializeAsyncKeepsJobsFromBeforeMigrationSixAsFileJobs()
     {
-        var databasePath = Path.Combine(_directory, "migration-five.db");
+        var databasePath = Path.Combine(_directory, "migration-four.db");
         var jobId = Guid.NewGuid();
         await using (var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False"))
         {
@@ -88,7 +90,7 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
             // The jobs table exactly as migrations 2 to 4 left it, with one finished job.
             command.CommandText = $$"""
                 CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_utc TEXT NOT NULL);
-                INSERT INTO schema_migrations(version, applied_utc) VALUES (1, '2026-01-01T00:00:00.0000000+00:00'), (2, '2026-01-01T00:00:00.0000000+00:00'), (3, '2026-01-01T00:00:00.0000000+00:00'), (4, '2026-01-01T00:00:00.0000000+00:00'), (5, '2026-01-01T00:00:00.0000000+00:00');
+                INSERT INTO schema_migrations(version, applied_utc) VALUES (1, '2026-01-01T00:00:00.0000000+00:00'), (2, '2026-01-01T00:00:00.0000000+00:00'), (3, '2026-01-01T00:00:00.0000000+00:00'), (4, '2026-01-01T00:00:00.0000000+00:00');
                 CREATE TABLE jobs (
                     id TEXT PRIMARY KEY,
                     source_path TEXT NOT NULL,
@@ -129,6 +131,65 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         job.ImmichNewAssetId.Should().BeNull();
         (await repository.ListCompletedImmichAsync(databasePath)).Should().BeEmpty();
         (await repository.ListImmichSkipsAsync(databasePath)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task MigrationEightAddsVideoFactsAndBackfillsJobsWhoseProbeEntryStillDescribesTheOriginal()
+    {
+        var databasePath = Path.Combine(_directory, "migration-seven.db");
+        await RollBackToMigrationSevenAsync(databasePath);
+        var queued = Guid.NewGuid();
+        var validated = Guid.NewGuid();
+        var finalised = Guid.NewGuid();
+        var immich = Guid.NewGuid();
+        var failed = Guid.NewGuid();
+        // The jobs were created on 2026-01-01; a file written after that is not the one they saw.
+        var before = new DateTime(2025, 12, 31, 23, 59, 0, DateTimeKind.Utc).Ticks;
+        var after = new DateTime(2026, 1, 1, 0, 1, 0, DateTimeKind.Utc).Ticks;
+        await ExecuteAsync(databasePath, $$"""
+            INSERT INTO jobs (id, source_path, source_fingerprint, status, source_size_bytes, created_utc, updated_utc) VALUES
+                ('{{queued:N}}', 'C:\Videos\Queued.mp4', 'f', 0, NULL, '2026-01-01T00:00:00.0000000+00:00', '2026-01-01T00:00:00.0000000+00:00'),
+                ('{{validated:N}}', 'C:\Videos\kept.mp4', 'f', 6, 5000, '2026-01-01T00:00:00.0000000+00:00', '2026-01-01T00:00:00.0000000+00:00'),
+                ('{{finalised:N}}', 'C:\Videos\replaced.mp4', 'f', 6, 9000, '2026-01-01T00:00:00.0000000+00:00', '2026-01-01T00:00:00.0000000+00:00'),
+                ('{{failed:N}}', 'C:\Videos\later.mp4', 'f', 7, NULL, '2026-01-01T00:00:00.0000000+00:00', '2026-01-01T00:00:00.0000000+00:00');
+            INSERT INTO jobs (id, source_path, source_fingerprint, status, source_kind, immich_asset_id, created_utc, updated_utc) VALUES
+                ('{{immich:N}}', 'C:\Staging\asset\clip.mov', 'f', 12, 'immich', 'asset', '2026-01-01T00:00:00.0000000+00:00', '2026-01-01T00:00:00.0000000+00:00');
+            INSERT INTO immich_skipped_assets (asset_id, checksum, rules_fingerprint, reason, recorded_utc) VALUES ('skipped', 'c', 'r', 'no rule for h264', '2026-01-01T00:00:00.0000000+00:00');
+            INSERT INTO media_probe_cache (source_path, source_size_bytes, source_last_write_utc_ticks, primary_video_codec, video_stream_count, audio_stream_count, subtitle_stream_count, attachment_count, duration_seconds, size_bytes, primary_video_width, primary_video_height, primary_video_bitrate, cache_schema_version, updated_utc) VALUES
+                ('c:\videos\queued.mp4', 7000, {{before}}, 'h264', 1, 1, 0, 0, 30.5, 7000, 1920, 1080, 22000000, 1, '2026-01-01T00:00:00.0000000+00:00'),
+                ('C:\Videos\kept.mp4', 5000, {{before}}, 'hevc', 1, 1, 0, 0, 12, 5000, 3840, 2160, NULL, 1, '2026-01-01T00:00:00.0000000+00:00'),
+                ('C:\Videos\replaced.mp4', 3000, {{before}}, 'av1', 1, 1, 0, 0, 12, 3000, 1920, 1080, 4000000, 1, '2026-01-01T00:00:00.0000000+00:00'),
+                ('C:\Videos\later.mp4', 3000, {{after}}, 'av1', 1, 1, 0, 0, 12, 3000, 1920, 1080, 4000000, 1, '2026-01-01T00:00:00.0000000+00:00');
+            """);
+
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+
+        (await repository.GetAsync(databasePath, queued))!.VideoFacts.Should().Be(new VideoFacts("h264", 1920, 1080, 22_000_000, 30.5, 7000));
+        (await repository.GetAsync(databasePath, validated))!.VideoFacts.Should().Be(new VideoFacts("hevc", 3840, 2160, null, 12, 5000));
+        // The cache now describes a file that replaced the original: smaller than the one validated, or written after the job began.
+        (await repository.GetAsync(databasePath, finalised))!.VideoFacts.Should().BeNull();
+        (await repository.GetAsync(databasePath, failed))!.VideoFacts.Should().BeNull();
+        (await repository.GetAsync(databasePath, immich))!.VideoFacts.Should().BeNull();
+        (await repository.ListImmichSkipsAsync(databasePath))["skipped"].VideoFacts.Should().BeNull();
+    }
+
+    /// <summary>A database exactly as migration 7 left it: the current schema without migration 8's columns.</summary>
+    private static async Task RollBackToMigrationSevenAsync(string databasePath)
+    {
+        await new SqliteDatabaseInitializer().InitializeAsync(databasePath);
+        var columns = new[] { "video_codec", "video_width", "video_height", "video_bitrate", "video_duration_seconds", "video_size_bytes" };
+        await ExecuteAsync(databasePath, string.Join(Environment.NewLine,
+            columns.SelectMany(column => new[] { $"ALTER TABLE jobs DROP COLUMN {column};", $"ALTER TABLE immich_skipped_assets DROP COLUMN {column};" })
+                .Append("DELETE FROM schema_migrations WHERE version = 8;")));
+    }
+
+    private static async Task ExecuteAsync(string databasePath, string sql)
+    {
+        await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        _ = await command.ExecuteNonQueryAsync();
     }
 
     public void Dispose()

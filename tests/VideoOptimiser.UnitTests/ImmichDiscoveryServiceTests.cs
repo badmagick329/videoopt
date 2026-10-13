@@ -50,7 +50,9 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         job.SourcePath.Should().Be(Path.Combine(_settings.Immich.StagingDirectory, asset.Id, "PXL_20250101_120000000.mp4"));
         job.ExecutionMode.Should().Be(ProcessingModes.Local);
         (await File.ReadAllTextAsync(job.SourcePath)).Should().Be("hevc video");
-        (await _repository.GetAsync(_settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.Queued);
+        var stored = (await _repository.GetAsync(_settings.Database.Path, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Queued);
+        stored.VideoFacts.Should().Be(new VideoFacts("hevc", 1920, 1080, 20_000_000, 60, "hevc video".Length));
         _immich.SearchedBefore.Should().Be(Now.AddDays(-90));
         _immich.SearchedWithFavorites.Should().BeFalse();
     }
@@ -241,6 +243,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         skip.RulesFingerprint.Should().Be(EligibilityEvaluator.RulesFingerprint(_settings.Eligibility));
         skip.Reason.Should().Be("no rule for h264");
         skip.RecordedUtc.Should().Be(Now);
+        skip.VideoFacts.Should().Be(new VideoFacts("h264", 1920, 1080, 20_000_000, 60, "h264 video".Length));
     }
 
     [Fact]
@@ -634,6 +637,21 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
         events.OfType<ImmichDiscoveryProgress.Started>().Single().StaleSkips.Should().Be(0);
         events.OfType<ImmichDiscoveryProgress.CandidateDownloading>().Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AStaleSkipRejectedWithoutADownloadKeepsItsFactsOnlyWhileTheChecksumIsUnchanged(bool sameChecksum)
+    {
+        var small = _immich.Add("small.mp4", "h264 small");
+        _immich.Replace(small with { Exif = small.Exif with { FileSizeInBytes = 3 } });
+        var facts = new VideoFacts("h264", 1920, 1080, 20_000_000, 60, 10);
+        await _repository.PutImmichSkipAsync(_settings.Database.Path, new ImmichSkipRecord(small.Id, sameChecksum ? small.Checksum : "an-older-checksum", "an-older-rules-fingerprint", "codec h264", Now, facts));
+
+        await DiscoverAsync();
+
+        (await _repository.ListImmichSkipsAsync(_settings.Database.Path))[small.Id].VideoFacts.Should().Be(sameChecksum ? facts : null);
     }
 
     [Fact]

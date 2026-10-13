@@ -105,6 +105,9 @@ public sealed class JobProcessor(
             if (!readinessResult.IsReady) return await FailAsync(job, databasePath, "SourceNotReady", $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure, progress, cancellationToken);
 
             var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
+            // Saved with the job's next update. This covers a job `process` created without a probe, and one queued before
+            // migration 8; for the rest it describes the file as this run found it.
+            job.VideoFacts = VideoFacts.From(media, info.Length);
             if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return await FailAsync(job, databasePath, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles, progress, cancellationToken);
 
             // Before staging, and whatever --force says: a video that cannot save savings.minimumBytesSaved would only fail
