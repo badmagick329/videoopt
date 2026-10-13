@@ -1,0 +1,9 @@
+[2026-10-13T10:06:43Z INFO  ab_av1::command::encode] encoding output.mp4
+[2026-10-13T10:06:59Z INFO  ab_av1::command::encode] 20%, 54 fps, eta 66 seconds
+[2026-10-13T10:07:15Z INFO  ab_av1::command::encode] 42%, 57 fps, eta 45 seconds
+[2026-10-13T10:07:47Z INFO  ab_av1::command::encode] 87%, 60 fps, eta 9 seconds
+Encoded 99.81 MiB (29%)
+	Command being timed: "ab-av1 encode --input /var/tmp/video-optimiser/x/source.mp4 --output output.mp4 --crf 20"
+	User time (seconds): 1201.10
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:12.40
+	Exit status: 0

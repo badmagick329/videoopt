@@ -28,6 +28,15 @@ public static partial class HumanReadableValues
         };
     }
 
+    /// <summary>The one duration format every command prints: <c>45s</c>, <c>7m 36s</c>, <c>1h 05m</c>.</summary>
+    public static string FormatDuration(TimeSpan duration)
+    {
+        if (duration < TimeSpan.Zero) duration = TimeSpan.Zero;
+        return duration.TotalHours >= 1 ? $"{(int)duration.TotalHours}h {duration.Minutes:00}m"
+            : duration.TotalMinutes >= 1 ? $"{duration.Minutes}m {duration.Seconds:00}s"
+            : $"{duration.Seconds}s";
+    }
+
     public static bool TryParseBitrate(string? value, out long bitsPerSecond)
     {
         bitsPerSecond = 0;

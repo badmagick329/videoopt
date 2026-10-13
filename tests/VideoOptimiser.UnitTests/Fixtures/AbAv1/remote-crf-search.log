@@ -1,0 +1,24 @@
+[2026-10-13T10:08:45Z INFO  ab_av1::command::sample_encode] encoding sample 1/2 crf 34
+[2026-10-13T10:09:01Z INFO  ab_av1::command::sample_encode] 36%, 14 fps, eta 29 seconds
+[2026-10-13T10:09:17Z INFO  ab_av1::command::sample_encode] 93%, 17 fps, eta 2 seconds
+[2026-10-13T10:09:19Z INFO  ab_av1::vmaf] vmaf source.sample51+600f.av1.crf34.7.mp4 vs reference source.sample51+600f.mkv
+[2026-10-13T10:09:35Z INFO  ab_av1::vmaf] 85%, 26 fps, eta 3 seconds
+[2026-10-13T10:09:42Z INFO  ab_av1::command::sample_encode] sample 1/2 crf 34 VMAF 95.54 (22%)
+[2026-10-13T10:09:42Z INFO  ab_av1::command::sample_encode] encoding sample 2/2 crf 34
+[2026-10-13T10:09:58Z INFO  ab_av1::command::sample_encode] 40%, 15 fps, eta 25 seconds
+[2026-10-13T10:10:13Z INFO  ab_av1::vmaf] vmaf source.sample122+600f.av1.crf34.7.mp4 vs reference source.sample122+600f.mkv
+[2026-10-13T10:10:29Z INFO  ab_av1::vmaf] 85%, 26 fps, eta 3 seconds
+[2026-10-13T10:10:36Z INFO  ab_av1::command::sample_encode] sample 2/2 crf 34 VMAF 94.51 (15%)
+[2026-10-13T10:10:36Z INFO  ab_av1::command::sample_encode] crf 34 VMAF 95.02 predicted video stream size 185.82 MiB (19%) taking 5 minutes
+[2026-10-13T10:10:36Z INFO  ab_av1::command::crf_search] crf 34 VMAF 95.02 (19%)
+[2026-10-13T10:10:36Z INFO  ab_av1::command::sample_encode] encoding sample 1/2 crf 18
+[2026-10-13T10:12:34Z INFO  ab_av1::command::crf_search] crf 18 VMAF 99.46 (61%)
+[2026-10-13T10:14:29Z INFO  ab_av1::command::crf_search] crf 27 VMAF 97.72 (33%)
+[2026-10-13T10:16:21Z INFO  ab_av1::command::sample_encode] crf 29 VMAF 97.13 predicted video stream size 284.87 MiB (29%) taking 5 minutes
+[2026-10-13T10:16:21Z INFO  ab_av1::command::crf_search] crf 29 successful
+crf 29 VMAF 97.13 predicted video stream size 284.87 MiB (29%) taking 5 minutes
+	Command being timed: "ab-av1 crf-search --input /var/tmp/video-optimiser/dca970c226c144eab7199ed3d11d8b4a/source.mp4 --encoder libsvtav1 --pix-format yuv420p10le --preset 7 --min-vmaf 97 --min-crf 18 --max-crf 50 --crf-increment 1 --samples 2 --sample-duration 20s"
+	User time (seconds): 2915.50
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 7:36.29
+	Maximum resident set size (kbytes): 7878168
+	Exit status: 0
