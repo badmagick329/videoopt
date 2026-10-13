@@ -71,7 +71,7 @@ public sealed class ImmichFinalizationTests : IDisposable
             $"copy {original.Id} {replacement.Id}",
             $"tag {replacement.Id} tag-1,tag-2",
             $"trash {original.Id}");
-        replacement.Upload.Should().Be(new ImmichUpload(job.OutputPath!, "PXL_20250501.mp4", Created, Modified, IsFavorite: true));
+        replacement.Upload.Should().Be(new ImmichUpload(job.OutputPath!, "PXL_20250501.MP4", Created, Modified, IsFavorite: true));
         _immich.Updates.Should().ContainSingle().Which.Should().Be(new ImmichMetadataUpdate(Description: "Beach", Rating: 4));
         _immich.Get(original.Id).IsTrashed.Should().BeTrue();
 
@@ -82,6 +82,22 @@ public sealed class ImmichFinalizationTests : IDisposable
         result.Message.Should().Be($"New asset {replacement.Id}; the original is in Immich's trash.");
         Directory.Exists(StagingFolder(original)).Should().BeFalse();
         Directory.Exists(_settings.Immich.StagingDirectory).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("IMG_0897.MOV", "IMG_0897.MP4")]
+    [InlineData("IMG_0897.mov", "IMG_0897.mp4")]
+    [InlineData("clip.m4v", "clip.mp4")]
+    [InlineData("clip.avi", "clip.mkv")]
+    public async Task TheUploadTakesTheContainerTheEncodeWroteNotTheOriginalsExtension(string originalName, string uploadName)
+    {
+        var original = _immich.Add(originalName, "original");
+        var job = await ReadyJobAsync(original);
+
+        var result = await FinalizeAsync(job);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        _immich.Uploads.Should().ContainSingle().Which.Upload.FileName.Should().Be(uploadName);
     }
 
     [Fact]
@@ -351,7 +367,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         var id = Guid.NewGuid();
         folder ??= StagingFolder(original);
         var sourcePath = Path.Combine(folder, original.OriginalFileName);
-        var outputPath = Path.Combine(folder, ".video-optimiser", $"{Path.GetFileNameWithoutExtension(original.OriginalFileName)}.{id:N}.1.encoding.mp4");
+        var outputPath = Path.Combine(folder, ".video-optimiser", $"{Path.GetFileNameWithoutExtension(original.OriginalFileName)}.{id:N}.1.encoding{OutputContainer.ExtensionFor(original.OriginalFileName)}");
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         await File.WriteAllTextAsync(sourcePath, "original");
         await File.WriteAllTextAsync(outputPath, "av1");

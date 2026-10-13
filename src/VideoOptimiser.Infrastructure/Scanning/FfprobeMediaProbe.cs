@@ -85,7 +85,8 @@ public static class FfprobeJsonParser
             size,
             GetInt(primaryVideo, "width"),
             GetInt(primaryVideo, "height"),
-            GetLong(primaryVideo, "bit_rate"));
+            GetLong(primaryVideo, "bit_rate"),
+            [.. streams.Where(stream => GetString(stream, "codec_type") == "audio").Select(stream => GetString(stream, "codec_name") ?? "unknown")]);
     }
 
     private static bool IsDefaultStream(JsonElement stream) => stream.TryGetProperty("disposition", out var disposition) && disposition.TryGetProperty("default", out var value) && GetInt(value) == 1;

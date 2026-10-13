@@ -4,8 +4,10 @@ using VideoOptimiser.Application.Processing;
 namespace VideoOptimiser.Infrastructure.Processing;
 
 /// <summary>
-/// Installs a validated AV1. <c>delete</c> and <c>archive</c> move the original aside before the AV1 takes its path and put
-/// it back if that fails, so the original's path always holds the original or a complete AV1. <c>keep</c> never moves the
+/// Installs a validated AV1 under the output's extension, which can differ from the original's (a .mov original gets a .mp4).
+/// <c>delete</c> and <c>archive</c> move the original aside before the AV1 takes the original's name and put it back if that
+/// fails, so the original's path always holds the original, or the AV1 is complete at its installed path. When the extension
+/// changes the AV1 never overwrites a different file already at its name; it is numbered instead. <c>keep</c> never moves the
 /// original and installs the AV1 next to it. The AV1 then takes the original's created and modified dates, so it does not look
 /// newly made; failing to set them only warns, because the AV1 is already safely in place.
 /// </summary>
@@ -26,12 +28,13 @@ public sealed class SafeFileInstaller : ISafeFileInstaller
         var directory = Path.GetDirectoryName(sourcePath)!;
         var stem = Path.GetFileNameWithoutExtension(sourcePath);
         var extension = Path.GetExtension(sourcePath);
+        var outputExtension = Path.GetExtension(outputPath);
         // Read before the original moves or goes; afterwards there is nothing to copy them from.
         var created = File.GetCreationTimeUtc(sourcePath);
         var modified = File.GetLastWriteTimeUtc(sourcePath);
         if (Is(original.Action, OriginalActions.Keep))
         {
-            var installed = AvailablePath(directory, $"{stem}.av1", extension);
+            var installed = AvailablePath(directory, $"{stem}.av1", outputExtension);
             File.Move(outputPath, installed);
             EnsureInstalled(installed);
             return Task.FromResult(new FileInstallation(installed, null, CopyTimestamps(installed, created, modified)));
@@ -42,14 +45,16 @@ public sealed class SafeFileInstaller : ISafeFileInstaller
             var archiveDirectory = Path.IsPathFullyQualified(original.ArchiveDirectory) ? original.ArchiveDirectory : Path.Combine(directory, original.ArchiveDirectory);
             Directory.CreateDirectory(archiveDirectory);
             var archived = AvailablePath(archiveDirectory, stem, extension);
-            Replace(sourcePath, outputPath, archived);
-            return Task.FromResult(new FileInstallation(sourcePath, archived, CopyTimestamps(sourcePath, created, modified)));
+            var installedPath = InstalledPath(sourcePath, directory, stem, extension, outputExtension);
+            Replace(sourcePath, outputPath, archived, installedPath);
+            return Task.FromResult(new FileInstallation(installedPath, archived, CopyTimestamps(installedPath, created, modified)));
         }
 
         var rollback = Path.Combine(directory, $"{stem}.{Guid.NewGuid():N}.original.pending-delete{extension}");
-        Replace(sourcePath, outputPath, rollback);
+        var deletedInstalledPath = InstalledPath(sourcePath, directory, stem, extension, outputExtension);
+        Replace(sourcePath, outputPath, rollback, deletedInstalledPath);
         File.Delete(rollback);
-        return Task.FromResult(new FileInstallation(sourcePath, null, CopyTimestamps(sourcePath, created, modified)));
+        return Task.FromResult(new FileInstallation(deletedInstalledPath, null, CopyTimestamps(deletedInstalledPath, created, modified)));
     }
 
     private string? CopyTimestamps(string installedPath, DateTime created, DateTime modified)
@@ -72,13 +77,20 @@ public sealed class SafeFileInstaller : ISafeFileInstaller
         File.SetLastWriteTimeUtc(path, modified);
     }
 
-    private static void Replace(string sourcePath, string outputPath, string displacedPath)
+    /// <summary>
+    /// The original's own path when the extension is unchanged, as before. Otherwise the AV1 takes the original's name under
+    /// the new extension; it is looked up before the original moves, so the original itself never counts as a collision.
+    /// </summary>
+    private static string InstalledPath(string sourcePath, string directory, string stem, string extension, string outputExtension) =>
+        extension.Equals(outputExtension, StringComparison.OrdinalIgnoreCase) ? sourcePath : AvailablePath(directory, stem, outputExtension);
+
+    private static void Replace(string sourcePath, string outputPath, string displacedPath, string installedPath)
     {
         try
         {
             File.Move(sourcePath, displacedPath);
-            File.Move(outputPath, sourcePath);
-            EnsureInstalled(sourcePath);
+            File.Move(outputPath, installedPath);
+            EnsureInstalled(installedPath);
         }
         catch
         {

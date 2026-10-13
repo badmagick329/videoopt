@@ -16,7 +16,7 @@ public interface IProcessingSession : IAsyncDisposable
     Task StageAsync(string sourcePath, string sourceFingerprint, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)
         => StageAsync(sourcePath, sourceFingerprint, cancellationToken);
     Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default);
-    Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default);
+    Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default);
     Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default);
     Task RetrieveOutputAsync(string outputPath, int attempt, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)
         => RetrieveOutputAsync(outputPath, attempt, cancellationToken);

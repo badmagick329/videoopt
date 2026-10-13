@@ -133,11 +133,11 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         return new CrfSearchResult(crf, log, string.Empty, elapsed.Elapsed, CrfSearchOutputParser.TryParsePrediction(log, crf, out var prediction) ? prediction : null);
     }
 
-    public async Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var directory = EncodeDirectory(attempt);
         var remoteOutput = $"{directory}/output{Path.GetExtension(outputPath).ToLowerInvariant()}";
-        var arguments = new AbAv1VideoEncoder("ab-av1").BuildArguments(RemoteSourcePath, remoteOutput, crf, settings);
+        var arguments = new AbAv1VideoEncoder("ab-av1").BuildArguments(RemoteSourcePath, remoteOutput, crf, settings, flacAudioStreams);
         var elapsed = Stopwatch.StartNew();
         _ = await RunStageAsync(directory, arguments, sourcePath, progress, cancellationToken);
         elapsed.Stop();

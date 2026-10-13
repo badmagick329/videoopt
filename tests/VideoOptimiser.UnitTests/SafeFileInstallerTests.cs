@@ -8,7 +8,7 @@ namespace VideoOptimiser.UnitTests;
 public sealed class SafeFileInstallerTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
-    private readonly string _source;
+    private string _source;
     private readonly string _output;
 
     public SafeFileInstallerTests()
@@ -133,7 +133,103 @@ public sealed class SafeFileInstallerTests : IDisposable
         if (action != OriginalActions.Keep) File.Exists(installation.ArchivedOriginalPath ?? _source).Should().BeTrue();
     }
 
+    [Fact]
+    public async Task DeleteInstallsAMovOriginalsAv1AsMp4AndRemovesTheMov()
+    {
+        var mov = UseMovSource();
+
+        var installation = await Install(OriginalActions.Delete);
+
+        var installed = Path.Combine(_directory, "movie.mp4");
+        installation.Should().Be(new FileInstallation(installed, null));
+        (await File.ReadAllTextAsync(installed)).Should().Be("av1");
+        File.Exists(mov).Should().BeFalse();
+        File.Exists(_output).Should().BeFalse();
+        Directory.EnumerateFiles(_directory).Should().Equal(installed);
+    }
+
+    [Fact]
+    public async Task DeleteNumbersTheMp4WhenADifferentFileAlreadyHoldsTheName()
+    {
+        var mov = UseMovSource();
+        var existing = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(existing, "someone else's");
+
+        var installation = await Install(OriginalActions.Delete);
+
+        var installed = Path.Combine(_directory, "movie (2).mp4");
+        installation.InstalledPath.Should().Be(installed);
+        (await File.ReadAllTextAsync(installed)).Should().Be("av1");
+        (await File.ReadAllTextAsync(existing)).Should().Be("someone else's");
+        File.Exists(mov).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ArchiveKeepsTheMovArchivedUnderItsOwnExtensionAndInstallsTheMp4()
+    {
+        var mov = UseMovSource();
+
+        var installation = await Install(OriginalActions.Archive);
+
+        var archived = Path.Combine(_directory, "Archive", "movie.mov");
+        var installed = Path.Combine(_directory, "movie.mp4");
+        installation.Should().Be(new FileInstallation(installed, archived));
+        (await File.ReadAllTextAsync(archived)).Should().Be("original");
+        (await File.ReadAllTextAsync(installed)).Should().Be("av1");
+        File.Exists(mov).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task KeepInstallsTheAv1BesideAMovUnderTheOutputsExtension()
+    {
+        var mov = UseMovSource();
+
+        var installation = await Install(OriginalActions.Keep);
+
+        var installed = Path.Combine(_directory, "movie.av1.mp4");
+        installation.Should().Be(new FileInstallation(installed, null));
+        (await File.ReadAllTextAsync(mov)).Should().Be("original");
+        (await File.ReadAllTextAsync(installed)).Should().Be("av1");
+    }
+
+    [Theory]
+    [InlineData(OriginalActions.Delete)]
+    [InlineData(OriginalActions.Archive)]
+    public async Task AFailedInstallPutsAMovOriginalBackAtItsOwnPath(string action)
+    {
+        var mov = UseMovSource();
+        File.Delete(_output);
+
+        var install = () => Install(action);
+
+        await install.Should().ThrowAsync<FileNotFoundException>();
+        (await File.ReadAllTextAsync(mov)).Should().Be("original");
+        Directory.EnumerateFiles(_directory, "*", SearchOption.AllDirectories).Should().Equal(mov);
+    }
+
+    [Fact]
+    public async Task TheInstalledMp4TakesAMovOriginalsFileDates()
+    {
+        UseMovSource();
+        File.SetCreationTimeUtc(_source, OriginalCreated);
+        File.SetLastWriteTimeUtc(_source, OriginalModified);
+
+        var installation = await Install(OriginalActions.Delete);
+
+        installation.Warning.Should().BeNull();
+        new FileInfo(installation.InstalledPath).LastWriteTimeUtc.Should().Be(OriginalModified);
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    /// <summary>Makes the original a .mov, whose AV1 is the .mp4 in <c>_output</c>; the default source is already an .mp4.</summary>
+    private string UseMovSource()
+    {
+        var mov = Path.Combine(_directory, "movie.mov");
+        File.Move(_source, mov);
+        _source = mov;
+        return mov;
+    }
 
     private static readonly DateTime OriginalCreated = new(2021, 3, 4, 10, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime OriginalModified = new(2022, 5, 6, 11, 30, 0, DateTimeKind.Utc);

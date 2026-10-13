@@ -150,14 +150,14 @@ public sealed class JobProcessor(
                 var reattachAttempt = session.IsRemote && resumeStatus is JobStatus.Encoding or JobStatus.Downloading && job.Attempt > 0;
                 if (!reattachAttempt) job.Attempt++;
                 var outputDirectory = Path.Combine(Path.GetDirectoryName(path)!, TemporaryOutputClassifier.FolderName);
-                var outputPath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(path)}.{job.Id:N}.{job.Attempt}.encoding{Path.GetExtension(path)}");
+                var outputPath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(path)}.{job.Id:N}.{job.Attempt}.encoding{OutputContainer.ExtensionFor(path)}");
                 job.OutputPath = outputPath;
                 job.ManifestPath = manifests.GetPath(outputPath);
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
                 Directory.CreateDirectory(outputDirectory);
                 var crf = job.Crf.Value.ToString(CultureInfo.InvariantCulture);
                 progress?.Report(JobProgress.Step(prediction is null ? $"Encoding at CRF {crf}..." : $"Encoding at CRF {crf}, expected to take about {prediction.Taking}..."));
-                var encodeResult = await session.EncodeAsync(path, outputPath, job.Crf.Value, quality, job.Attempt, Translating(progress, AbAv1Stage.Encode, quality), cancellationToken);
+                var encodeResult = await session.EncodeAsync(path, outputPath, job.Crf.Value, quality, job.Attempt, PcmAudioStreams(media), Translating(progress, AbAv1Stage.Encode, quality), cancellationToken);
                 if (session.IsRemote)
                 {
                     stage = "DownloadFailed";
@@ -224,6 +224,10 @@ public sealed class JobProcessor(
             return await FailAsync(job, databasePath, stage, exception.Message, ExitCode.ProcessingFailure, progress, cancellationToken, (exception as AbAv1StageException)?.LogPath);
         }
     }
+
+    /// <summary>The audio-relative indexes of the PCM streams. Browsers do not play PCM copied into MP4, so these are re-encoded to FLAC.</summary>
+    private static int[] PcmAudioStreams(MediaInfo media) =>
+        [.. (media.AudioCodecs ?? []).Select((codec, index) => (codec, index)).Where(stream => stream.codec.StartsWith("pcm_", StringComparison.OrdinalIgnoreCase)).Select(stream => stream.index)];
 
     /// <summary>Each ab-av1 stage gets a fresh translator: its per-stage state (predictions, progress throttle, timing) must not carry over.</summary>
     private static IProgress<JobProgress>? Translating(IProgress<JobProgress>? progress, AbAv1Stage stage, QualitySettings quality) =>

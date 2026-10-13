@@ -36,6 +36,23 @@ public sealed class FfprobeJsonParserTests
     }
 
     [Fact]
+    public void ParseListsTheAudioCodecsInAudioStreamOrder()
+    {
+        const string json = """
+            {
+              "streams": [
+                { "codec_type": "video", "codec_name": "h264" },
+                { "codec_type": "audio", "codec_name": "aac" },
+                { "codec_type": "subtitle", "codec_name": "subrip" },
+                { "codec_type": "audio", "codec_name": "pcm_s24le" }
+              ]
+            }
+            """;
+
+        FfprobeJsonParser.Parse(json).AudioCodecs.Should().Equal("aac", "pcm_s24le");
+    }
+
+    [Fact]
     public void ParseRejectsFilesWithOnlyAttachedCoverArt()
     {
         const string json = """

@@ -38,9 +38,9 @@ internal sealed class LocalProcessingSession(JobRecord job, ICrfSearchClient crf
     public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
         RunLoggedAsync(sourcePath, "crf", progress, recorder => crfSearch.SearchAsync(sourcePath, settings, recorder, cancellationToken));
 
-    public async Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        var result = await RunLoggedAsync(sourcePath, $"encode-{attempt.ToString(CultureInfo.InvariantCulture)}", progress, recorder => encoder.EncodeAsync(sourcePath, outputPath, crf, settings, recorder, cancellationToken));
+        var result = await RunLoggedAsync(sourcePath, $"encode-{attempt.ToString(CultureInfo.InvariantCulture)}", progress, recorder => encoder.EncodeAsync(sourcePath, outputPath, crf, settings, flacAudioStreams, recorder, cancellationToken));
         return new ProcessingStageResult(result.OutputPath, result.Duration);
     }
 

@@ -20,7 +20,8 @@ public sealed record MediaInfo(
     long? SizeBytes,
     int? PrimaryVideoWidth = null,
     int? PrimaryVideoHeight = null,
-    long? PrimaryVideoBitrate = null);
+    long? PrimaryVideoBitrate = null,
+    IReadOnlyList<string>? AudioCodecs = null);
 
 public sealed record MediaTimeline(
     double FirstVideoTimestampSeconds,

@@ -42,6 +42,12 @@ function Get-VideoCodec([string] $Path) {
     $codec
 }
 
+function Get-AudioCodec([string] $Path) {
+    $codec = (& ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 $Path | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "ffprobe failed on $Path." }
+    $codec
+}
+
 function Get-FormatTag([string] $Path, [string] $Tag) {
     $value = (& ffprobe -v error -show_entries "format_tags=$Tag" -of csv=p=0 $Path | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "ffprobe failed on $Path." }
@@ -60,6 +66,8 @@ try {
     # Three 1080p H.264 clips: 1080p is the lowest resolution band, and near-lossless H.264 clears any bitrate floor.
     # Clip a is finalised with archive and clip c with keep; clip b's output is damaged to prove validation rejects it.
     # Each carries a phone-style capture date, GPS point and com.android tag, which the output must keep.
+    # Clip d is a .mov with PCM audio, as a camera or phone writes: AV1 cannot go in a .mov, so its output must be an .mp4
+    # with the PCM re-encoded to FLAC, and it is finalised first, in delete mode.
     foreach ($name in 'a', 'b', 'c') {
         & ffmpeg -hide_banner -v error -f lavfi -i 'testsrc2=size=1920x1080:rate=30:duration=3' `
             -f lavfi -i 'sine=frequency=440:duration=3:sample_rate=48000' `
@@ -68,6 +76,12 @@ try {
             -metadata 'com.android.model=Pixel 9 Pro' -movflags +use_metadata_tags (Join-Path $watchRoot "$name.mp4")
         if ($LASTEXITCODE -ne 0) { throw "ffmpeg failed to generate clip $name." }
     }
+
+    & ffmpeg -hide_banner -v error -f lavfi -i 'testsrc2=size=1920x1080:rate=30:duration=3' `
+        -f lavfi -i 'sine=frequency=440:duration=3:sample_rate=48000' `
+        -c:v libx264 -preset ultrafast -qp 5 -pix_fmt yuv420p -c:a pcm_s16le -shortest `
+        -metadata 'creation_time=2025-05-28T23:51:45.000000Z' -movflags +use_metadata_tags (Join-Path $watchRoot 'd.mov')
+    if ($LASTEXITCODE -ne 0) { throw 'ffmpeg failed to generate clip d.' }
 
     $config = Join-Path $workDirectory 'video-optimiser.yaml'
     $yamlPath = { param($path) $path.Replace('\', '\\') }
@@ -115,14 +129,18 @@ validation:
     Invoke-Cli 0 @('config', 'validate') | Out-Null
     Invoke-Cli 0 @('queue', 'discover') | Out-Null
     $queued = Get-Jobs 'queue list'
-    Assert ($queued.Count -eq 3) "discover should queue all three clips; queued $($queued.Count)."
+    Assert ($queued.Count -eq 4) "discover should queue all four clips; queued $($queued.Count)."
 
     Invoke-Cli 0 @('queue', 'run') | Out-Null
     $ready = Get-Jobs 'queue list'
-    Assert (@($ready | Where-Object status -eq 'ReadyToFinalize').Count -eq 3) "every job should be ReadyToFinalize; got $(($ready | ForEach-Object status) -join ', ')."
+    Assert (@($ready | Where-Object status -eq 'ReadyToFinalize').Count -eq 4) "every job should be ReadyToFinalize; got $(($ready | ForEach-Object status) -join ', ')."
     $jobA = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'a.mp4' }
     $jobB = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'b.mp4' }
     $jobC = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'c.mp4' }
+    $jobD = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'd.mov' }
+    Assert ($jobD.outputPath -like '*.encoding.mp4') "clip d's output should be an .mp4 because AV1 cannot go in a .mov: $($jobD.outputPath)"
+    Assert ((Get-VideoCodec $jobD.outputPath) -eq 'av1') 'clip d output should be AV1.'
+    Assert ((Get-AudioCodec $jobD.outputPath) -eq 'flac') 'clip d output should carry its PCM audio as FLAC.'
     Assert ((Get-VideoCodec $jobA.outputPath) -eq 'av1') 'clip a output should be AV1.'
     Assert ((Get-FormatTag $jobA.outputPath 'creation_time') -eq '2025-05-28T23:51:45.000000Z') 'the output should keep the capture date.'
     Assert ((Get-FormatTag $jobA.outputPath 'location') -eq '+51.5074-000.1278/') 'the output should keep the GPS location.'
@@ -142,6 +160,14 @@ validation:
     try { $stream.SetLength([long]($stream.Length / 2)) } finally { $stream.Dispose() }
     Invoke-Cli 7 @('validate', $jobB.id) | Out-Null
 
+    # Delete mode (the configured action) must remove the .mov and leave the AV1 under the .mp4 name.
+    $deleted = Invoke-Cli 0 @('finalize', $jobD.id)
+    $installedD = Join-Path $watchRoot 'd.mp4'
+    Assert ($deleted -match 'Original deleted; the AV1 is ') "finalising a .mov in delete mode should name the new AV1 path: $deleted"
+    Assert (-not (Test-Path -LiteralPath $jobD.sourcePath)) 'delete should remove the .mov original.'
+    Assert ((Get-VideoCodec $installedD) -eq 'av1') 'delete should install the AV1 as d.mp4.'
+    Assert ((Get-AudioCodec $installedD) -eq 'flac') 'the installed d.mp4 should carry FLAC audio.'
+
     # finalize reads original.action when it runs, so switching it between runs finalises each clip differently.
     function Set-OriginalAction([string] $Action) {
         (Get-Content -LiteralPath $config) -replace '^  action: ".*"$', "  action: `"$Action`"" | Set-Content -LiteralPath $config -Encoding utf8
@@ -156,6 +182,8 @@ validation:
     $finalA = $history | Where-Object id -eq $jobA.id
     $finalB = $history | Where-Object id -eq $jobB.id
     $finalC = $history | Where-Object id -eq $jobC.id
+    $finalD = $history | Where-Object id -eq $jobD.id
+    Assert ($finalD.status -eq 'Completed') "clip d should be Completed; got $($finalD.status)."
     Assert ($finalA.status -eq 'Completed' -and $finalC.status -eq 'Completed') "clips a and c should be Completed; got $($finalA.status), $($finalC.status)."
     Assert ($finalB.status -eq 'Failed' -and $finalB.failureCategory -eq 'ValidationFailed') "clip b should be Failed/ValidationFailed; got $($finalB.status)/$($finalB.failureCategory)."
     Assert ((Get-VideoCodec $jobA.sourcePath) -eq 'av1') 'the archived original path should now hold AV1.'
@@ -166,7 +194,7 @@ validation:
     Assert ((Get-VideoCodec $keptAv1) -eq 'av1') 'keep should install the AV1 beside the original.'
     Assert ((Get-VideoCodec $jobB.sourcePath) -eq 'h264') 'the original of a failed job must be untouched.'
 
-    foreach ($installed in $jobA.sourcePath, $keptAv1) {
+    foreach ($installed in $jobA.sourcePath, $keptAv1, $installedD) {
         $decodeErrors = (& ffmpeg -hide_banner -nostdin -v error -xerror -i $installed -f null - 2>&1 | Out-String).Trim()
         Assert ($LASTEXITCODE -eq 0 -and -not $decodeErrors) "the installed AV1 $installed should decode cleanly: $decodeErrors"
     }
@@ -185,11 +213,11 @@ validation:
     $afterCancel = Invoke-Cli 0 @('queue', 'discover')
     Assert ($afterCancel -cmatch '(?m)^Queued: 0\.' -and $afterCancel -match 'Previously failed or cancelled: 1\.') "a cancelled clip b should stay out of the queue: $afterCancel"
 
-    # Left behind: the manifests of clips a and c (completed) and clip b's output and manifest (failed).
+    # Left behind: the manifests of clips a, c and d (completed) and clip b's output and manifest (failed).
     $outputFolder = Join-Path $watchRoot '.video-optimiser'
     $preview = Invoke-Cli 0 @('cleanup', '--dry-run')
-    Assert ($preview -match 'Abandoned temporary outputs: 4\.') "cleanup --dry-run should list 4 abandoned files: $preview"
-    Assert (@(Get-ChildItem -LiteralPath $outputFolder -File).Count -eq 4) 'cleanup --dry-run must not delete anything.'
+    Assert ($preview -match 'Abandoned temporary outputs: 5\.') "cleanup --dry-run should list 5 abandoned files: $preview"
+    Assert (@(Get-ChildItem -LiteralPath $outputFolder -File).Count -eq 5) 'cleanup --dry-run must not delete anything.'
     Invoke-Cli 0 @('cleanup') -InputText 'y' | Out-Null
     Assert (@(Get-ChildItem -LiteralPath $outputFolder -File).Count -eq 0) 'cleanup should delete every abandoned file.'
     Assert ((Get-VideoCodec $jobB.sourcePath) -eq 'h264') 'cleanup must leave the original of a failed job untouched.'

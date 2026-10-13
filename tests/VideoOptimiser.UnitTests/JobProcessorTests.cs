@@ -51,6 +51,33 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     [Theory]
+    [InlineData("clip.mov", new[] { "aac", "pcm_s24le", "pcm_s16le" }, ".mp4", new[] { 1, 2 })]
+    [InlineData("CLIP.MOV", new[] { "pcm_s16le" }, ".MP4", new[] { 0 })]
+    [InlineData("clip.m4v", new[] { "aac" }, ".mp4", new int[0])]
+    [InlineData("clip.avi", new string[0], ".mkv", new int[0])]
+    public async Task ProcessAsyncWritesTheContainerTheCodecFitsAndAsksForFlacOnlyForPcmStreams(string sourceName, string[] audioCodecs, string expectedExtension, int[] expectedFlac)
+    {
+        var source = Path.Combine(_directory, sourceName);
+        await File.WriteAllTextAsync(source, "original video data");
+        var encoder = new FakeEncoder();
+        var processor = new JobProcessor(
+            new SqliteJobRepository(new SqliteDatabaseInitializer()),
+            new ReadableFiles(),
+            _ => new H264Probe(audioCodecs: audioCodecs),
+            new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => encoder, new UnexpectedExternalProcessRunner()),
+            new FileFingerprintService(),
+            new OutputManifestStore(),
+            new PassingValidator());
+        var settings = Settings("jobs.db");
+
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        encoder.OutputPath.Should().EndWith(".encoding" + expectedExtension);
+        encoder.FlacAudioStreams.Should().Equal(expectedFlac);
+    }
+
+    [Theory]
     [InlineData(JobSourceKind.Immich, "staging", JobStatus.ReadyToFinalize)]
     [InlineData(JobSourceKind.Immich, "elsewhere", JobStatus.Failed)]
     [InlineData(JobSourceKind.File, "staging", JobStatus.Failed)]
@@ -629,8 +656,8 @@ public sealed class JobProcessorTests : IDisposable
 
     private sealed class LoggingEncoder : IVideoEncoder
     {
-        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) => [];
-        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams) => [];
+        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             progress?.Report(JobProgress.Tool("Encoded 99.8 MiB (29%)"));
             await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
@@ -651,8 +678,8 @@ public sealed class JobProcessorTests : IDisposable
 
     private sealed class FailingLoggingEncoder : IVideoEncoder
     {
-        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) => [];
-        public Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams) => [];
+        public Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             progress?.Report(JobProgress.Tool("Error: disk full"));
             throw new InvalidOperationException("ab-av1 encode failed with exit code 1.");
@@ -675,11 +702,11 @@ public sealed class JobProcessorTests : IDisposable
         public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
     }
 
-    private sealed class H264Probe(string? unreadable = null) : IMediaProbe
+    private sealed class H264Probe(string? unreadable = null, IReadOnlyList<string>? audioCodecs = null) : IMediaProbe
     {
         public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => unreadable is not null && path.EndsWith(unreadable, StringComparison.OrdinalIgnoreCase)
             ? Task.FromException<MediaInfo>(new MediaProbeException("ffprobe exited with 1: moov atom not found"))
-            : Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, 10_000_000));
+            : Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, 10_000_000, audioCodecs));
     }
 
     private sealed class FixedCrfSearch : ICrfSearchClient
@@ -714,10 +741,14 @@ public sealed class JobProcessorTests : IDisposable
     private sealed class FakeEncoder : IVideoEncoder
     {
         public int CallCount { get; private set; }
-        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) => [];
-        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public string? OutputPath { get; private set; }
+        public IReadOnlyList<int>? FlacAudioStreams { get; private set; }
+        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams) => [];
+        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             CallCount++;
+            OutputPath = outputPath;
+            FlacAudioStreams = flacAudioStreams;
             await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
             return new EncodeResult(outputPath, TimeSpan.Zero);
         }
@@ -746,7 +777,7 @@ public sealed class JobProcessorTests : IDisposable
         public string? RemoteWorkspace => null;
         public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default) => throw new RemoteConnectionException("Remote unavailable.");
         public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task CancelAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -770,7 +801,7 @@ public sealed class JobProcessorTests : IDisposable
         public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
 
-        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             if (cancellationStage == CancellationStage.Encoding) throw new OperationCanceledException();
             return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));

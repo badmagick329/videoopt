@@ -7,7 +7,7 @@ namespace VideoOptimiser.Infrastructure.Processing;
 
 public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
 {
-    public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) =>
+    public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams) =>
     [
         "encode", "--input", inputPath, "--output", outputPath,
         "--encoder", settings.Encoder,
@@ -22,13 +22,16 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
         // Setting movflags replaces ab-av1's own +faststart, so it is repeated: the index stays ahead of the media
         // for streaming, and a truncated output still probes and fails validation cleanly.
         "--enc", "map_metadata=0",
-        "--enc", "movflags=+faststart+use_metadata_tags"
+        "--enc", "movflags=+faststart+use_metadata_tags",
+        // ab-av1 copies audio. PCM copied into MP4 is tagged ipcm, which browsers cannot play, so those streams become
+        // lossless FLAC, which MP4 and Matroska both carry and browsers play.
+        .. flacAudioStreams.SelectMany(index => new[] { "--enc", $"c:a:{index.ToString(CultureInfo.InvariantCulture)}=flac" })
     ];
 
-    public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var info = new ProcessStartInfo { FileName = executablePath, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var argument in BuildArguments(inputPath, outputPath, crf, settings))
+        foreach (var argument in BuildArguments(inputPath, outputPath, crf, settings, flacAudioStreams))
         {
             info.ArgumentList.Add(argument);
         }

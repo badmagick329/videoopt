@@ -48,7 +48,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             if (await fingerprints.CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint) throw new FinalizationRefusedException("Original changed after encoding.");
             var message = fromImmich
                 ? await immich.ReplaceAsync(databasePath, job, manifest, settings, cancellationToken)
-                : Describe(manifest.SourcePath, await installer.InstallAsync(manifest.SourcePath, manifest.OutputPath, settings.Original, cancellationToken));
+                : Describe(manifest.SourcePath, settings.Original, await installer.InstallAsync(manifest.SourcePath, manifest.OutputPath, settings.Original, cancellationToken));
             job.Status = JobStatus.Completed;
             job.FailureCategory = null;
             job.FailureMessage = null;
@@ -95,11 +95,16 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
     }
 
-    private static string Describe(string sourcePath, FileInstallation installation)
+    /// <summary>
+    /// The mode comes from the action, not the paths: the AV1 takes the output's extension, so a changed path no longer
+    /// means the original was kept.
+    /// </summary>
+    internal static string Describe(string sourcePath, OriginalSettings original, FileInstallation installation)
     {
-        var message = installation.ArchivedOriginalPath is { } archived ? $"Original archived to {archived}."
-            : installation.InstalledPath != sourcePath ? $"Original kept; AV1 installed as {installation.InstalledPath}."
-            : "Original deleted.";
+        var moved = string.Equals(installation.InstalledPath, sourcePath, StringComparison.Ordinal) ? string.Empty : $"; the AV1 is {installation.InstalledPath}";
+        var message = original.Action.Equals(OriginalActions.Keep, StringComparison.OrdinalIgnoreCase) ? $"Original kept; AV1 installed as {installation.InstalledPath}."
+            : installation.ArchivedOriginalPath is { } archived ? $"Original archived to {archived}{moved}."
+            : $"Original deleted{moved}.";
         return installation.Warning is { } warning ? $"{message} Warning: {warning}" : message;
     }
 }

@@ -399,7 +399,7 @@ public sealed class RemoteSshProcessingSessionTests
         ]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
-        var result = await session.EncodeAsync(source, output, 42, new QualitySettings(), 3);
+        var result = await session.EncodeAsync(source, output, 42, new QualitySettings(), 3, []);
 
         result.OutputPath.Should().Be(output);
         runner.Requests.Should().HaveCount(3);

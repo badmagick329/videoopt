@@ -233,9 +233,9 @@ public sealed class ImmichRunTests : IDisposable
 
     private sealed class FakeEncoder : IVideoEncoder
     {
-        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) => [];
+        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams) => [];
 
-        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             await File.WriteAllTextAsync(outputPath, $"av1 of {await File.ReadAllTextAsync(inputPath, cancellationToken)}", cancellationToken);
             return new EncodeResult(outputPath, TimeSpan.Zero);
