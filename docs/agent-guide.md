@@ -9,7 +9,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 | Class | Commands | What to do |
 | --- | --- | --- |
 | Read-only | `doctor`, `status`, `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `process --dry-run` | Run freely. Add `--json` where offered. `doctor` may create the job database and the Immich staging folder. |
-| Working | `queue discover`, `queue run`, `process`, `immich run`, `validate`, `queue cancel`, `queue retry` | Run when the user's request covers it. They change only the job database and temporary files. The one exception: `immich run`'s re-upload guard moves converted originals the phone uploaded again back to Immich's trash, which is the intended outcome. |
+| Working | `config init`, `queue discover`, `queue run`, `process`, `immich run`, `validate`, `queue cancel`, `queue retry` | Run when the user's request covers it. They change only the job database and temporary files, and `config init` writes a new config that never replaces an existing one. The one exception: `immich run`'s re-upload guard moves converted originals the phone uploaded again back to Immich's trash, which is the intended outcome. |
 | Gated | `finalize`, `immich finalize`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Gate first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
 
 **Paid encoding.** When the config has `processing.mode: "remoteSsh"` and `remoteSsh.lifecycle: "hetzner"`, a `queue run`, `process`, `immich run` or `worker create` that needs a server asks before creating one, which bills by the hour:
@@ -32,7 +32,7 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 
 `--local` and `--remote` on `queue run`, `process` and `immich run` set the mode for that run only. `--remote` on a Hetzner config is gated as above. `--local` encodes on this PC and needs no gate; use it when the user wants a free trial run on a remote config. Never edit `processing.mode` to switch for one run.
 
-**Remote setup.** `remote setup` is the one-time Hetzner setup. It uploads an SSH key to the user's Hetzner project before it asks anything, so gate even its first run. Without input it then prints the `processing:` section it would write, changes no file and exits `0`. Show the user that section; after their go-ahead, run `'y' | video-optimiser remote setup`. A rerun reuses the uploaded key, rewrites only the `processing:` section and keeps the old file as `<config>.bak`. Exit `3` after `No Hetzner API token was found.` means the user must create the token and add it to `.env` themselves; never ask for its value.
+**Remote setup.** `remote setup` is the one-time Hetzner setup. It uploads an SSH key to the user's Hetzner project before it asks anything, so gate even its first run. Without input it then prints the `processing:` section it would write, changes no file and exits `0`. Show the user that section; after their go-ahead, run `'y' | video-optimiser remote setup`. A rerun reuses the uploaded key, rewrites only the `processing:` section and keeps the old file as `<config>.bak`. Exit `3` after `No Hetzner API token was found.` means the user must create the token and add it to `.env` themselves; never ask for its value. Exit `3` after `remote setup configures managed Hetzner workers only` means the config uses a manual SSH host; that setup is in [remote-ssh.md](remote-ssh.md#manual-ssh-lifecycle). Exit `4` means Hetzner's API or `ssh-keygen` failed; report the message.
 
 **Where encoding runs.** Take the encoding location from VideoOptimiser, not from your reading of the config. `doctor` reports it as `EncodingLocation` under `Processing`, and `queue run`, `process` and `immich run` print the same `Encoding on ...` line first, before any download or encoding. Quote it at the paid-encoding gate. If a run's line differs from what the user expects, stop the run before its next line.
 
@@ -43,15 +43,15 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 ## Setup
 
 1. Find the config. The app uses `--config <path>`, then `VIDEO_OPTIMISER_CONFIG`, then `%ProgramData%\VideoOptimiser\config.yaml`, then `video-optimiser.yaml` in the current folder. `config show` prints the one in use. Pass `--config` on every command when more than one may exist. With no config yet, ask the user for a quality level: `archive` (VMAF 97, indistinguishable from the original), `standard` (95, hard to tell apart) or `compact` (93, small visible loss, bigger savings). Then run `config init --config <path> --quality <level>`. Without `--quality`, redirected input gets `standard`. It never overwrites a file.
-2. Run `doctor --json`. Done when no diagnostic has `"status": "Fail"`. Each failure's `message` says what to fix. Configuration fixes are the user's to choose: propose the YAML change, then apply it once they agree.
+2. Run `doctor --json`. Done when no diagnostic has `"status": "Fail"`. Each failure's `message` says what to fix. Configuration fixes are the user's to choose: propose the YAML change, then apply it once they agree. A config written by an older version can fail with `Unknown setting '<path>' at line N, column M.` when a later version removed that setting. Propose deleting the line; the release notes on GitHub list each removed setting, and any replacement, under **Breaking config change**.
 
 ## Workflow: folders
 
-1. **Queue.** `queue discover`. On a user's first run, add `--first` to queue one video. Done when it prints its `Queued: N.` summary, which leaves out zero counts, so a missing `Queued` means none. With nothing queued, report that and stop. On a large folder it prints `Checked N files so far ...` every 10 seconds; that is progress, not a hang. The starter rules match only large H.264 files at 1080p and above, so phone footage (HEVC) needs a rule change first.
-2. **Convert.** `queue run`. Done when it exits. A video can take an hour or more on a PC; run it in the background if your harness allows, and check progress with `status --json`. Exit `0`: every job is ready. Exit `10`: some failed. Exit `6`: all failed.
+1. **Queue.** `queue discover`. On a user's first run, add `--first` to queue one video. Done when it prints its `Queued: N.` summary, which leaves out zero counts, so a missing `Queued` means none. With nothing queued, report that and stop. On a large folder it prints `Checked N files so far ...` every 10 seconds; that is progress, not a hang. The starter rules match only large H.264 files at 1080p–1440p and at 4K or above, so phone footage (HEVC) needs a rule change first; `calibrate` shows what the rules leave out.
+2. **Convert.** `queue run`. Done when it exits. A video can take an hour or more on a PC; run it in the background if your harness allows, and check progress with `status --json`. Exit `0`: no job failed; each is ready or not worth converting. Exit `10`: some failed and some are ready. Exit `6`: some failed and none is ready.
 3. **Report.** From `status --json`, list each `ReadyToFinalize` job's `sourcePath`, `outputPath` and `percentageSaved`, and each failed job's `failureCategory` and `failureMessage`. Ask the user to watch the outputs.
 4. **Gate.** Say what `original.action` will do to each original: `delete`, `archive` or `keep`.
-5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` or `Failed  <file>: <message>` per job, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out), then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed, so check `status --json`.
+5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` per job to standard output, or `Failed  <file>: <message>` to standard error, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out), then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed, so check `status --json`.
 
 ## Workflow: Immich
 
@@ -59,7 +59,7 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
 
 1. **Phone.** Ask the user whether they have run the Immich app's "Free up space" since the last round, with a cutoff no older than `immich.minimumAgeDays`, and emptied the phone's trash. Only the user can do this. Wait for their answer.
 2. **Convert.** `immich run`, with `--first` on a user's first round and `--limit <n>` when the user names a round size. Before a paid remote round, ask the user for that size. Done when it exits. If it lists re-uploaded originals, pass that list to the user exactly as printed: they must delete those files from the phone. Exit `10` also covers guard or search issues; quote those lines.
-   Discovery downloads each candidate to check it, so many `[n] <file>  <date>  <codec> <resolution> <bitrate>  <size>  skip: <reason>` lines are normal: a rejected download is deleted from the staging folder and the video is skipped in future runs. `queued: fits rule N` and `skip: rule N needs ...` number the rules from 1 in `eligibility.rules` order. `N videos were skipped under different eligibility rules; ...` is normal after a rules change, and returns on later runs until the search has reached each of them. Report the summary to the user: `Found X of N after checking M. Skipped K: <reasons>.` and, when present, `Not downloaded: ...`. A video that fails its checksum or probe prints `issue: ...` and is tried again on the next run. The re-upload guard prints only when it finds a converted original in Immich again.
+   Discovery prints many lines before the first encode; *Immich discovery lines* under *Reading run output* says which are normal and which summary to report.
 3. **Report.** As in the folders workflow; filter `status --json` to `"source": "immich"`. Each `outputPath` is under `immich.stagingDirectory`.
 4. **Gate.** Each AV1 is uploaded as a new Immich asset and each original goes to Immich's trash.
 5. **Finalise.** After the go-ahead, `'y' | video-optimiser immich finalize`. Done when it prints `Finalised: N.` with no `Failed:` count and exits `0`. If it stops partway, running it again continues; that rerun needs the gate too.
@@ -76,7 +76,7 @@ Use this when the user asks why videos are not converted, or whether their rules
 
 ## Reading run output
 
-`queue run`, `process` and `immich run` print one block per job, then a tally of the non-zero outcomes (`Ready to finalise: 4. Not worth converting: 1.`, or `Nothing to finalise.`) and a `Next:` line when something is ready:
+`queue run`, `process` and `immich run` print one block per job. `queue run` and `immich run` then print a tally of the non-zero outcomes (`Ready to finalise: 4. Not worth converting: 1.`, or `Nothing to finalise.`) and, when something is ready, a `Next:` line naming `finalize --ready` or `immich finalize`. `process` prints no tally; when its job is ready, its `Next:` line names `finalize <job-id>`. A job block:
 
 ```text
 [2/5] PXL_20250531_041434717.mp4 (1002.4 MiB)
@@ -95,7 +95,7 @@ Use this when the user asks why videos are not converted, or whether their rules
       Ready to finalise: 1002.4 MiB -> 287.3 MiB, 71.3% saved.
 ```
 
-The upload and download lines appear only on a remote worker. On a terminal the output is coloured; redirected output is plain text. If your harness runs commands in a terminal and you see escape codes such as `ESC[32m`, set `NO_COLOR=1`. The last line of each block is the job's outcome:
+The upload and download lines appear only on a remote worker. When `savings.minimumBytesSaved` sets the video's size cap, the search line names it: `Finding the best CRF for VMAF 97 that saves 100MiB (...)`. On a terminal the output is coloured; redirected output is plain text. If your harness runs commands in a terminal and you see escape codes such as `ESC[32m`, set `NO_COLOR=1`. The last line of each block is the job's outcome:
 
 | Outcome line | Job status |
 | --- | --- |
@@ -106,6 +106,18 @@ The upload and download lines appear only on a remote worker. On a terminal the 
 | `Worker unreachable: … Run the same command again to resume.` | `Interrupted` |
 
 **Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints a progress line about every 15 seconds and states its expected length when it starts; its progress lines add `about <time> left` only after 30 seconds and 5 percentage points, so early lines without it are normal. A running job that prints nothing new for 15 minutes is stuck: report it with the job's last lines and `status --json`.
+
+### Immich discovery lines
+
+`immich run` downloads each candidate to check it, so before the first job block it prints one line per video checked:
+
+- `[n] <file>  <date>  <codec> <resolution> <bitrate>  <size>  skip: <reason>` is normal. The rejected download is deleted from the staging folder, and the video is skipped in future runs.
+- `queued: fits rule N` and `skip: rule N needs ...` number the rules from 1 in `eligibility.rules` order; with a single rule, the number is left out.
+- `issue: ...` means a video failed its checksum or probe. It is tried again on the next run.
+- `N videos were skipped under different eligibility rules; ...` (or `1 video was ...`) is normal after a rules change, and returns on later runs until the search has reached each of them.
+- The re-upload guard prints only when it finds a converted original in Immich again.
+
+Report the summary to the user: `Found X of N after checking M.` with `--first` or `--limit`, `Found N videos to convert after checking M.` without, followed by `Skipped K: <reasons>.` and, when present, `Not downloaded: ...`.
 
 ## Recovery
 
@@ -120,6 +132,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `ValidationFailed` | The AV1 failed a check, such as saving less than `savings.minimumBytesSaved` when the encode came out larger than the search predicted | Report it. The original stays as it is, and discovery won't queue it again until the file changes. |
 | `StagingFailed`, `CrfSearchFailed`, `EncodeFailed`, `DownloadFailed`, `ProcessingFailed` | A processing step failed | Report `failureMessage`. Run `queue retry <id>` only if the user asks, once the cause is fixed. |
 | `RemoteConfigurationChanged` | The job started under a different processing setup | Report it. `queue retry <id>` starts a fresh job under the current setup, if the user wants. |
+| `Cancelled` | `queue cancel` stopped it | Nothing. `queue retry <id>` queues it again, only if the user asks. |
 | `Ineligible`, `SourceNotReady`, `SourceOutsideWatchRoot`, `SourceChanged`, `SourceMissing` | The file did not qualify, changed, or was gone when the job ran | Nothing. The next `queue discover` or `immich run` re-checks it. |
 | `FinalizationIncomplete` | An Immich finalisation stopped partway | Gate, then `'y' | video-optimiser immich finalize`. |
 | `FinalizationFailed`, `ManualInterventionRequired` | Replacing a file original failed or was cut off | Stop. Show the user the job, its `sourcePath` and `outputPath`, and let them decide. |
@@ -136,11 +149,11 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | --- | --- |
 | `0` | Success, or a confirmation answered "no" |
 | `1` | General failure, including a `doctor` failure outside configuration and dependencies, and `calibrate` on a database an older version wrote |
-| `2` | Invalid arguments |
+| `2` | Invalid arguments, including an invalid job ID, or `queue retry` on a job it cannot retry (not found, not failed, cancelled or skipped, or the original already has an open job) |
 | `3` | Invalid configuration, or an Immich API key that is missing, rejected or lacks a permission |
-| `4` | Missing or unusable media tool (`doctor`) |
+| `4` | A failed dependency check in `doctor`: a media tool, the Immich server (unreachable, not Immich 3, its key, or its trash off) or the Hetzner API. Also `remote setup` when it cannot run `ssh-keygen` or list or upload the Hetzner key |
 | `5` | `process` on a file the rules exclude; add `--force` to convert it anyway |
-| `6` | Processing failed for every job, an Immich request failed, or ffprobe could not read an original (`validate`) |
+| `6` | Processing failed and nothing is ready, including a `process` whose job failed or whose file is missing; an Immich request failed; ffprobe could not read a file; Hetzner had no server capacity; or `validate` or `finalize <job-id>` named a job that does not exist |
 | `7` | The output failed validation, including an output ffprobe cannot read (`validate`, `process`), or `finalize <job-id>` named a job that is not ready |
 | `8` | `finalize <job-id>` failed, or `immich finalize` failed for every job |
 | `9` | Cancelled with `Ctrl+C` |

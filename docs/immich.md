@@ -23,7 +23,7 @@ Put it in the `.env` file beside your config (copy `.env.example` if you don't h
 VIDEO_OPTIMISER_IMMICH_API_KEY=paste-your-key-here
 ```
 
-An environment variable with the same name wins over the file. The key never goes in the YAML, and VideoOptimiser never prints or stores it.
+An environment variable with the same name wins over the file. The key never goes in the YAML, and VideoOptimiser never prints or stores it. To use another variable or file, set `immich.apiKeyEnvironmentVariable` or `immich.apiKeyFile`; a relative file path is relative to the config file.
 
 ### 3. Configure
 
@@ -35,12 +35,12 @@ immich:
   stagingDirectory: "immich-staging"
 ```
 
-- **`baseUrl`:** use the server's LAN address. A public hostname behind Cloudflare rejects uploads over 100 MB, so large AV1 uploads would fail.
+- **`baseUrl`:** use the server's LAN address. A public hostname behind Cloudflare rejects uploads over 100 MB, so large AV1 uploads would fail. Leave it empty to turn Immich off; the `immich` commands then refuse to run.
 - **`minimumAgeDays`:** only videos taken more than this many days ago are converted. See [The age rule](#the-age-rule).
 - **`skipFavorites`:** leaves favourites alone, matching the phone's "Free up space", which keeps them by default.
 - **`stagingDirectory`:** where full-size originals are downloaded while they convert. It needs room for the largest batch you run. Relative paths are relative to the config file.
 
-Phones usually record HEVC, so make sure your [eligibility rules](../README.md#choose-which-videos-to-convert) include `"hevc"`.
+Phones usually record HEVC, so make sure your [eligibility rules](configuration.md#choose-which-videos-to-convert) include `"hevc"`.
 
 ### 4. Check
 
@@ -48,7 +48,7 @@ Phones usually record HEVC, so make sure your [eligibility rules](../README.md#c
 .\video-optimiser.exe doctor --config .\video-optimiser.yaml
 ```
 
-`doctor` confirms that the server runs Immich 3, that it accepts the key, and that the staging directory is writable. It can't test every permission without changing your library: if one is missing, the command that needs it stops with exit code 3 and names it.
+`doctor` confirms that the server runs Immich 3, that it accepts the key, and that the staging directory is writable. It can't test every permission without changing your library. If one is missing, the error names it: `immich run` stops with exit code 3, and `immich finalize` fails that video, leaves it ready to finalise, and exits 8 (or 10 when other videos succeeded).
 
 Using only Immich? You can leave `watch.roots` empty.
 
@@ -77,7 +77,7 @@ Then use `--limit <n>` for a round of at most `n` videos, such as `--limit 5`, o
 1. Prints where encoding runs, such as `Encoding on this PC (--local).`, before downloading anything.
 2. Runs the [re-upload guard](#the-re-upload-guard), which prints something only when it acts.
 3. Downloads again the staged copy of any open job that is missing one, such as a job `queue retry` queued after `cleanup` deleted its copy. If Immich no longer has that video, the job fails as `SourceMissing`.
-4. Searches Immich for videos taken before the age cutoff, skipping favourites if configured, and anything already converted, skipped or failed. A video no bigger than `savings.minimumBytesSaved` (default `100MiB`) cannot save that much, so it is never downloaded. A video whose conversion would not save enough (`quality.maxEncodedPercent`, default `80`, or `savings.minimumBytesSaved`) ends as `Not worth converting` and counts under "Previously skipped" on later runs.
+4. Searches Immich, oldest first, for timeline and archived videos taken before the age cutoff. It leaves out the locked folder, the trash, external libraries, favourites if configured, and anything already converted, skipped or failed. Without a download it also passes over a video whose extension is not in `eligibility.extensions`, one smaller than every rule's `minimumFileSize`, and one no bigger than `savings.minimumBytesSaved` (default `100MiB`), which cannot save that much. A video whose conversion would not save enough (`quality.maxEncodedPercent`, default `80`, or `savings.minimumBytesSaved`) ends as `Not worth converting`, and later runs count it as `handled in earlier runs`.
 5. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it. A video that doesn't match is deleted at once, so most downloads you see go by without leaving a file. Each downloaded candidate gets one line with its capture date, codec, resolution, video bitrate, size and outcome, so the outcome reads against what was measured: `hevc 4K 33 Mbps  319.4 MiB  queued: fits rule 3 (1 of 1)`, `h264 4K 42 Mbps  495.1 MiB  skip: rule 1 needs 2GiB` (what the closest rule asks for, as written in your config) or `issue: ...`. The rule numbers count the entries of `eligibility.rules` from 1. The search ends with how many videos it found, why the others were skipped, and a count for everything it left alone without a download.
 6. Converts the queue on your PC or remote worker, exactly like `queue run`.
 
@@ -111,7 +111,7 @@ If it stops partway, run it again: it continues where it left off. Until step 3,
 - **Changing the quality bar checks skipped videos again.** A video that ended `Not worth converting` is left alone while `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat`, `crfSearch.minCrf`/`maxCrf` and `savings.minimumBytesSaved` stay the same; changing any of them, or the video's file, downloads it again on the next run. It is not a failure: it does not change the exit code, and `immich run` counts it in its closing tally as `Not worth converting: N.`
 - **`calibrate` includes Immich without downloading anything.** It searches the same videos `immich run` would. Immich reports no codec, so a video no run has downloaded is listed by resolution and by a bitrate worked out from its size and length, which includes the audio. `calibrate` can name one of those videos for you to test, but no command converts a single Immich video.
 - **Failed, cancelled or skipped videos keep their download** in the staging directory until you run `cleanup`, which deletes the download with the job's temporary files and asset folder. A download an open job still needs is never deleted. After `queue retry`, the next `immich run` downloads the video again.
-- **Exit code 10** after `immich run` means some videos failed to convert (not videos that were not worth converting), or something else needs a look: a guard or search issue, or an asset Immich returned that its filter should have excluded. Read the output.
+- **Exit codes after `immich run`:** `6` means videos failed and none is ready to finalise. `10` means some failed while others are ready, or something else needs a look: a guard or search issue, or an asset Immich returned that its filter should have excluded. Videos not worth converting change neither. Read the output.
 
 ## The age rule
 

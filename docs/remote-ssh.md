@@ -30,9 +30,9 @@ It creates the password-disabled, non-sudo `videoopt` SSH user and the `/var/tmp
 .\artifacts\local\video-optimiser.exe remote setup --config .\video-optimiser.yaml
 ```
 
-`remote setup` creates no server and costs nothing. In order, it:
+`remote setup` creates no server and costs nothing. It sets up managed Hetzner workers only: with `lifecycle: "manual"` and a `host` set, it stops with exit `3` and points you to [Manual SSH lifecycle](#manual-ssh-lifecycle). If it cannot reach the Hetzner API or run `ssh-keygen`, it exits `4`. In order, it:
 
-1. **Checks the Hetzner API token.** With none, it prints how to create one and exits `3`. In the Hetzner Cloud project, open **Security > API Tokens** and create a token with **Read & Write** permission; Hetzner shows it only once. Then create the ignored token file from the repository root or release folder:
+1. **Checks the Hetzner API token.** With none, it prints how to create one and exits `3`. In the Hetzner Cloud project, open **Security > API Tokens** and create a token with **Read & Write** permission; Hetzner shows it only once. Then create the ignored token file beside your config file (`apiTokenFile` sets another path, relative to the config):
 
    ```powershell
    Copy-Item .\.env.example .\.env
@@ -59,10 +59,10 @@ VideoOptimiser tries each server type in `serverTypes` order, and each type in e
 
 Before creating anything, it reads Hetzner's server type list once and skips any type and location where:
 
-- Hetzner reports the type as unavailable (sold out) there, or doesn't sell it there;
+- Hetzner doesn't list the type name at all, reports the type as unavailable (sold out) there, or doesn't sell it there;
 - the type has fewer cores than `minimumCpuCount` or less memory than `minimumAvailableMemory`, because the worker check would reject it after billing starts;
 - the type isn't x86 (the bootstrap installs x86 builds), or Hetzner has deprecated it;
-- its price there, including VAT, is above `maxHourlyPrice`.
+- its price there, including VAT, is above `maxHourlyPrice`, or Hetzner lists no price there while a cap is set.
 
 It prints each skipped type with the reason, then asks once before creating anything:
 
@@ -129,6 +129,7 @@ The worker's type and location show in `worker status`.
      remoteSsh:
        lifecycle: "hetzner"
        identityFile: "C:\\Users\\YOUR_USER\\.ssh\\video-optimiser-hetzner-ed25519"
+       # Keep this path for Hetzner: the bootstrap creates only this workspace.
        workingDirectory: "/var/tmp/video-optimiser"
        minimumCpuCount: 8
        minimumAvailableMemory: "14GiB"
@@ -205,7 +206,7 @@ For an initial test with an empty queue, discover only one eligible video:
 
 With `deleteAfterRun: true`, a clean `process` or `queue run` deletes the server after outputs have been downloaded, checksum-verified, and validated locally. It then confirms that the separately billable Primary IPv4 was also deleted. The original video remains untouched in `ReadyToFinalize` state.
 
-When it creates a server, the command says setup takes several minutes and prints a `Worker setup: 35%, building SVT-AV1...` line at each stage, with the time spent in a stage if it runs long. SSH refusals while the server boots are expected and stay silent for the first 3 minutes; after that `Still waiting for the worker's SSH` appears at most once a minute. `Worker ready after 7m 36s.` ends the wait. While an original is staged, the command reports local hashing, remote capacity checks, resumable upload bytes/percentage, and checksum verification. Downloads report the same resumable bytes/percentage and verification phases. Slow transfers print an elapsed-time heartbeat every 30 seconds, so `Staging` or `Downloading` does not remain silent.
+When it creates a server, the command says setup takes several minutes and prints a `Worker setup: 35%, building SVT-AV1...` line at each stage, with the time spent in a stage if it runs long. SSH refusals while the server boots are expected and stay silent for the first 3 minutes; after that `Still waiting for the worker's SSH` appears at most once a minute. `Worker ready after 7m 36s.` ends the wait. While an original is staged, the command reports local hashing, remote capacity checks, resumable upload bytes/percentage, and checksum verification. Downloads report the same resumable bytes/percentage and verification phases. A step that runs longer than 10 seconds prints a progress line at most every 10 seconds: a transfer gives its percentage, rate and time left, and local hashing gives `Checking the checksum: N% of <size>`, so `Staging` or `Downloading` does not remain silent.
 
 If the application crashes, the network becomes unreachable, bootstrap times out, or a job is marked `Interrupted`, the worker is retained. Run the same command again to reconnect, resume the remote stage or transfer, and delete the worker after the clean completion.
 

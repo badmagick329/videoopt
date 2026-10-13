@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+
+- The README is shorter. Eligibility rules, `calibrate`, videos not worth converting and what `finalize` does to originals are now in [docs/configuration.md](docs/configuration.md).
+
+### Fixed
+
+- [docs/immich.md](docs/immich.md), [docs/remote-ssh.md](docs/remote-ssh.md) and [docs/agent-guide.md](docs/agent-guide.md) now match the program: exit codes for a missing Immich permission, a failed run and `remote setup`; the `handled in earlier runs` count; which Immich videos are searched; transfer progress every 10 seconds; `.env` beside the config file; and the Hetzner workspace path.
 
 ## [0.7.0] - 2026-10-13
 ### Added
