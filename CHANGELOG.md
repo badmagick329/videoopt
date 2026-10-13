@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.7.1] - 2026-10-13
 ### Changed
 
 - The README is shorter. Eligibility rules, `calibrate`, videos not worth converting and what `finalize` does to originals are now in [docs/configuration.md](docs/configuration.md).
