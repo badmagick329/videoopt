@@ -306,16 +306,19 @@ public sealed class ImmichHttpClientTests : IDisposable
         progress.Values[^1].Should().Be("av1-bytes".Length);
     }
 
-    [Fact]
-    public async Task UpdateMetadataSendsOnlyTheFieldsToChange()
+    [Theory]
+    [InlineData("Beach", 4, """{"description":"Beach","rating":4}""")]
+    [InlineData(null, 5, """{"rating":5}""")]
+    [InlineData("Beach", null, """{"description":"Beach"}""")]
+    public async Task UpdateMetadataSendsOnlyTheFieldsToChange(string? description, int? rating, string expectedBody)
     {
         var handler = FakeHandler.Json(HttpStatusCode.OK, AssetJson);
 
-        await CreateClient(handler).UpdateMetadataAsync("asset-9", new ImmichMetadataUpdate(DateTimeOriginal: new DateTimeOffset(2025, 5, 28, 23, 51, 45, TimeSpan.Zero), Latitude: 51.5, Longitude: -0.12));
+        await CreateClient(handler).UpdateMetadataAsync("asset-9", new ImmichMetadataUpdate(Description: description, Rating: rating));
 
         handler.Last.Method.Should().Be(HttpMethod.Put);
         handler.Last.Uri.AbsolutePath.Should().Be("/api/assets/asset-9");
-        handler.Last.Body.Should().Be("""{"dateTimeOriginal":"2025-05-28T23:51:45+00:00","latitude":51.5,"longitude":-0.12}""");
+        handler.Last.Body.Should().Be(expectedBody);
     }
 
     [Fact]

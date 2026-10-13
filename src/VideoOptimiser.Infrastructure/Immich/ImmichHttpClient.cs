@@ -189,9 +189,6 @@ public sealed class ImmichHttpClient : IImmichClient
     {
         var request = new UpdateAssetRequest
         {
-            DateTimeOriginal = update.DateTimeOriginal,
-            Latitude = update.Latitude,
-            Longitude = update.Longitude,
             Description = update.Description,
             Rating = update.Rating
         };

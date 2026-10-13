@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Data.Sqlite;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Infrastructure.Diagnostics;
 using VideoOptimiser.Infrastructure.Jobs;
@@ -96,6 +97,25 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         skips.Should().HaveCount(2);
         skips["asset-1"].Should().Be(new ImmichSkipRecord("asset-1", "checksum-c", "rules-b", "bitrate too low", recorded.AddDays(1)));
         skips["asset-2"].Reason.Should().Be("shorter than 10 s");
+    }
+
+    [Fact]
+    public async Task ARowWithAnUnknownSourceKindIsRefusedRatherThanReadAsAFile()
+    {
+        // A newer version may have written the kind; reading it as "file" would treat an Immich staged copy as a user's original.
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        await using (var connection = new SqliteConnection($"Data Source={_databasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE jobs SET source_kind = 'future-kind' WHERE id = $id;";
+            command.Parameters.AddWithValue("$id", job.Id.ToString("N"));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var action = async () => await _repository.GetAsync(_databasePath, job.Id);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*unknown source kind 'future-kind'*");
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);

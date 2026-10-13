@@ -138,9 +138,6 @@ internal sealed class UploadResponseDto
 
 internal sealed class UpdateAssetRequest
 {
-    public DateTimeOffset? DateTimeOriginal { get; init; }
-    public double? Latitude { get; init; }
-    public double? Longitude { get; init; }
     public string? Description { get; init; }
     public int? Rating { get; init; }
 }

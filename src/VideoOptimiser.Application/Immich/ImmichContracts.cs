@@ -91,9 +91,6 @@ public sealed record ImmichUploadResult(string AssetId, bool IsDuplicate);
 
 /// <summary>Fields to set on an asset; a null field is left unchanged.</summary>
 public sealed record ImmichMetadataUpdate(
-    DateTimeOffset? DateTimeOriginal = null,
-    double? Latitude = null,
-    double? Longitude = null,
     string? Description = null,
     int? Rating = null);
 

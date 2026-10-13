@@ -25,6 +25,16 @@ public sealed class RemoteSshProcessingSessionTests
         arguments.Should().Contain("StrictHostKeyChecking=yes");
     }
 
+    [Theory]
+    [InlineData(false, "StrictHostKeyChecking=yes")]
+    [InlineData(true, "StrictHostKeyChecking=accept-new")]
+    public void ConnectionArgumentsPinTheConfiguredKnownHostsFile(bool acceptNewHostKey, string expectedStrictness)
+    {
+        var arguments = OpenSshConnectionArguments.Build(new RemoteSshSettings { KnownHostsFile = "C:\\state\\known_hosts" }, acceptNewHostKey);
+
+        arguments.Should().ContainInOrder("-o", "UserKnownHostsFile=C:\\state\\known_hosts", "-o", expectedStrictness);
+    }
+
     [Fact]
     public void UsesDeterministicGuidWorkspaceAndAttemptPaths()
     {
@@ -93,6 +103,43 @@ public sealed class RemoteSshProcessingSessionTests
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
         runner.Requests.Should().ContainSingle(request => request.FileName == "sftp" && request.StandardInput!.StartsWith("reput ", StringComparison.Ordinal));
         runner.Requests.SelectMany(request => request.Arguments).Should().NotContain(argument => argument.Contains("rm -f --", StringComparison.Ordinal));
+        Directory.Delete(directory, true);
+    }
+
+    [Theory]
+    [InlineData(40, false)]
+    [InlineData(150, true)]
+    public async Task ADivergentPartialUploadIsRemovedAndTheOriginalIsUploadedAgainFromTheStart(int partialLength, bool hashMatchesTheWholeOriginal)
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        var bytes = Enumerable.Range(0, 100).Select(value => (byte)value).ToArray();
+        await File.WriteAllBytesAsync(source, bytes);
+        // A partial longer than the original cannot be a prefix of it, even when its checksum equals the whole file's.
+        var partialHash = hashMatchesTheWholeOriginal ? Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant() : new string('0', 64);
+        var runner = new QueueRunner([
+            new ExternalProcessResult(0, "8 20000000000 100000", string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty),
+            new ExternalProcessResult(0, $"{partialLength} {partialHash}", string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty),
+            new ExternalProcessResult(0, string.Empty, string.Empty)
+        ]);
+        var progress = new CaptureProgress();
+        var session = CreateSession(Guid.NewGuid(), runner, source, new FakeClock());
+
+        await session.StageAsync(source, "fingerprint", progress);
+
+        var partial = session.RemoteSourcePath + ".partial";
+        var removal = runner.Requests.FindIndex(request => request.FileName == "ssh" && request.Arguments[^1].Contains("rm -f --", StringComparison.Ordinal) && request.Arguments[^1].Contains(partial, StringComparison.Ordinal));
+        var transfer = runner.Requests.FindIndex(request => request.FileName == "sftp");
+        removal.Should().BeGreaterThan(-1, "bytes that do not belong to this original must not be built upon");
+        transfer.Should().BeGreaterThan(removal);
+        runner.Requests[transfer].StandardInput.Should().StartWith("put ");
+        runner.Requests.Should().NotContain(request => request.StandardInput != null && request.StandardInput.StartsWith("reput ", StringComparison.Ordinal));
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Uploading 100 B to the worker..."),
+            JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
         Directory.Delete(directory, true);
     }
 
@@ -314,6 +361,28 @@ public sealed class RemoteSshProcessingSessionTests
         runner.Requests.Should().HaveCount(3);
         runner.Requests.Should().OnlyContain(request => request.StandardInput == null);
         runner.Requests[^1].Arguments[^1].Should().Contain("test -s");
+        Directory.Delete(directory, true);
+    }
+
+    [Theory]
+    [InlineData("", "Remote output checksum was missing.")]
+    [InlineData("15\nnot-a-checksum", "Remote output checksum was invalid.")]
+    [InlineData("15\n0123456789abcdef", "Remote output checksum was invalid.")]
+    public async Task ARemoteChecksumThatIsMissingOrNotSha256HexStopsBeforeAnythingIsDownloadedOrInstalled(string remoteOutput, string expectedMessage)
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        var output = Path.Combine(directory, "output.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var runner = new QueueRunner([new ExternalProcessResult(0, remoteOutput, string.Empty)]);
+        var session = CreateSession(Guid.NewGuid(), runner, source);
+
+        var action = async () => await session.RetrieveOutputAsync(output, 1);
+
+        await action.Should().ThrowAsync<InvalidDataException>().WithMessage(expectedMessage);
+        runner.Requests.Should().ContainSingle().Which.FileName.Should().Be("ssh");
+        File.Exists(output).Should().BeFalse();
+        File.Exists(output + ".partial").Should().BeFalse();
         Directory.Delete(directory, true);
     }
 

@@ -164,11 +164,30 @@ public sealed class ImmichFinalizationTests : IDisposable
     {
         var original = _immich.Add("PXL.mp4", "original");
         var job = await ReadyJobAsync(original);
-        _immich.FailOnce["copy"] = new ImmichApiException("ImmichRequestFailed", "Immich answered 500.");
+        // Read inside the copy step: a failure handler that writes the job back afterwards would hide a missing early save.
+        string? storedWhenCopyStarted = null;
+        _immich.BeforeCopy = async () => storedWhenCopyStarted = (await JobAsync(job)).ImmichNewAssetId;
 
-        await FinalizeAsync(job);
+        var result = await FinalizeAsync(job);
 
-        (await JobAsync(job)).ImmichNewAssetId.Should().Be(_immich.Uploads.Single().Id);
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        storedWhenCopyStarted.Should().Be(_immich.Uploads.Single().Id);
+    }
+
+    [Fact]
+    public async Task RefusesWhenImmichAnswersTheUploadWithTheOriginalItself()
+    {
+        // The AV1 holds the same bytes as the original, so Immich calls the upload a duplicate of the original asset.
+        var original = _immich.Add("PXL.mp4", "av1");
+        var job = await ReadyJobAsync(original);
+
+        var result = await FinalizeAsync(job);
+
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Contain($"Immich returned the original, asset {original.Id}, as the AV1.");
+        _immich.Calls.Should().NotContain(call => call.StartsWith("copy") || call.StartsWith("trash"));
+        _immich.Get(original.Id).IsTrashed.Should().BeFalse();
+        (await JobAsync(job)).Status.Should().Be(JobStatus.Failed);
     }
 
     [Fact]
@@ -369,6 +388,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         public List<ImmichMetadataUpdate> Updates { get; } = [];
         public Dictionary<string, Exception> FailOnce { get; } = [];
         public Dictionary<string, Exception> LoseResponseOnce { get; } = [];
+        public Func<Task>? BeforeCopy { get; set; }
 
         public static string Checksum(string content) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
 
@@ -408,8 +428,11 @@ public sealed class ImmichFinalizationTests : IDisposable
             return true;
         });
 
-        public Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default) =>
-            Step("copy", $"copy {sourceAssetId} {targetAssetId}", () => true);
+        public async Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default)
+        {
+            if (BeforeCopy is { } hook) await hook();
+            await Step("copy", $"copy {sourceAssetId} {targetAssetId}", () => true);
+        }
 
         // The real client sends nothing for an empty list.
         public Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) =>

@@ -13,30 +13,78 @@ namespace VideoOptimiser.UnitTests;
 public sealed class FolderFinalizationTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
+    private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
+    private readonly OutputManifestStore _manifests = new();
+    private readonly FileFingerprintService _fingerprints = new();
 
     [Fact]
     public async Task FinalizeStillCompletesAndShowsTheWarningWhenTheFileDatesCannotBeCopied()
+    {
+        var (settings, job, source, _) = await ReadyJobAsync();
+        var installer = new SafeFileInstaller((_, _, _) => throw new IOException("locked"));
+
+        var result = await CreateFinalizer(installer).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        result.Message.Should().StartWith("Original deleted. Warning: ").And.Contain("file dates").And.Contain("locked");
+        (await _repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.Completed);
+        (await File.ReadAllTextAsync(source)).Should().Be("av1");
+    }
+
+    [Fact]
+    public async Task FinalizeRefusesAndLeavesTheOriginalUntouchedWhenItChangedAfterEncoding()
+    {
+        var (settings, job, source, output) = await ReadyJobAsync();
+        await File.WriteAllTextAsync(source, "edited after the encode");
+
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Be("Original changed after encoding.");
+        (await File.ReadAllTextAsync(source)).Should().Be("edited after the encode");
+        File.Exists(output).Should().BeTrue("the AV1 was never installed");
+        var stored = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Failed);
+        stored.FailureCategory.Should().Be("FinalizationFailed");
+    }
+
+    [Fact]
+    public async Task FinalizeRefusesAndLeavesTheOriginalUntouchedWhenValidationDidNotPass()
+    {
+        var (settings, job, source, output) = await ReadyJobAsync(validationPassed: false);
+
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.ExitCode.Should().Be(ExitCode.ValidationFailure);
+        result.Message.Should().Be("Job validation did not pass.");
+        (await File.ReadAllTextAsync(source)).Should().Be("original");
+        File.Exists(output).Should().BeTrue("the AV1 was never installed");
+        (await _repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    private FinalizationService CreateFinalizer(SafeFileInstaller installer) =>
+        // A folder job never reaches the Immich finalizer, so it gets no client.
+        new(_repository, _manifests, _fingerprints, installer, new ImmichFinalizer(null!, _repository, _manifests));
+
+    private async Task<(AppSettings Settings, JobRecord Job, string Source, string Output)> ReadyJobAsync(bool validationPassed = true)
     {
         Directory.CreateDirectory(Path.Combine(_directory, ".video-optimiser"));
         var source = Path.Combine(_directory, "movie.mp4");
         var output = Path.Combine(_directory, ".video-optimiser", "movie.encoding.mp4");
         await File.WriteAllTextAsync(source, "original");
         await File.WriteAllTextAsync(output, "av1");
-        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
-        var manifests = new OutputManifestStore();
-        var fingerprints = new FileFingerprintService();
-        var fingerprint = await fingerprints.CreateAsync(source);
-        await manifests.SaveAsync(new OutputManifest
+        var fingerprint = await _fingerprints.CreateAsync(source);
+        await _manifests.SaveAsync(new OutputManifest
         {
             SourcePath = source,
             SourceFingerprint = fingerprint,
             OutputPath = output,
             Crf = 30,
             CreatedUtc = DateTimeOffset.UtcNow,
-            Validation = new ValidationReport { Passed = true }
+            Validation = new ValidationReport { Passed = validationPassed }
         });
         var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
-        var job = await repository.CreateAsync(settings.Database.Path, new JobRecord
+        var job = await _repository.CreateAsync(settings.Database.Path, new JobRecord
         {
             Id = Guid.NewGuid(),
             SourcePath = source,
@@ -45,16 +93,7 @@ public sealed class FolderFinalizationTests : IDisposable
             Attempt = 1,
             OutputPath = output
         });
-        var installer = new SafeFileInstaller((_, _, _) => throw new IOException("locked"));
-        // A folder job never reaches the Immich finalizer, so it gets no client.
-        var finalizer = new FinalizationService(repository, manifests, fingerprints, installer, new ImmichFinalizer(null!, repository, manifests));
-
-        var result = await finalizer.FinalizeAsync(settings.Database.Path, job.Id, settings);
-
-        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
-        result.Message.Should().StartWith("Original deleted. Warning: ").And.Contain("file dates").And.Contain("locked");
-        (await repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.Completed);
-        (await File.ReadAllTextAsync(source)).Should().Be("av1");
+        return (settings, job, source, output);
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);

@@ -27,6 +27,24 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         }
     }
 
+    [Theory]
+    [InlineData("OTHER=value\nVIDEO_OPTIMISER_HETZNER_TOKEN=old\nexport VIDEO_OPTIMISER_HETZNER_TOKEN=\"last\"\n")]
+    [InlineData("# comment\nexport VIDEO_OPTIMISER_HETZNER_TOKEN='last'\nOTHER=value\n")]
+    public void DotEnvReaderStripsExportAndQuotesFromTheLastAssignmentOfTheKey(string content)
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, content);
+
+            SecretLoader.ReadDotEnvValue(path, "VIDEO_OPTIMISER_HETZNER_TOKEN").Should().Be("last");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public async Task EnsureLoadsTokenFromDotEnvWhenEnvironmentVariableIsAbsent()
     {
@@ -527,6 +545,23 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     [Fact]
+    public async Task DeleteRefusesARecordedServerWithoutExactOwnershipLabels()
+    {
+        using var fixture = new Fixture { AutoDeletePrimaryIpWithServer = false };
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        fixture.Handler.ReturnWrongOwnership = true;
+
+        var action = () => lifecycle.DeleteAsync(fixture.Settings, fixture.DatabasePath);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*ownership labels*");
+        fixture.Handler.DeleteRequests.Should().Be(0, "a server that is not ours is never deleted");
+        fixture.Handler.ServerExists.Should().BeTrue();
+        fixture.Handler.PrimaryIpExists.Should().BeTrue();
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue();
+    }
+
+    [Fact]
     public async Task EnsureSendsTheBootstrapWithLfLineEndingsWhenTheCheckoutHasCrlf()
     {
         using var fixture = new Fixture();
@@ -714,10 +749,12 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         public void DeleteServerOutOfBand() => ServerExists = false;
 
         public int RequestCount { get; private set; }
+        public int DeleteRequests { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestCount++;
+            if (request.Method == HttpMethod.Delete) DeleteRequests++;
             request.Headers.Authorization!.Scheme.Should().Be("Bearer");
             request.Headers.Authorization.Parameter.Should().Be("secret-test-token");
             var path = request.RequestUri!.PathAndQuery;
@@ -766,7 +803,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             if (request.Method == HttpMethod.Get && path is "/v1/actions/10" or "/v1/actions/11")
                 return Json("{\"action\":{\"status\":\"success\"}}");
             if (request.Method == HttpMethod.Get && path == "/v1/servers/42")
-                return ServerExists ? Json($"{{\"server\":{ServerJson()}}}") : new HttpResponseMessage(HttpStatusCode.NotFound);
+                return ServerExists ? Json($"{{\"server\":{ServerJson(wrongOwnership: ReturnWrongOwnership)}}}") : new HttpResponseMessage(HttpStatusCode.NotFound);
             if (request.Method == HttpMethod.Delete && path == "/v1/servers/42")
             {
                 ServerExists = false;

@@ -193,6 +193,67 @@ public sealed class OutputValidationServiceTests : IDisposable
             new DecodeWindow(147.189 - 10, null));
     }
 
+    [Fact]
+    public async Task ValidateAsyncFailsWhenTheOutputVideoIsNotAv1()
+    {
+        var manifest = await CreateManifestAsync();
+        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
+        var decodeTester = new RecordingDecodeTester(new DecodeTestResult(true, null));
+
+        var result = await ValidateAsync(manifest, timeline, timeline, outputCodec: "hevc", decodeTester: decodeTester);
+
+        result.Passed.Should().BeFalse();
+        result.Failures.Should().Equal("Output video is not AV1.");
+        decodeTester.Windows.Should().BeEmpty("a full decode only runs for an output that would otherwise pass");
+    }
+
+    [Fact]
+    public async Task ValidateAsyncFailsWhenTheOutputDropsAnAudioStream()
+    {
+        var manifest = await CreateManifestAsync();
+        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
+
+        var result = await ValidateAsync(manifest, timeline, timeline, outputAudioStreams: 0);
+
+        result.Passed.Should().BeFalse();
+        result.Failures.Should().Equal("Output stream counts differ from the original.");
+    }
+
+    [Theory]
+    [InlineData(true, 100, true)]
+    [InlineData(true, 120, true)]
+    [InlineData(false, 100, false)]
+    public async Task ValidateAsyncRequiresASmallerOutputOnlyWhenTheSettingAsksForIt(bool requireSmallerOutput, int outputBytes, bool expectedFailure)
+    {
+        var manifest = await CreateManifestAsync(outputBytes);
+        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
+
+        var result = await ValidateAsync(manifest, timeline, timeline, requireSmallerOutput: requireSmallerOutput);
+
+        if (expectedFailure)
+        {
+            result.Passed.Should().BeFalse();
+            result.Failures.Should().Contain("Output is not smaller than the original.");
+        }
+        else
+        {
+            result.Failures.Should().NotContain("Output is not smaller than the original.");
+        }
+    }
+
+    [Fact]
+    public async Task ValidateAsyncFailsWhenThePercentageSavedIsBelowMinimum()
+    {
+        var manifest = await CreateManifestAsync(outputBytes: 80);
+        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
+
+        var result = await ValidateAsync(manifest, timeline, timeline, minimumPercentageSaved: 30);
+
+        result.Passed.Should().BeFalse();
+        result.Failures.Should().Equal("Output saves less than 30%.");
+        result.PercentageSaved.Should().Be(20);
+    }
+
     [Theory]
     [InlineData("none", 600d, 0)]
     [InlineData("full", 600d, 1)]
@@ -215,16 +276,20 @@ public sealed class OutputValidationServiceTests : IDisposable
         string minimumBytesSaved = "0B",
         RecordingDecodeTester? decodeTester = null,
         Exception? outputProbeError = null,
-        Exception? sourceProbeError = null)
+        Exception? sourceProbeError = null,
+        string outputCodec = "av1",
+        int outputAudioStreams = 1,
+        bool requireSmallerOutput = true,
+        decimal minimumPercentageSaved = 0)
     {
         decodeTester ??= new RecordingDecodeTester(new DecodeTestResult(true, null));
         var service = new OutputValidationService(
-            _ => new StaticMediaProbe(manifest.OutputPath, outputProbeError, sourceProbeError),
+            _ => new StaticMediaProbe(manifest.OutputPath, outputProbeError, sourceProbeError, outputCodec, outputAudioStreams),
             _ => new StaticTimelineProbe(manifest.SourcePath, sourceTimeline, outputTimeline, outputError),
             _ => decodeTester);
         return await service.ValidateAsync(manifest, new AppSettings
         {
-            Savings = new SavingsSettings { MinimumPercentageSaved = 0, MinimumBytesSaved = minimumBytesSaved },
+            Savings = new SavingsSettings { RequireSmallerOutput = requireSmallerOutput, MinimumPercentageSaved = minimumPercentageSaved, MinimumBytesSaved = minimumBytesSaved },
             Validation = new ValidationSettings { DurationToleranceSeconds = 0.1 }
         });
     }
@@ -249,14 +314,14 @@ public sealed class OutputValidationServiceTests : IDisposable
         }
     }
 
-    private sealed class StaticMediaProbe(string outputPath, Exception? outputError = null, Exception? sourceError = null) : IMediaProbe
+    private sealed class StaticMediaProbe(string outputPath, Exception? outputError = null, Exception? sourceError = null, string outputCodec = "av1", int outputAudioStreams = 1) : IMediaProbe
     {
         public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
             (path == outputPath ? outputError : sourceError) is { } error ? Task.FromException<MediaInfo>(error) : Task.FromResult(
             new MediaInfo(
-                path == outputPath ? "av1" : "h264",
+                path == outputPath ? outputCodec : "h264",
                 1,
-                1,
+                path == outputPath ? outputAudioStreams : 1,
                 0,
                 0,
                 path == outputPath ? 147.189 : 149.069,
