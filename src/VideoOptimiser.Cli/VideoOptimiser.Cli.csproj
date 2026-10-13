@@ -6,6 +6,8 @@
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <!-- The LibraryImport source generator emits unsafe stubs; TerminalStyle uses it to switch on colour in the Windows console. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\VideoOptimiser.Domain\VideoOptimiser.Domain.csproj" />

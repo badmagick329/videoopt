@@ -220,6 +220,8 @@ public sealed class JobProcessorTests : IDisposable
             "Encoding at CRF 42...",
             "Checking the output: streams, duration, savings and decode test...",
             "Ready to finalise: 100 B -> 50 B, 50.0% saved.");
+        reported.Last().Tone.Should().Be(JobTone.Success);
+        reported.Where(line => line.Tone != JobTone.None).Should().ContainSingle("only the outcome line carries a tone");
     }
 
     [Fact]
@@ -368,6 +370,7 @@ public sealed class JobProcessorTests : IDisposable
         Steps(reported).Should().Equal(
             "Finding the best CRF for VMAF 97 (2 test clips of 20s each)...",
             $"Not worth converting: {stored.FailureMessage}");
+        reported.Last().Tone.Should().Be(JobTone.Warning);
     }
 
     [Fact]
@@ -551,6 +554,7 @@ public sealed class JobProcessorTests : IDisposable
 
         result.ExitCode.Should().Be(ExitCode.ValidationFailure);
         Steps(reported).Last().Should().Be("Failed validation: duration differs; no streams");
+        reported.Last().Tone.Should().Be(JobTone.Failure);
     }
 
     [Fact]
@@ -566,6 +570,7 @@ public sealed class JobProcessorTests : IDisposable
         _ = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
 
         Steps(reported).Should().Equal("Worker unreachable: Remote unavailable. Run the same command again to resume.");
+        reported.Single().Tone.Should().Be(JobTone.Failure);
     }
 
     [Fact]
@@ -581,6 +586,7 @@ public sealed class JobProcessorTests : IDisposable
         _ = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
 
         Steps(reported).Should().Equal($"Job {first.Job.Id:N} is already ready to finalise.");
+        reported.Single().Tone.Should().Be(JobTone.Success);
     }
 
     private AppSettings Settings(string databaseName, QualitySettings? quality = null) => new()

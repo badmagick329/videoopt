@@ -13,9 +13,10 @@ namespace VideoOptimiser.Cli;
 /// before its download starts and the rest when known, so a slow download shows which file it is on. The rest names the
 /// candidate's codec, resolution, bitrate and size before the verdict, because a verdict such as "rule 1 needs 2GiB" is
 /// only readable beside the facts it was reached from: one user could not see why a 319 MiB video was queued while two
-/// others were skipped for being under 2 GiB, when the difference was the codec.
+/// others were skipped for being under 2 GiB, when the difference was the codec. On a terminal the explanation is dim and each
+/// verdict has a colour (queued green, skip yellow, issue red), so the few lines that matter stand out of a long run.
 /// </summary>
-internal sealed class ImmichDiscoveryConsole(TextWriter output, TextWriter error) : IProgress<ImmichDiscoveryProgress>
+internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle outputStyle, TextWriter error, TerminalStyle errorStyle) : IProgress<ImmichDiscoveryProgress>
 {
     private readonly object _gate = new();
     private int? _limit;
@@ -41,10 +42,10 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TextWriter error
                 case ImmichDiscoveryProgress.Started started:
                     _limit = started.Limit;
                     _ruleCount = started.RuleCount;
-                    output.WriteLine(started.Limit is { } limit
+                    output.WriteLine(outputStyle.Dim(started.Limit is { } limit
                         ? $"Searching Immich for {OutputWords.Count(limit, "video", "videos")} to convert. Each candidate is downloaded and checked with"
-                        : "Searching Immich for every video that fits your rules. Each candidate is downloaded and checked with");
-                    output.WriteLine("ffprobe; ones that don't fit your rules are deleted and skipped in future runs.");
+                        : "Searching Immich for every video that fits your rules. Each candidate is downloaded and checked with"));
+                    output.WriteLine(outputStyle.Dim("ffprobe; ones that don't fit your rules are deleted and skipped in future runs."));
                     if (started.AlreadyQueued > 0)
                         output.WriteLine($"{started.AlreadyQueued} already queued from earlier runs.");
                     if (started.StaleSkips > 0)
@@ -55,7 +56,7 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TextWriter error
                     output.WriteLine($"Downloading again: {restaging.FileName} (job {restaging.JobId:N} is open but its staged copy is missing)");
                     break;
                 case ImmichDiscoveryProgress.Restaged restaged:
-                    output.WriteLine(restaged.Problem is null ? "  done: the staged copy is back" : $"  issue: {restaged.Problem}");
+                    output.WriteLine(restaged.Problem is null ? outputStyle.Green("  done: the staged copy is back") : outputStyle.Red($"  issue: {restaged.Problem}"));
                     break;
                 case ImmichDiscoveryProgress.CandidateDownloading candidate:
                     _prefix = $"[{candidate.Number}] {candidate.FileName}  {candidate.Taken.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}  ";
@@ -70,10 +71,10 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TextWriter error
                     _prefix = null;
                     break;
                 case ImmichDiscoveryProgress.AssetExcluded excluded:
-                    error.WriteLine($"Excluded: {excluded.FileName} (asset {excluded.AssetId}) {excluded.Reason}; left alone.");
+                    error.WriteLine(errorStyle.Red($"Excluded: {excluded.FileName} (asset {excluded.AssetId}) {excluded.Reason}; left alone."));
                     break;
                 case ImmichDiscoveryProgress.AssetIssue issue:
-                    output.WriteLine($"Issue: {issue.FileName}: {issue.Message}.");
+                    output.WriteLine(outputStyle.Red($"Issue: {issue.FileName}: {issue.Message}."));
                     break;
             }
         }
@@ -96,10 +97,11 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TextWriter error
 
     private string Outcome(ImmichDiscoveryProgress.CandidateJudged judged)
     {
-        if (judged.Outcome == CandidateOutcome.Issue) return $"issue: {judged.Detail}; {judged.NextStep}";
+        if (judged.Outcome == CandidateOutcome.Issue) return outputStyle.Red($"issue: {judged.Detail}; {judged.NextStep}");
 
+        // The facts stay plain: only the verdict is coloured, because it is what the eye is looking for.
         var facts = judged.Facts is { } measured ? $"{Describe(measured)}  " : string.Empty;
-        return facts + (judged.Outcome == CandidateOutcome.Queued ? Queued(judged) : $"skip: {judged.Detail}");
+        return facts + (judged.Outcome == CandidateOutcome.Queued ? outputStyle.Green(Queued(judged)) : outputStyle.Yellow($"skip: {judged.Detail}"));
     }
 
     // The rule's number is left out when it is the only rule: "fits rule 1" would say nothing.

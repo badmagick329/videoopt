@@ -27,7 +27,7 @@ internal static partial class CliApplication
             guardReports.Add(update);
             Console.WriteLine(ReuploadGuardReport.FormatProgress(update));
         });
-        var discoveryProgress = new ImmichDiscoveryConsole(Console.Out, Console.Error);
+        var discoveryProgress = new ImmichDiscoveryConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
 
         ImmichRunPreparation preparation;
         try
@@ -49,7 +49,7 @@ internal static partial class CliApplication
         if (ReuploadGuardReport.Summary(guard) is { } guardLine) Console.WriteLine(guardLine);
         Console.WriteLine();
         foreach (var line in ImmichDiscoveryConsole.Summary(discovery, limit)) Console.WriteLine(line);
-        if (discovery.Excluded > 0) Console.Error.WriteLine($"Immich's search returned {OutputWords.Count(discovery.Excluded, "asset", "assets")} its filter should have left out. They were left alone, but the search may behave differently in this Immich version: check before running again.");
+        if (discovery.Excluded > 0) WriteError($"Immich's search returned {OutputWords.Count(discovery.Excluded, "asset", "assets")} its filter should have left out. They were left alone, but the search may behave differently in this Immich version: check before running again.");
 
         int ready;
         FailedQueueJob[] failures;
@@ -57,7 +57,7 @@ internal static partial class CliApplication
         {
             (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, explicitConfigPath, preparation.Queue, (ready, skipped, failures) =>
             {
-                Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length));
+                Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
                 PrintFailedJobs(failures);
                 PrintGuardSummary(guard);
                 if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser immich finalize'.");
@@ -116,7 +116,7 @@ internal static partial class CliApplication
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
 
         var finalizer = services.GetRequiredService<IFinalizationService>();
-        var report = new FinalizationConsole(Console.Out, Console.Error);
+        var report = new FinalizationConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
         var failed = new List<(JobRecord Job, string Message)>();
         foreach (var job in ready)
         {
@@ -134,7 +134,7 @@ internal static partial class CliApplication
     private static bool RequireImmich(LoadedConfiguration configuration)
     {
         if (configuration.Settings.Immich.IsConfigured) return true;
-        Console.Error.WriteLine("Set immich.baseUrl in the configuration first; 'video-optimiser doctor' then checks the connection and the API key.");
+        WriteError("Set immich.baseUrl in the configuration first; 'video-optimiser doctor' then checks the connection and the API key.");
         return false;
     }
 

@@ -20,10 +20,27 @@ public enum JobProgressKind
 }
 
 /// <summary>
-/// One line of a job's console output. <see cref="Text"/> is the final wording; the console adds only the indentation for
-/// <see cref="Kind"/>, so the same lines read the same in <c>process</c>, <c>queue run</c> and <c>immich run</c>.
+/// How a line that ends something should read. It is data, set where the outcome is known, so the console never has to
+/// guess a colour from the wording.
 /// </summary>
-public sealed record JobProgress(JobProgressKind Kind, string Text)
+public enum JobTone
+{
+    /// <summary>An ordinary line.</summary>
+    None,
+    /// <summary>The job, or a stage of it, is done: ready to finalise.</summary>
+    Success,
+    /// <summary>The job ended without being converted, and nothing is wrong: not worth converting.</summary>
+    Warning,
+    /// <summary>The job failed or cannot continue.</summary>
+    Failure
+}
+
+/// <summary>
+/// One line of a job's console output. <see cref="Text"/> is the final wording; the console adds only the indentation for
+/// <see cref="Kind"/> and, when it can, the colour for <see cref="Tone"/>, so the same lines read the same in <c>process</c>,
+/// <c>queue run</c> and <c>immich run</c>.
+/// </summary>
+public sealed record JobProgress(JobProgressKind Kind, string Text, JobTone Tone = JobTone.None)
 {
     /// <summary>The block's first line: <c>[2/5] name.mp4 (1.0 GiB)</c>. The size is left out when the original is already gone.</summary>
     public static JobProgress Header(int number, int total, string sourcePath)
@@ -34,6 +51,9 @@ public sealed record JobProgress(JobProgressKind Kind, string Text)
     }
 
     public static JobProgress Step(string text) => new(JobProgressKind.Step, text);
+
+    /// <summary>A step that ends the job, or says how it ended, with the <paramref name="tone"/> that outcome deserves.</summary>
+    public static JobProgress Outcome(JobTone tone, string text) => new(JobProgressKind.Step, text, tone);
     public static JobProgress Detail(string text) => new(JobProgressKind.Detail, text);
     public static JobProgress Tool(string text) => new(JobProgressKind.ToolOutput, text);
 }

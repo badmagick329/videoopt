@@ -80,7 +80,7 @@ public sealed class JobConsoleOutputTests : IDisposable
     private static async Task<string> RunAsync(JobProcessor processor, string source, AppSettings settings)
     {
         var output = new StringWriter { NewLine = "\n" };
-        var console = new JobProgressConsole(output);
+        var console = new JobProgressConsole(output, TerminalStyle.Plain);
         console.Report(JobProgress.Header(1, 1, source));
 
         var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, console);

@@ -23,11 +23,21 @@ return await CliApplication.RunAsync(args);
 
 internal static partial class CliApplication
 {
+    // Chosen once from the real console before the command runs, because it depends on how this process was started
+    // (terminal or redirected, per stream) and on --json. The writers take them as arguments so tests can pick their own.
+    private static TerminalStyle OutputStyle { get; set; } = TerminalStyle.Plain;
+    private static TerminalStyle ErrorStyle { get; set; } = TerminalStyle.Plain;
+
+    /// <summary>An error or a refusal, in red on a terminal. Usage text and other help are written as they are.</summary>
+    private static void WriteError(string? text) => Console.Error.WriteLine(ErrorStyle.Red(text ?? string.Empty));
+
     public static async Task<int> RunAsync(string[] args)
     {
         try
         {
             var command = CliCommand.Parse(args);
+            OutputStyle = TerminalStyle.ForOutput(command.Json);
+            ErrorStyle = TerminalStyle.ForError(command.Json);
             if (command.ShowHelp)
             {
                 Console.WriteLine(Usage);
@@ -42,7 +52,7 @@ internal static partial class CliApplication
 
             if (!command.IsValid)
             {
-                Console.Error.WriteLine(command.Error);
+                WriteError(command.Error);
                 Console.Error.WriteLine(Usage);
                 return (int)ExitCode.InvalidArguments;
             }
@@ -70,22 +80,22 @@ internal static partial class CliApplication
         }
         catch (FileNotFoundException exception)
         {
-            Console.Error.WriteLine(exception.Message);
+            WriteError(exception.Message);
             return (int)ExitCode.InvalidConfiguration;
         }
         catch (InvalidDataException exception)
         {
-            Console.Error.WriteLine($"Configuration could not be read: {exception.Message}");
+            WriteError($"Configuration could not be read: {exception.Message}");
             return (int)ExitCode.InvalidConfiguration;
         }
         catch (MediaProbeException exception)
         {
-            Console.Error.WriteLine(exception.Message);
+            WriteError(exception.Message);
             return (int)ExitCode.ProcessingFailure;
         }
         catch (ImmichApiException exception)
         {
-            Console.Error.WriteLine(exception.Message);
+            WriteError(exception.Message);
             return exception.Code is "ImmichApiKeyMissing" or "ImmichApiKeyRejected" or "ImmichPermissionMissing" or ImmichTrash.DisabledCode
                 ? (int)ExitCode.InvalidConfiguration
                 : (int)ExitCode.ProcessingFailure;
@@ -98,13 +108,13 @@ internal static partial class CliApplication
         }
         catch (RemoteWorkerCapacityUnavailableException exception)
         {
-            Console.Error.WriteLine(exception.Message);
-            Console.Error.WriteLine("Check server type and location availability in Hetzner Console: https://console.hetzner.com/");
+            WriteError(exception.Message);
+            WriteError("Check server type and location availability in Hetzner Console: https://console.hetzner.com/");
             return (int)ExitCode.ProcessingFailure;
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"Unexpected failure: {exception.GetBaseException().Message}");
+            WriteError($"Unexpected failure: {exception.GetBaseException().Message}");
             return (int)ExitCode.GeneralFailure;
         }
     }
@@ -165,7 +175,7 @@ internal static partial class CliApplication
             }
             catch (InvalidOperationException exception)
             {
-                Console.Error.WriteLine(exception.Message);
+                WriteError(exception.Message);
                 return (int)ExitCode.GeneralFailure;
             }
         }
@@ -218,7 +228,7 @@ internal static partial class CliApplication
 
         foreach (var diagnostic in diagnostics)
         {
-            Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}");
+            WriteError($"[{diagnostic.Code}] {diagnostic.Message}");
         }
 
         return (int)ExitCode.InvalidConfiguration;
@@ -253,7 +263,7 @@ internal static partial class CliApplication
         {
             foreach (var diagnostic in diagnostics)
             {
-                Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}");
+                WriteError($"[{diagnostic.Code}] {diagnostic.Message}");
             }
 
             return (int)ExitCode.InvalidConfiguration;
@@ -263,7 +273,7 @@ internal static partial class CliApplication
         var sourcePath = Path.GetFullPath(command.ProcessPath!);
         if (!File.Exists(sourcePath))
         {
-            Console.Error.WriteLine($"Original does not exist: {sourcePath}");
+            WriteError($"Original does not exist: {sourcePath}");
             return (int)ExitCode.ProcessingFailure;
         }
         if (command.DryRun)
@@ -295,7 +305,7 @@ internal static partial class CliApplication
         {
             await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
         }
-        var progress = new JobProgressConsole(Console.Out);
+        var progress = new JobProgressConsole(Console.Out, OutputStyle);
         progress.Report(JobProgress.Header(1, 1, sourcePath));
         JobProcessingResult result;
         try
@@ -317,7 +327,7 @@ internal static partial class CliApplication
         if (result.Job.Id == Guid.Empty)
         {
             if (result.ExitCode == ExitCode.Success) Console.WriteLine(result.Message);
-            else Console.Error.WriteLine(result.Message);
+            else WriteError(result.Message);
         }
 
         if (result.ExitCode != ExitCode.Success) PrintFailedJobs([ToFailedQueueJob(result.Job, result.Message)]);
@@ -341,7 +351,7 @@ internal static partial class CliApplication
         // Settings validation allows no roots when Immich is configured; scanning nothing would only print "Queued: 0".
         if (configuration.Settings.Watch.Roots.Count == 0)
         {
-            Console.Error.WriteLine("queue discover needs at least one watch.roots entry. For Immich videos, use 'immich run'.");
+            WriteError("queue discover needs at least one watch.roots entry. For Immich videos, use 'immich run'.");
             return (int)ExitCode.InvalidConfiguration;
         }
 
@@ -361,7 +371,7 @@ internal static partial class CliApplication
         {
             // A ready job is cancellable only by ID, so --all never discards finished encodes. It is the way out for an Immich
             // job whose original went away, which would otherwise wait at ready forever.
-            if (job.Status is not (JobStatus.Queued or JobStatus.Interrupted) && (command.All || job.Status != JobStatus.ReadyToFinalize)) { Console.Error.WriteLine($"{job.Id:N} is not cancellable."); continue; }
+            if (job.Status is not (JobStatus.Queued or JobStatus.Interrupted) && (command.All || job.Status != JobStatus.ReadyToFinalize)) { WriteError($"{job.Id:N} is not cancellable."); continue; }
             job.Status = JobStatus.Cancelled;
             job.FailureCategory = "Cancelled";
             job.FailureMessage = "Cancelled by user.";
@@ -377,13 +387,13 @@ internal static partial class CliApplication
     {
         if (!Guid.TryParse(jobId, out var id))
         {
-            Console.Error.WriteLine("Job ID is invalid.");
+            WriteError("Job ID is invalid.");
             return (int)ExitCode.InvalidArguments;
         }
         var result = await retryService.RetryAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
         if (!result.Succeeded)
         {
-            Console.Error.WriteLine(result.Error);
+            WriteError(result.Error);
             return (int)ExitCode.InvalidArguments;
         }
 
@@ -407,7 +417,7 @@ internal static partial class CliApplication
         var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, modeOverridden: modeOverride is not null, cancellationToken);
         var (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, explicitConfigPath, preparation, (ready, skipped, failures) =>
         {
-            Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length));
+            Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
             PrintFailedJobs(failures);
             if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser finalize --ready'.");
         }, cancellationToken);
@@ -449,7 +459,7 @@ internal static partial class CliApplication
     private static bool ReportInvalidSettings(IServiceProvider services, LoadedConfiguration configuration)
     {
         var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
-        foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}");
+        foreach (var diagnostic in diagnostics) WriteError($"[{diagnostic.Code}] {diagnostic.Message}");
         return diagnostics.Count > 0;
     }
 
@@ -474,7 +484,7 @@ internal static partial class CliApplication
             await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
         }
         Console.WriteLine($"Converting {preparation.RunnableJobs.Count} {(preparation.RunnableJobs.Count == 1 ? "video" : "videos")}.");
-        var progress = new JobProgressConsole(Console.Out);
+        var progress = new JobProgressConsole(Console.Out, OutputStyle);
         QueueRunResult result;
         try
         {
@@ -507,7 +517,7 @@ internal static partial class CliApplication
     {
         if (failedJobs.Length == 0) return;
         Console.WriteLine();
-        Console.WriteLine("Failed jobs:");
+        Console.WriteLine(OutputStyle.Red("Failed jobs:"));
         foreach (var job in failedJobs)
         {
             Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
@@ -548,9 +558,9 @@ internal static partial class CliApplication
     private static async Task<int> RunWorkerCreateAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
         var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        if (!lifecycle.IsManaged(configuration.Settings)) { Console.Error.WriteLine("Configure processing.remoteSsh.lifecycle as hetzner first."); return (int)ExitCode.InvalidConfiguration; }
+        if (!lifecycle.IsManaged(configuration.Settings)) { WriteError("Configure processing.remoteSsh.lifecycle as hetzner first."); return (int)ExitCode.InvalidConfiguration; }
         var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
-        if (diagnostics.Count > 0) { foreach (var diagnostic in diagnostics) Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}"); return (int)ExitCode.InvalidConfiguration; }
+        if (diagnostics.Count > 0) { foreach (var diagnostic in diagnostics) WriteError($"[{diagnostic.Code}] {diagnostic.Message}"); return (int)ExitCode.InvalidConfiguration; }
         var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
         Console.WriteLine($"Worker ready: {worker.Name} ({worker.ServerId}) {worker.Address}{DescribePlacement(worker)}");
         return (int)ExitCode.Success;
@@ -574,7 +584,7 @@ internal static partial class CliApplication
     private static async Task<int> RunWorkerDeleteAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
         var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        if (!lifecycle.IsManaged(configuration.Settings)) { Console.Error.WriteLine("Managed Hetzner lifecycle is not enabled."); return (int)ExitCode.InvalidConfiguration; }
+        if (!lifecycle.IsManaged(configuration.Settings)) { WriteError("Managed Hetzner lifecycle is not enabled."); return (int)ExitCode.InvalidConfiguration; }
         var deleted = await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
         if (!deleted) Console.WriteLine("No managed Hetzner worker exists.");
         return (int)ExitCode.Success;
@@ -610,10 +620,10 @@ internal static partial class CliApplication
 
     private static async Task<int> RunValidateAsync(IServiceProvider services, LoadedConfiguration configuration, string jobId, CancellationToken cancellationToken)
     {
-        if (!Guid.TryParse(jobId, out var id)) { Console.Error.WriteLine("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
+        if (!Guid.TryParse(jobId, out var id)) { WriteError("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
         var repository = services.GetRequiredService<IJobRepository>();
         var job = await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken);
-        if (job?.OutputPath is null) { Console.Error.WriteLine("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
+        if (job?.OutputPath is null) { WriteError("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
         var store = services.GetRequiredService<IOutputManifestStore>();
         var manifest = await store.LoadAsync(job.OutputPath, cancellationToken);
         manifest.Validation = await services.GetRequiredService<IOutputValidationService>().ValidateAsync(manifest, configuration.Settings, cancellationToken);
@@ -635,9 +645,10 @@ internal static partial class CliApplication
         var finalizer = services.GetRequiredService<IFinalizationService>();
         if (!command.FinalizeReady)
         {
-            if (!Guid.TryParse(command.JobId, out var id)) { Console.Error.WriteLine("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
+            if (!Guid.TryParse(command.JobId, out var id)) { WriteError("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
             var result = await finalizer.FinalizeAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
-            (result.ExitCode == ExitCode.Success ? Console.Out : Console.Error).WriteLine(result.Message);
+            if (result.ExitCode == ExitCode.Success) Console.WriteLine(result.Message);
+            else WriteError(result.Message);
             return (int)result.ExitCode;
         }
 
@@ -650,7 +661,7 @@ internal static partial class CliApplication
         if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) Console.WriteLine("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
         Console.Write("Finalise these jobs? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
-        var report = new FinalizationConsole(Console.Out, Console.Error);
+        var report = new FinalizationConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
         var failed = new List<(JobRecord Job, string Message)>();
         foreach (var job in ready)
         {
@@ -685,7 +696,7 @@ internal static partial class CliApplication
         Console.Write("Delete these files? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Cleanup cancelled."); return (int)ExitCode.Success; }
         var result = cleanup.Delete(plan);
-        foreach (var failure in result.Failures) Console.Error.WriteLine($"Could not delete {failure}");
+        foreach (var failure in result.Failures) WriteError($"Could not delete {failure}");
         Console.WriteLine($"Deleted {OutputWords.Count(result.Deleted, "file", "files")}, {HumanReadableValues.FormatSize(result.DeletedBytes)}.");
         return result.Failures.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }

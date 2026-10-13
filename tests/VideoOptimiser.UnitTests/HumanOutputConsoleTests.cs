@@ -297,7 +297,7 @@ public sealed class HumanOutputConsoleTests
     {
         var output = new StringWriter { NewLine = "\n" };
         var error = new StringWriter { NewLine = "\n" };
-        var console = new FinalizationConsole(output, error);
+        var console = new FinalizationConsole(output, TerminalStyle.Plain, error, TerminalStyle.Plain);
         var done = Job("D:\\v\\a.mp4");
         var failed = Job("D:\\v\\b.mp4");
 
@@ -316,12 +316,12 @@ public sealed class HumanOutputConsoleTests
     public void FinalizeTallyLeavesOutAZeroCount()
     {
         var output = new StringWriter { NewLine = "\n" };
-        var console = new FinalizationConsole(output, new StringWriter());
+        var console = new FinalizationConsole(output, TerminalStyle.Plain, new StringWriter(), TerminalStyle.Plain);
 
         console.Summary(3, []);
 
         output.ToString().Should().Be("Finalised: 3.\n");
-        OutcomeSummary.Finalisation(0, 2).Should().Be("Failed: 2.");
+        OutcomeSummary.Finalisation(0, 2, TerminalStyle.Plain).Should().Be("Failed: 2.");
     }
 
     [Theory]
@@ -331,7 +331,7 @@ public sealed class HumanOutputConsoleTests
     [InlineData(4, 1, 2, "Ready to finalise: 4. Not worth converting: 1. Failed: 2.")]
     [InlineData(0, 0, 0, "Nothing to finalise.")]
     public void TheRunTallyNamesOnlyTheOutcomesThatHappened(int ready, int notWorth, int failed, string expected) =>
-        OutcomeSummary.Run(ready, notWorth, failed).Should().Be(expected);
+        OutcomeSummary.Run(ready, notWorth, failed, TerminalStyle.Plain).Should().Be(expected);
 
     [Fact]
     public void TheCleanupTotalNamesOnlyTheKindsOfFileFound()
@@ -372,7 +372,7 @@ public sealed class HumanOutputConsoleTests
     {
         var output = new StringWriter { NewLine = "\n" };
         var error = new StringWriter { NewLine = "\n" };
-        return (new ImmichDiscoveryConsole(output, error), output, error);
+        return (new ImmichDiscoveryConsole(output, TerminalStyle.Plain, error, TerminalStyle.Plain), output, error);
     }
 
     private static ImmichDiscoveryResult Result(int queued, int alreadyQueued, int skipped, SkipReasonCount[] reasons, int restaged = 0, int alreadyConverted = 0, int previouslyFailed = 0, int previouslySkipped = 0, int excluded = 0, int ineligible = 0, int issues = 0) =>

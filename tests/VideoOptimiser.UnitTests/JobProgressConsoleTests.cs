@@ -10,7 +10,7 @@ public sealed class JobProgressConsoleTests
     public void ALineIsIndentedByItsKindAndAHeaderOpensWithABlankLine()
     {
         var output = new StringWriter { NewLine = "\n" };
-        var console = new JobProgressConsole(output);
+        var console = new JobProgressConsole(output, TerminalStyle.Plain);
 
         console.Report(new JobProgress(JobProgressKind.Header, "[1/2] a.mp4 (1.0 MiB)"));
         console.Report(JobProgress.Step("Uploading 1.0 MiB to the worker..."));

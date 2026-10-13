@@ -192,7 +192,7 @@ public sealed class JobProcessor(
             job.Status = JobStatus.ReadyToFinalize;
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
             // Console output stays ASCII: redirected output and legacy consoles use a code page that drops characters like "→".
-            progress?.Report(JobProgress.Step($"Ready to finalise: {HumanReadableValues.FormatSize(job.SourceSizeBytes ?? 0)} -> {HumanReadableValues.FormatSize(job.OutputSizeBytes ?? 0)}, {(job.PercentageSaved ?? 0).ToString("F1", CultureInfo.InvariantCulture)}% saved."));
+            progress?.Report(JobProgress.Outcome(JobTone.Success, $"Ready to finalise: {HumanReadableValues.FormatSize(job.SourceSizeBytes ?? 0)} -> {HumanReadableValues.FormatSize(job.OutputSizeBytes ?? 0)}, {(job.PercentageSaved ?? 0).ToString("F1", CultureInfo.InvariantCulture)}% saved."));
             return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is ready to finalise.");
         }
         catch (OperationCanceledException)
@@ -216,7 +216,7 @@ public sealed class JobProcessor(
             job.FailureCategory = "RemoteUnavailable";
             job.FailureMessage = exception.Message;
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
-            progress?.Report(JobProgress.Step($"Worker unreachable: {exception.Message.TrimEnd('.')}. Run the same command again to resume."));
+            progress?.Report(JobProgress.Outcome(JobTone.Failure, $"Worker unreachable: {exception.Message.TrimEnd('.')}. Run the same command again to resume."));
             return new JobProcessingResult(job, ExitCode.ProcessingFailure, exception.Message);
         }
         catch (Exception exception)
@@ -232,7 +232,7 @@ public sealed class JobProcessor(
     /// <summary>A result for a job that reached no stage: its message is already the job's outcome, so it is reported as the last line.</summary>
     private static JobProcessingResult Outcome(JobRecord job, ExitCode exitCode, string message, IProgress<JobProgress>? progress)
     {
-        progress?.Report(JobProgress.Step(message));
+        progress?.Report(JobProgress.Outcome(exitCode == ExitCode.Success ? JobTone.Success : JobTone.Failure, message));
         return new JobProcessingResult(job, exitCode, message);
     }
 
@@ -273,7 +273,7 @@ public sealed class JobProcessor(
         job.FailureMessage = stored;
         job.CompletedUtc = DateTimeOffset.UtcNow;
         await jobs.UpdateAsync(databasePath, job, cancellationToken);
-        progress?.Report(JobProgress.Step(category switch
+        progress?.Report(JobProgress.Outcome(JobTone.Failure, category switch
         {
             "ValidationFailed" => $"Failed validation: {message}",
             "StagingFailed" => $"Failed during the upload: {message}",
@@ -298,7 +298,7 @@ public sealed class JobProcessor(
         job.QualityFingerprint = QualityFingerprint.Compute(settings.Quality);
         job.CompletedUtc = DateTimeOffset.UtcNow;
         await jobs.UpdateAsync(databasePath, job, cancellationToken);
-        progress?.Report(JobProgress.Step($"Not worth converting: {exception.Message}"));
+        progress?.Report(JobProgress.Outcome(JobTone.Warning, $"Not worth converting: {exception.Message}"));
         return new JobProcessingResult(job, ExitCode.Success, exception.Message);
     }
 
