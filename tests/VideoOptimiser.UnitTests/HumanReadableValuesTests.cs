@@ -16,6 +16,15 @@ public sealed class HumanReadableValuesTests
     }
 
     [Theory]
+    [InlineData("208.92 MiB", "208.9 MiB")]
+    [InlineData("215.62 MiB", "215.6 MiB")]
+    [InlineData("1.50 GiB", "1.5 GiB")]
+    [InlineData("512 B", "512 B")]
+    [InlineData("not a size", "not a size")]
+    public void FormatSizeTextRewritesAToolsSizeInTheOneFormatEveryCommandPrints(string text, string expected) =>
+        HumanReadableValues.FormatSizeText(text).Should().Be(expected);
+
+    [Theory]
     [InlineData("")]
     [InlineData("-1GiB")]
     [InlineData("12XB")]

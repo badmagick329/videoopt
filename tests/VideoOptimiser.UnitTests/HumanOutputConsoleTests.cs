@@ -313,6 +313,39 @@ public sealed class HumanOutputConsoleTests
     }
 
     [Fact]
+    public void FinalizeTallyLeavesOutAZeroCount()
+    {
+        var output = new StringWriter { NewLine = "\n" };
+        var console = new FinalizationConsole(output, new StringWriter());
+
+        console.Summary(3, []);
+
+        output.ToString().Should().Be("Finalised: 3.\n");
+        OutcomeSummary.Finalisation(0, 2).Should().Be("Failed: 2.");
+    }
+
+    [Theory]
+    [InlineData(1, 0, 0, "Ready to finalise: 1.")]
+    [InlineData(1, 2, 0, "Ready to finalise: 1. Not worth converting: 2.")]
+    [InlineData(0, 0, 3, "Failed: 3.")]
+    [InlineData(4, 1, 2, "Ready to finalise: 4. Not worth converting: 1. Failed: 2.")]
+    [InlineData(0, 0, 0, "Nothing to finalise.")]
+    public void TheRunTallyNamesOnlyTheOutcomesThatHappened(int ready, int notWorth, int failed, string expected) =>
+        OutcomeSummary.Run(ready, notWorth, failed).Should().Be(expected);
+
+    [Fact]
+    public void TheCleanupTotalNamesOnlyTheKindsOfFileFound()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "videos");
+        var abandoned = new AbandonedTemporaryOutput(Path.Combine(folder, "a.encoding.mp4"), Guid.NewGuid(), 1, 3L << 20, "job failed");
+        var staged = new StagedImmichOriginal(Path.Combine(folder, "PXL.mp4"), Guid.NewGuid(), 500L << 20, "job completed");
+
+        CleanupReport.Summary(new TemporaryOutputCleanupPlan([abandoned], [], [])).Should().Be("Abandoned temporary outputs: 1. Total: 3.0 MiB.");
+        CleanupReport.Summary(new TemporaryOutputCleanupPlan([], [staged], [])).Should().Be("Staged Immich originals: 1. Total: 500.0 MiB.");
+        CleanupReport.Summary(new TemporaryOutputCleanupPlan([abandoned], [staged], [])).Should().Be("Abandoned temporary outputs: 1. Staged Immich originals: 1. Total: 503.0 MiB.");
+    }
+
+    [Fact]
     public void CleanupPrintsEachFolderOnceWithItsFiles()
     {
         var folder = Path.Combine(Path.GetTempPath(), "videos", ".video-optimiser");

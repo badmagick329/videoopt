@@ -49,7 +49,7 @@ internal static partial class CliApplication
         if (ReuploadGuardReport.Summary(guard) is { } guardLine) Console.WriteLine(guardLine);
         Console.WriteLine();
         foreach (var line in ImmichDiscoveryConsole.Summary(discovery, limit)) Console.WriteLine(line);
-        if (discovery.Excluded > 0) Console.Error.WriteLine($"Immich's search returned {discovery.Excluded} asset(s) its filter should have left out. They were left alone, but the search may behave differently in this Immich version: check before running again.");
+        if (discovery.Excluded > 0) Console.Error.WriteLine($"Immich's search returned {OutputWords.Count(discovery.Excluded, "asset", "assets")} its filter should have left out. They were left alone, but the search may behave differently in this Immich version: check before running again.");
 
         int ready;
         FailedQueueJob[] failures;
@@ -57,7 +57,7 @@ internal static partial class CliApplication
         {
             (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, explicitConfigPath, preparation.Queue, (ready, skipped, failures) =>
             {
-                Console.WriteLine($"Ready to finalise: {ready}. Not worth converting: {skipped}. Failed: {failures.Length}.");
+                Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length));
                 PrintFailedJobs(failures);
                 PrintGuardSummary(guard);
                 if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser immich finalize'.");
@@ -110,7 +110,7 @@ internal static partial class CliApplication
 
         var totalBefore = ready.Sum(job => job.SourceSizeBytes ?? 0);
         var totalAfter = ready.Sum(job => job.OutputSizeBytes ?? 0);
-        Console.WriteLine($"{ready.Length} job(s): {HumanReadableValues.FormatSize(totalBefore)} -> {HumanReadableValues.FormatSize(totalAfter)}, saving {HumanReadableValues.FormatSize(totalBefore - totalAfter)}.");
+        Console.WriteLine($"{OutputWords.Count(ready.Length, "video", "videos")}: {HumanReadableValues.FormatSize(totalBefore)} -> {HumanReadableValues.FormatSize(totalAfter)}, saving {HumanReadableValues.FormatSize(totalBefore - totalAfter)}.");
         Console.WriteLine("Each AV1 is uploaded as a new asset with the original's albums, tags, favourite and other relations; then the original goes to Immich's trash.");
         Console.Write("Finalise these jobs? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }

@@ -79,6 +79,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         stored.Status.Should().Be(JobStatus.Completed);
         stored.ImmichNewAssetId.Should().Be(replacement.Id);
         stored.FailureMessage.Should().BeNull();
+        result.Message.Should().Be($"New asset {replacement.Id}; the original is in Immich's trash.");
         Directory.Exists(StagingFolder(original)).Should().BeFalse();
         Directory.Exists(_settings.Immich.StagingDirectory).Should().BeTrue();
     }

@@ -134,7 +134,7 @@ public sealed class JobProcessor(
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
                 progress?.Report(JobProgress.Step(prediction is null
                     ? $"Chose CRF {crfResult.Crf.ToString(CultureInfo.InvariantCulture)} in {HumanReadableValues.FormatDuration(crfResult.Duration)}."
-                    : $"Chose CRF {crfResult.Crf.ToString(CultureInfo.InvariantCulture)} in {HumanReadableValues.FormatDuration(crfResult.Duration)}. Expected output: {prediction.Size} ({prediction.Percent.ToString(CultureInfo.InvariantCulture)}% of the original)."));
+                    : $"Chose CRF {crfResult.Crf.ToString(CultureInfo.InvariantCulture)} in {HumanReadableValues.FormatDuration(crfResult.Duration)}. Expected output: {HumanReadableValues.FormatSizeText(prediction.Size)} ({prediction.Percent.ToString(CultureInfo.InvariantCulture)}% of the original)."));
             }
 
             OutputManifest manifest;

@@ -448,7 +448,7 @@ public sealed class JobProcessorTests : IDisposable
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize);
         Steps(reported).Should().Equal(
             "Finding the best CRF for VMAF 97 (2 test clips of 20s each)...",
-            "Chose CRF 29 in 7m 36s. Expected output: 284.87 MiB (29% of the original).",
+            "Chose CRF 29 in 7m 36s. Expected output: 284.9 MiB (29% of the original).",
             "Encoding at CRF 29, expected to take about 5 minutes...",
             "Checking the output: streams, duration, savings and decode test...",
             "Ready to finalise: 100 B -> 50 B, 50.0% saved.");
@@ -498,7 +498,7 @@ public sealed class JobProcessorTests : IDisposable
 
         reported.Should().NotContain(line => line.Kind == JobProgressKind.ToolOutput);
         reported.Should().Contain(JobProgress.Detail("CRF 34   VMAF 95.02   size  19%   below target"));
-        reported.Should().Contain(line => line.Kind == JobProgressKind.Step && line.Text.StartsWith("Encoded 99.81 MiB (29% of the original) in ", StringComparison.Ordinal));
+        reported.Should().Contain(line => line.Kind == JobProgressKind.Step && line.Text.StartsWith("Encoded 99.8 MiB (29% of the original) in ", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -626,7 +626,7 @@ public sealed class JobProcessorTests : IDisposable
         public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings) => [];
         public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
-            progress?.Report(JobProgress.Tool("Encoded 99.81 MiB (29%)"));
+            progress?.Report(JobProgress.Tool("Encoded 99.8 MiB (29%)"));
             await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
             return new EncodeResult(outputPath, TimeSpan.Zero);
         }

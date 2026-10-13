@@ -52,7 +52,7 @@ public sealed class FolderFinalizationTests : IDisposable
         var result = await finalizer.FinalizeAsync(settings.Database.Path, job.Id, settings);
 
         result.ExitCode.Should().Be(ExitCode.Success, result.Message);
-        result.Message.Should().StartWith("Finalisation complete. Original deleted. Warning: ").And.Contain("file dates").And.Contain("locked");
+        result.Message.Should().StartWith("Original deleted. Warning: ").And.Contain("file dates").And.Contain("locked");
         (await repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.Completed);
         (await File.ReadAllTextAsync(source)).Should().Be("av1");
     }

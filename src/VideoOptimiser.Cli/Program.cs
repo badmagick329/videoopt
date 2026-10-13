@@ -407,7 +407,7 @@ internal static partial class CliApplication
         var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, modeOverridden: modeOverride is not null, cancellationToken);
         var (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, explicitConfigPath, preparation, (ready, skipped, failures) =>
         {
-            Console.WriteLine($"Ready to finalise: {ready}. Not worth converting: {skipped}. Failed: {failures.Length}.");
+            Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length));
             PrintFailedJobs(failures);
             if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser finalize --ready'.");
         }, cancellationToken);
@@ -678,7 +678,7 @@ internal static partial class CliApplication
         foreach (var path in plan.UnknownJobFiles) Console.WriteLine($"Skipped  {path} (its job is not in this database)");
         if (plan.Count == 0) { Console.WriteLine("No abandoned temporary outputs or staged Immich originals found."); return (int)ExitCode.Success; }
         CleanupReport.WriteFiles(Console.Out, plan);
-        Console.WriteLine($"Abandoned temporary outputs: {plan.Abandoned.Count}. Staged Immich originals: {plan.StagedOriginals.Count}. Total: {HumanReadableValues.FormatSize(plan.TotalBytes)}.");
+        Console.WriteLine(CleanupReport.Summary(plan));
         if (plan.StagedOriginals.Count > 0) Console.WriteLine("Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.");
         if (dryRun) return (int)ExitCode.Success;
 
@@ -686,7 +686,7 @@ internal static partial class CliApplication
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Cleanup cancelled."); return (int)ExitCode.Success; }
         var result = cleanup.Delete(plan);
         foreach (var failure in result.Failures) Console.Error.WriteLine($"Could not delete {failure}");
-        Console.WriteLine($"Deleted {result.Deleted} files, {HumanReadableValues.FormatSize(result.DeletedBytes)}.");
+        Console.WriteLine($"Deleted {OutputWords.Count(result.Deleted, "file", "files")}, {HumanReadableValues.FormatSize(result.DeletedBytes)}.");
         return result.Failures.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 

@@ -55,7 +55,7 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         await client.CopyRelationsAsync(originalId, replacement, cancellationToken);
         await client.TagAssetAsync(replacement, original.TagIds, cancellationToken);
         if (!original.IsTrashed) await client.TrashAsync([originalId], cancellationToken);
-        return $"Finalisation complete. The AV1 is Immich asset {replacement}; the original is in Immich's trash.";
+        return $"New asset {replacement}; the original is in Immich's trash.";
     }
 
     /// <summary>

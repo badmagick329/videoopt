@@ -26,12 +26,18 @@ public sealed partial class AbAv1OutputTranslator
     /// </summary>
     internal static readonly TimeSpan ProgressInterval = TimeSpan.FromSeconds(8);
 
+    // An estimate from too little progress swings wildly (the first percent or two said "2 minutes" three times for a
+    // three-minute encode), so it is withheld until both the progress and the time it is measured over are worth trusting.
+    internal const int MinimumProgressForEta = 5;
+    internal static readonly TimeSpan MinimumTimeForEta = TimeSpan.FromSeconds(30);
+
     private readonly AbAv1Stage _stage;
     private readonly double _minimumVmaf;
     private readonly int _maxEncodedPercent;
     private readonly Func<TimeSpan> _elapsed;
     private readonly Dictionary<string, Prediction> _predictions = new(StringComparer.Ordinal);
     private TimeSpan? _lastProgress;
+    private (int Percent, TimeSpan At)? _firstProgress;
     private bool _inTimeReport;
 
     public AbAv1OutputTranslator(AbAv1Stage stage, double minimumVmaf, int maxEncodedPercent)
@@ -104,16 +110,30 @@ public sealed partial class AbAv1OutputTranslator
         if (message.StartsWith("encoding ", StringComparison.Ordinal)) return [];
         if (ProgressLine().Match(message) is not { Success: true } progress) return [JobProgress.Detail(message)];
         var now = _elapsed();
+        var percent = int.Parse(progress.Groups["percent"].Value, CultureInfo.InvariantCulture);
+        _firstProgress ??= (percent, now);
         if (_lastProgress is { } last && now - last < ProgressInterval) return [];
         _lastProgress = now;
-        var eta = ParseEta(progress.Groups["eta"].Value) is { } left ? $", about {HumanReadableValues.FormatDuration(left)} left" : string.Empty;
-        return [JobProgress.Detail($"{progress.Groups["percent"].Value}%, {progress.Groups["fps"].Value} fps{eta}")];
+        var eta = EstimateTimeLeft(percent, now) is { } left ? $", about {HumanReadableValues.FormatDuration(left)} left" : string.Empty;
+        return [JobProgress.Detail($"{percent}%, {progress.Groups["fps"].Value} fps{eta}")];
+    }
+
+    /// <summary>
+    /// Time left at the pace seen since the first progress line, measured on this translator's clock. ab-av1's own estimate is
+    /// rounded to whole minutes and early on reflects the first seconds only. A remote log arrives in polled batches, so the
+    /// clock here is when the lines were read, which averages out over the minimum span.
+    /// </summary>
+    private TimeSpan? EstimateTimeLeft(int percent, TimeSpan now)
+    {
+        var (startPercent, startedAt) = _firstProgress!.Value;
+        if (percent - startPercent < MinimumProgressForEta || now - startedAt < MinimumTimeForEta) return null;
+        return (now - startedAt) * ((100d - percent) / (percent - startPercent));
     }
 
     private IReadOnlyList<JobProgress> TranslatePlain(string line)
     {
         if (EncodedLine().Match(line) is { Success: true } encoded)
-            return [JobProgress.Step($"Encoded {encoded.Groups["size"].Value} ({encoded.Groups["percent"].Value}% of the original) in {HumanReadableValues.FormatDuration(_elapsed())}.")];
+            return [JobProgress.Step($"Encoded {HumanReadableValues.FormatSizeText(encoded.Groups["size"].Value)} ({encoded.Groups["percent"].Value}% of the original) in {HumanReadableValues.FormatDuration(_elapsed())}.")];
         // The crf-search result line repeats the chosen attempt, which is already on screen.
         if (_stage == AbAv1Stage.CrfSearch && PredictionLine().IsMatch(line)) return [];
         // The job's outcome explains this one: the video is not worth converting at the configured limits.
@@ -124,21 +144,6 @@ public sealed partial class AbAv1OutputTranslator
 
     private static string FormatAttempt(string crf, double vmaf, int percent, string verdict) =>
         string.Create(CultureInfo.InvariantCulture, $"CRF {crf,2}   VMAF {vmaf,5:0.00}   size {percent,3}%   {verdict}");
-
-    /// <summary>ab-av1 writes ETAs as "66 seconds", "3 minutes" or "1 hour".</summary>
-    internal static TimeSpan? ParseEta(string value)
-    {
-        var match = EtaPattern().Match(value);
-        if (!match.Success || !double.TryParse(match.Groups["value"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) return null;
-        return match.Groups["unit"].Value switch
-        {
-            "second" => TimeSpan.FromSeconds(number),
-            "minute" => TimeSpan.FromMinutes(number),
-            "hour" => TimeSpan.FromHours(number),
-            "day" => TimeSpan.FromDays(number),
-            _ => null
-        };
-    }
 
     private sealed record Prediction(double Vmaf, int Percent);
 
@@ -177,7 +182,7 @@ public sealed partial class AbAv1OutputTranslator
     [GeneratedRegex(@"^crf (?<crf>\d+(?:\.\d+)?) VMAF (?<vmaf>\d+(?:\.\d+)?) predicted video stream size (?<size>\d+(?:\.\d+)? \w+) \((?<percent>\d+)%\) taking (?<taking>.+?)(?: \(cache\))?$", RegexOptions.CultureInvariant)]
     private static partial Regex PredictionLine();
 
-    [GeneratedRegex(@"^(?<percent>\d+)%, (?<fps>\d+(?:\.\d+)?) fps, eta (?<eta>.+)$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(?<percent>\d+)%, (?<fps>\d+(?:\.\d+)?) fps, eta .+$", RegexOptions.CultureInvariant)]
     private static partial Regex ProgressLine();
 
     [GeneratedRegex(@"^Encoded (?<size>\d+(?:\.\d+)? \w+) \((?<percent>\d+)%\)$", RegexOptions.CultureInvariant)]
@@ -188,7 +193,4 @@ public sealed partial class AbAv1OutputTranslator
 
     [GeneratedRegex(@"^Command exited with non-zero status \d+$", RegexOptions.CultureInvariant)]
     private static partial Regex NonZeroExit();
-
-    [GeneratedRegex(@"^(?<value>\d+(?:\.\d+)?) (?<unit>second|minute|hour|day)s?$", RegexOptions.CultureInvariant)]
-    private static partial Regex EtaPattern();
 }

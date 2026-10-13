@@ -28,6 +28,13 @@ public static partial class HumanReadableValues
         };
     }
 
+    /// <summary>
+    /// A size a tool wrote as text (ab-av1's <c>208.92 MiB</c>) in the format every command prints (<c>208.9 MiB</c>), so the
+    /// same size never shows two spellings in one block. Text that is not a size is returned as it came: the tool's own
+    /// words beat a guess.
+    /// </summary>
+    public static string FormatSizeText(string text) => TryParseSize(text, out var bytes) ? FormatSize(bytes) : text;
+
     /// <summary>The one duration format every command prints: <c>45s</c>, <c>7m 36s</c>, <c>1h 05m</c>.</summary>
     public static string FormatDuration(TimeSpan duration)
     {

@@ -27,7 +27,7 @@ internal sealed class FinalizationConsole(TextWriter output, TextWriter error)
 
     public void Summary(int total, IReadOnlyList<(JobRecord Job, string Message)> failed)
     {
-        output.WriteLine($"Finalised: {total - failed.Count}. Failed: {failed.Count}.");
+        output.WriteLine(OutcomeSummary.Finalisation(total - failed.Count, failed.Count));
         foreach (var (job, message) in failed) output.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}  {message}");
     }
 }
@@ -35,6 +35,16 @@ internal sealed class FinalizationConsole(TextWriter output, TextWriter error)
 /// <summary>What <c>cleanup</c> would delete, folder by folder, so a folder's path is printed once rather than per file.</summary>
 internal static class CleanupReport
 {
+    /// <summary>The count of each kind that is present, then the total; a kind with none is not mentioned.</summary>
+    public static string Summary(TemporaryOutputCleanupPlan plan)
+    {
+        var parts = new List<string>();
+        if (plan.Abandoned.Count > 0) parts.Add($"Abandoned temporary outputs: {plan.Abandoned.Count}.");
+        if (plan.StagedOriginals.Count > 0) parts.Add($"Staged Immich originals: {plan.StagedOriginals.Count}.");
+        parts.Add($"Total: {HumanReadableValues.FormatSize(plan.TotalBytes)}.");
+        return string.Join(' ', parts);
+    }
+
     public static void WriteFiles(TextWriter output, TemporaryOutputCleanupPlan plan)
     {
         var files = plan.Abandoned.Select(file => (file.Path, file.SizeBytes, file.Reason))

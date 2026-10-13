@@ -57,9 +57,9 @@ public sealed class AbAv1OutputTranslatorTests
         }
 
         output.Should().Equal(
-            JobProgress.Detail("20%, 54 fps, about 1m 06s left"),
-            JobProgress.Detail("42%, 57 fps, about 45s left"),
-            JobProgress.Step("Encoded 99.81 MiB (29% of the original) in 1m 00s."));
+            JobProgress.Detail("20%, 54 fps"),
+            JobProgress.Detail("42%, 57 fps"),
+            JobProgress.Step("Encoded 99.8 MiB (29% of the original) in 1m 00s."));
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public sealed class AbAv1OutputTranslatorTests
     {
         _now = TimeSpan.FromSeconds(14);
 
-        Translate(AbAv1Stage.Encode, "local-encode.stderr.log").Should().Equal(JobProgress.Step("Encoded 49.17 MiB (75% of the original) in 14s."));
+        Translate(AbAv1Stage.Encode, "local-encode.stderr.log").Should().Equal(JobProgress.Step("Encoded 49.2 MiB (75% of the original) in 14s."));
     }
 
     [Fact]
@@ -97,12 +97,53 @@ public sealed class AbAv1OutputTranslatorTests
         captured.Should().Equal(JobProgress.Step("Finding the best CRF..."), JobProgress.Detail("CRF 34   VMAF 95.02   size  19%   below target"));
     }
 
-    [Theory]
-    [InlineData("66 seconds", 66)]
-    [InlineData("1 second", 1)]
-    [InlineData("3 minutes", 180)]
-    [InlineData("1 hour", 3600)]
-    public void ParsesAbAv1Etas(string eta, int seconds) => AbAv1OutputTranslator.ParseEta(eta).Should().Be(TimeSpan.FromSeconds(seconds));
+    [Fact]
+    public void TheTimeLeftIsMeasuredFromTheProgressSeenNotTakenFromAbAv1sCoarseEstimate()
+    {
+        var translator = Create(AbAv1Stage.Encode);
+
+        // ab-av1 said "2 minutes" on every one of these lines; the pace between the first line and each later one decides.
+        Progress(translator, 0, 10).Should().Equal(JobProgress.Detail("10%, 8.5 fps"));
+        Progress(translator, 10, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps"));
+        Progress(translator, 20, 20).Should().Equal(JobProgress.Detail("20%, 8.5 fps"));
+        // 20 points in 40 s: 70 points left take 140 s.
+        Progress(translator, 40, 30).Should().Equal(JobProgress.Detail("30%, 8.5 fps, about 2m 20s left"));
+        // 80 points in 100 s: 10 points left take 12.5 s.
+        Progress(translator, 100, 90).Should().Equal(JobProgress.Detail("90%, 8.5 fps, about 12s left"));
+    }
+
+    [Fact]
+    public void NoTimeLeftIsShownUntilBothEnoughProgressAndEnoughTimeHavePassed()
+    {
+        var translator = Create(AbAv1Stage.Encode);
+
+        Progress(translator, 0, 10);
+        // 30 s but only 4 points: the pace is still noise.
+        Progress(translator, 30, 14).Should().Equal(JobProgress.Detail("14%, 8.5 fps"));
+        // 5 points but 20 s: the same.
+        var quick = Create(AbAv1Stage.Encode);
+        Progress(quick, 0, 10);
+        Progress(quick, 20, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps"));
+        // Both reached.
+        Progress(translator, 60, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps, about 17m 00s left"));
+    }
+
+    [Fact]
+    public void ThePaceStartsAtTheFirstProgressLine()
+    {
+        var translator = Create(AbAv1Stage.Encode);
+
+        Progress(translator, 0, 10);
+        Progress(translator, 3, 11).Should().BeEmpty();
+        // 20 points in 50 s: 70 points left take 175 s.
+        Progress(translator, 50, 30).Should().Equal(JobProgress.Detail("30%, 8.5 fps, about 2m 55s left"));
+    }
+
+    private IReadOnlyList<JobProgress> Progress(AbAv1OutputTranslator translator, int seconds, int percent)
+    {
+        _now = TimeSpan.FromSeconds(seconds);
+        return translator.Translate($"[2026-10-13T10:06:59Z INFO  ab_av1::command::encode] {percent}%, 8.5 fps, eta 2 minutes");
+    }
 
     private List<JobProgress> Translate(AbAv1Stage stage, string fixture, double minimumVmaf = 95, int maxEncodedPercent = 80)
     {
