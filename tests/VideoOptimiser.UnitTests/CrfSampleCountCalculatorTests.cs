@@ -20,4 +20,15 @@ public sealed class CrfSampleCountCalculatorTests
     {
         CrfSampleCountCalculator.Calculate(null, fallbackSampleCount: 5).Should().Be(5);
     }
+
+    [Theory]
+    [InlineData(8d, 2, 20, true)]
+    [InlineData(47.05, 2, 20, true)]
+    [InlineData(47.1, 2, 20, false)]
+    [InlineData(600d, 2, 0, true)]
+    [InlineData(null, 2, 20, false)]
+    public void TestsTheWholeVideoWhereAbAv1Would(double? durationSeconds, int sampleCount, int sampleSeconds, bool expected)
+    {
+        CrfSampleCountCalculator.TestsWholeVideo(durationSeconds, sampleCount, TimeSpan.FromSeconds(sampleSeconds)).Should().Be(expected);
+    }
 }

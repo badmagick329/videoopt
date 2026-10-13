@@ -371,7 +371,7 @@ internal static partial class CliApplication
         {
             // A ready job is cancellable only by ID, so --all never discards finished encodes. It is the way out for an Immich
             // job whose original went away, which would otherwise wait at ready forever.
-            if (job.Status is not (JobStatus.Queued or JobStatus.Interrupted) && (command.All || job.Status != JobStatus.ReadyToFinalize)) { WriteError($"{job.Id:N} is not cancellable."); continue; }
+            if (job.Status is not (JobStatus.Queued or JobStatus.Interrupted) && (command.All || job.Status != JobStatus.ReadyToFinalize)) { WriteError(NotCancellableMessage(job)); continue; }
             job.Status = JobStatus.Cancelled;
             job.FailureCategory = "Cancelled";
             job.FailureMessage = "Cancelled by user.";
@@ -382,6 +382,16 @@ internal static partial class CliApplication
         }
         return (int)ExitCode.Success;
     }
+
+    // Says why and what to do instead: a failed job's leftover output looks like something to cancel, but cleanup removes it.
+    private static string NotCancellableMessage(JobRecord job) => job.Status switch
+    {
+        JobStatus.Failed => $"{job.Id:N} has already failed, so there is nothing to cancel. Run 'cleanup' to delete its temporary output.",
+        JobStatus.Cancelled => $"{job.Id:N} is already cancelled. Run 'cleanup' to delete its temporary output.",
+        JobStatus.Completed => $"{job.Id:N} has already been finalised, so there is nothing to cancel.",
+        JobStatus.Skipped => $"{job.Id:N} was skipped, so there is nothing to cancel.",
+        _ => $"{job.Id:N} is in progress ({job.Status}). It can be cancelled once its run stops (Ctrl+C)."
+    };
 
     private static async Task<int> RunQueueRetryAsync(IJobRetryService retryService, LoadedConfiguration configuration, string jobId, CancellationToken cancellationToken)
     {
