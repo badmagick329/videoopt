@@ -38,6 +38,7 @@ public sealed class ImmichRunTests : IDisposable
         _settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Immich = new ImmichSettings { BaseUrl = "http://immich.test:2283", StagingDirectory = Path.Combine(_directory, "staging") },
             Eligibility = new EligibilitySettings { Rules = [new EligibilityRuleSettings { Codecs = ["hevc"], Resolution = "1080p-1440p", MinimumVideoBitrate = "10Mbps", MinimumFileSize = "5B" }] }
         };

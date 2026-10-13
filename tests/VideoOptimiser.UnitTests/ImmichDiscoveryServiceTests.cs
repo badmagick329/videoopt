@@ -30,6 +30,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         _settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Immich = new ImmichSettings { BaseUrl = "http://immich.test:2283", StagingDirectory = Path.Combine(_directory, "staging") },
             Eligibility = new EligibilitySettings { Rules = [HevcRule()] }
         };
@@ -195,7 +196,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
         var skipped = await CreateJobAsync(asset, JobStatus.Skipped, "NotWorthConverting");
-        skipped.QualityFingerprint = QualityFingerprint.Compute(_settings.Quality);
+        skipped.QualityFingerprint = QualityFingerprint.Compute(_settings);
         await _repository.UpdateAsync(_settings.Database.Path, skipped);
         switch (change)
         {
@@ -217,7 +218,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
         var skipped = await CreateJobAsync(asset with { Checksum = "earlier-checksum" }, JobStatus.Skipped, "NotWorthConverting");
-        skipped.QualityFingerprint = QualityFingerprint.Compute(_settings.Quality);
+        skipped.QualityFingerprint = QualityFingerprint.Compute(_settings);
         await _repository.UpdateAsync(_settings.Database.Path, skipped);
 
         var result = await DiscoverAsync();
@@ -283,6 +284,22 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
         result.Queued.Should().ContainSingle();
         _immich.Downloads.Should().HaveCount(2);
+    }
+
+    /// <summary>Immich gives no bitrate, so the file size decides: an asset no bigger than the minimum cannot save it.</summary>
+    [Fact]
+    public async Task RejectsAnAssetTooSmallToSaveTheMinimumWithoutDownloadingIt()
+    {
+        _settings.Savings.MinimumBytesSaved = "1KiB";
+        var atMinimum = _immich.Add("at-minimum.mp4", "hevc video");
+        _immich.Replace(atMinimum with { Exif = atMinimum.Exif with { FileSizeInBytes = 1024 } });
+        var overMinimum = _immich.Add("over-minimum.mp4", "hevc video");
+        _immich.Replace(overMinimum with { Exif = overMinimum.Exif with { FileSizeInBytes = 1025 } });
+
+        var result = await DiscoverAsync();
+
+        result.Ineligible.Should().Be(1);
+        _immich.Downloads.Should().Equal(overMinimum.Id);
     }
 
     [Fact]

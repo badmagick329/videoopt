@@ -149,10 +149,9 @@ quality:
 savings:
   # Reject output that is not smaller than the original.
   requireSmallerOutput: true
-  # Minimum absolute saving required for validation.
+  # Minimum saving per video. A video too small to save this much is never searched, and the
+  # CRF search rejects any CRF that would save less. The encode is checked against it again.
   minimumBytesSaved: "100MiB"
-  # Minimum percentage saving required for validation.
-  minimumPercentageSaved: 5
 
 original:
   # What finalize does with the original: delete, archive (move it to archiveDirectory),

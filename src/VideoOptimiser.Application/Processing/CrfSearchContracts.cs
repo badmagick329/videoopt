@@ -1,5 +1,6 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Application.Processing;
 
@@ -31,7 +32,7 @@ public interface ICrfSearchClient
 public sealed record CrfAttempt(int Crf, double Vmaf, double EncodedPercent);
 
 /// <summary>
-/// ab-av1 found no CRF that meets both the minimum VMAF and <c>quality.maxEncodedPercent</c>. That is an expected outcome
+/// ab-av1 found no CRF that meets both the minimum VMAF and the video's <see cref="SizeCap"/>. That is an expected outcome
 /// (AV1 would not shrink this video enough), not a failure, and a retry would end the same way. <see cref="Best"/> is the
 /// smallest attempt that met the VMAF, or null when none did.
 /// </summary>
@@ -55,14 +56,23 @@ public sealed class NoWorthwhileCrfException : Exception
     // With no quality-passing attempt, ab-av1 may have stopped early: a lower CRF raises the VMAF but also the size, so once
     // an attempt is already over the size limit it tries no lower CRF, and naming both limits is all that stays true. When it
     // reached the lowest allowed CRF and that still missed the VMAF, size played no part, and naming quality.maxEncodedPercent
-    // would send the user to a setting that cannot help.
+    // would send the user to a setting that cannot help. When savings.minimumBytesSaved set the cap, the reason names it in
+    // bytes: a percentage of the video stream would not match any size the user set or sees.
     private static string Describe(CrfAttempt? best, CrfAttempt? atMinCrf, QualitySettings quality)
     {
         var vmaf = quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture);
+        var bytesCap = quality.SizeCap is { SetByMinimumBytes: true } cap ? cap : null;
         if (best is not null)
-            return $"AV1 would make it {best.EncodedPercent.ToString("0.#", CultureInfo.InvariantCulture)}% of the original's size at the best quality-passing setting (CRF {best.Crf}, VMAF {best.Vmaf.ToString("F1", CultureInfo.InvariantCulture)}); the limit is {quality.MaxEncodedPercent}% (quality.maxEncodedPercent).";
-        return atMinCrf is null
+        {
+            var setting = $"(CRF {best.Crf}, VMAF {best.Vmaf.ToString("F1", CultureInfo.InvariantCulture)})";
+            return bytesCap is null
+                ? $"AV1 would make it {best.EncodedPercent.ToString("0.#", CultureInfo.InvariantCulture)}% of the original's size at the best quality-passing setting {setting}; the limit is {quality.MaxEncodedPercent}% (quality.maxEncodedPercent)."
+                : $"AV1 would save about {HumanReadableValues.FormatSize(bytesCap.BytesSaved(best.EncodedPercent))} at the best quality-passing setting {setting}; the minimum is {bytesCap.MinimumText} (savings.minimumBytesSaved).";
+        }
+        if (atMinCrf is not null)
+            return $"No CRF reached VMAF {vmaf}; even CRF {atMinCrf.Crf}, the lowest allowed (quality.crfSearch.minCrf), scored {atMinCrf.Vmaf.ToString("F1", CultureInfo.InvariantCulture)}.";
+        return bytesCap is null
             ? $"No CRF reached VMAF {vmaf} within {quality.MaxEncodedPercent}% of the original's size (quality.maxEncodedPercent)."
-            : $"No CRF reached VMAF {vmaf}; even CRF {atMinCrf.Crf}, the lowest allowed (quality.crfSearch.minCrf), scored {atMinCrf.Vmaf.ToString("F1", CultureInfo.InvariantCulture)}.";
+            : $"No CRF reached VMAF {vmaf} while saving {bytesCap.MinimumText} (savings.minimumBytesSaved).";
     }
 }

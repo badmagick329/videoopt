@@ -100,6 +100,7 @@ public sealed class JobConsoleOutputTests : IDisposable
     {
         Quality = new QualitySettings { MinimumVmaf = minimumVmaf },
         Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+        Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
         Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
         Eligibility = new EligibilitySettings { Rules = [new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "1Mbps", MinimumFileSize = "1B" }] },
         Processing = remote ? new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } } : new ProcessingSettings()

@@ -212,6 +212,8 @@ public sealed class QueueServiceTests : IDisposable
     [InlineData("minimumVmaf", false)]
     [InlineData("maxEncodedPercent", false)]
     [InlineData("sampleCount", true)]
+    [InlineData("minimumBytesSaved", false)]
+    [InlineData("minimumBytesSavedRespelled", true)]
     public async Task DiscoverAsyncSettlesASkippedOriginalOnlyWhileTheQualityBarIsUnchanged(string change, bool stillSettled)
     {
         var source = Path.Combine(_directory, "movie.mp4");
@@ -222,13 +224,15 @@ public sealed class QueueServiceTests : IDisposable
         await repository.CreateAsync(settings.Database.Path, new JobRecord
         {
             Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = await fingerprints.CreateAsync(source), Status = JobStatus.Skipped,
-            FailureCategory = "NotWorthConverting", QualityFingerprint = QualityFingerprint.Compute(settings.Quality)
+            FailureCategory = "NotWorthConverting", QualityFingerprint = QualityFingerprint.Compute(settings)
         });
         switch (change)
         {
             case "minimumVmaf": settings.Quality.MinimumVmaf = 93; break;
             case "maxEncodedPercent": settings.Quality.MaxEncodedPercent = 90; break;
             case "sampleCount": settings.Quality.CrfSearch.SampleCount = 9; break;
+            case "minimumBytesSaved": settings.Savings.MinimumBytesSaved = "50MiB"; break;
+            case "minimumBytesSavedRespelled": settings.Savings.MinimumBytesSaved = "100 MiB"; break;
         }
         var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor());
 

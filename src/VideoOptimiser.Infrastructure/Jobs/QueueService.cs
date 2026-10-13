@@ -13,7 +13,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         var open = new HashSet<string>(
             (await jobs.ListAsync(databasePath, terminal: false, cancellationToken)).Select(job => Path.GetFullPath(job.SourcePath)),
             StringComparer.OrdinalIgnoreCase);
-        var settled = await FindSettledOriginalsAsync(databasePath, open, QualityFingerprint.Compute(settings.Quality), cancellationToken);
+        var settled = await FindSettledOriginalsAsync(databasePath, open, QualityFingerprint.Compute(settings), cancellationToken);
         var openSourcePaths = first ? open : null;
         var report = await scanner.ScanAsync(
             settings.Watch.Roots,

@@ -1,3 +1,4 @@
+using VideoOptimiser.Application.Processing;
 using YamlDotNet.Serialization;
 
 namespace VideoOptimiser.Application.Configuration;
@@ -186,6 +187,21 @@ public sealed class QualitySettings
         copy.CrfSearch = CrfSearch.WithSampleCount(sampleCount);
         return copy;
     }
+
+    /// <summary>
+    /// The video's own size cap, set on a job's copy only. It travels with the settings because every reader of
+    /// <see cref="MaxEncodedPercent"/> (ab-av1's arguments, local or remote, the progress verdicts and the skip reason) must
+    /// use the cap, and the skip reason must name the setting that set it.
+    /// </summary>
+    [YamlIgnore] public SizeCap? SizeCap { get; private set; }
+
+    public QualitySettings WithSizeCap(SizeCap cap)
+    {
+        var copy = (QualitySettings)MemberwiseClone();
+        copy.MaxEncodedPercent = cap.Percent;
+        copy.SizeCap = cap;
+        return copy;
+    }
 }
 
 [YamlSerializable]
@@ -210,7 +226,6 @@ public sealed class SavingsSettings
 {
     [YamlMember(Alias = "requireSmallerOutput")] public bool RequireSmallerOutput { get; set; } = true;
     [YamlMember(Alias = "minimumBytesSaved")] public string MinimumBytesSaved { get; set; } = "100MiB";
-    [YamlMember(Alias = "minimumPercentageSaved")] public decimal MinimumPercentageSaved { get; set; } = 5;
 }
 
 [YamlSerializable]

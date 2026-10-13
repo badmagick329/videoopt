@@ -120,7 +120,6 @@ quality:
 savings:
   requireSmallerOutput: true
   minimumBytesSaved: "1KiB"
-  minimumPercentageSaved: 5
 validation:
   decodeTest: "sampled"
   durationToleranceSeconds: 1

@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.Scanning;
 
 namespace VideoOptimiser.Infrastructure.Scanning;
@@ -134,9 +135,7 @@ public sealed class FileScanner(
             cached.SourceSizeBytes == cachedSizeBytes &&
             cached.SourceLastWriteUtcTicks == cachedLastWriteUtcTicks)
         {
-            return EligibilityEvaluator.IsEligible(info, cached.MediaInfo, settings.Eligibility, out var cachedReason)
-                ? new EvaluationResult(new ScanItem(path, ScanItemStatus.Eligible, cachedReason, cachedSizeBytes, cached.MediaInfo), CacheHit: true)
-                : new EvaluationResult(new ScanItem(path, ScanItemStatus.Ineligible, cachedReason, cachedSizeBytes, cached.MediaInfo), CacheHit: true);
+            return new EvaluationResult(Judge(path, info, cached.MediaInfo, cachedSizeBytes, settings), CacheHit: true);
         }
 
         var readiness = await readinessService.CheckAsync(path, cancellationToken);
@@ -168,15 +167,27 @@ public sealed class FileScanner(
                 new MediaProbeCacheEntry(path, sourceSizeBytes, sourceLastWriteUtcTicks, mediaInfo),
                 cancellationToken);
 
-            return EligibilityEvaluator.IsEligible(info, mediaInfo!, settings.Eligibility, out var reason)
-                ? new EvaluationResult(new ScanItem(path, ScanItemStatus.Eligible, reason, sourceSizeBytes, mediaInfo), RealProbe: true)
-                : new EvaluationResult(new ScanItem(path, ScanItemStatus.Ineligible, reason, sourceSizeBytes, mediaInfo), RealProbe: true);
+            return new EvaluationResult(Judge(path, info, mediaInfo, sourceSizeBytes, settings), RealProbe: true);
         }
         catch (Exception exception) when (exception is IOException or MediaProbeException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
             progress?.Report(new ScanProgress(path, "Issue", exception.Message));
             return new EvaluationResult(new ScanItem(path, ScanItemStatus.ProbeFailed, exception.Message, info.Length));
         }
+    }
+
+    /// <summary>
+    /// The eligibility rules, then the size cap: a video too small to save <c>savings.minimumBytesSaved</c> is never queued,
+    /// since its job would only skip it.
+    /// </summary>
+    private static ScanItem Judge(string path, FileInfo info, MediaInfo media, long sizeBytes, AppSettings settings)
+    {
+        if (!EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var reason))
+            return new ScanItem(path, ScanItemStatus.Ineligible, reason, sizeBytes, media);
+        var cap = SizeCap.For(media, sizeBytes, settings.Quality, settings.Savings);
+        return cap.RulesOutEverything
+            ? new ScanItem(path, ScanItemStatus.Ineligible, $"Too small to save {cap.MinimumText} (savings.minimumBytesSaved).", sizeBytes, media)
+            : new ScanItem(path, ScanItemStatus.Eligible, reason, sizeBytes, media);
     }
 
     private sealed record EvaluationResult(ScanItem Item, bool CacheHit = false, bool RealProbe = false);

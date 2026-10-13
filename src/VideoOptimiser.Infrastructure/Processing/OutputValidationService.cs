@@ -59,7 +59,6 @@ public sealed class OutputValidationService(
 
         var saved = (decimal)(sourceSize - outputSize) / sourceSize * 100;
         if (settings.Savings.RequireSmallerOutput && outputSize >= sourceSize) failures.Add("Output is not smaller than the original.");
-        if (saved < settings.Savings.MinimumPercentageSaved) failures.Add($"Output saves less than {settings.Savings.MinimumPercentageSaved}%.");
         if (!HumanReadableValues.TryParseSize(settings.Savings.MinimumBytesSaved, out var minimumBytesSaved))
         {
             throw new InvalidOperationException("savings.minimumBytesSaved must be validated before output validation.");

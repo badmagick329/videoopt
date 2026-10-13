@@ -107,8 +107,17 @@ public sealed class JobProcessor(
             var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
             if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return await FailAsync(job, databasePath, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles, progress, cancellationToken);
 
+            // Before staging, and whatever --force says: a video that cannot save savings.minimumBytesSaved would only fail
+            // validation after a full upload, search and encode.
+            var cap = SizeCap.For(media, info.Length, settings.Quality, settings.Savings);
+            if (cap.RulesOutEverything)
+            {
+                var measured = cap.MeasuredIsFile ? $"the file is {HumanReadableValues.FormatSize(cap.MeasuredBytes)}" : $"the video stream is about {HumanReadableValues.FormatSize(cap.MeasuredBytes)}";
+                return await SkipAsync(job, databasePath, settings, $"{measured}, so it cannot save {cap.MinimumText} (savings.minimumBytesSaved).", progress, cancellationToken);
+            }
+
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.SampleCount);
-            var quality = settings.Quality.WithSampleCount(sampleCount);
+            var quality = settings.Quality.WithSampleCount(sampleCount).WithSizeCap(cap);
             if (session.IsRemote)
             {
                 stage = "StagingFailed";
@@ -130,7 +139,8 @@ public sealed class JobProcessor(
                 var samples = HumanReadableValues.TryParseDuration(quality.CrfSearch.SampleDuration, out var sampleDuration) && CrfSampleCountCalculator.TestsWholeVideo(media.DurationSeconds, quality.CrfSearch.SampleCount, sampleDuration)
                     ? "testing the whole video"
                     : $"{quality.CrfSearch.SampleCount.ToString(CultureInfo.InvariantCulture)} test {(quality.CrfSearch.SampleCount == 1 ? "clip" : "clips")} of {quality.CrfSearch.SampleDuration} each";
-                progress?.Report(JobProgress.Step($"Finding the best CRF for VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)} ({samples})..."));
+                var saving = cap.SetByMinimumBytes ? $" that saves {cap.MinimumText}" : string.Empty;
+                progress?.Report(JobProgress.Step($"Finding the best CRF for VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)}{saving} ({samples})..."));
                 var crfResult = await session.SearchCrfAsync(path, quality, Translating(progress, AbAv1Stage.CrfSearch, quality), cancellationToken);
                 job.Crf = crfResult.Crf;
                 prediction = crfResult.Prediction;
@@ -212,7 +222,7 @@ public sealed class JobProcessor(
         }
         catch (NoWorthwhileCrfException exception)
         {
-            return await SkipAsync(job, databasePath, settings, exception, path, progress, cancellationToken);
+            return await SkipAsync(job, databasePath, settings, exception.Message, progress, cancellationToken);
         }
         catch (RemoteConnectionException exception)
         {
@@ -304,19 +314,20 @@ public sealed class JobProcessor(
     }
 
     /// <summary>
-    /// Ends the job as skipped: AV1 cannot meet the quality bar and the size limit together. The fingerprint lets discovery
-    /// check the video again once those settings change. The remote stage has already cleaned its workspace on the way out.
+    /// Ends the job as skipped: AV1 cannot meet the quality bar and the size cap together. The fingerprint lets discovery
+    /// check the video again once those settings change. A remote search has already cleaned its workspace on the way out;
+    /// a skip before the search staged nothing in this run.
     /// </summary>
-    private async Task<JobProcessingResult> SkipAsync(JobRecord job, string databasePath, AppSettings settings, NoWorthwhileCrfException exception, string path, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    private async Task<JobProcessingResult> SkipAsync(JobRecord job, string databasePath, AppSettings settings, string reason, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         job.Status = JobStatus.Skipped;
         job.FailureCategory = NotWorthConvertingCategory;
-        job.FailureMessage = exception.Message;
-        job.QualityFingerprint = QualityFingerprint.Compute(settings.Quality);
+        job.FailureMessage = reason;
+        job.QualityFingerprint = QualityFingerprint.Compute(settings);
         job.CompletedUtc = DateTimeOffset.UtcNow;
         await jobs.UpdateAsync(databasePath, job, cancellationToken);
-        progress?.Report(JobProgress.Outcome(JobTone.Warning, $"Not worth converting: {exception.Message}"));
-        return new JobProcessingResult(job, ExitCode.Success, exception.Message);
+        progress?.Report(JobProgress.Outcome(JobTone.Warning, $"Not worth converting: {reason}"));
+        return new JobProcessingResult(job, ExitCode.Success, reason);
     }
 
     internal const string NotWorthConvertingCategory = "NotWorthConverting";

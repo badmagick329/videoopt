@@ -27,8 +27,12 @@ public sealed class ImmichDiscoveryService(
         var client = clients.Create(settings.Immich);
         var cutoff = _utcNow().AddDays(-settings.Immich.MinimumAgeDays);
         var rulesFingerprint = EligibilityEvaluator.RulesFingerprint(settings.Eligibility);
-        var qualityFingerprint = QualityFingerprint.Compute(settings.Quality);
+        var qualityFingerprint = QualityFingerprint.Compute(settings);
         var minimumSize = SmallestMinimumFileSize(settings.Eligibility);
+        // Immich gives no bitrate, so this uses the file size; a video whose stream is too small is skipped by its job before
+        // the search instead.
+        if (!Domain.HumanReadableValues.TryParseSize(settings.Savings.MinimumBytesSaved, out var minimumBytesSaved))
+            throw new InvalidOperationException("savings.minimumBytesSaved must be validated before Immich discovery.");
         // Before the history load: a job this fails has ended, so the search below may stage its asset afresh.
         var (restaged, issues) = await RestageMissingAsync(client, databasePath, settings, limit, progress, cancellationToken);
         var history = await ImmichHistory.LoadAsync(jobs, databasePath, cancellationToken);
@@ -64,7 +68,7 @@ public sealed class ImmichDiscoveryService(
             if (skips.TryGetValue(asset.Id, out var skip) && skip.IsCurrent(asset.Checksum, rulesFingerprint)) { previouslySkipped++; continue; }
 
             if (!settings.Eligibility.Extensions.Contains(Path.GetExtension(asset.OriginalFileName), StringComparer.OrdinalIgnoreCase) ||
-                asset.Exif.FileSizeInBytes < minimumSize)
+                asset.Exif.FileSizeInBytes < minimumSize || asset.Exif.FileSizeInBytes <= minimumBytesSaved)
             {
                 ineligible++;
                 // A stale skip this check settles without a download would otherwise stay stale for good, and every later run

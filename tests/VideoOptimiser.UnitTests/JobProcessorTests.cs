@@ -34,6 +34,7 @@ public sealed class JobProcessorTests : IDisposable
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
             Eligibility = Rules()
         };
@@ -99,6 +100,7 @@ public sealed class JobProcessorTests : IDisposable
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = Path.Combine(_directory, "watched") }] },
             Immich = new ImmichSettings { StagingDirectory = Path.Combine(_directory, stagingDirectory) },
             Eligibility = Rules()
@@ -159,6 +161,7 @@ public sealed class JobProcessorTests : IDisposable
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
             Eligibility = Rules()
         };
@@ -203,6 +206,7 @@ public sealed class JobProcessorTests : IDisposable
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
             Eligibility = Rules()
         };
@@ -260,6 +264,7 @@ public sealed class JobProcessorTests : IDisposable
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
             Eligibility = Rules()
         };
@@ -289,6 +294,7 @@ public sealed class JobProcessorTests : IDisposable
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
             Eligibility = Rules(),
             Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } }
@@ -328,6 +334,7 @@ public sealed class JobProcessorTests : IDisposable
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
             Eligibility = Rules(),
             Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } }
@@ -353,6 +360,7 @@ public sealed class JobProcessorTests : IDisposable
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
             Eligibility = Rules(),
             Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } }
@@ -378,6 +386,68 @@ public sealed class JobProcessorTests : IDisposable
         JobProcessor.ResumePoint(current, earlier).Should().Be(expected);
     }
 
+    /// <summary>
+    /// The remote session fails the job as soon as it is staged, so a skip here proves nothing was uploaded or searched.
+    /// --force does not bypass the check; with it, an unknown bitrate leaves the file size to stand in for the stream.
+    /// </summary>
+    [Theory]
+    [InlineData(false, "the video stream is about 143.1 MiB, so it cannot save 200MiB (savings.minimumBytesSaved).")]
+    [InlineData(true, "the file is 19 B, so it cannot save 200MiB (savings.minimumBytesSaved).")]
+    public async Task AVideoTooSmallToSaveTheMinimumIsSkippedBeforeItIsStagedOrSearched(bool unknownBitrate, string reason)
+    {
+        var source = Path.Combine(_directory, "small.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "small.db") },
+            Savings = new SavingsSettings { MinimumBytesSaved = "200MiB" },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules(),
+            Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } }
+        };
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(bitrate: unknownBitrate ? null : 10_000_000), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        var reported = new List<JobProgress>();
+
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: unknownBitrate, new SynchronousProgress(reported.Add));
+
+        result.ExitCode.Should().Be(ExitCode.Success);
+        var stored = (await repository.GetAsync(settings.Database.Path, result.Job.Id))!;
+        stored.Status.Should().Be(JobStatus.Skipped);
+        stored.FailureCategory.Should().Be("NotWorthConverting");
+        stored.FailureMessage.Should().Be(reason);
+        stored.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings));
+        Steps(reported).Should().Equal($"Not worth converting: {reason}");
+    }
+
+    /// <summary>The 143.1 MiB stream must save 100 MiB, so the search may keep no more than 30% of it.</summary>
+    [Fact]
+    public async Task WhenTheMinimumSavingSetsTheCapTheSearchGetsItAndEveryLineNamesTheSaving()
+    {
+        var source = Path.Combine(_directory, "capped.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "capped.db") },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules(),
+            Quality = new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 }
+        };
+        var search = new NothingWorthwhileCrfSearch();
+        var reported = new List<JobProgress>();
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
+
+        search.MaxEncodedPercent.Should().Be(30);
+        var stored = (await repository.GetAsync(settings.Database.Path, result.Job.Id))!;
+        stored.Status.Should().Be(JobStatus.Skipped);
+        Steps(reported).Should().Equal(
+            "Finding the best CRF for VMAF 97 that saves 100MiB (2 test clips of 20s each)...",
+            "Not worth converting: No CRF reached VMAF 97 while saving 100MiB (savings.minimumBytesSaved).");
+    }
+
     [Fact]
     public async Task AJobWhoseCrfSearchFindsNothingWorthwhileEndsSkippedNotFailedAndReportsIt()
     {
@@ -387,6 +457,7 @@ public sealed class JobProcessorTests : IDisposable
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "skipped.db") },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
             Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
             Eligibility = Rules(),
             Quality = new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 }
@@ -402,7 +473,7 @@ public sealed class JobProcessorTests : IDisposable
         stored.Status.Should().Be(JobStatus.Skipped);
         stored.FailureCategory.Should().Be("NotWorthConverting");
         stored.FailureMessage.Should().Be("AV1 would make it 95% of the original's size at the best quality-passing setting (CRF 31, VMAF 97.3); the limit is 80% (quality.maxEncodedPercent).");
-        stored.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings.Quality));
+        stored.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings));
         stored.CompletedUtc.Should().NotBeNull();
         // The header names the file, so the outcome line does not repeat it, and nothing follows the outcome line.
         Steps(reported).Should().Equal(
@@ -537,6 +608,7 @@ public sealed class JobProcessorTests : IDisposable
     private AppSettings Settings(string databaseName, QualitySettings? quality = null) => new()
     {
         Database = new DatabaseSettings { Path = Path.Combine(_directory, databaseName) },
+        Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
         Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
         Eligibility = Rules(),
         Quality = quality ?? new QualitySettings()
@@ -620,10 +692,22 @@ public sealed class JobProcessorTests : IDisposable
         public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
     }
 
-    private sealed class H264Probe(IReadOnlyList<string>? audioCodecs = null) : IMediaProbe
+    private sealed class H264Probe(IReadOnlyList<string>? audioCodecs = null, long? bitrate = 10_000_000) : IMediaProbe
     {
         public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, 10_000_000, audioCodecs));
+            Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, bitrate, audioCodecs));
+    }
+
+    /// <summary>Keeps the cap ab-av1 would be given, then ends as a search where no attempt met the VMAF.</summary>
+    private sealed class NothingWorthwhileCrfSearch : ICrfSearchClient
+    {
+        public int? MaxEncodedPercent { get; private set; }
+        public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
+        public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            MaxEncodedPercent = settings.MaxEncodedPercent;
+            throw new NoWorthwhileCrfException([new CrfAttempt(30, 96.1, 25)], settings);
+        }
     }
 
     private sealed class FixedCrfSearch : ICrfSearchClient

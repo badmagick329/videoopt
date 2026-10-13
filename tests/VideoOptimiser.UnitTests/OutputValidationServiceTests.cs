@@ -241,19 +241,6 @@ public sealed class OutputValidationServiceTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task ValidateAsyncFailsWhenThePercentageSavedIsBelowMinimum()
-    {
-        var manifest = await CreateManifestAsync(outputBytes: 80);
-        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
-
-        var result = await ValidateAsync(manifest, timeline, timeline, minimumPercentageSaved: 30);
-
-        result.Passed.Should().BeFalse();
-        result.Failures.Should().Equal("Output saves less than 30%.");
-        result.PercentageSaved.Should().Be(20);
-    }
-
     [Theory]
     [InlineData("none", 600d, 0)]
     [InlineData("full", 600d, 1)]
@@ -279,8 +266,7 @@ public sealed class OutputValidationServiceTests : IDisposable
         Exception? sourceProbeError = null,
         string outputCodec = "av1",
         int outputAudioStreams = 1,
-        bool requireSmallerOutput = true,
-        decimal minimumPercentageSaved = 0)
+        bool requireSmallerOutput = true)
     {
         decodeTester ??= new RecordingDecodeTester(new DecodeTestResult(true, null));
         var service = new OutputValidationService(
@@ -289,7 +275,7 @@ public sealed class OutputValidationServiceTests : IDisposable
             _ => decodeTester);
         return await service.ValidateAsync(manifest, new AppSettings
         {
-            Savings = new SavingsSettings { RequireSmallerOutput = requireSmallerOutput, MinimumPercentageSaved = minimumPercentageSaved, MinimumBytesSaved = minimumBytesSaved },
+            Savings = new SavingsSettings { RequireSmallerOutput = requireSmallerOutput, MinimumBytesSaved = minimumBytesSaved },
             Validation = new ValidationSettings { DurationToleranceSeconds = 0.1 }
         });
     }

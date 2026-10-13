@@ -31,6 +31,30 @@ public sealed class FileScannerTests : IDisposable
         new FileInfo(h264).Length.Should().Be(3);
     }
 
+    /// <summary>The probe gives no duration, so the file size stands in for the stream. Cached and fresh probes are judged alike.</summary>
+    [Fact]
+    public async Task ScanAsyncKeepsOutAVideoTooSmallToSaveTheMinimum()
+    {
+        var fresh = Path.Combine(_directory, "fresh.mkv");
+        var cached = Path.Combine(_directory, "cached.mkv");
+        var bigEnough = Path.Combine(_directory, "big.mkv");
+        await File.WriteAllBytesAsync(fresh, [1, 2, 3]);
+        await File.WriteAllBytesAsync(cached, [1, 2, 3]);
+        await File.WriteAllBytesAsync(bigEnough, [1, 2, 3, 4]);
+        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new SelectiveProbeCache(new HashSet<string> { cached }));
+        var settings = Settings("1B");
+        settings.Savings.MinimumBytesSaved = "3B";
+
+        var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
+
+        report.Items.Where(item => item.Status == ScanItemStatus.Ineligible).Select(item => (item.Path, item.Reason)).Should().BeEquivalentTo(new[]
+        {
+            (fresh, "Too small to save 3B (savings.minimumBytesSaved)."),
+            (cached, "Too small to save 3B (savings.minimumBytesSaved).")
+        });
+        report.Items.Should().ContainSingle(item => item.Path == bigEnough && item.Status == ScanItemStatus.Eligible);
+    }
+
     [Fact]
     public async Task ScanAsyncSkipsExcludedDirectory()
     {
@@ -114,6 +138,7 @@ public sealed class FileScannerTests : IDisposable
     private AppSettings Settings(string minimumFileSize, bool recursive = false) => new()
     {
         Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+        Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
         Eligibility = new EligibilitySettings
         {
             Rules = [new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "1Mbps", MinimumFileSize = minimumFileSize }]
