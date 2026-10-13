@@ -43,13 +43,17 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
                     _limit = started.Limit;
                     _ruleCount = started.RuleCount;
                     output.WriteLine(outputStyle.Dim(started.Limit is { } limit
-                        ? $"Searching Immich for {OutputWords.Count(limit, "video", "videos")} to convert. Each candidate is downloaded and checked with"
-                        : "Searching Immich for every video that fits your rules. Each candidate is downloaded and checked with"));
-                    output.WriteLine(outputStyle.Dim("ffprobe; ones that don't fit your rules are deleted and skipped in future runs."));
+                        ? $"Searching Immich for {OutputWords.Count(limit, "video", "videos")} to convert."
+                        : "Searching Immich for every video that fits your rules."));
+                    // "The download", not "it": a user read "deleted" as the video in Immich.
+                    output.WriteLine(outputStyle.Dim("Each candidate is downloaded and checked with ffprobe."));
+                    output.WriteLine(outputStyle.Dim("If it doesn't fit your rules, the download is deleted and the video is skipped in future runs."));
                     if (started.AlreadyQueued > 0)
                         output.WriteLine($"{started.AlreadyQueued} already queued from earlier runs.");
                     if (started.StaleSkips > 0)
-                        output.WriteLine($"Your eligibility rules changed since the last run, so {OutputWords.Count(started.StaleSkips, "video", "videos")} skipped before will be downloaded and checked again.");
+                        // The count is of records, not of a change event: a run with a limit re-checks only the stale skips it
+                        // reaches, so the rest stay stale and this line returns on later runs with the rules unchanged.
+                        output.WriteLine($"{OutputWords.Count(started.StaleSkips, "video was", "videos were")} skipped under different eligibility rules; each is checked again when the search reaches it.");
                     output.WriteLine();
                     break;
                 case ImmichDiscoveryProgress.Restaging restaging:

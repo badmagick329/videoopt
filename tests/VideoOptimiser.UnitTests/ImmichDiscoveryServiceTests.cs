@@ -648,6 +648,21 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AStaleSkipRejectedWithoutADownloadIsRecordedUnderTheCurrentRulesSoLaterRunsStopCountingIt()
+    {
+        var small = _immich.Add("small.mp4", "h264 small");
+        _immich.Replace(small with { Exif = small.Exif with { FileSizeInBytes = 3 } });
+        await _repository.PutImmichSkipAsync(_settings.Database.Path, new ImmichSkipRecord(small.Id, small.Checksum, "an-older-rules-fingerprint", "codec h264", Now));
+        var events = new List<ImmichDiscoveryProgress>();
+
+        await DiscoverAsync();
+        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+
+        events.OfType<ImmichDiscoveryProgress.Started>().Single().StaleSkips.Should().Be(0);
+        events.OfType<ImmichDiscoveryProgress.CandidateDownloading>().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ReportsARestagedDownloadAndAFailedOne()
     {
         var restored = _immich.Add("restored.mp4", "hevc restored");

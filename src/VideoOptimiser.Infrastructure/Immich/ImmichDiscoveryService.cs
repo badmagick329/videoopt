@@ -67,6 +67,10 @@ public sealed class ImmichDiscoveryService(
                 asset.Exif.FileSizeInBytes < minimumSize)
             {
                 ineligible++;
+                // A stale skip this check settles without a download would otherwise stay stale for good, and every later run
+                // would announce it as one to check again.
+                if (skip is not null)
+                    await jobs.PutImmichSkipAsync(databasePath, new ImmichSkipRecord(asset.Id, asset.Checksum, rulesFingerprint, "too small or not a listed file type", _utcNow()), cancellationToken);
                 continue;
             }
 

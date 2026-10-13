@@ -110,8 +110,9 @@ public sealed partial class ColourOutputTests
         console.Report(new ImmichDiscoveryProgress.AssetExcluded("fav.mp4", "0f1e", "is a favourite"));
 
         output.ToString().Should().Be(
-            $"{Esc}2mSearching Immich for 1 video to convert. Each candidate is downloaded and checked with{Reset}\n" +
-            $"{Esc}2mffprobe; ones that don't fit your rules are deleted and skipped in future runs.{Reset}\n" +
+            $"{Esc}2mSearching Immich for 1 video to convert.{Reset}\n" +
+            $"{Esc}2mEach candidate is downloaded and checked with ffprobe.{Reset}\n" +
+            $"{Esc}2mIf it doesn't fit your rules, the download is deleted and the video is skipped in future runs.{Reset}\n" +
             "\n" +
             $"[1] a.mp4  2025-07-18  h264 4K 42 Mbps  495.1 MiB  {Esc}33mskip: rule 1 needs 2GiB{Reset}\n" +
             $"[2] b.mp4  2026-02-23  hevc 4K 33 Mbps  319.4 MiB  {Esc}32mqueued: fits rule 3 (1 of 1){Reset}\n" +

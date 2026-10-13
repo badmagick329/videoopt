@@ -30,9 +30,10 @@ public sealed class HumanOutputConsoleTests
         console.Report(new ImmichDiscoveryProgress.AssetExcluded("fav.mp4", "0f1e", "is a favourite"));
 
         output.ToString().Should().Be(
-            "Searching Immich for 1 video to convert. Each candidate is downloaded and checked with\n" +
-            "ffprobe; ones that don't fit your rules are deleted and skipped in future runs.\n" +
-            "Your eligibility rules changed since the last run, so 418 videos skipped before will be downloaded and checked again.\n" +
+            "Searching Immich for 1 video to convert.\n" +
+            "Each candidate is downloaded and checked with ffprobe.\n" +
+            "If it doesn't fit your rules, the download is deleted and the video is skipped in future runs.\n" +
+            "418 videos were skipped under different eligibility rules; each is checked again when the search reaches it.\n" +
             "\n" +
             "[1] PXL_20250718_192844658.mp4  2025-07-18  h264 4K 42 Mbps  495.1 MiB  skip: rule 1 needs 2GiB\n" +
             "[2] PXL_20260223_092415845.mp4  2026-02-23  hevc 4K 33 Mbps  319.4 MiB  queued: fits rule 3 (1 of 1)\n" +
@@ -50,10 +51,11 @@ public sealed class HumanOutputConsoleTests
         console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 3, Facts("hevc", 1920, 1080, 8_100_000, 10), 2));
 
         output.ToString().Should().StartWith(
-                "Searching Immich for every video that fits your rules. Each candidate is downloaded and checked with\n" +
-                "ffprobe; ones that don't fit your rules are deleted and skipped in future runs.\n" +
+                "Searching Immich for every video that fits your rules.\n" +
+                "Each candidate is downloaded and checked with ffprobe.\n" +
+                "If it doesn't fit your rules, the download is deleted and the video is skipped in future runs.\n" +
                 "2 already queued from earlier runs.\n")
-            .And.NotContain("rules changed")
+            .And.NotContain("different eligibility rules")
             .And.EndWith("[1] a.mp4  2022-11-30  hevc 1080p 8.1 Mbps  10 B  queued: fits rule 2\n");
     }
 
