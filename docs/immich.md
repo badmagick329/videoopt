@@ -72,7 +72,7 @@ Start with one video, encoded on this PC whatever `processing.mode` says, so the
 .\video-optimiser.exe immich run --first --local --config .\video-optimiser.yaml
 ```
 
-Then drop `--first` to convert everything that matches, and drop `--local` to encode where the config says. `--remote` does the opposite for one run. `immich run`:
+Then use `--limit <n>` for a round of at most `n` videos, such as `--limit 5`, or drop the flag to convert everything that matches. A paid remote round is worth a few videos, since creating the server takes several minutes. Drop `--local` to encode where the config says; `--remote` does the opposite for one run. `immich run`:
 
 1. Prints where encoding runs, such as `Encoding on: this PC.`, before downloading anything.
 2. Runs the [re-upload guard](#the-re-upload-guard).
@@ -81,7 +81,7 @@ Then drop `--first` to convert everything that matches, and drop `--local` to en
 5. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it.
 6. Converts the queue on your PC or remote worker, exactly like `queue run`.
 
-Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes. If a `--first` run stops before converting, run it again: it converts the video it already downloaded and downloads no other.
+Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes. If a `--first` or `--limit` run stops before converting, run it again with the same flag: videos already downloaded count toward the limit, so it converts those first and downloads only enough new ones to reach it.
 
 ### 3. Review
 

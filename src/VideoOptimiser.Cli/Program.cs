@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
@@ -187,7 +188,7 @@ internal static partial class CliApplication
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
             CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command, cancellationToken),
             CliCommandKind.Cleanup => await RunCleanupAsync(services.GetRequiredService<ITemporaryOutputCleanupService>(), configuration, command.DryRun, cancellationToken),
-            CliCommandKind.ImmichRun => await RunImmichRunAsync(services, configuration, command.First, command.ModeOverride, cancellationToken),
+            CliCommandKind.ImmichRun => await RunImmichRunAsync(services, configuration, command.Limit, command.ModeOverride, cancellationToken),
             CliCommandKind.ImmichFinalize => await RunImmichFinalizeAsync(services, configuration, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
@@ -716,7 +717,7 @@ Usage:
   video-optimiser finalize <job-id> [--config <path>]
   video-optimiser finalize --ready [--config <path>]
   video-optimiser cleanup [--dry-run] [--config <path>]
-  video-optimiser immich run [--first] [--config <path>] [--local | --remote]
+  video-optimiser immich run [--first | --limit <n>] [--config <path>] [--local | --remote]
   video-optimiser immich finalize [--config <path>]
 """;
 
@@ -751,7 +752,7 @@ internal enum CliCommandKind
     ImmichFinalize
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -763,6 +764,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         var force = false;
         var dryRun = false;
         var first = false;
+        int? limit = null;
         var all = false;
         var json = false;
         var finalizeReady = false;
@@ -786,6 +788,12 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                 case "--first":
                     first = true;
                     break;
+                case "--limit" when index + 1 < args.Length && int.TryParse(args[index + 1], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) && parsed > 0:
+                    limit = parsed;
+                    index++;
+                    break;
+                case "--limit":
+                    return Invalid("--limit requires a whole number of 1 or more.");
                 case "--dry-run":
                     dryRun = true;
                     break;
@@ -851,6 +859,10 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         }
 
         if (first && kind is not (CliCommandKind.QueueDiscover or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue discover and immich run.");
+        if (limit is not null && kind != CliCommandKind.ImmichRun) return Invalid("--limit is only supported by immich run.");
+        if (first && limit is not null) return Invalid("--first and --limit cannot be used together.");
+        // --first is --limit 1 for immich run; queue discover keeps its own --first.
+        if (first && kind == CliCommandKind.ImmichRun) limit = 1;
         if (all && kind != CliCommandKind.QueueCancel) return Invalid("--all is only supported by queue cancel.");
 
         if (force && kind != CliCommandKind.Process)
@@ -870,7 +882,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid($"{modeOverride.Flag} is only supported by queue run, process and immich run.");
         }
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueCancel or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueCancel or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);

@@ -12,7 +12,7 @@ using VideoOptimiser.Infrastructure.Jobs;
 /// </summary>
 internal static partial class CliApplication
 {
-    private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, bool first, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
+    private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, int? limit, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
     {
         if (!RequireImmich(configuration) || ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
         // Discovery downloads originals, so the banner comes first.
@@ -36,7 +36,7 @@ internal static partial class CliApplication
         ImmichRunPreparation preparation;
         try
         {
-            preparation = await services.GetRequiredService<IImmichRunService>().PrepareAsync(settings.Database.Path, settings, first, guardProgress, discoveryProgress, modeOverridden: modeOverride is not null, cancellationToken);
+            preparation = await services.GetRequiredService<IImmichRunService>().PrepareAsync(settings.Database.Path, settings, limit, guardProgress, discoveryProgress, modeOverridden: modeOverride is not null, cancellationToken);
         }
         catch when (guardReports.Count > 0)
         {

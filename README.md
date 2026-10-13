@@ -167,7 +167,7 @@ All commands take `--config <path>`.
 | `validate <job-id>` | Re-run the checks on a job's output. |
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one after a single confirmation. |
 | `cleanup [--dry-run]` | Delete temporary files and staged Immich downloads no job will use again. |
-| `immich run [--first] [--local \| --remote]`, `immich finalize` | The same flow for an Immich library. See [docs/immich.md](docs/immich.md). |
+| `immich run [--first \| --limit <n>] [--local \| --remote]`, `immich finalize` | The same flow for an Immich library. `--limit 5` converts at most five videos. See [docs/immich.md](docs/immich.md). |
 | `remote setup` | One-time Hetzner setup: checks the API token, creates and uploads an SSH key, and writes the `processing:` section after asking. Creates no server. |
 | `worker create`, `worker status`, `worker delete` | Manage the Hetzner server by hand. Normally the run does this. |
 | `version` | Print the version. |

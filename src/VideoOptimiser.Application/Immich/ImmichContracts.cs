@@ -168,10 +168,11 @@ public sealed record ImmichDiscoveryResult(
 public interface IImmichDiscoveryService
 {
     /// <summary>
-    /// Stages and queues every eligible Immich video without an open, completed or settled failed job (<paramref name="first"/>:
-    /// at most one). Assets that need a download to judge are downloaded under <see cref="ImmichSettings.StagingDirectory"/>.
+    /// Stages and queues every eligible Immich video without an open, completed or settled failed job. With a
+    /// <paramref name="limit"/>, it stops once that many Immich jobs are open, counting those already open. Assets that need
+    /// a download to judge are downloaded under <see cref="ImmichSettings.StagingDirectory"/>.
     /// </summary>
-    Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
+    Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -206,7 +207,7 @@ public interface IImmichReuploadGuard
 
 /// <summary>
 /// What <c>immich run</c> did before processing. <see cref="Queue"/> holds the open Immich jobs to process; with
-/// <c>--first</c> at most one.
+/// <c>--limit</c> at most that many, and with <c>--first</c> at most one.
 /// </summary>
 public sealed record ImmichRunPreparation(ImmichReuploadGuardResult Guard, ImmichDiscoveryResult Discovery, QueuePreparationResult Queue);
 
@@ -216,7 +217,7 @@ public interface IImmichRunService
     /// Runs the re-upload guard, then Immich discovery, then prepares the open Immich jobs for processing. Processing is left
     /// to the caller, which owns the remote worker's lifecycle.
     /// </summary>
-    Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? guardProgress = null, IProgress<ScanProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default);
+    Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ScanProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

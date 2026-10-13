@@ -6,16 +6,47 @@ namespace VideoOptimiser.UnitTests;
 public sealed class CliCommandParserTests
 {
     [Theory]
-    [InlineData(new[] { "immich", "run" }, false)]
-    [InlineData(new[] { "immich", "run", "--first" }, true)]
-    [InlineData(new[] { "--first", "immich", "run", "--config", "my.yaml" }, true)]
-    public void ParsesImmichRun(string[] args, bool first)
+    [InlineData(new[] { "immich", "run" }, null)]
+    [InlineData(new[] { "immich", "run", "--first" }, 1)]
+    [InlineData(new[] { "--first", "immich", "run", "--config", "my.yaml" }, 1)]
+    [InlineData(new[] { "immich", "run", "--limit", "5" }, 5)]
+    [InlineData(new[] { "--limit", "1", "immich", "run", "--remote" }, 1)]
+    public void ParsesImmichRun(string[] args, int? limit)
     {
         var command = CliCommand.Parse(args);
 
         command.Kind.Should().Be(CliCommandKind.ImmichRun, command.Error);
-        command.First.Should().Be(first);
+        command.Limit.Should().Be(limit);
     }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("five")]
+    [InlineData("2.5")]
+    [InlineData("--remote")]
+    public void LimitNeedsAPositiveWholeNumber(string value)
+    {
+        var command = CliCommand.Parse(["immich", "run", "--limit", value]);
+
+        command.IsValid.Should().BeFalse();
+        command.Error.Should().Be("--limit requires a whole number of 1 or more.");
+    }
+
+    [Fact]
+    public void LimitWithoutAValueIsRejected() =>
+        CliCommand.Parse(["immich", "run", "--limit"]).Error.Should().Be("--limit requires a whole number of 1 or more.");
+
+    [Fact]
+    public void FirstAndLimitTogetherAreRejected() =>
+        CliCommand.Parse(["immich", "run", "--first", "--limit", "3"]).Error.Should().Be("--first and --limit cannot be used together.");
+
+    [Theory]
+    [InlineData("queue", "run")]
+    [InlineData("queue", "discover")]
+    [InlineData("immich", "finalize")]
+    public void LimitOnAnyOtherCommandIsRejected(params string[] args) =>
+        CliCommand.Parse([.. args, "--limit", "3"]).Error.Should().Be("--limit is only supported by immich run.");
 
     [Fact]
     public void ParsesImmichFinalize()
@@ -38,8 +69,14 @@ public sealed class CliCommandParserTests
         CliCommand.Parse(args).IsValid.Should().BeFalse();
 
     [Fact]
-    public void QueueDiscoverStillAcceptsFirst() =>
-        CliCommand.Parse(["queue", "discover", "--first"]).Kind.Should().Be(CliCommandKind.QueueDiscover);
+    public void QueueDiscoverStillAcceptsFirst()
+    {
+        var command = CliCommand.Parse(["queue", "discover", "--first"]);
+
+        command.Kind.Should().Be(CliCommandKind.QueueDiscover);
+        command.First.Should().BeTrue();
+        command.Limit.Should().BeNull();
+    }
 
     [Theory]
     [InlineData("--local", "queue", "run")]
@@ -114,7 +151,7 @@ public sealed class CliCommandParserTests
     {
         CliCommand.Parse(["--help"]).ShowHelp.Should().BeTrue();
         CliApplication.Usage.Should()
-            .Contain("video-optimiser immich run [--first] [--config <path>] [--local | --remote]")
+            .Contain("video-optimiser immich run [--first | --limit <n>] [--config <path>] [--local | --remote]")
             .And.Contain("video-optimiser immich finalize [--config <path>]");
     }
 

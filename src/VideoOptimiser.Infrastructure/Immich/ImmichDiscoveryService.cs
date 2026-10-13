@@ -22,14 +22,14 @@ public sealed class ImmichDiscoveryService(
 {
     private readonly Func<DateTimeOffset> _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
 
-    public async Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var client = clients.Create(settings.Immich);
         var cutoff = _utcNow().AddDays(-settings.Immich.MinimumAgeDays);
         var rulesFingerprint = EligibilityEvaluator.RulesFingerprint(settings.Eligibility);
         var minimumSize = SmallestMinimumFileSize(settings.Eligibility);
         // Before the history load: a job this fails has ended, so the search below may stage its asset afresh.
-        var (restaged, issues) = await RestageMissingAsync(client, databasePath, settings, first, progress, cancellationToken);
+        var (restaged, issues) = await RestageMissingAsync(client, databasePath, settings, limit, progress, cancellationToken);
         var history = await ImmichHistory.LoadAsync(jobs, databasePath, cancellationToken);
         var skips = await jobs.ListImmichSkipsAsync(databasePath, cancellationToken);
 
@@ -39,8 +39,9 @@ public sealed class ImmichDiscoveryService(
         var seen = new HashSet<string>(StringComparer.Ordinal);
         await foreach (var asset in client.SearchVideosAsync(cutoff, includeFavorites: !settings.Immich.SkipFavorites, cancellationToken))
         {
-            // --first means one video in flight: a rerun after a failed start resumes that video rather than adding a second.
-            if (first && queued.Count + alreadyQueued > 0) break;
+            // A limit counts videos in flight, open ones included: a rerun after a failed start resumes those videos and adds
+            // only enough to reach the limit. The search is oldest first, so open jobs' assets come before new ones.
+            if (queued.Count + alreadyQueued >= limit) break;
             if (!seen.Add(asset.Id)) continue;
 
             if (Exclusion(asset, cutoff, settings.Immich.SkipFavorites) is { } exclusion)
@@ -131,17 +132,17 @@ public sealed class ImmichDiscoveryService(
     /// <c>cleanup</c> deleted the copy, or one whose copy was deleted by hand. Such a job could never run, and discovery
     /// skips an asset with an open job, so nothing else would bring the file back. The download must match the job's
     /// checksum, so the job converts the bytes it was created for. When Immich no longer returns them, the job fails as
-    /// <c>SourceMissing</c>, which leaves the asset free for discovery. With <paramref name="first"/>, only the oldest
-    /// open job counts, as it is the one the run processes.
+    /// <c>SourceMissing</c>, which leaves the asset free for discovery. With a <paramref name="limit"/>, only that many of
+    /// the oldest open jobs count, as they are the ones the run processes.
     /// </summary>
-    private async Task<(int Restaged, int Issues)> RestageMissingAsync(IImmichClient client, string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    private async Task<(int Restaged, int Issues)> RestageMissingAsync(IImmichClient client, string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
     {
         int restaged = 0, issues = 0;
         // Ready jobs no longer read the original, and a job interrupted during finalisation needs it left as it is.
         var candidates = (await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
             .Where(job => job.SourceKind == JobSourceKind.Immich && job.Status is not (JobStatus.ReadyToFinalize or JobStatus.Finalizing) && job.ResumeStatus != JobStatus.Finalizing)
             .OrderBy(job => job.CreatedUtc)
-            .Take(first ? 1 : int.MaxValue);
+            .Take(limit ?? int.MaxValue);
         foreach (var job in candidates)
         {
             if (File.Exists(job.SourcePath)) continue;

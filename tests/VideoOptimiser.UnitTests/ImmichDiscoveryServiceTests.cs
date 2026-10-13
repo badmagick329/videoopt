@@ -267,10 +267,52 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         _immich.Add("one.mp4", "hevc one");
         _immich.Add("two.mp4", "hevc two");
 
-        var result = await DiscoverAsync(first: true);
+        var result = await DiscoverAsync(limit: 1);
 
         result.Queued.Should().ContainSingle();
         _immich.Downloads.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ALimitQueuesThatManyAndStopsDownloading()
+    {
+        for (var index = 0; index < 5; index++) _immich.Add($"clip{index}.mp4", $"hevc {index}");
+
+        var result = await DiscoverAsync(limit: 3);
+
+        result.Queued.Should().HaveCount(3);
+        _immich.Downloads.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task ALimitCountsOpenJobsAndAddsOnlyEnoughToReachIt()
+    {
+        var open = _immich.Add("open.mp4", "hevc open");
+        _immich.Add("next1.mp4", "hevc next1");
+        _immich.Add("next2.mp4", "hevc next2");
+        _immich.Add("next3.mp4", "hevc next3");
+        await CreateJobAsync(open, JobStatus.Queued);
+
+        var result = await DiscoverAsync(limit: 3);
+
+        result.AlreadyQueued.Should().Be(1);
+        result.Queued.Should().HaveCount(2);
+        _immich.Downloads.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ALimitAlreadyReachedByOpenJobsQueuesNothingNew()
+    {
+        var first = _immich.Add("a.mp4", "hevc a");
+        var second = _immich.Add("b.mp4", "hevc b");
+        _immich.Add("c.mp4", "hevc c");
+        await CreateJobAsync(first, JobStatus.Queued);
+        await CreateJobAsync(second, JobStatus.Interrupted);
+
+        var result = await DiscoverAsync(limit: 2);
+
+        result.Queued.Should().BeEmpty();
+        _immich.Downloads.Should().BeEmpty();
     }
 
     [Fact]
@@ -280,7 +322,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         _immich.Add("next.mp4", "hevc next");
         await CreateJobAsync(open, JobStatus.Queued);
 
-        var result = await DiscoverAsync(first: true);
+        var result = await DiscoverAsync(limit: 1);
 
         result.Queued.Should().BeEmpty();
         result.AlreadyQueued.Should().Be(1);
@@ -445,10 +487,28 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         await Task.Delay(20);
         await CreateJobAsync(newer, JobStatus.Queued, staged: false);
 
-        var result = await DiscoverAsync(first: true);
+        var result = await DiscoverAsync(limit: 1);
 
         result.Restaged.Should().Be(1);
         _immich.Downloads.Should().Equal(older.Id);
+    }
+
+    [Fact]
+    public async Task ALimitDownloadsAgainOnlyTheOldestOpenJobsOriginals()
+    {
+        var oldest = _immich.Add("oldest.mp4", "hevc oldest");
+        var middle = _immich.Add("middle.mp4", "hevc middle");
+        var newest = _immich.Add("newest.mp4", "hevc newest");
+        await CreateJobAsync(oldest, JobStatus.Queued, staged: false);
+        await Task.Delay(20);
+        await CreateJobAsync(middle, JobStatus.Queued, staged: false);
+        await Task.Delay(20);
+        await CreateJobAsync(newest, JobStatus.Queued, staged: false);
+
+        var result = await DiscoverAsync(limit: 2);
+
+        result.Restaged.Should().Be(2);
+        _immich.Downloads.Should().Equal(oldest.Id, middle.Id);
     }
 
     [Fact]
@@ -468,9 +528,9 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private Task<ImmichDiscoveryResult> DiscoverAsync(bool first = false) =>
+    private Task<ImmichDiscoveryResult> DiscoverAsync(int? limit = null) =>
         new ImmichDiscoveryService(_immich, _repository, _ => new ContentProbe(), new FileFingerprintService(), () => Now)
-            .DiscoverAsync(_settings.Database.Path, _settings, first);
+            .DiscoverAsync(_settings.Database.Path, _settings, limit);
 
     /// <summary>An Immich job for the asset. An open one has its staged copy unless <paramref name="staged"/> is false.</summary>
     private async Task<JobRecord> CreateJobAsync(ImmichAsset asset, JobStatus status, string? failureCategory = null, bool staged = true)
