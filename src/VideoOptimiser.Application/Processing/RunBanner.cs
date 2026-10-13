@@ -35,10 +35,11 @@ public static class RunBanner
         if (recordedWorker is not null) return DescribeRecordedWorker(recordedWorker);
 
         var hetzner = remote.Hetzner;
+        // No parentheses here or below: the line ends with "(--remote)" when a flag chose the mode, and two in a row misread.
         var cap = hetzner.MaxHourlyPrice is { } price
-            ? $"max EUR {price.ToString("0.00##", CultureInfo.InvariantCulture)}/h"
-            : "no price cap";
-        return $"a Hetzner server created for this run, billed hourly (tries {string.Join(", ", hetzner.ServerTypes)}; {cap})";
+            ? $"at up to EUR {price.ToString("0.00##", CultureInfo.InvariantCulture)}/h"
+            : "with no price cap";
+        return $"a Hetzner server created for this run, billed hourly, trying {string.Join(", ", hetzner.ServerTypes)} {cap}";
     }
 
     // A worker recovered from Hetzner before its type was recorded can lack the type, location or creation time.
@@ -50,6 +51,6 @@ public static class RunBanner
         var billing = worker.CreatedUtc is { } created
             ? $"billing since {created.ToUniversalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC"
             : "still billing";
-        return $"{server}, kept from an earlier run ({billing})";
+        return $"{server}, kept from an earlier run and {billing}";
     }
 }
