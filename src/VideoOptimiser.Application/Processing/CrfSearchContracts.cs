@@ -35,13 +35,34 @@ public sealed record CrfAttempt(int Crf, double Vmaf, double EncodedPercent);
 /// (AV1 would not shrink this video enough), not a failure, and a retry would end the same way. <see cref="Best"/> is the
 /// smallest attempt that met the VMAF, or null when none did.
 /// </summary>
-public sealed class NoWorthwhileCrfException(CrfAttempt? best, QualitySettings quality) : Exception(Describe(best, quality))
+public sealed class NoWorthwhileCrfException : Exception
 {
-    public CrfAttempt? Best { get; } = best;
+    public NoWorthwhileCrfException(IReadOnlyList<CrfAttempt> attempts, QualitySettings quality) : this(Analyse(attempts, quality), quality)
+    {
+    }
+
+    private NoWorthwhileCrfException((CrfAttempt? Best, CrfAttempt? AtMinCrf) found, QualitySettings quality) : base(Describe(found.Best, found.AtMinCrf, quality))
+    {
+        Best = found.Best;
+    }
+
+    public CrfAttempt? Best { get; }
+
+    private static (CrfAttempt? Best, CrfAttempt? AtMinCrf) Analyse(IReadOnlyList<CrfAttempt> attempts, QualitySettings quality) => (
+        attempts.Where(attempt => attempt.Vmaf >= quality.MinimumVmaf).MinBy(attempt => attempt.EncodedPercent),
+        attempts.FirstOrDefault(attempt => attempt.Crf == quality.CrfSearch.MinCrf));
 
     // With no quality-passing attempt, ab-av1 may have stopped early: a lower CRF raises the VMAF but also the size, so once
-    // an attempt is already over the size limit it tries no lower CRF. Naming both limits stays true either way.
-    private static string Describe(CrfAttempt? best, QualitySettings quality) => best is null
-        ? $"No CRF reached VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)} within {quality.MaxEncodedPercent}% of the original's size (quality.maxEncodedPercent)."
-        : $"AV1 would keep {best.EncodedPercent.ToString("0.#", CultureInfo.InvariantCulture)}% of the size at the best quality-passing setting (CRF {best.Crf}, VMAF {best.Vmaf.ToString("F1", CultureInfo.InvariantCulture)}); the limit is {quality.MaxEncodedPercent}% (quality.maxEncodedPercent).";
+    // an attempt is already over the size limit it tries no lower CRF, and naming both limits is all that stays true. When it
+    // reached the lowest allowed CRF and that still missed the VMAF, size played no part, and naming quality.maxEncodedPercent
+    // would send the user to a setting that cannot help.
+    private static string Describe(CrfAttempt? best, CrfAttempt? atMinCrf, QualitySettings quality)
+    {
+        var vmaf = quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture);
+        if (best is not null)
+            return $"AV1 would make it {best.EncodedPercent.ToString("0.#", CultureInfo.InvariantCulture)}% of the original's size at the best quality-passing setting (CRF {best.Crf}, VMAF {best.Vmaf.ToString("F1", CultureInfo.InvariantCulture)}); the limit is {quality.MaxEncodedPercent}% (quality.maxEncodedPercent).";
+        return atMinCrf is null
+            ? $"No CRF reached VMAF {vmaf} within {quality.MaxEncodedPercent}% of the original's size (quality.maxEncodedPercent)."
+            : $"No CRF reached VMAF {vmaf}; even CRF {atMinCrf.Crf}, the lowest allowed (quality.crfSearch.minCrf), scored {atMinCrf.Vmaf.ToString("F1", CultureInfo.InvariantCulture)}.";
+    }
 }

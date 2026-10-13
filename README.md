@@ -88,7 +88,7 @@ The commands below assume you run them there, with the config file beside the ex
 
 When one video works, drop `--first` to queue everything that matches your rules.
 
-A video AV1 would not shrink enough ends as `Not worth converting: <file>. <why>`, with the best quality setting it found. That is not a failure: the run exits `0` and a managed Hetzner server is deleted without asking. The video is checked again when the file changes, or when you change `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat` or the CRF range under `quality`. Raise `quality.maxEncodedPercent` (default `80`) to accept smaller savings; `queue retry <job-id>` queues one now.
+A video AV1 would not shrink enough ends as `Not worth converting: <file>. <why>`, with the best quality setting it found. That is not a failure: the run exits `0` and a managed Hetzner server is deleted without asking. The video is checked again when the file changes, or when you change `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat` or the CRF range under `quality`. Raise `quality.maxEncodedPercent` (default `80`) to accept smaller savings. When the reason says even the lowest allowed CRF missed the VMAF, size was not the problem: only a lower `quality.minimumVmaf` or `quality.crfSearch.minCrf` helps. `queue retry <job-id>` queues one now.
 
 > **Tip:** set `VIDEO_OPTIMISER_CONFIG` to the config's full path and you can leave out `--config`. Without either, the app looks for `%ProgramData%\VideoOptimiser\config.yaml`, then `video-optimiser.yaml` in the current folder.
 

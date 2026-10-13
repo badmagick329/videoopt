@@ -40,14 +40,30 @@ public sealed class AbAv1CrfSearchClientTests
         var thrown = (await FluentActions.Awaiting(() => SearchFailingWithAsync(stderr, new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 })).Should().ThrowAsync<NoWorthwhileCrfException>()).Which;
 
         thrown.Best.Should().Be(new CrfAttempt(31, 97.31, 95));
-        thrown.Message.Should().Be("AV1 would keep 95% of the size at the best quality-passing setting (CRF 31, VMAF 97.3); the limit is 80% (quality.maxEncodedPercent).");
+        thrown.Message.Should().Be("AV1 would make it 95% of the original's size at the best quality-passing setting (CRF 31, VMAF 97.3); the limit is 80% (quality.maxEncodedPercent).");
     }
 
     [Fact]
-    public async Task SearchThrowsTheSkipExceptionWithoutABestAttemptWhenNoCrfReachedTheVmaf()
+    public async Task WhenEvenTheLowestAllowedCrfMissesTheVmafTheReasonNamesThatCrfNotTheSizeLimit()
     {
         const string stderr = """
-            [2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] crf 18 VMAF 91.20 (60%)
+            [2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] crf 34 VMAF 91.39 (10%)
+            [2026-10-13T10:55:58Z INFO  ab_av1::command::crf_search] crf 18 VMAF 96.34 (46%)
+            Error: Failed to find a suitable crf
+            """;
+
+        var thrown = (await FluentActions.Awaiting(() => SearchFailingWithAsync(stderr, new QualitySettings { MinimumVmaf = 97 })).Should().ThrowAsync<NoWorthwhileCrfException>()).Which;
+
+        thrown.Best.Should().BeNull();
+        thrown.Message.Should().Be("No CRF reached VMAF 97; even CRF 18, the lowest allowed (quality.crfSearch.minCrf), scored 96.3.");
+    }
+
+    /// <summary>ab-av1 tries no lower CRF once an attempt is over the size limit, so the lowest CRF's VMAF is unknown and both limits are named.</summary>
+    [Fact]
+    public async Task WhenTheSearchStoppedAboveTheLowestCrfTheReasonNamesBothLimits()
+    {
+        const string stderr = """
+            [2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] crf 30 VMAF 96.10 (85%)
             Error: Failed to find a suitable crf
             """;
 

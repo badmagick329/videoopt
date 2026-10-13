@@ -391,7 +391,7 @@ public sealed class JobProcessorTests : IDisposable
             Eligibility = Rules(),
             Quality = new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 }
         };
-        var search = new ThrowingCrfSearch(new NoWorthwhileCrfException(new CrfAttempt(31, 97.31, 95), settings.Quality));
+        var search = new ThrowingCrfSearch(new NoWorthwhileCrfException([new CrfAttempt(31, 97.31, 95)], settings.Quality));
         var reported = new List<JobProgress>();
         var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
 
@@ -401,7 +401,7 @@ public sealed class JobProcessorTests : IDisposable
         var stored = (await repository.GetAsync(settings.Database.Path, result.Job.Id))!;
         stored.Status.Should().Be(JobStatus.Skipped);
         stored.FailureCategory.Should().Be("NotWorthConverting");
-        stored.FailureMessage.Should().Be("AV1 would keep 95% of the size at the best quality-passing setting (CRF 31, VMAF 97.3); the limit is 80% (quality.maxEncodedPercent).");
+        stored.FailureMessage.Should().Be("AV1 would make it 95% of the original's size at the best quality-passing setting (CRF 31, VMAF 97.3); the limit is 80% (quality.maxEncodedPercent).");
         stored.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings.Quality));
         stored.CompletedUtc.Should().NotBeNull();
         // The header names the file, so the outcome line does not repeat it, and nothing follows the outcome line.

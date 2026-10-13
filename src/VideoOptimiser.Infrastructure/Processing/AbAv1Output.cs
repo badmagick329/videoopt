@@ -21,19 +21,17 @@ public static partial class AbAv1Output
 
     /// <summary>
     /// The exception for a run that found no CRF meeting both the VMAF and the size limit, or null for any other failure.
-    /// Its best attempt is the smallest one that met the minimum VMAF; ab-av1 itself only fails when none was small enough.
     /// </summary>
     public static NoWorthwhileCrfException? NoWorthwhileCrf(string log, QualitySettings quality)
     {
         if (!log.Contains(NoSuitableCrf, StringComparison.Ordinal)) return null;
-        var best = AttemptLine().Matches(log)
+        var attempts = AttemptLine().Matches(log)
             .Select(match => new CrfAttempt(
                 int.Parse(match.Groups["crf"].Value, CultureInfo.InvariantCulture),
                 double.Parse(match.Groups["vmaf"].Value, CultureInfo.InvariantCulture),
                 double.Parse(match.Groups["percent"].Value, CultureInfo.InvariantCulture)))
-            .Where(attempt => attempt.Vmaf >= quality.MinimumVmaf)
-            .MinBy(attempt => attempt.EncodedPercent);
-        return new NoWorthwhileCrfException(best, quality);
+            .ToList();
+        return new NoWorthwhileCrfException(attempts, quality);
     }
 
     /// <summary>The last <c>Error:</c> line without its prefix, or null when the log has none.</summary>
