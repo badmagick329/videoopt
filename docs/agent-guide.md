@@ -28,6 +28,8 @@ Gate it with the run's own quote:
 
 A run that reuses a running server never asks; it is already billing.
 
+A new server prints `Setting up the worker: ... takes several minutes.`, then `Worker setup: P%, <stage>...` as it builds its tools, and `Worker ready after <duration>.` SSH is refused for the first few minutes of a boot; only after 3 minutes does `Still waiting for the worker's SSH (...)` appear, at most once a minute. That is still waiting, not failing; the run stops by itself at `hetzner.bootstrapTimeout`.
+
 `--local` and `--remote` on `queue run`, `process` and `immich run` set the mode for that run only. `--remote` on a Hetzner config is gated as above. `--local` encodes on this PC and needs no gate; use it when the user wants a free trial run on a remote config. Never edit `processing.mode` to switch for one run.
 
 **Remote setup.** `remote setup` is the one-time Hetzner setup. It uploads an SSH key to the user's Hetzner project before it asks anything, so gate even its first run. Without input it then prints the `processing:` section it would write, changes no file and exits `0`. Show the user that section; after their go-ahead, run `'y' | video-optimiser remote setup`. A rerun reuses the uploaded key, rewrites only the `processing:` section and keeps the old file as `<config>.bak`. Exit `3` after `No Hetzner API token was found.` means the user must create the token and add it to `.env` themselves; never ask for its value.
@@ -45,11 +47,11 @@ A run that reuses a running server never asks; it is already billing.
 
 ## Workflow: folders
 
-1. **Queue.** `queue discover`. On a user's first run, add `--first` to queue one video. Done when it prints `Queued: N`. `N` is `0` when nothing new matches the eligibility rules; report that and stop. The starter rules match only large H.264 files at 1080p and above, so phone footage (HEVC) needs a rule change first.
+1. **Queue.** `queue discover`. On a user's first run, add `--first` to queue one video. Done when it prints its `Queued: N.` summary, which leaves out zero counts, so a missing `Queued` means none. With nothing queued, report that and stop. On a large folder it prints `Checked N files so far ...` every 10 seconds; that is progress, not a hang. The starter rules match only large H.264 files at 1080p and above, so phone footage (HEVC) needs a rule change first.
 2. **Convert.** `queue run`. Done when it exits. A video can take an hour or more on a PC; run it in the background if your harness allows, and check progress with `status --json`. Exit `0`: every job is ready. Exit `10`: some failed. Exit `6`: all failed.
 3. **Report.** From `status --json`, list each `ReadyToFinalize` job's `sourcePath`, `outputPath` and `percentageSaved`, and each failed job's `failureCategory` and `failureMessage`. Ask the user to watch the outputs.
 4. **Gate.** Say what `original.action` will do to each original: `delete`, `archive` or `keep`.
-5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `<job-id>: <message>` per job. Done at exit `0`; exit `10` means at least one failed, so check `status --json`.
+5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` or `Failed  <file>: <message>` per job, then `Finalised: N. Failed: N.`, then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed, so check `status --json`.
 
 ## Workflow: Immich
 
@@ -57,6 +59,7 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
 
 1. **Phone.** Ask the user whether they have run the Immich app's "Free up space" since the last round, with a cutoff no older than `immich.minimumAgeDays`, and emptied the phone's trash. Only the user can do this. Wait for their answer.
 2. **Convert.** `immich run`, with `--first` on a user's first round and `--limit <n>` when the user names a round size. Before a paid remote round, ask the user for that size. Done when it exits. If it lists re-uploaded originals, pass that list to the user exactly as printed: they must delete those files from the phone. Exit `10` also covers guard or search issues; quote those lines.
+   Discovery downloads each candidate to check it, so many `[n] <file>  <date>, <size>  skipped: <reason>` lines are normal: each rejected download is deleted at once and never fetched again. `Your eligibility rules changed since the last run, ...` is also normal after the rules change. Report the summary to the user: `Found X of N after checking M videos; ...` and `Most common reason: <reason> (<count>). To include those, change eligibility.rules.` A video that fails its checksum or probe prints `issue: ...` and is tried again on the next run.
 3. **Report.** As in the folders workflow; filter `status --json` to `"source": "immich"`. Each `outputPath` is under `immich.stagingDirectory`.
 4. **Gate.** Each AV1 is uploaded as a new Immich asset and each original goes to Immich's trash.
 5. **Finalise.** After the go-ahead, `'y' | video-optimiser immich finalize`. Done when it prints `Finalised: N. Failed: 0.` and exits `0`. If it stops partway, running it again continues; that rerun needs the gate too.
@@ -81,7 +84,7 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
       Downloading 285.1 MiB from the worker...
       Downloaded 285.1 MiB in 30s, checksum verified.
       Checking the output: streams, duration, savings and decode test...
-      Ready to finalise: 1002.4 MiB → 287.3 MiB, 71.3% saved.
+      Ready to finalise: 1002.4 MiB -> 287.3 MiB, 71.3% saved.
 ```
 
 The upload and download lines appear only on a remote worker. The last line of each block is the job's outcome:
