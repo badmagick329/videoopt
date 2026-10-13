@@ -72,6 +72,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | A `Skipped <file>: started on ...` line | The job started in the other mode, and `--local` or `--remote` chose this one | Nothing is lost. Run the command without the flag to resume it; a remote resume is gated as paid encoding. |
 | `Interrupted` | Stopped by `Ctrl+C`, a crash or a lost connection | Run the same command again (`queue run`, `immich run` or `process`). It resumes. |
 | `RemoteUnavailable` | The remote worker could not be reached | Run the command again. A Hetzner worker is kept for the resume. |
+| `Skipped`, `NotWorthConverting` | No CRF met both `quality.minimumVmaf` and `quality.maxEncodedPercent`: AV1 would not shrink this video enough. A normal outcome, not a failure | Report `failureMessage`, which names the best setting found. Discovery checks the video again once the file or those quality settings change. |
 | `ValidationFailed` | The AV1 failed a check, usually too little saving | Report it. The original stays as it is, and discovery won't queue it again until the file changes. |
 | `StagingFailed`, `CrfSearchFailed`, `EncodeFailed`, `DownloadFailed`, `ProcessingFailed` | A processing step failed | Report `failureMessage`. Run `queue retry <id>` only if the user asks, once the cause is fixed. |
 | `RemoteConfigurationChanged` | The job started under a different processing setup | Report it. `queue retry <id>` starts a fresh job under the current setup, if the user wants. |
@@ -79,9 +80,9 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `FinalizationIncomplete` | An Immich finalisation stopped partway | Gate, then `'y' | video-optimiser immich finalize`. |
 | `FinalizationFailed`, `ManualInterventionRequired` | Replacing a file original failed or was cut off | Stop. Show the user the job, its `sourcePath` and `outputPath`, and let them decide. |
 
-**Failed or cancelled jobs** stay settled: discovery skips them until the original changes. `queue retry <id>` queues one again; run it only at the user's request.
+**Failed, cancelled or skipped jobs** stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` queues one again; run it only at the user's request.
 
-**Retained Hetzner worker.** After a remote run with any failed or interrupted job, the server stays up so the work can resume, and it keeps billing. With `deleteAfterRun: false` it stays after every run. `worker status` shows it. Tell the user; deleting it is gated, because outputs not yet downloaded are lost with it.
+**Retained Hetzner worker.** After a remote run with any failed or interrupted job (a skipped one does not count), the server stays up so the work can resume, and it keeps billing. With `deleteAfterRun: false` it stays after every run. `worker status` shows it. Tell the user; deleting it is gated, because outputs not yet downloaded are lost with it.
 
 ## Reference
 
@@ -104,7 +105,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 ### Job statuses
 
 - **Open** (`status`, `queue list`): `Queued`, `Staging`, `CrfSearching`, `Encoding`, `Downloading`, `Validating`, `ReadyToFinalize`, `Finalizing`, `Interrupted`.
-- **Finished** (`history`): `Completed`, `Failed`, `Cancelled`.
+- **Finished** (`history`): `Completed`, `Failed`, `Cancelled`, `Skipped`.
 
 `Staging` and `Downloading` are transfers to and from a remote worker. `ReadyToFinalize` jobs can be finalised, and so can an Immich job whose finalisation was cut off (`Finalizing` or `Interrupted`).
 
@@ -122,7 +123,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `crf` | The CRF chosen by the search, or `null` |
 | `outputPath` | The temporary AV1, or `null` before encoding starts; the file exists once the job reaches `Validating` |
 | `percentageSaved` | Size saving in percent, or `null` |
-| `failureCategory`, `failureMessage` | Why the job failed or what it needs, or `null` |
+| `failureCategory`, `failureMessage` | Why the job failed or was skipped, or what it needs, or `null` |
 | `updatedUtc` | Last change, ISO 8601 |
 
 `doctor --json` prints `configurationPath`, `exitCode` and `diagnostics`, an array of `{ category, status, code, message }` where `status` is `Pass`, `Warning` or `Fail`.
