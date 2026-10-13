@@ -10,7 +10,7 @@ public sealed class OutputManifestStore : IOutputManifestStore
     public async Task SaveAsync(OutputManifest manifest, CancellationToken cancellationToken = default) =>
         await File.WriteAllTextAsync(GetPath(manifest.OutputPath), JsonSerializer.Serialize(manifest, VideoOptimiserJsonContext.Default.OutputManifest), cancellationToken);
     public async Task<OutputManifest> LoadAsync(string outputPath, CancellationToken cancellationToken = default) =>
-        JsonSerializer.Deserialize(await File.ReadAllTextAsync(GetPath(outputPath), cancellationToken), VideoOptimiserJsonContext.Default.OutputManifest) ?? throw new InvalidDataException("Output manifest is invalid.");
+        JsonSerializer.Deserialize(await File.ReadAllTextAsync(GetPath(outputPath), cancellationToken), VideoOptimiserJsonContext.Default.OutputManifest) ?? throw new InvalidOperationException("Output manifest is invalid.");
 }
 
 public sealed class FileFingerprintService : IFileFingerprintService

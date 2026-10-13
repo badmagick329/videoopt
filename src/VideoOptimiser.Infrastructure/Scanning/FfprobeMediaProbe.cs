@@ -37,10 +37,17 @@ public sealed class FfprobeMediaProbe(string ffprobePath) : IMediaProbe
         var error = await errorTask;
         if (process.ExitCode != 0)
         {
-            throw new InvalidDataException($"ffprobe exited with {process.ExitCode}: {FirstLine(error)}");
+            throw new MediaProbeException($"ffprobe exited with {process.ExitCode}: {FirstLine(error)}");
         }
 
-        return FfprobeJsonParser.Parse(output);
+        try
+        {
+            return FfprobeJsonParser.Parse(output);
+        }
+        catch (JsonException exception)
+        {
+            throw new MediaProbeException("ffprobe returned malformed output.", exception);
+        }
     }
 
     private static string FirstLine(string message) => message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "No error output.";
@@ -63,7 +70,7 @@ public static class FfprobeJsonParser
             .FirstOrDefault();
         if (primaryVideo.ValueKind == JsonValueKind.Undefined)
         {
-            throw new InvalidDataException("ffprobe did not report a substantive video stream.");
+            throw new MediaProbeException("ffprobe did not report a substantive video stream.");
         }
 
         var duration = root.TryGetProperty("format", out var format) ? GetDouble(format, "duration") : null;

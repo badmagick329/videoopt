@@ -128,6 +128,36 @@ public sealed class OutputValidationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ValidateAsyncFailsWhenFfprobeCannotReadTheOutput()
+    {
+        var manifest = await CreateManifestAsync();
+        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
+        var decodeTester = new RecordingDecodeTester(new DecodeTestResult(true, null));
+        var result = await ValidateAsync(
+            manifest,
+            timeline,
+            timeline,
+            outputProbeError: new MediaProbeException("ffprobe exited with 1: [mov,mp4,m4a,3gp,3g2,mj2 @ 0000] moov atom not found"),
+            decodeTester: decodeTester);
+
+        result.Passed.Should().BeFalse();
+        result.Failures.Should().Equal($"Output '{Path.GetFileName(manifest.OutputPath)}' could not be read by ffprobe: ffprobe exited with 1: [mov,mp4,m4a,3gp,3g2,mj2 @ 0000] moov atom not found");
+        result.OutputSizeBytes.Should().Be(50);
+        decodeTester.Windows.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ValidateAsyncKeepsAnUnreadableOriginalAnErrorRatherThanAVerdictOnTheOutput()
+    {
+        var manifest = await CreateManifestAsync();
+        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
+
+        var action = () => ValidateAsync(manifest, timeline, timeline, sourceProbeError: new MediaProbeException("ffprobe exited with 1: Invalid data found"));
+
+        (await action.Should().ThrowAsync<MediaProbeException>()).WithMessage($"Original '{Path.GetFileName(manifest.SourcePath)}' could not be read by ffprobe: *");
+    }
+
+    [Fact]
     public async Task ValidateAsyncFailsWhenOutputIsEmpty()
     {
         var manifest = await CreateManifestAsync(outputBytes: 0);
@@ -206,11 +236,13 @@ public sealed class OutputValidationServiceTests : IDisposable
         MediaTimeline? outputTimeline,
         Exception? outputError = null,
         string minimumBytesSaved = "0B",
-        RecordingDecodeTester? decodeTester = null)
+        RecordingDecodeTester? decodeTester = null,
+        Exception? outputProbeError = null,
+        Exception? sourceProbeError = null)
     {
         decodeTester ??= new RecordingDecodeTester(new DecodeTestResult(true, null));
         var service = new OutputValidationService(
-            _ => new StaticMediaProbe(manifest.OutputPath),
+            _ => new StaticMediaProbe(manifest.OutputPath, outputProbeError, sourceProbeError),
             _ => new StaticTimelineProbe(manifest.SourcePath, sourceTimeline, outputTimeline, outputError),
             _ => decodeTester);
         return await service.ValidateAsync(manifest, new AppSettings
@@ -240,9 +272,10 @@ public sealed class OutputValidationServiceTests : IDisposable
         }
     }
 
-    private sealed class StaticMediaProbe(string outputPath) : IMediaProbe
+    private sealed class StaticMediaProbe(string outputPath, Exception? outputError = null, Exception? sourceError = null) : IMediaProbe
     {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(
+        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
+            (path == outputPath ? outputError : sourceError) is { } error ? Task.FromException<MediaInfo>(error) : Task.FromResult(
             new MediaInfo(
                 path == outputPath ? "av1" : "h264",
                 1,
@@ -265,6 +298,6 @@ public sealed class OutputValidationServiceTests : IDisposable
                     ? Task.FromException<MediaTimeline>(outputError)
                 : outputTimeline is { } timeline
                     ? Task.FromResult(timeline)
-                    : throw new InvalidDataException("Malformed packet timing.");
+                    : throw new MediaProbeException("Malformed packet timing.");
     }
 }

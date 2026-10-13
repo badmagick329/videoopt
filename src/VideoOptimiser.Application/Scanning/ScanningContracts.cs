@@ -76,6 +76,12 @@ public interface IMediaTimelineProbe
     Task<MediaTimeline> ProbeAsync(string path, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// ffprobe could not read a media file: it exited non-zero, or reported nothing usable. A dedicated type, rather than
+/// <see cref="InvalidDataException"/>, because the CLI reads that one as an unreadable configuration file.
+/// </summary>
+public sealed class MediaProbeException(string message, Exception? innerException = null) : Exception(message, innerException);
+
 public interface IMediaProbeCache
 {
     Task<IReadOnlyList<MediaProbeCacheEntry>> LoadAllAsync(

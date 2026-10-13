@@ -569,7 +569,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         public async Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
         {
             var codec = (await File.ReadAllTextAsync(path, cancellationToken)).Split(' ')[0];
-            if (codec == "corrupt") throw new InvalidDataException("ffprobe exited with 1: Invalid data found when processing input");
+            if (codec == "corrupt") throw new MediaProbeException("ffprobe exited with 1: Invalid data found when processing input");
             if (codec == "missing-ffprobe") throw new System.ComponentModel.Win32Exception(2, "The system cannot find the file specified.");
             return new MediaInfo(codec, 1, 1, 0, 0, 60, new FileInfo(path).Length, 1920, 1080, 20_000_000);
         }

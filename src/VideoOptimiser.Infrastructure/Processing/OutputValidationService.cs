@@ -30,8 +30,29 @@ public sealed class OutputValidationService(
             return new ValidationReport { Passed = false, Failures = failures, SourceSizeBytes = sourceSize, OutputSizeBytes = outputSize, ValidatedUtc = DateTimeOffset.UtcNow };
         }
 
-        var source = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(manifest.SourcePath, cancellationToken);
-        var output = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(manifest.OutputPath, cancellationToken);
+        // An original ffprobe cannot read says nothing about the output, so it stays an error rather than a verdict on it.
+        MediaInfo source;
+        try
+        {
+            source = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(manifest.SourcePath, cancellationToken);
+        }
+        catch (MediaProbeException exception)
+        {
+            throw new MediaProbeException($"Original '{Path.GetFileName(manifest.SourcePath)}' could not be read by ffprobe: {exception.Message}", exception);
+        }
+
+        // A truncated or corrupt encode is exactly what validation exists to catch, so it is a failure, not a crash.
+        MediaInfo output;
+        try
+        {
+            output = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(manifest.OutputPath, cancellationToken);
+        }
+        catch (MediaProbeException exception)
+        {
+            failures.Add($"Output '{Path.GetFileName(manifest.OutputPath)}' could not be read by ffprobe: {exception.Message}");
+            return new ValidationReport { Passed = false, Failures = failures, SourceSizeBytes = sourceSize, OutputSizeBytes = outputSize, ValidatedUtc = DateTimeOffset.UtcNow };
+        }
+
         if (!output.PrimaryVideoCodec.Equals("av1", StringComparison.OrdinalIgnoreCase)) failures.Add("Output video is not AV1.");
         await ValidateMediaTimelineAsync(manifest, settings, source, output, failures, cancellationToken);
         if (source.AudioStreamCount != output.AudioStreamCount || source.SubtitleStreamCount != output.SubtitleStreamCount) failures.Add("Output stream counts differ from the original.");
@@ -131,7 +152,7 @@ public sealed class OutputValidationService(
                 failures.Add("Output audio timing differs from the original.");
             }
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException)
+        catch (Exception exception) when (exception is IOException or MediaProbeException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException)
         {
             failures.Add("Output media timeline could not be validated.");
         }

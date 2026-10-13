@@ -78,6 +78,11 @@ internal static partial class CliApplication
             Console.Error.WriteLine($"Configuration could not be read: {exception.Message}");
             return (int)ExitCode.InvalidConfiguration;
         }
+        catch (MediaProbeException exception)
+        {
+            Console.Error.WriteLine(exception.Message);
+            return (int)ExitCode.ProcessingFailure;
+        }
         catch (ImmichApiException exception)
         {
             Console.Error.WriteLine(exception.Message);

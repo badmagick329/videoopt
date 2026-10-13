@@ -159,7 +159,7 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
 
     private sealed class ThrowingProbe : IMediaProbe
     {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => throw new InvalidDataException("Probe failed.");
+        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => throw new MediaProbeException("Probe failed.");
     }
 
     private sealed class ChangingProbe : IMediaProbe

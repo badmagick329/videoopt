@@ -167,7 +167,7 @@ public sealed class FileScanner(
                 ? new EvaluationResult(new ScanItem(path, ScanItemStatus.Eligible, reason, sourceSizeBytes, mediaInfo), RealProbe: true)
                 : new EvaluationResult(new ScanItem(path, ScanItemStatus.Ineligible, reason, sourceSizeBytes, mediaInfo), RealProbe: true);
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        catch (Exception exception) when (exception is IOException or MediaProbeException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
             progress?.Report(new ScanProgress(path, "Issue", exception.Message));
             return new EvaluationResult(new ScanItem(path, ScanItemStatus.ProbeFailed, exception.Message, info.Length));

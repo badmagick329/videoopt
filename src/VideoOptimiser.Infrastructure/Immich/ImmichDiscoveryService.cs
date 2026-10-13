@@ -113,7 +113,7 @@ public sealed class ImmichDiscoveryService(
             // Failures of this one asset: Immich refused the request, or ffprobe could not read the file. Anything else
             // (Immich unreachable, a rejected key, a missing ffprobe, a full or unwritable staging disk) would fail every
             // asset the same way after a full download, so it ends the run.
-            catch (Exception exception) when (exception is ImmichApiException { Code: "ImmichRequestFailed" } or InvalidDataException)
+            catch (Exception exception) when (exception is ImmichApiException { Code: "ImmichRequestFailed" } or MediaProbeException)
             {
                 issues++;
                 progress?.Report(new ScanProgress(stagedPath, "Issue", exception.Message));

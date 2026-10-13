@@ -1,4 +1,5 @@
 using FluentAssertions;
+using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Infrastructure.Scanning;
 
 namespace VideoOptimiser.UnitTests;
@@ -45,6 +46,6 @@ public sealed class FfprobeJsonParserTests
 
         var action = () => FfprobeJsonParser.Parse(json);
 
-        action.Should().Throw<InvalidDataException>();
+        action.Should().Throw<MediaProbeException>();
     }
 }

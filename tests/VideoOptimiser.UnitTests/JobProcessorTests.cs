@@ -115,6 +115,35 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task AnOutputFfprobeCannotReadFailsTheJobAsAValidationFailureNotACrash()
+    {
+        var source = Path.Combine(_directory, "movie.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var processor = new JobProcessor(
+            repository,
+            new ReadableFiles(),
+            _ => new H264Probe(unreadable: ".encoding.mp4"),
+            new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
+            new FileFingerprintService(),
+            new OutputManifestStore(),
+            new OutputValidationService(_ => new H264Probe(unreadable: ".encoding.mp4"), _ => throw new NotSupportedException(), _ => throw new NotSupportedException()));
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules()
+        };
+
+        var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
+
+        result.ExitCode.Should().Be(ExitCode.ValidationFailure);
+        result.Job.Status.Should().Be(JobStatus.Failed);
+        result.Job.FailureCategory.Should().Be("ValidationFailed");
+        result.Job.FailureMessage.Should().Contain("could not be read by ffprobe");
+    }
+
+    [Fact]
     public async Task ProcessAsyncMarksTheJobInterruptedWhenCancelled()
     {
         var source = Path.Combine(_directory, "cancelled.mp4");
@@ -316,9 +345,11 @@ public sealed class JobProcessorTests : IDisposable
         public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
     }
 
-    private sealed class H264Probe : IMediaProbe
+    private sealed class H264Probe(string? unreadable = null) : IMediaProbe
     {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, 10_000_000));
+        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => unreadable is not null && path.EndsWith(unreadable, StringComparison.OrdinalIgnoreCase)
+            ? Task.FromException<MediaInfo>(new MediaProbeException("ffprobe exited with 1: moov atom not found"))
+            : Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, 10_000_000));
     }
 
     private sealed class FixedCrfSearch : ICrfSearchClient

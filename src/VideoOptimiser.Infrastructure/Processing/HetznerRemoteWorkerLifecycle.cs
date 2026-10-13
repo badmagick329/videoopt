@@ -908,7 +908,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             server.GetProperty("id").GetInt64(),
             server.GetProperty("name").GetString() ?? string.Empty,
             server.GetProperty("status").GetString() ?? "unknown",
-            ipv4.GetProperty("ip").GetString() ?? throw new InvalidDataException("Hetzner server has no public IPv4 address."),
+            ipv4.GetProperty("ip").GetString() ?? throw new InvalidOperationException("Hetzner server has no public IPv4 address."),
             ipv4.TryGetProperty("id", out var primaryId) && primaryId.ValueKind == JsonValueKind.Number ? primaryId.GetInt64() : 0,
             labels,
             created,

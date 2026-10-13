@@ -31,7 +31,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
                 using var document = JsonDocument.Parse(output);
                 if (!document.RootElement.TryGetProperty("streams", out var streamArray) || streamArray.ValueKind != JsonValueKind.Array)
                 {
-                    throw new InvalidDataException("ffprobe did not report streams for timeline validation.");
+                    throw new MediaProbeException("ffprobe did not report streams for timeline validation.");
                 }
 
                 var streams = streamArray.EnumerateArray().ToArray();
@@ -41,7 +41,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
                     .FirstOrDefault();
                 if (video.ValueKind == JsonValueKind.Undefined || !TryGetInt(video, "index", out var videoIndex))
                 {
-                    throw new InvalidDataException("ffprobe did not report a primary video stream for timeline validation.");
+                    throw new MediaProbeException("ffprobe did not report a primary video stream for timeline validation.");
                 }
 
                 var audio = streams
@@ -55,7 +55,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
             }
             catch (JsonException exception)
             {
-                throw new InvalidDataException("ffprobe returned malformed stream metadata for timeline validation.", exception);
+                throw new MediaProbeException("ffprobe returned malformed stream metadata for timeline validation.", exception);
             }
         }
         catch
@@ -151,7 +151,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
     {
         if (process.ExitCode != 0)
         {
-            throw new InvalidDataException($"ffprobe exited with {process.ExitCode}: {FirstLine(error)}");
+            throw new MediaProbeException($"ffprobe exited with {process.ExitCode}: {FirstLine(error)}");
         }
     }
 
@@ -202,7 +202,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
             {
                 if (!TryParseTimestamp(fields[1], out var pts) || !TryParseTimestamp(fields[2], out var duration) || duration < 0)
                 {
-                    throw new InvalidDataException("ffprobe reported malformed primary video packet timing.");
+                    throw new MediaProbeException("ffprobe reported malformed primary video packet timing.");
                 }
 
                 _firstVideoTimestamp = Math.Min(_firstVideoTimestamp, pts);
@@ -213,7 +213,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
             {
                 if (!TryParseTimestamp(fields[1], out var pts))
                 {
-                    throw new InvalidDataException("ffprobe reported malformed primary audio packet timing.");
+                    throw new MediaProbeException("ffprobe reported malformed primary audio packet timing.");
                 }
 
                 _firstAudioTimestamp = Math.Min(_firstAudioTimestamp, pts);
@@ -224,7 +224,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
         {
             if (_videoPacketCount == 0 || !double.IsFinite(_firstVideoTimestamp) || !double.IsFinite(_lastVideoEndTimestamp) || _lastVideoEndTimestamp < _firstVideoTimestamp)
             {
-                throw new InvalidDataException("ffprobe did not report complete primary video packet timing.");
+                throw new MediaProbeException("ffprobe did not report complete primary video packet timing.");
             }
 
             return new MediaTimeline(
