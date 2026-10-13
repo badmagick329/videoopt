@@ -36,7 +36,7 @@ public sealed class ImmichDiscoveryService(
         // Said up front because each of these is downloaded again: the user would otherwise see a long run of downloads
         // for videos an earlier run already judged.
         var staleSkips = skips.Values.Count(skip => !string.Equals(skip.RulesFingerprint, rulesFingerprint, StringComparison.Ordinal));
-        progress?.Report(new ImmichDiscoveryProgress.Started(limit, history.OpenAssets.Count, staleSkips));
+        progress?.Report(new ImmichDiscoveryProgress.Started(limit, history.OpenAssets.Count, staleSkips, settings.Eligibility.Rules.Count));
 
         var queued = new List<JobRecord>();
         int alreadyQueued = 0, alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, excluded = 0, ineligible = 0, skipped = 0, candidates = 0;
@@ -83,7 +83,7 @@ public sealed class ImmichDiscoveryService(
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(stagedPath)!);
-                progress?.Report(new ImmichDiscoveryProgress.CandidateDownloading(++candidates, asset.OriginalFileName, asset.LocalDateTime.DateTime, asset.Exif.FileSizeInBytes));
+                progress?.Report(new ImmichDiscoveryProgress.CandidateDownloading(++candidates, asset.OriginalFileName, asset.LocalDateTime.DateTime));
                 await client.DownloadOriginalAsync(asset.Id, stagedPath, cancellationToken: cancellationToken);
 
                 // The checksum is the job's identity and what the re-upload guard matches on, so it must describe these bytes.
@@ -95,13 +95,16 @@ public sealed class ImmichDiscoveryService(
                 }
 
                 var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(stagedPath, cancellationToken);
-                if (!EligibilityEvaluator.IsEligible(new FileInfo(stagedPath), media, settings.Eligibility, out _))
+                // The size of the bytes just probed, which is what the rules were judged on.
+                var downloadedBytes = new FileInfo(stagedPath).Length;
+                var facts = new CandidateFacts(media.PrimaryVideoCodec, media.PrimaryVideoWidth, media.PrimaryVideoHeight, media.PrimaryVideoBitrate, downloadedBytes);
+                if (EligibilityEvaluator.MatchingRule(downloadedBytes, media, settings.Eligibility) is not { } rule)
                 {
-                    var mismatch = EligibilityEvaluator.DescribeMismatch(new FileInfo(stagedPath).Length, media, settings.Eligibility);
-                    await jobs.PutImmichSkipAsync(databasePath, new ImmichSkipRecord(asset.Id, asset.Checksum, rulesFingerprint, mismatch.Text, _utcNow()), cancellationToken);
+                    var reason = EligibilityEvaluator.DescribeMismatch(downloadedBytes, media, settings.Eligibility);
+                    await jobs.PutImmichSkipAsync(databasePath, new ImmichSkipRecord(asset.Id, asset.Checksum, rulesFingerprint, reason, _utcNow()), cancellationToken);
                     skipped++;
-                    skipReasons[mismatch.Key] = skipReasons.GetValueOrDefault(mismatch.Key) + 1;
-                    progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, mismatch.Text, null, 0));
+                    skipReasons[reason] = skipReasons.GetValueOrDefault(reason) + 1;
+                    progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, reason, null, 0, facts));
                     continue;
                 }
 
@@ -118,7 +121,7 @@ public sealed class ImmichDiscoveryService(
                 JobCompatibility.Apply(job, JobCompatibility.ExpectedBinding(job.Id, settings));
                 queued.Add(await jobs.CreateAsync(databasePath, job, cancellationToken));
                 keepStaged = true;
-                progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, queued.Count + alreadyQueued));
+                progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, queued.Count + alreadyQueued, facts, rule));
             }
             // Failures of this one asset: Immich refused the request, or ffprobe could not read the file. Anything else
             // (Immich unreachable, a rejected key, a missing ffprobe, a full or unwritable staging disk) would fail every

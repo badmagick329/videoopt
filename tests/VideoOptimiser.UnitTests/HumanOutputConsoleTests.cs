@@ -16,78 +16,126 @@ public sealed class HumanOutputConsoleTests
     private static readonly DateTime Taken = new(2022, 11, 30, 21, 37, 45);
 
     [Fact]
-    public void ImmichDiscoveryReadsAsAnIntroOneLinePerDownloadAndASummary()
+    public void ImmichDiscoveryReadsAsAnIntroOneLinePerDownloadWithItsFactsAndASummary()
     {
         var (console, output, error) = ImmichConsole();
 
-        console.Report(new ImmichDiscoveryProgress.Started(5, 0, 418));
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "20221130_213745.mp4", Taken, 412L * 1024 * 1024));
-        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "codec h264 (rules want hevc)", null, 0));
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(2, "PXL_20250531_125257509.mp4", new DateTime(2025, 5, 31), 1288490189));
-        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1));
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(3, "VID_x.mp4", new DateTime(2023, 1, 2), 380L * 1024 * 1024 + 100_000));
+        console.Report(new ImmichDiscoveryProgress.Started(1, 0, 418, 3));
+        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "PXL_20250718_192844658.mp4", new DateTime(2025, 7, 18)));
+        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "rule 1 needs 2GiB", null, 0, Facts("h264", 3840, 2160, 41_700_000, 519_200_000)));
+        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(2, "PXL_20260223_092415845.mp4", new DateTime(2026, 2, 23)));
+        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, Facts("hevc", 3840, 2160, 33_000_000, 334_900_000), 3));
+        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(3, "VID_x.mp4", new DateTime(2023, 1, 2)));
         console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Issue, "the download does not match Immich's checksum", "it will be tried again next run", 0));
         console.Report(new ImmichDiscoveryProgress.AssetExcluded("fav.mp4", "0f1e", "is a favourite"));
 
         output.ToString().Should().Be(
-            "Looking for up to 5 videos to convert (already queued: 0).\n" +
-            "Each candidate is downloaded so ffprobe can check it against your eligibility rules.\n" +
-            "A video that doesn't match is deleted at once and never downloaded again.\n" +
+            "Searching Immich for 1 video to convert. Each candidate is downloaded and checked with\n" +
+            "ffprobe; ones that don't fit your rules are deleted and skipped in future runs.\n" +
             "Your eligibility rules changed since the last run, so 418 videos skipped before will be downloaded and checked again.\n" +
             "\n" +
-            "[1] 20221130_213745.mp4  2022-11-30, 412.0 MiB  skipped: codec h264 (rules want hevc)\n" +
-            "[2] PXL_20250531_125257509.mp4  2025-05-31, 1.2 GiB  queued (1 of 5)\n" +
-            "[3] VID_x.mp4  2023-01-02, 380.1 MiB  issue: the download does not match Immich's checksum; it will be tried again next run\n");
+            "[1] PXL_20250718_192844658.mp4  2025-07-18  h264 4K 42 Mbps  495.1 MiB  skip: rule 1 needs 2GiB\n" +
+            "[2] PXL_20260223_092415845.mp4  2026-02-23  hevc 4K 33 Mbps  319.4 MiB  queued: fits rule 3 (1 of 1)\n" +
+            "[3] VID_x.mp4  2023-01-02  issue: the download does not match Immich's checksum; it will be tried again next run\n");
         error.ToString().Should().Be("Excluded: fav.mp4 (asset 0f1e) is a favourite; left alone.\n");
     }
 
     [Fact]
-    public void WithoutALimitTheIntroAsksForEveryVideoAndTheQueuedOutcomeHasNoCount()
+    public void WithoutALimitTheIntroAsksForEveryFittingVideoNamesOpenJobsAndTheQueuedOutcomeHasNoCount()
     {
         var (console, output, _) = ImmichConsole();
 
-        console.Report(new ImmichDiscoveryProgress.Started(null, 2, 0));
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken, 10));
-        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 3));
+        console.Report(new ImmichDiscoveryProgress.Started(null, 2, 0, 2));
+        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken));
+        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 3, Facts("hevc", 1920, 1080, 8_100_000, 10), 2));
 
-        output.ToString().Should().StartWith("Looking for every eligible video (already queued: 2).\n")
+        output.ToString().Should().StartWith(
+                "Searching Immich for every video that fits your rules. Each candidate is downloaded and checked with\n" +
+                "ffprobe; ones that don't fit your rules are deleted and skipped in future runs.\n" +
+                "2 already queued from earlier runs.\n")
             .And.NotContain("rules changed")
-            .And.EndWith("[1] a.mp4  2022-11-30, 10 B  queued\n");
+            .And.EndWith("[1] a.mp4  2022-11-30  hevc 1080p 8.1 Mbps  10 B  queued: fits rule 2\n");
     }
+
+    [Fact]
+    public void WithOneRuleTheRuleNumberIsLeftOutOfBothOutcomes()
+    {
+        var (console, output, _) = ImmichConsole();
+
+        console.Report(new ImmichDiscoveryProgress.Started(5, 0, 0, 1));
+        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken));
+        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, Facts("hevc", 1920, 1080, 20_000_000, 10), 1));
+        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(2, "b.mp4", Taken));
+        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "needs 10Mbps", null, 0, Facts("hevc", 1920, 1080, 6_000_000, 10)));
+
+        output.ToString().Should().EndWith(
+            "[1] a.mp4  2022-11-30  hevc 1080p 20 Mbps  10 B  queued (1 of 5)\n" +
+            "[2] b.mp4  2022-11-30  hevc 1080p 6.0 Mbps  10 B  skip: needs 10Mbps\n");
+    }
+
+    [Theory]
+    [InlineData(3840, 2160, "4K")]
+    [InlineData(2160, 3840, "4K")]
+    [InlineData(2560, 1440, "1440p")]
+    [InlineData(1440, 2560, "1440p")]
+    [InlineData(1920, 1080, "1080p")]
+    [InlineData(1080, 1920, "1080p")]
+    [InlineData(1280, 720, "720p")]
+    [InlineData(720, 1280, "720p")]
+    [InlineData(640, 480, "640x480")]
+    public void ResolutionIsNamedByTheShorterSideSoPortraitAndLandscapeReadAlike(int width, int height, string expected) =>
+        ImmichDiscoveryConsole.Resolution(width, height).Should().Be(expected);
+
+    [Fact]
+    public void AnUnknownResolutionOrBitrateReadsAsAQuestionMark()
+    {
+        ImmichDiscoveryConsole.Resolution(null, 1080).Should().Be("?");
+        ImmichDiscoveryConsole.Resolution(1920, null).Should().Be("?");
+        ImmichDiscoveryConsole.Bitrate(null).Should().Be("? Mbps");
+    }
+
+    [Theory]
+    [InlineData(41_700_000L, "42 Mbps")]
+    [InlineData(10_000_000L, "10 Mbps")]
+    [InlineData(9_960_000L, "10 Mbps")]
+    [InlineData(8_140_000L, "8.1 Mbps")]
+    [InlineData(500_000L, "0.5 Mbps")]
+    public void BitrateIsWholeMbpsWithOneDecimalUnderTen(long bitsPerSecond, string expected) =>
+        ImmichDiscoveryConsole.Bitrate(bitsPerSecond).Should().Be(expected);
 
     [Fact]
     public void ALineIsNotBrokenByOtherOutputAndItsOutcomeThenRepeatsTheFile()
     {
         var (console, output, _) = ImmichConsole();
-        console.Report(new ImmichDiscoveryProgress.Started(null, 0, 0));
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken, 2048));
+        console.Report(new ImmichDiscoveryProgress.Started(null, 0, 0, 1));
+        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken));
 
-        // The prefix is on screen while the download runs.
-        output.ToString().Should().EndWith("[1] a.mp4  2022-11-30, 2.0 KiB  ");
+        // The file and date are on screen while the download runs.
+        output.ToString().Should().EndWith("[1] a.mp4  2022-11-30  ");
 
         console.Report(new ImmichDiscoveryProgress.AssetIssue("b.txt", "asset 1 has an ID or file name that cannot be staged safely; it is left alone"));
-        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1));
+        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, Facts("hevc", 1920, 1080, 20_000_000, 2048), 1));
 
         output.ToString().Should().EndWith(
-            "[1] a.mp4  2022-11-30, 2.0 KiB  \n" +
+            "[1] a.mp4  2022-11-30  \n" +
             "Issue: b.txt: asset 1 has an ID or file name that cannot be staged safely; it is left alone.\n" +
-            "[1] a.mp4  2022-11-30, 2.0 KiB  queued\n");
+            "[1] a.mp4  2022-11-30  hevc 1080p 20 Mbps  2.0 KiB  queued\n");
     }
 
     [Fact]
     public void ADownloadCutShortEndsItsLineBeforeTheErrorThatFollows()
     {
         var (console, output, _) = ImmichConsole();
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken, 2048));
+        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken));
 
         console.FinishLine();
         console.FinishLine();
 
-        output.ToString().Should().Be("[1] a.mp4  2022-11-30, 2.0 KiB  stopped\n");
+        output.ToString().Should().Be("[1] a.mp4  2022-11-30  stopped\n");
     }
 
     [Fact]
-    public void AnUnknownSizeIsSaidSoAndRestagingReadsAsAStepWithAnOutcome()
+    public void RestagingReadsAsAStepWithAnOutcome()
     {
         var (console, output, _) = ImmichConsole();
         var job = Guid.Parse("11111111-2222-3333-4444-555555555555");
@@ -96,51 +144,63 @@ public sealed class HumanOutputConsoleTests
         console.Report(new ImmichDiscoveryProgress.Restaged("a.mp4", null));
         console.Report(new ImmichDiscoveryProgress.Restaging("b.mp4", job));
         console.Report(new ImmichDiscoveryProgress.Restaged("b.mp4", "Immich did not return the video again; the job is marked failed"));
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "c.mp4", Taken, null));
 
         output.ToString().Should().Be(
             "Downloading again: a.mp4 (job 11111111222233334444555555555555 is open but its staged copy is missing)\n" +
             "  done: the staged copy is back\n" +
             "Downloading again: b.mp4 (job 11111111222233334444555555555555 is open but its staged copy is missing)\n" +
-            "  issue: Immich did not return the video again; the job is marked failed\n" +
-            "[1] c.mp4  2022-11-30, size unknown  ");
+            "  issue: Immich did not return the video again; the job is marked failed\n");
     }
 
     [Fact]
-    public void TheDiscoverySummaryNamesTheMostCommonReasonAndCountsTheRestWithoutZeros()
+    public void TheDiscoverySummaryNamesTheSkipReasonsWithTheirCountsAndGroupsWhatWasNotDownloaded()
     {
-        var result = Result(queued: 5, alreadyQueued: 0, skipped: 18, reasons: [new SkipReasonCount("codec h264", 15), new SkipReasonCount("bitrate below 10Mbps", 3)],
-            alreadyConverted: 3, previouslyFailed: 2, previouslySkipped: 418, ineligible: 12, excluded: 1, issues: 0);
+        var result = Result(queued: 1, alreadyQueued: 0, skipped: 2, reasons: [new SkipReasonCount("rule 1 needs 2GiB", 2)],
+            alreadyConverted: 5, previouslyFailed: 1, previouslySkipped: 48, ineligible: 193);
+
+        ImmichDiscoveryConsole.Summary(result, 1).Should().Equal(
+            "Found 1 of 1 after checking 3. Skipped 2: rule 1 needs 2GiB.",
+            "Not downloaded: 54 handled in earlier runs, 193 too small or not a listed file type.");
+    }
+
+    [Fact]
+    public void WithSeveralReasonsTheSummaryNamesTheThreeMostCommonAndCountsTheRest()
+    {
+        var result = Result(queued: 5, alreadyQueued: 0, skipped: 20, excluded: 1,
+            reasons: [new SkipReasonCount("no rule for vp9", 9), new SkipReasonCount("rule 1 needs 2GiB", 5), new SkipReasonCount("rule 2 needs 10Mbps", 3), new SkipReasonCount("rule 2 needs 300MiB", 2), new SkipReasonCount("rule 3 needs 4k+", 1)]);
 
         ImmichDiscoveryConsole.Summary(result, 5).Should().Equal(
-            "Found 5 of 5 after checking 23 videos; 18 didn't match your rules and won't be checked again.",
-            "Most common reason: codec h264 (15). To include those, change eligibility.rules.",
-            "Also: 3 already converted, 2 previously failed or cancelled, 418 previously skipped, 12 ineligible by extension or size, 1 excluded.");
+            "Found 5 of 5 after checking 25. Skipped 20: 9 no rule for vp9, 5 rule 1 needs 2GiB, 3 rule 2 needs 10Mbps, 3 other.",
+            "Not downloaded: 1 excluded.");
     }
 
     [Fact]
-    public void TheDiscoverySummaryWithoutALimitCountsOpenJobsAndKeepsEveryCount()
+    public void TheDiscoverySummaryWithoutALimitCountsOpenJobsAndKeepsRestagedAndIssueCounts()
     {
         var result = Result(queued: 1, alreadyQueued: 2, skipped: 0, reasons: [], restaged: 2, issues: 1);
 
         ImmichDiscoveryConsole.Summary(result, null).Should().Equal(
             "Found 3 videos to convert after checking 1.",
-            "Also: 2 staged originals downloaded again, 1 issue.");
+            "Also: 2 staged originals downloaded again, 1 issue (above).");
+        ImmichDiscoveryConsole.Summary(Result(queued: 0, alreadyQueued: 0, skipped: 0, reasons: [], restaged: 1), 3).Should().Equal(
+            "Found 0 of 3 after checking 0.",
+            "Also: 1 staged original downloaded again.");
     }
 
     [Fact]
-    public void TheDiscoverySummaryOmitsTheReasonAndTheAlsoLineWhenThereIsNothingToSay()
+    public void TheDiscoverySummaryIsOneLineWhenThereIsNothingElseToSay()
     {
         ImmichDiscoveryConsole.Summary(Result(queued: 0, alreadyQueued: 0, skipped: 0, reasons: []), 3)
-            .Should().Equal("Found 0 of 3 after checking 0 videos.");
+            .Should().Equal("Found 0 of 3 after checking 0.");
     }
 
     [Fact]
-    public void TheGuardSaysNothingWasUploadedAgainOrLeavesOutItsZeroCounts()
+    public void TheGuardSaysNothingWhenItFoundNothingAndOtherwiseWhatItDid()
     {
-        ReuploadGuardReport.Summary(Guard(4)).Should().Be("Re-upload guard: checked 4 converted originals; nothing uploaded again.");
-        ReuploadGuardReport.Summary(Guard(1, trashed: 1, issues: 2)).Should().Be("Re-upload guard: checked 1 converted original; 1 trashed, 2 issues.");
-        ReuploadGuardReport.Summary(Guard(7, restored: 1)).Should().Be("Re-upload guard: checked 7 converted originals; 1 restored.");
+        ReuploadGuardReport.Summary(Guard(4)).Should().BeNull();
+        ReuploadGuardReport.Summary(Guard(1, trashed: 1)).Should().Be("Re-upload guard: 1 converted original was uploaded again and moved to Immich's trash.");
+        ReuploadGuardReport.Summary(Guard(7, trashed: 2, restored: 1, issues: 2)).Should().Be(
+            "Re-upload guard: 2 converted originals were uploaded again and moved to Immich's trash; 1 converted original is out of Immich's trash, so both versions exist; 2 issues.");
     }
 
     [Fact]
@@ -272,6 +332,8 @@ public sealed class HumanOutputConsoleTests
             $"{staging}\n" +
             "   500.0 MiB  PXL.mp4 (job completed)\n");
     }
+
+    private static CandidateFacts Facts(string codec, int width, int height, long bitsPerSecond, long sizeBytes) => new(codec, width, height, bitsPerSecond, sizeBytes);
 
     private static (ImmichDiscoveryConsole Console, StringWriter Output, StringWriter Error) ImmichConsole()
     {

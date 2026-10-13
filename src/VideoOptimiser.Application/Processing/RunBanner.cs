@@ -16,8 +16,8 @@ public static class RunBanner
     public static string Describe(AppSettings settings, RemoteWorkerInfo? recordedWorker = null, string? overrideFlag = null)
     {
         var location = DescribeLocation(settings, recordedWorker);
-        var source = overrideFlag is null ? string.Empty : $" (from {overrideFlag})";
-        return $"Encoding on: {location}{source}.";
+        var source = overrideFlag is null ? string.Empty : $" ({overrideFlag})";
+        return $"Encoding on {location}{source}.";
     }
 
     private static string DescribeLocation(AppSettings settings, RemoteWorkerInfo? recordedWorker)

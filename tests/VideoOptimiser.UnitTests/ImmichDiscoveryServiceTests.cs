@@ -239,7 +239,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         var skip = (await _repository.ListImmichSkipsAsync(_settings.Database.Path))[asset.Id];
         skip.Checksum.Should().Be(asset.Checksum);
         skip.RulesFingerprint.Should().Be(EligibilityEvaluator.RulesFingerprint(_settings.Eligibility));
-        skip.Reason.Should().Be("codec h264 (rules want hevc)");
+        skip.Reason.Should().Be("no rule for h264");
         skip.RecordedUtc.Should().Be(Now);
     }
 
@@ -584,19 +584,19 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         // notes.txt needs no download, so it is counted and never listed.
         result.Ineligible.Should().Be(1);
         events.Should().Equal(
-            new ImmichDiscoveryProgress.Started(3, 0, 0),
-            new ImmichDiscoveryProgress.CandidateDownloading(1, "a-h264.mp4", Old.DateTime, 10),
-            new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "codec h264 (rules want hevc)", null, 0),
-            new ImmichDiscoveryProgress.CandidateDownloading(2, "b-bad-checksum.mp4", Old.DateTime, 10),
+            new ImmichDiscoveryProgress.Started(3, 0, 0, 1),
+            new ImmichDiscoveryProgress.CandidateDownloading(1, "a-h264.mp4", Old.DateTime),
+            new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "no rule for h264", null, 0, new CandidateFacts("h264", 1920, 1080, 20_000_000, 10)),
+            new ImmichDiscoveryProgress.CandidateDownloading(2, "b-bad-checksum.mp4", Old.DateTime),
             new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Issue, "the download does not match Immich's checksum", "it will be tried again next run", 0),
-            new ImmichDiscoveryProgress.CandidateDownloading(3, "c-gone.mp4", Old.DateTime, 9),
+            new ImmichDiscoveryProgress.CandidateDownloading(3, "c-gone.mp4", Old.DateTime),
             new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Issue, "Immich answered 404", "it will be tried again next run", 0),
-            new ImmichDiscoveryProgress.CandidateDownloading(4, "d-good.mp4", Old.DateTime, 9),
-            new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1));
+            new ImmichDiscoveryProgress.CandidateDownloading(4, "d-good.mp4", Old.DateTime),
+            new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, new CandidateFacts("hevc", 1920, 1080, 20_000_000, 9), 1));
     }
 
     [Fact]
-    public async Task TalliesSkipsByReasonWithoutTheFilesValuesAndCountsOnlyJudgedVideosAsChecked()
+    public async Task TalliesSkipsByTheirReasonAndCountsOnlyJudgedVideosAsChecked()
     {
         _immich.Add("a.mp4", "h264 one");
         _immich.Add("b.mp4", "h264 two");
@@ -607,10 +607,27 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
         var result = await DiscoverAsync();
 
-        result.SkipReasons.Should().Equal(new SkipReasonCount("codec h264", 2), new SkipReasonCount("codec vp9", 1));
+        result.SkipReasons.Should().Equal(new SkipReasonCount("no rule for h264", 2), new SkipReasonCount("no rule for vp9", 1));
         result.Skipped.Should().Be(3);
         result.Checked.Should().Be(4);
         result.Issues.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReportsTheFactsOfEachJudgedVideoAndTheRuleItFitsOrTheRuleItMissed()
+    {
+        // The same size can fail the h264 rule and fit the hevc one; the events must carry what tells the two apart.
+        _settings.Eligibility = new EligibilitySettings { Rules = [new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "10Mbps", MinimumFileSize = "20B" }, HevcRule()] };
+        _immich.Add("a-h264.mp4", "h264 tiny");
+        _immich.Add("b-hevc.mp4", "hevc small");
+        var events = new List<ImmichDiscoveryProgress>();
+
+        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+
+        events.OfType<ImmichDiscoveryProgress.Started>().Single().RuleCount.Should().Be(2);
+        var judged = events.OfType<ImmichDiscoveryProgress.CandidateJudged>().ToArray();
+        judged[0].Should().Be(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "rule 1 needs 20B", null, 0, new CandidateFacts("h264", 1920, 1080, 20_000_000, 9)));
+        judged[1].Should().Be(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, new CandidateFacts("hevc", 1920, 1080, 20_000_000, 10), 2));
     }
 
     [Fact]
@@ -626,7 +643,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
         await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
 
-        events.First().Should().Be(new ImmichDiscoveryProgress.Started(null, 1, 1));
+        events.First().Should().Be(new ImmichDiscoveryProgress.Started(null, 1, 1, 1));
         events.OfType<ImmichDiscoveryProgress.CandidateDownloading>().Select(candidate => candidate.FileName).Should().Equal("stale.mp4");
     }
 

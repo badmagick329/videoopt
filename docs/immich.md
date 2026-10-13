@@ -74,11 +74,11 @@ Start with one video, encoded on this PC whatever `processing.mode` says, so the
 
 Then use `--limit <n>` for a round of at most `n` videos, such as `--limit 5`, or drop the flag to convert everything that matches. A paid remote round is worth a few videos, since creating the server takes several minutes. Drop `--local` to encode where the config says; `--remote` does the opposite for one run. `immich run`:
 
-1. Prints where encoding runs, such as `Encoding on: this PC.`, before downloading anything.
-2. Runs the [re-upload guard](#the-re-upload-guard).
+1. Prints where encoding runs, such as `Encoding on this PC (--local).`, before downloading anything.
+2. Runs the [re-upload guard](#the-re-upload-guard), which prints something only when it acts.
 3. Downloads again the staged copy of any open job that is missing one, such as a job `queue retry` queued after `cleanup` deleted its copy. If Immich no longer has that video, the job fails as `SourceMissing`.
 4. Searches Immich for videos taken before the age cutoff, skipping favourites if configured, and anything already converted, skipped or failed. A video whose conversion would not save enough (`quality.maxEncodedPercent`, default `80`) ends as `Not worth converting` and counts under "Previously skipped" on later runs.
-5. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it. A video that doesn't match is deleted at once, so most downloads you see go by without leaving a file. Each downloaded candidate gets one line with its capture date, size and outcome (`queued`, `skipped: codec h264 (rules want hevc)` or `issue: ...`). The search ends with how many videos it found, the most common reason videos were skipped, and a count for everything it left alone without a download.
+5. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it. A video that doesn't match is deleted at once, so most downloads you see go by without leaving a file. Each downloaded candidate gets one line with its capture date, codec, resolution, video bitrate, size and outcome, so the outcome reads against what was measured: `hevc 4K 33 Mbps  319.4 MiB  queued: fits rule 3 (1 of 1)`, `h264 4K 42 Mbps  495.1 MiB  skip: rule 1 needs 2GiB` (what the closest rule asks for, as written in your config) or `issue: ...`. The rule numbers count the entries of `eligibility.rules` from 1. The search ends with how many videos it found, why the others were skipped, and a count for everything it left alone without a download.
 6. Converts the queue on your PC or remote worker, exactly like `queue run`.
 
 Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes. If a `--first` or `--limit` run stops before converting, run it again with the same flag: videos already downloaded count toward the limit, so it converts those first and downloads only enough new ones to reach it.

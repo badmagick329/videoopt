@@ -105,7 +105,7 @@ public sealed class DoctorServiceTests : IDisposable
         var report = await CreateDoctor(new FakeToolVerifier(true), new FakeRemoteEnvironmentVerifier(), lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
         report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "EncodingLocation")
-            .Which.Message.Should().StartWith("Encoding on: a Hetzner server created for this run");
+            .Which.Message.Should().StartWith("Encoding on a Hetzner server created for this run");
     }
 
     [Fact]

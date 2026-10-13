@@ -99,21 +99,16 @@ public sealed class EligibilityEvaluatorTests : IDisposable
     {
         var settings = new EligibilitySettings { Rules = [Rule(["hevc"], "1080p-1440p", "10Mbps", "5B"), Rule(["vp9", "av1"], "4k+", "10Mbps", "5B")] };
 
-        var mismatch = EligibilityEvaluator.DescribeMismatch(1_000, Described("h264", 1920, 1080, 20_000_000), settings);
-
-        mismatch.Text.Should().Be("codec h264 (rules want hevc/vp9/av1)");
-        mismatch.Key.Should().Be("codec h264");
+        EligibilityEvaluator.DescribeMismatch(1_000, Described("h264", 1920, 1080, 20_000_000), settings).Should().Be("no rule for h264");
     }
 
     [Fact]
-    public void DescribeMismatchListsEveryFailureOfTheOnlyRuleWithTheRealValues()
+    public void DescribeMismatchListsWhatTheOnlyRuleNeedsAsWrittenInTheConfigWithoutANumber()
     {
         var settings = new EligibilitySettings { Rules = [Rule(["hevc"], "1080p-1440p", "10Mbps", "500MiB")] };
 
-        var mismatch = EligibilityEvaluator.DescribeMismatch(100L * 1024 * 1024, Described("hevc", 1280, 720, 6_500_000), settings);
-
-        mismatch.Text.Should().Be("bitrate 6.5Mbps below 10Mbps; resolution 1280x720 outside 1080p-1440p; size 100.0 MiB below 500MiB");
-        mismatch.Key.Should().Be("bitrate below 10Mbps; resolution outside 1080p-1440p; size below 500MiB");
+        EligibilityEvaluator.DescribeMismatch(100L * 1024 * 1024, Described("hevc", 1280, 720, 6_500_000), settings)
+            .Should().Be("needs 500MiB and 10Mbps and 1080p-1440p");
     }
 
     [Fact]
@@ -122,10 +117,7 @@ public sealed class EligibilityEvaluatorTests : IDisposable
         // Rule 1 fails on resolution and bitrate, rule 2 only on bitrate: rule 2 is the one worth telling the user about.
         var settings = new EligibilitySettings { Rules = [Rule(["hevc"], "4k+", "20Mbps", "1B"), Rule(["hevc"], "1080p-1440p", "10Mbps", "1B"), Rule(["h264"], "1080p-1440p", "1Mbps", "1B")] };
 
-        var mismatch = EligibilityEvaluator.DescribeMismatch(1_000, Described("hevc", 1920, 1080, 8_000_000), settings);
-
-        mismatch.Text.Should().Be("bitrate 8Mbps below 10Mbps (rule 2)");
-        mismatch.Key.Should().Be("bitrate below 10Mbps (rule 2)");
+        EligibilityEvaluator.DescribeMismatch(1_000, Described("hevc", 1920, 1080, 8_000_000), settings).Should().Be("rule 2 needs 10Mbps");
     }
 
     [Fact]
@@ -133,10 +125,33 @@ public sealed class EligibilityEvaluatorTests : IDisposable
     {
         var settings = new EligibilitySettings { Rules = [Rule(["hevc"], "1080p-1440p", "10Mbps", "1B")] };
 
-        var mismatch = EligibilityEvaluator.DescribeMismatch(1_000, Described("hevc", 1920, 1080, null), settings);
+        EligibilityEvaluator.DescribeMismatch(1_000, Described("hevc", 1920, 1080, null), settings).Should().Be("needs a known bitrate");
+    }
 
-        mismatch.Text.Should().Be("bitrate unknown (needs 10Mbps)");
-        mismatch.Key.Should().Be("bitrate unknown");
+    [Fact]
+    public void DescribeMismatchGivesTheSameTextForAlikeSkipsWhateverTheFilesValuesAre()
+    {
+        // The text doubles as the key that counts alike skips together, so it must not carry the file's own values.
+        var settings = new EligibilitySettings { Rules = [Rule(["h264"], "1080p-1440p", "1Mbps", "2GiB"), Rule(["hevc"], "1080p-1440p", "1Mbps", "300MiB")] };
+
+        var small = EligibilityEvaluator.DescribeMismatch(100L << 20, Described("h264", 1920, 1080, 40_000_000), settings);
+        var smaller = EligibilityEvaluator.DescribeMismatch(200L << 20, Described("h264", 1920, 1080, 9_000_000), settings);
+
+        small.Should().Be("rule 1 needs 2GiB");
+        smaller.Should().Be(small);
+    }
+
+    [Fact]
+    public void MatchingRuleIsTheFirstRuleInConfigOrderThatTheFileFits()
+    {
+        // The user's case: the same size fails the h264 rule and fits the hevc one.
+        var settings = new EligibilitySettings { Rules = [Rule(["h264"], "4k+", "10Mbps", "2GiB"), Rule(["h264", "hevc"], "4k+", "10Mbps", "300MiB"), Rule(["hevc"], "4k+", "10Mbps", "1B")] };
+        var size = 319L << 20;
+
+        EligibilityEvaluator.MatchingRule(size, Described("hevc", 3840, 2160, 33_000_000), settings).Should().Be(2);
+        EligibilityEvaluator.MatchingRule(size, Described("h264", 3840, 2160, 33_000_000), settings).Should().Be(2);
+        EligibilityEvaluator.MatchingRule(100, Described("hevc", 3840, 2160, 33_000_000), settings).Should().Be(3);
+        EligibilityEvaluator.MatchingRule(100, Described("h264", 3840, 2160, 33_000_000), settings).Should().BeNull();
     }
 
     [Fact]
@@ -146,7 +161,7 @@ public sealed class EligibilityEvaluatorTests : IDisposable
         foreach (var media in new[] { Described("hevc", 1920, 1080, 9_000_000), Described("h264", 1280, 720, 9_000_000), Described("h264", 1920, 1080, 7_999_999) })
         {
             IsEligible(rule, media).Should().BeFalse();
-            EligibilityEvaluator.DescribeMismatch(10, media, new EligibilitySettings { Rules = [rule] }).Text.Should().NotBe("did not match");
+            EligibilityEvaluator.DescribeMismatch(10, media, new EligibilitySettings { Rules = [rule] }).Should().NotBe("did not match");
         }
     }
 

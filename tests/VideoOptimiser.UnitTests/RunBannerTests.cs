@@ -9,7 +9,7 @@ public sealed class RunBannerTests
     [Fact]
     public void LocalModeSaysThisPc()
     {
-        RunBanner.Describe(Settings(ProcessingModes.Local)).Should().Be("Encoding on: this PC.");
+        RunBanner.Describe(Settings(ProcessingModes.Local)).Should().Be("Encoding on this PC.");
     }
 
     [Fact]
@@ -19,7 +19,7 @@ public sealed class RunBannerTests
         settings.Processing.RemoteSsh.Host = "encoder.lan";
         settings.Processing.RemoteSsh.User = "videoopt";
 
-        RunBanner.Describe(settings).Should().Be("Encoding on: videoopt@encoder.lan over SSH.");
+        RunBanner.Describe(settings).Should().Be("Encoding on videoopt@encoder.lan over SSH.");
     }
 
     [Fact]
@@ -28,14 +28,14 @@ public sealed class RunBannerTests
         var settings = Settings(ProcessingModes.RemoteSsh);
         settings.Processing.RemoteSsh.Host = "encoder";
 
-        RunBanner.Describe(settings).Should().Be("Encoding on: encoder over SSH.");
+        RunBanner.Describe(settings).Should().Be("Encoding on encoder over SSH.");
     }
 
     [Fact]
     public void ManagedHetznerWithoutAWorkerNamesTheTypesAndTheCap()
     {
         RunBanner.Describe(Settings(ProcessingModes.RemoteSsh, RemoteLifecycleModes.Hetzner)).Should().Be(
-            "Encoding on: a Hetzner server created for this run, billed hourly (tries cx43, cx53, cpx42, ccx33; max EUR 0.30/h).");
+            "Encoding on a Hetzner server created for this run, billed hourly (tries cx43, cx53, cpx42, ccx33; max EUR 0.30/h).");
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public sealed class RunBannerTests
         settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice = null;
 
         RunBanner.Describe(settings).Should().Be(
-            "Encoding on: a Hetzner server created for this run, billed hourly (tries cpx42; no price cap).");
+            "Encoding on a Hetzner server created for this run, billed hourly (tries cpx42; no price cap).");
     }
 
     [Fact]
@@ -55,7 +55,7 @@ public sealed class RunBannerTests
         var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "recorded", new DateTimeOffset(2026, 10, 12, 20, 4, 0, TimeSpan.FromHours(2)), "cx43", "hel1");
 
         RunBanner.Describe(Settings(ProcessingModes.RemoteSsh, RemoteLifecycleModes.Hetzner), worker).Should().Be(
-            "Encoding on: Hetzner cx43 in hel1, kept from an earlier run (billing since 2026-10-12 18:04 UTC).");
+            "Encoding on Hetzner cx43 in hel1, kept from an earlier run (billing since 2026-10-12 18:04 UTC).");
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public sealed class RunBannerTests
         var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "recorded", null, string.Empty, string.Empty);
 
         RunBanner.Describe(Settings(ProcessingModes.RemoteSsh, RemoteLifecycleModes.Hetzner), worker).Should().Be(
-            "Encoding on: Hetzner server 42, kept from an earlier run (still billing).");
+            "Encoding on Hetzner server 42, kept from an earlier run (still billing).");
     }
 
     [Fact]
@@ -72,12 +72,12 @@ public sealed class RunBannerTests
     {
         var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "recorded", null, "cx43", "hel1");
 
-        RunBanner.Describe(Settings(ProcessingModes.Local), worker).Should().Be("Encoding on: this PC.");
+        RunBanner.Describe(Settings(ProcessingModes.Local), worker).Should().Be("Encoding on this PC.");
     }
 
     [Theory]
-    [InlineData(ProcessingModes.Local, "--local", "Encoding on: this PC (from --local).")]
-    [InlineData(ProcessingModes.RemoteSsh, "--remote", "Encoding on: a Hetzner server created for this run, billed hourly (tries cx43, cx53, cpx42, ccx33; max EUR 0.30/h) (from --remote).")]
+    [InlineData(ProcessingModes.Local, "--local", "Encoding on this PC (--local).")]
+    [InlineData(ProcessingModes.RemoteSsh, "--remote", "Encoding on a Hetzner server created for this run, billed hourly (tries cx43, cx53, cpx42, ccx33; max EUR 0.30/h) (--remote).")]
     public void AnOverrideFlagIsNamed(string mode, string flag, string expected)
     {
         RunBanner.Describe(Settings(mode, RemoteLifecycleModes.Hetzner), overrideFlag: flag).Should().Be(expected);

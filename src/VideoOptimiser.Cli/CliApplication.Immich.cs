@@ -29,7 +29,6 @@ internal static partial class CliApplication
         });
         var discoveryProgress = new ImmichDiscoveryConsole(Console.Out, Console.Error);
 
-        Console.WriteLine("Checking converted originals for re-uploads, then searching Immich for videos to convert.");
         ImmichRunPreparation preparation;
         try
         {
@@ -47,7 +46,7 @@ internal static partial class CliApplication
         }
 
         var (guard, discovery) = (preparation.Guard, preparation.Discovery);
-        Console.WriteLine(ReuploadGuardReport.Summary(guard));
+        if (ReuploadGuardReport.Summary(guard) is { } guardLine) Console.WriteLine(guardLine);
         Console.WriteLine();
         foreach (var line in ImmichDiscoveryConsole.Summary(discovery, limit)) Console.WriteLine(line);
         if (discovery.Excluded > 0) Console.Error.WriteLine($"Immich's search returned {discovery.Excluded} asset(s) its filter should have left out. They were left alone, but the search may behave differently in this Immich version: check before running again.");
