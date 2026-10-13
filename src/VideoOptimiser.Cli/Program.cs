@@ -321,7 +321,7 @@ internal static partial class CliApplication
         }
 
         if (result.ExitCode != ExitCode.Success) PrintFailedJobs([ToFailedQueueJob(result.Job, result.Message)]);
-        else if (result.Job.Status == JobStatus.ReadyToFinalize) Console.WriteLine($"Next: review the outputs, then run 'video-optimiser finalize {result.Job.Id:N}'.");
+        else if (result.Job.Status == JobStatus.ReadyToFinalize) Console.WriteLine($"Next: review the output, then run 'video-optimiser finalize {result.Job.Id:N}'.");
         await ApplyManagedWorkerDeletionPolicyAsync(
             services,
             configuration,
@@ -600,7 +600,7 @@ internal static partial class CliApplication
                 var savings = job.PercentageSaved is null ? string.Empty : $" {job.PercentageSaved:F1}% saved";
                 var resume = TemporaryOutputClassifier.DescribeResume(job) is { } behaviour ? $" ({behaviour})" : string.Empty;
                 // An Immich job's file name is the original's in Immich; the asset IDs find it there.
-                var immich = job.ImmichAssetId is { } asset ? $" Immich {asset}{(job.ImmichNewAssetId is { } av1 ? $" → {av1}" : string.Empty)}" : string.Empty;
+                var immich = job.ImmichAssetId is { } asset ? $" Immich {asset}{(job.ImmichNewAssetId is { } av1 ? $" -> {av1}" : string.Empty)}" : string.Empty;
                 Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}{resume}");
             }
         }

@@ -219,7 +219,7 @@ public sealed class JobProcessorTests : IDisposable
             "Deleted the partial output of interrupted attempt 1.",
             "Encoding at CRF 42...",
             "Checking the output: streams, duration, savings and decode test...",
-            "Ready to finalise: 100 B → 50 B, 50.0% saved.");
+            "Ready to finalise: 100 B -> 50 B, 50.0% saved.");
     }
 
     [Fact]
@@ -388,7 +388,7 @@ public sealed class JobProcessorTests : IDisposable
         var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
 
         result.Job.Status.Should().Be(JobStatus.Skipped);
-        result.Job.FailureMessage.Should().Be("No CRF from 18 to 50 reached VMAF 97.");
+        result.Job.FailureMessage.Should().Be("No CRF reached VMAF 97 within 80% of the original's size (quality.maxEncodedPercent).");
     }
 
     [Fact]
@@ -451,7 +451,7 @@ public sealed class JobProcessorTests : IDisposable
             "Chose CRF 29 in 7m 36s. Expected output: 284.87 MiB (29% of the original).",
             "Encoding at CRF 29, expected to take about 5 minutes...",
             "Checking the output: streams, duration, savings and decode test...",
-            "Ready to finalise: 100 B → 50 B, 50.0% saved.");
+            "Ready to finalise: 100 B -> 50 B, 50.0% saved.");
         // No staging, hashing or download lines for a local job, and no job header: the caller owns that.
         reported.Should().NotContain(line => line.Kind == JobProgressKind.Header);
     }

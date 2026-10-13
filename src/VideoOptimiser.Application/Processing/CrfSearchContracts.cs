@@ -39,7 +39,9 @@ public sealed class NoWorthwhileCrfException(CrfAttempt? best, QualitySettings q
 {
     public CrfAttempt? Best { get; } = best;
 
+    // With no quality-passing attempt, ab-av1 may have stopped early: a lower CRF raises the VMAF but also the size, so once
+    // an attempt is already over the size limit it tries no lower CRF. Naming both limits stays true either way.
     private static string Describe(CrfAttempt? best, QualitySettings quality) => best is null
-        ? $"No CRF from {quality.CrfSearch.MinCrf} to {quality.CrfSearch.MaxCrf} reached VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)}."
+        ? $"No CRF reached VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)} within {quality.MaxEncodedPercent}% of the original's size (quality.maxEncodedPercent)."
         : $"AV1 would keep {best.EncodedPercent.ToString("0.#", CultureInfo.InvariantCulture)}% of the size at the best quality-passing setting (CRF {best.Crf}, VMAF {best.Vmaf.ToString("F1", CultureInfo.InvariantCulture)}); the limit is {quality.MaxEncodedPercent}% (quality.maxEncodedPercent).";
 }

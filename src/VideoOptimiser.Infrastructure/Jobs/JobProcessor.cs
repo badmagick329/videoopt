@@ -191,7 +191,8 @@ public sealed class JobProcessor(
 
             job.Status = JobStatus.ReadyToFinalize;
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            progress?.Report(JobProgress.Step($"Ready to finalise: {HumanReadableValues.FormatSize(job.SourceSizeBytes ?? 0)} → {HumanReadableValues.FormatSize(job.OutputSizeBytes ?? 0)}, {(job.PercentageSaved ?? 0).ToString("F1", CultureInfo.InvariantCulture)}% saved."));
+            // Console output stays ASCII: redirected output and legacy consoles use a code page that drops characters like "→".
+            progress?.Report(JobProgress.Step($"Ready to finalise: {HumanReadableValues.FormatSize(job.SourceSizeBytes ?? 0)} -> {HumanReadableValues.FormatSize(job.OutputSizeBytes ?? 0)}, {(job.PercentageSaved ?? 0).ToString("F1", CultureInfo.InvariantCulture)}% saved."));
             return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is ready to finalise.");
         }
         catch (OperationCanceledException)

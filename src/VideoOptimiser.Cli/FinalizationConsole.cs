@@ -9,10 +9,10 @@ namespace VideoOptimiser.Cli;
 /// </summary>
 internal sealed class FinalizationConsole(TextWriter output, TextWriter error)
 {
-    /// <summary><c>name  1.0 GiB → 400.0 MiB, 62.5% saved</c></summary>
+    /// <summary><c>name  1.0 GiB -> 400.0 MiB, 62.5% saved</c></summary>
     public static string DescribeReady(JobRecord job)
     {
-        var sizes = job is { SourceSizeBytes: { } before, OutputSizeBytes: { } after } ? $"{HumanReadableValues.FormatSize(before)} → {HumanReadableValues.FormatSize(after)}" : "sizes unknown";
+        var sizes = job is { SourceSizeBytes: { } before, OutputSizeBytes: { } after } ? $"{HumanReadableValues.FormatSize(before)} -> {HumanReadableValues.FormatSize(after)}" : "sizes unknown";
         var saved = job.PercentageSaved is { } percentage ? $", {percentage:F1}% saved" : string.Empty;
         return $"{Path.GetFileName(job.SourcePath)}  {sizes}{saved}";
     }

@@ -103,7 +103,7 @@ internal static partial class CliApplication
                 taken = "not readable in Immich";
             }
 
-            var sizes = job is { SourceSizeBytes: { } before, OutputSizeBytes: { } after } ? $"{HumanReadableValues.FormatSize(before)} → {HumanReadableValues.FormatSize(after)}" : "sizes unknown";
+            var sizes = job is { SourceSizeBytes: { } before, OutputSizeBytes: { } after } ? $"{HumanReadableValues.FormatSize(before)} -> {HumanReadableValues.FormatSize(after)}" : "sizes unknown";
             var saved = job.PercentageSaved is { } percentage ? $", {percentage:F1}% saved" : string.Empty;
             Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}  {taken}  {sizes}{saved}");
             if (job.FailureCategory == FinalizationService.IncompleteCategory) Console.WriteLine($"    Resumes after: {job.FailureMessage}");
@@ -111,7 +111,7 @@ internal static partial class CliApplication
 
         var totalBefore = ready.Sum(job => job.SourceSizeBytes ?? 0);
         var totalAfter = ready.Sum(job => job.OutputSizeBytes ?? 0);
-        Console.WriteLine($"{ready.Length} job(s): {HumanReadableValues.FormatSize(totalBefore)} → {HumanReadableValues.FormatSize(totalAfter)}, saving {HumanReadableValues.FormatSize(totalBefore - totalAfter)}.");
+        Console.WriteLine($"{ready.Length} job(s): {HumanReadableValues.FormatSize(totalBefore)} -> {HumanReadableValues.FormatSize(totalAfter)}, saving {HumanReadableValues.FormatSize(totalBefore - totalAfter)}.");
         Console.WriteLine("Each AV1 is uploaded as a new asset with the original's albums, tags, favourite and other relations; then the original goes to Immich's trash.");
         Console.Write("Finalise these jobs? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }

@@ -54,7 +54,7 @@ public sealed class AbAv1CrfSearchClientTests
         var thrown = (await FluentActions.Awaiting(() => SearchFailingWithAsync(stderr, new QualitySettings { MinimumVmaf = 97 })).Should().ThrowAsync<NoWorthwhileCrfException>()).Which;
 
         thrown.Best.Should().BeNull();
-        thrown.Message.Should().Be("No CRF from 18 to 50 reached VMAF 97.");
+        thrown.Message.Should().Be("No CRF reached VMAF 97 within 80% of the original's size (quality.maxEncodedPercent).");
     }
 
     [Fact]

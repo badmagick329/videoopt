@@ -42,7 +42,7 @@ public sealed class JobConsoleOutputTests : IDisposable
             "      Encoding at CRF 32, expected to take about 14 seconds...",
             "      Encoded 49.17 MiB (75% of the original) in 0s.",
             "      Checking the output: streams, duration, savings and decode test...",
-            "      Ready to finalise: 1002.4 MiB → 287.3 MiB, 71.3% saved.",
+            "      Ready to finalise: 1002.4 MiB -> 287.3 MiB, 71.3% saved.",
             ""));
     }
 
@@ -73,7 +73,7 @@ public sealed class JobConsoleOutputTests : IDisposable
             "      Downloading 99.8 MiB from the worker...",
             "      Downloaded 99.8 MiB in 30s, checksum verified.",
             "      Checking the output: streams, duration, savings and decode test...",
-            "      Ready to finalise: 1002.4 MiB → 287.3 MiB, 71.3% saved.",
+            "      Ready to finalise: 1002.4 MiB -> 287.3 MiB, 71.3% saved.",
             ""));
     }
 

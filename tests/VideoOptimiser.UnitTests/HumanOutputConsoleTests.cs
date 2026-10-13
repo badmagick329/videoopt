@@ -228,7 +228,7 @@ public sealed class HumanOutputConsoleTests
     [Fact]
     public void FinalizeListsEachReadyJobByFileWithItsSizesAndSavings()
     {
-        FinalizationConsole.DescribeReady(Job("D:\\v\\clip.mp4", before: 1L << 30, after: 400L << 20, saved: 61.1m)).Should().Be("clip.mp4  1.0 GiB → 400.0 MiB, 61.1% saved");
+        FinalizationConsole.DescribeReady(Job("D:\\v\\clip.mp4", before: 1L << 30, after: 400L << 20, saved: 61.1m)).Should().Be("clip.mp4  1.0 GiB -> 400.0 MiB, 61.1% saved");
         FinalizationConsole.DescribeReady(Job("D:\\v\\old.mp4")).Should().Be("old.mp4  sizes unknown");
     }
 
