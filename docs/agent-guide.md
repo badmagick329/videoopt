@@ -42,7 +42,7 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 
 ## Setup
 
-1. Find the config. The app uses `--config <path>`, then `VIDEO_OPTIMISER_CONFIG`, then `%ProgramData%\VideoOptimiser\config.yaml`, then `video-optimiser.yaml` in the current folder. `config show` prints the one in use. Pass `--config` on every command when more than one may exist.
+1. Find the config. The app uses `--config <path>`, then `VIDEO_OPTIMISER_CONFIG`, then `%ProgramData%\VideoOptimiser\config.yaml`, then `video-optimiser.yaml` in the current folder. `config show` prints the one in use. Pass `--config` on every command when more than one may exist. With no config yet, ask the user for a quality level: `archive` (VMAF 97, indistinguishable from the original), `standard` (95, hard to tell apart) or `compact` (93, small visible loss, bigger savings). Then run `config init --config <path> --quality <level>`. Without `--quality`, redirected input gets `standard`. It never overwrites a file.
 2. Run `doctor --json`. Done when no diagnostic has `"status": "Fail"`. Each failure's `message` says what to fix. Configuration fixes are the user's to choose: propose the YAML change, then apply it once they agree.
 
 ## Workflow: folders

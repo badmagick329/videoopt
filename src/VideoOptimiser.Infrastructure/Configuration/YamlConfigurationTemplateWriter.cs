@@ -5,24 +5,32 @@ namespace VideoOptimiser.Infrastructure.Configuration;
 
 public sealed class YamlConfigurationTemplateWriter(IConfigurationLoader configurationLoader) : IConfigurationTemplateWriter
 {
-    public async Task<string> WriteAsync(string? explicitPath, CancellationToken cancellationToken = default)
+    public string GetDestination(string? explicitPath) => Path.GetFullPath(explicitPath ?? configurationLoader.GetDefaultConfigurationPath());
+
+    public async Task<string> WriteAsync(string? explicitPath, QualityLevel quality, CancellationToken cancellationToken = default)
     {
-        var destination = Path.GetFullPath(explicitPath ?? configurationLoader.GetDefaultConfigurationPath());
+        var destination = GetDestination(explicitPath);
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        var contents = Template
+            .Replace("{{QUALITY_LEVEL}}", QualityLevels.TemplateComment(quality), StringComparison.Ordinal)
+            .Replace("{{MINIMUM_VMAF}}", QualityLevels.MinimumVmaf(quality).ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
 
         try
         {
             await using var stream = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            await writer.WriteAsync(Template.AsMemory(), cancellationToken);
+            await writer.WriteAsync(contents.AsMemory(), cancellationToken);
         }
         catch (IOException) when (File.Exists(destination))
         {
-            throw new InvalidOperationException($"Refusing to overwrite the existing configuration file '{destination}'.");
+            throw RefuseOverwrite(destination);
         }
 
         return destination;
     }
+
+    public static InvalidOperationException RefuseOverwrite(string destination) =>
+        new($"Refusing to overwrite the existing configuration file '{destination}'.");
 
     private const string Template = """
 # VideoOptimiser configuration
@@ -124,8 +132,9 @@ eligibility:
   ignoreSystemFiles: true
 
 quality:
+  # {{QUALITY_LEVEL}}
   # Minimum visual quality target used by CRF search.
-  minimumVmaf: 95
+  minimumVmaf: {{MINIMUM_VMAF}}
   # Largest share of the original size the AV1 output may keep. A video that cannot shrink this far at the
   # minimum VMAF is skipped as not worth converting, and checked again when the quality settings change.
   maxEncodedPercent: 80

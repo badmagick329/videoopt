@@ -39,6 +39,34 @@ public sealed class CliCommandParserTests
     public void LimitOnAnyOtherCommandIsRejected(params string[] args) =>
         CliCommand.Parse([.. args, "--limit", "3"]).Error.Should().Be("--limit is only supported by immich run.");
 
+    [Theory]
+    [InlineData("archive", QualityLevel.Archive)]
+    [InlineData("Standard", QualityLevel.Standard)]
+    [InlineData("COMPACT", QualityLevel.Compact)]
+    public void ConfigInitTakesAQualityLevel(string value, QualityLevel level)
+    {
+        var command = CliCommand.Parse(["config", "init", "--quality", value]);
+
+        command.Kind.Should().Be(CliCommandKind.ConfigInit, command.Error);
+        command.Quality.Should().Be(level);
+    }
+
+    [Fact]
+    public void ConfigInitWithoutQualityLeavesItToTheQuestion() =>
+        CliCommand.Parse(["config", "init"]).Quality.Should().BeNull();
+
+    [Theory]
+    [InlineData("config", "init", "--quality", "high")]
+    [InlineData("config", "init", "--quality")]
+    public void QualityNeedsALevel(params string[] args) =>
+        CliCommand.Parse(args).Error.Should().Be("--quality requires archive, standard or compact.");
+
+    [Theory]
+    [InlineData("config", "validate")]
+    [InlineData("immich", "run")]
+    public void QualityOnAnyOtherCommandIsRejected(params string[] args) =>
+        CliCommand.Parse([.. args, "--quality", "archive"]).Error.Should().Be("--quality is only supported by config init.");
+
     [Fact]
     public void ParsesImmichFinalize()
     {

@@ -51,6 +51,16 @@ The commands below assume you run them there, with the config file beside the ex
    .\video-optimiser.exe config init --config .\video-optimiser.yaml
    ```
 
+   It asks one question, the quality target, and writes it as `quality.minimumVmaf`:
+
+   | Level | `minimumVmaf` | Meaning |
+   | --- | --- | --- |
+   | Archive | 97 | indistinguishable from the original |
+   | Standard (default) | 95 | hard to tell apart |
+   | Compact | 93 | small visible loss, bigger savings |
+
+   A higher target leaves fewer videos worth converting. `--quality archive|standard|compact` answers it from a script. You can change `minimumVmaf` in the file later.
+
 2. Open `video-optimiser.yaml` and add a folder under `watch.roots`:
 
    ```yaml
@@ -160,7 +170,7 @@ All commands take `--config <path>`.
 
 | Command | What it does |
 | --- | --- |
-| `config init` | Write a starter config. Never overwrites an existing file. |
+| `config init` | Write a starter config. Asks for the quality target unless `--quality archive\|standard\|compact` gives it. Never overwrites an existing file. |
 | `config validate`, `config show` | Check the config, or print its path and contents. |
 | `doctor` | Check the config, tools, database, disk space, and any Immich server or remote worker. |
 | `queue discover [--first]` | Scan the watch folders and queue matching videos. `--first` queues one. |

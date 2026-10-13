@@ -168,7 +168,11 @@ internal static partial class CliApplication
             var writer = services.GetRequiredService<IConfigurationTemplateWriter>();
             try
             {
-                var destination = await writer.WriteAsync(command.ConfigurationPath, cancellationToken);
+                // Refuse before asking, so nobody answers a question for a file that will not be written.
+                var target = writer.GetDestination(command.ConfigurationPath);
+                if (File.Exists(target)) throw YamlConfigurationTemplateWriter.RefuseOverwrite(target);
+                var quality = ConfigInitQuestion.Choose(command.Quality, new ConsoleInteractiveConfirmation().IsAvailable, Console.In, Console.Out);
+                var destination = await writer.WriteAsync(command.ConfigurationPath, quality, cancellationToken);
                 Console.WriteLine($"Created editable configuration template: {destination}");
                 Console.WriteLine("Add watch.roots, then run 'video-optimiser config validate'.");
                 return (int)ExitCode.Success;
@@ -744,7 +748,7 @@ internal static partial class CliApplication
 
     internal const string Usage = """
 Usage:
-  video-optimiser config init [--config <path>]
+  video-optimiser config init [--config <path>] [--quality archive|standard|compact]
   video-optimiser version
   video-optimiser config show [--config <path>]
   video-optimiser config validate [--config <path>]
@@ -801,7 +805,7 @@ internal enum CliCommandKind
     ImmichFinalize
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -814,6 +818,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
         var dryRun = false;
         var first = false;
         int? limit = null;
+        QualityLevel? quality = null;
         var all = false;
         var json = false;
         var finalizeReady = false;
@@ -843,6 +848,12 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                     break;
                 case "--limit":
                     return Invalid("--limit requires a whole number of 1 or more.");
+                case "--quality" when index + 1 < args.Length && QualityLevels.TryParse(args[index + 1], out var level):
+                    quality = level;
+                    index++;
+                    break;
+                case "--quality":
+                    return Invalid("--quality requires archive, standard or compact.");
                 case "--dry-run":
                     dryRun = true;
                     break;
@@ -909,6 +920,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
 
         if (first && kind is not (CliCommandKind.QueueDiscover or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue discover and immich run.");
         if (limit is not null && kind != CliCommandKind.ImmichRun) return Invalid("--limit is only supported by immich run.");
+        if (quality is not null && kind != CliCommandKind.ConfigInit) return Invalid("--quality is only supported by config init.");
         if (first && limit is not null) return Invalid("--first and --limit cannot be used together.");
         // --first is --limit 1 for immich run; queue discover keeps its own --first.
         if (first && kind == CliCommandKind.ImmichRun) limit = 1;
@@ -931,7 +943,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid($"{modeOverride.Flag} is only supported by queue run, process and immich run.");
         }
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueCancel or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueCancel or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);

@@ -17,5 +17,7 @@ public interface ISettingsValidator
 
 public interface IConfigurationTemplateWriter
 {
-    Task<string> WriteAsync(string? explicitPath, CancellationToken cancellationToken = default);
+    /// <summary>The full path <see cref="WriteAsync"/> writes to, so <c>config init</c> can refuse before it asks anything.</summary>
+    string GetDestination(string? explicitPath);
+    Task<string> WriteAsync(string? explicitPath, QualityLevel quality, CancellationToken cancellationToken = default);
 }

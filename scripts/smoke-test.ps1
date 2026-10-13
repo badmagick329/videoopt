@@ -32,7 +32,8 @@ $configDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "video-optimiser-
 New-Item -ItemType Directory -Path $configDirectory | Out-Null
 try {
     $config = Join-Path $configDirectory 'video-optimiser.yaml'
-    & $Executable config init --config $config
+    # --quality keeps config init from waiting on its question when stdin is a console nobody answers.
+    & $Executable config init --config $config --quality standard
     if ($LASTEXITCODE -ne 0) {
         throw "config init failed with exit code $LASTEXITCODE."
     }
