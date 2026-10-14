@@ -1,6 +1,7 @@
 using FluentAssertions;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
@@ -295,6 +296,46 @@ public sealed class RemoteSshProcessingSessionTests
         Directory.Delete(directory, true);
     }
 
+    /// <summary>A launch that ran on the worker but lost its reply is resent by the SSH retry; the resend must not start a
+    /// second script, and the stage reads as missing until the first one writes its pid.</summary>
+    [Fact]
+    public async Task AResentLaunchAfterALostReplyStartsNoSecondScript()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var worker = new StageWorker(["missing", "missing", "running", "completed 0"]) { DropFirstLaunchReply = true };
+
+        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
+
+        result.Crf.Should().Be(42);
+        worker.Launches.Should().HaveCount(2);
+        worker.Launches[1].Should().Be(worker.Launches[0]);
+        worker.ScriptsStarted.Should().Be(1);
+        Directory.Delete(directory, true);
+    }
+
+    /// <summary>A script that died without an exit code (a reboot, an OOM kill) leaves its marker behind; the next command
+    /// must still launch the stage again.</summary>
+    [Fact]
+    public async Task AStageWhoseScriptDiedLeavingItsMarkerIsLaunchedAgainByTheNextCommand()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var worker = new StageWorker(["missing", "missing", "missing", "missing", "missing", "missing", "running", "completed 0"]);
+        var id = Guid.NewGuid();
+
+        var died = async () => await CreateSession(id, worker, source).SearchCrfAsync(source, new QualitySettings());
+        await died.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote stage has neither*");
+        var result = await CreateSession(id, worker, source).SearchCrfAsync(source, new QualitySettings());
+
+        result.Crf.Should().Be(42);
+        worker.Launches.Should().HaveCount(2);
+        worker.ScriptsStarted.Should().Be(2);
+        Directory.Delete(directory, true);
+    }
+
     [Fact]
     public async Task AlreadyRunningCrfStageIsPolledUntilCompletion()
     {
@@ -346,7 +387,7 @@ public sealed class RemoteSshProcessingSessionTests
         launch.Should().Contain("{ nohup setsid bash ");
         launch.Should().Contain("</dev/null >/dev/null 2>&1 & }");
         launch.Should().Contain($"cd -- '\"'\"'{session.CrfDirectory}'\"'\"' && ");
-        RemoteSshProcessingSession.BuildLaunchCommand("/w/a b", "/w/a b/run.sh").Should().Be("cd -- '/w/a b' && { nohup setsid bash '/w/a b/run.sh' </dev/null >/dev/null 2>&1 & }");
+        RemoteSshProcessingSession.BuildLaunchCommand("/w/a b", "/w/a b/run.sh", "launch-1").Should().Be("cd -- '/w/a b' && if mkdir -- 'launch-1'; then { nohup setsid bash '/w/a b/run.sh' </dev/null >/dev/null 2>&1 & }; elif ! test -d 'launch-1'; then exit 1; fi");
         Directory.Delete(directory, true);
     }
 
@@ -772,6 +813,40 @@ public sealed class RemoteSshProcessingSessionTests
             }
             return Task.FromResult(new ExternalProcessResult(0, string.Empty, string.Empty));
         }
+    }
+
+    /// <summary>
+    /// A worker for one CRF stage that keeps the launch markers it was asked to create, as <c>mkdir</c> would. A launch
+    /// command without a marker starts a script every time it arrives.
+    /// </summary>
+    private sealed class StageWorker(IEnumerable<string> states) : IExternalProcessRunner
+    {
+        // The marker as it appears once the command is quoted for `bash -lc`.
+        private static readonly Regex MarkerPattern = new(@"mkdir -- '""'""'([^']+)'""'""'", RegexOptions.CultureInvariant);
+        private readonly Queue<string> _states = new(states);
+        private readonly HashSet<string> _markers = [];
+
+        public bool DropFirstLaunchReply { get; set; }
+        public List<string> Launches { get; } = [];
+        public int ScriptsStarted { get; private set; }
+
+        public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
+        {
+            var command = request.Arguments[^1];
+            if (command.Contains("nohup setsid bash", StringComparison.Ordinal))
+            {
+                Launches.Add(command);
+                var marker = MarkerPattern.Match(command);
+                if (!marker.Success || _markers.Add(marker.Groups[1].Value)) ScriptsStarted++;
+                if (!DropFirstLaunchReply) return Ok(string.Empty);
+                DropFirstLaunchReply = false;
+                return Task.FromResult(new ExternalProcessResult(255, string.Empty, "Connection reset by peer"));
+            }
+            if (command.Contains("kill -0", StringComparison.Ordinal)) return Ok($"{_states.Dequeue()}\n\u001ecrf 42 successful\n");
+            return Ok(command.Contains("/log", StringComparison.Ordinal) ? "crf 42 successful\n" : string.Empty);
+        }
+
+        private static Task<ExternalProcessResult> Ok(string output) => Task.FromResult(new ExternalProcessResult(0, output, string.Empty));
     }
 
     private sealed class CaptureProgress : IProgress<JobProgress>

@@ -15,6 +15,7 @@
 - After Ctrl+C or an unreachable worker during a download, the `To delete it instead:` line ends `(the finished encode is lost)`: the encode exists only on the worker until it is downloaded.
 - A partial download longer than the output, left by an earlier encode, is discarded instead of failing the job for good.
 - After Ctrl+C or an unreachable worker, the resume command for an `immich run` with `--limit` or `--first` now uses `--limit` with the number of Immich jobs left. Rerunning with the number you typed would have downloaded new videos on top of the unfinished ones.
+- A dropped connection while a remote CRF search or encode starts no longer starts it twice on the worker. Before, the retry could launch a second ab-av1 writing the same log and output, giving a mixed log, a wrong exit code or a damaged encode.
 
 ## [0.7.1] - 2026-10-13
 ### Changed

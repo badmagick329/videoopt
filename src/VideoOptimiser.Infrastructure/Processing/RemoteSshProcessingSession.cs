@@ -230,17 +230,20 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         {
             progress?.Report(JobProgress.Step($"{name} finished on the worker while this command was stopped."));
         }
+        var startingPolls = 0;
         if (state.ExitCode is null && !state.Running)
         {
-            var scriptPath = $"{stageDirectory}/run-{Guid.NewGuid():N}.sh";
+            var launchId = Guid.NewGuid().ToString("N");
+            var scriptPath = $"{stageDirectory}/run-{launchId}.sh";
             var cacheDirectory = $"{stageDirectory}/cache";
             var command = string.Join(" ", new[] { Quote("/usr/bin/time"), Quote("-v"), Quote("ab-av1") }.Concat(arguments.Select(Quote)));
             var script = $"#!/usr/bin/env bash\nset +e\numask 077\nmkdir -p -- {Quote(cacheDirectory)}\nexport XDG_CACHE_HOME={Quote(cacheDirectory)}\nprintf '%s\\n' \"$$\" > pid.partial\nmv -f pid.partial pid\n{command} > log 2>&1\ncode=$?\nprintf '%s\\n' \"$code\" > exit-code.partial\nmv -f exit-code.partial exit-code\nexit 0\n";
             var create = await SshAsync($"mkdir -p -- {Quote(stageDirectory)} && umask 077 && cat > {Quote(scriptPath)} && chmod 700 {Quote(scriptPath)}", script, cancellationToken: cancellationToken);
             EnsureSuccess(create, "Remote stage script upload");
-            var launch = await SshAsync(BuildLaunchCommand(stageDirectory, scriptPath), cancellationToken: cancellationToken);
+            var launch = await SshAsync(BuildLaunchCommand(stageDirectory, scriptPath, $"launch-{launchId}"), cancellationToken: cancellationToken);
             EnsureSuccess(launch, "Remote stage launch");
             useCurrentState = false;
+            startingPolls = StartingPolls;
         }
 
         var reportedLength = 0;
@@ -267,18 +270,27 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 }
                 return state.Log;
             }
-            if (!state.Running) throw new InvalidOperationException("Remote stage has neither a running process nor a completion marker.");
+            if (state.Running) startingPolls = 0;
+            // The launch returns before the script writes its pid, so a stage this call launched can read as missing at first.
+            else if (startingPolls-- <= 0) throw new InvalidOperationException("Remote stage has neither a running process nor a completion marker.");
             await _pollDelay(cancellationToken);
         }
     }
+
+    /// <summary>How many polls a stage this call launched may read as missing before it counts as dead.</summary>
+    private const int StartingPolls = 3;
 
     /// <summary>
     /// The braces put only the stage script in the background. Without them, <c>&amp;</c> backgrounds the whole
     /// <c>cd … &amp;&amp; nohup …</c> list as a subshell that inherits the SSH channel's output, so the launch's ssh stays
     /// open until ab-av1 exits and the poll loop then prints the whole stage log at once.
+    /// <para>The marker makes the launch idempotent: <see cref="SshAsync"/> resends the same command after an exit 255,
+    /// which can follow a launch that ran but lost its reply, and a second script would share the stage's log, pid,
+    /// exit code and output. It is unique per launch, not a fixed lock, so a later command can still relaunch a stage
+    /// whose script died without an exit code.</para>
     /// </summary>
-    internal static string BuildLaunchCommand(string stageDirectory, string scriptPath) =>
-        $"cd -- {Quote(stageDirectory)} && {{ nohup setsid bash {Quote(scriptPath)} </dev/null >/dev/null 2>&1 & }}";
+    internal static string BuildLaunchCommand(string stageDirectory, string scriptPath, string marker) =>
+        $"cd -- {Quote(stageDirectory)} && if mkdir -- {Quote(marker)}; then {{ nohup setsid bash {Quote(scriptPath)} </dev/null >/dev/null 2>&1 & }}; elif ! test -d {Quote(marker)}; then exit 1; fi";
 
     private async Task<(bool Running, int? ExitCode, string Log)> GetStageStateAsync(string stageDirectory, CancellationToken cancellationToken)
     {
