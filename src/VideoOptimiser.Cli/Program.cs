@@ -317,7 +317,9 @@ internal static partial class CliApplication
         }
         var canRunExistingJob = existingJob is null ||
             existingJob.Status is JobStatus.Queued or JobStatus.Interrupted && compatibility!.CanRun;
-        var managedWork = lifecycle.IsManaged(configuration.Settings) && canRunExistingJob;
+        // A server bills from the moment it exists, so it is created only for a job that will reach a remote stage (VOPT-68).
+        var managedWork = lifecycle.IsManaged(configuration.Settings) && canRunExistingJob &&
+            await services.GetRequiredService<IJobProcessor>().NeedsWorkerAsync(configuration.Settings.Database.Path, sourcePath, configuration.Settings, command.Force, cancellationToken);
         if (managedWork)
         {
             await EnsureWorkerReadyAsync(services, configuration, command, cancellationToken);
@@ -500,7 +502,10 @@ internal static partial class CliApplication
 
         var queue = services.GetRequiredService<IQueueService>();
         var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        var managedWork = lifecycle.IsManaged(configuration.Settings);
+        var managed = lifecycle.IsManaged(configuration.Settings);
+        // A server bills from the moment it exists, so it is created only once a job will reach a remote stage (VOPT-68).
+        // A run that never needs it prints no worker lines and leaves a worker kept from an earlier run alone.
+        var managedWork = managed && await AnyJobNeedsWorkerAsync(services, configuration, preparation.RunnableJobs, cancellationToken);
         if (managedWork)
         {
             await EnsureWorkerReadyAsync(services, configuration, command, cancellationToken);
@@ -535,11 +540,22 @@ internal static partial class CliApplication
         {
             await ReportUnreachableManualHostAsync(services, configuration, command, result.UnreachableWorkerJob);
         }
-        else if (!managedWork && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
+        else if (!managed && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the server; powering it off still bills.");
         }
         return (result.ReadyToFinalize, result.SkippedJobs.Count, failures, result.UnreachableWorkerJob is not null);
+    }
+
+    /// <summary>In run order, stopping at the first job that needs the worker: usually only the first job is probed twice.</summary>
+    private static async Task<bool> AnyJobNeedsWorkerAsync(IServiceProvider services, LoadedConfiguration configuration, IReadOnlyList<JobRecord> jobs, CancellationToken cancellationToken)
+    {
+        var processor = services.GetRequiredService<IJobProcessor>();
+        foreach (var job in jobs)
+        {
+            if (await processor.NeedsWorkerAsync(configuration.Settings.Database.Path, job.SourcePath, configuration.Settings, force: false, cancellationToken)) return true;
+        }
+        return false;
     }
 
     /// <summary>U3m (VOPT-69): a manual host that stopped answering is neither billed nor deleted by this tool, so the user hears only how to resume.</summary>

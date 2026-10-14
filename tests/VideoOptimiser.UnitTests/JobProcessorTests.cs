@@ -389,6 +389,76 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     /// <summary>
+    /// A run creates a server only for a job that will reach a remote stage (VOPT-68). Each row is one local check that ends the
+    /// job first; the prediction writes nothing, so asking leaves no job behind.
+    /// </summary>
+    [Theory]
+    [InlineData("eligible", true)]
+    [InlineData("local mode", false)]
+    [InlineData("below the rules' bitrate", false)]
+    [InlineData("below the rules' bitrate, --force", true)]
+    [InlineData("cannot save the minimum", false)]
+    [InlineData("outside the watch roots", false)]
+    [InlineData("unreadable by ffprobe", false)]
+    public async Task OnlyAJobThatPassesEveryLocalCheckNeedsTheWorker(string situation, bool expected)
+    {
+        var source = Path.Combine(_directory, "clip.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "predict.db") },
+            Savings = new SavingsSettings { MinimumBytesSaved = situation == "cannot save the minimum" ? "200MiB" : "0B" },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = situation == "outside the watch roots" ? Path.Combine(_directory, "elsewhere") : _directory }] },
+            Eligibility = Rules(),
+            Processing = new ProcessingSettings { Mode = situation == "local mode" ? "local" : "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker" } }
+        };
+        IMediaProbe probe = situation == "unreadable by ffprobe" ? new FailingProbe() : new H264Probe(bitrate: situation.StartsWith("below", StringComparison.Ordinal) ? 500_000 : 10_000_000);
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => probe, new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+
+        var needed = await processor.NeedsWorkerAsync(settings.Database.Path, source, settings, force: situation.EndsWith("--force", StringComparison.Ordinal));
+
+        needed.Should().Be(expected);
+        (await repository.ListAsync(settings.Database.Path, terminal: false)).Should().BeEmpty();
+    }
+
+    /// <summary>A ready job, or one whose finalisation was interrupted, returns before any stage.</summary>
+    [Theory]
+    [InlineData(JobStatus.ReadyToFinalize, null, false)]
+    [InlineData(JobStatus.Interrupted, JobStatus.Finalizing, false)]
+    [InlineData(JobStatus.Interrupted, JobStatus.Encoding, true)]
+    public async Task AnOpenJobNeedsTheWorkerOnlyWhenItStillHasARemoteStage(JobStatus status, JobStatus? resumeStatus, bool expected)
+    {
+        var source = Path.Combine(_directory, "open.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = new AppSettings
+        {
+            Database = new DatabaseSettings { Path = Path.Combine(_directory, "open.db") },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules(),
+            Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/w" } }
+        };
+        var id = Guid.NewGuid();
+        await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = id, SourcePath = source, Status = JobStatus.Queued, ExecutionMode = "remoteSsh", RemoteHost = "video-worker", RemoteWorkspace = $"/w/{id:N}" });
+        var job = (await repository.GetAsync(settings.Database.Path, id))!;
+        if (status == JobStatus.ReadyToFinalize)
+        {
+            foreach (var step in new[] { JobStatus.Validating, JobStatus.ReadyToFinalize }) { job.Status = step; await repository.UpdateAsync(settings.Database.Path, job); }
+        }
+        else
+        {
+            job.Status = status;
+            job.ResumeStatus = resumeStatus;
+            await repository.UpdateAsync(settings.Database.Path, job);
+        }
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+
+        (await processor.NeedsWorkerAsync(settings.Database.Path, source, settings, force: false)).Should().Be(expected);
+    }
+
+    /// <summary>
     /// The remote session fails the job as soon as it is staged, so a skip here proves nothing was uploaded or searched.
     /// --force does not bypass the check; with it, an unknown bitrate leaves the file size to stand in for the stream.
     /// </summary>
@@ -707,6 +777,11 @@ public sealed class JobProcessorTests : IDisposable
     private sealed class ReadableFiles : IFileReadinessService
     {
         public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
+    }
+
+    private sealed class FailingProbe : IMediaProbe
+    {
+        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => throw new MediaProbeException("moov atom not found");
     }
 
     private sealed class H264Probe(IReadOnlyList<string>? audioCodecs = null, long? bitrate = 10_000_000) : IMediaProbe

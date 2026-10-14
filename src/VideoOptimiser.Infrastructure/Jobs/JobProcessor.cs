@@ -100,27 +100,13 @@ public sealed class JobProcessor(
         await using var session = sessions.Create(job, settings);
         try
         {
-            // An Immich job's original is the staged copy, which lives under immich.stagingDirectory rather than a watch root.
-            if (!force && job.SourceKind == JobSourceKind.Immich && !(settings.Immich.StagingDirectory.Length > 0 && IsWithinRoot(path, settings.Immich.StagingDirectory))) return await FailAsync(job, databasePath, "SourceOutsideWatchRoot", "Staged Immich original is outside immich.stagingDirectory. Use --force to bypass this check.", ExitCode.ProcessingFailure, progress, cancellationToken);
-            if (!force && job.SourceKind == JobSourceKind.File && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return await FailAsync(job, databasePath, "SourceOutsideWatchRoot", "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure, progress, cancellationToken);
-            var info = new FileInfo(path);
-            var readinessResult = await readiness.CheckAsync(path, cancellationToken);
-            if (!readinessResult.IsReady) return await FailAsync(job, databasePath, "SourceNotReady", $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure, progress, cancellationToken);
-
-            var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
+            var verdict = await CheckSourceAsync(path, job.SourceKind, settings, force, cancellationToken);
             // Saved with the job's next update. This covers a job `process` created without a probe, and one queued before
             // migration 8; for the rest it describes the file as this run found it.
-            job.VideoFacts = VideoFacts.From(media, info.Length);
-            if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return await FailAsync(job, databasePath, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles, progress, cancellationToken);
-
-            // Before staging, and whatever --force says: a video that cannot save savings.minimumBytesSaved would only fail
-            // validation after a full upload, search and encode.
-            var cap = SizeCap.For(media, info.Length, settings.Quality, settings.Savings);
-            if (cap.RulesOutEverything)
-            {
-                var measured = cap.MeasuredIsFile ? $"the file is {HumanReadableValues.FormatSize(cap.MeasuredBytes)}" : $"the video stream is about {HumanReadableValues.FormatSize(cap.MeasuredBytes)}";
-                return await SkipAsync(job, databasePath, settings, $"{measured}, so it cannot save {cap.MinimumText} (savings.minimumBytesSaved).", progress, cancellationToken);
-            }
+            if (verdict.Media is not null) job.VideoFacts = VideoFacts.From(verdict.Media, verdict.Info.Length);
+            if (verdict.Skip) return await SkipAsync(job, databasePath, settings, verdict.Message!, progress, cancellationToken);
+            if (!verdict.Proceeds) return await FailAsync(job, databasePath, verdict.FailureCategory!, verdict.Message!, verdict.ExitCode, progress, cancellationToken);
+            var (info, media, cap) = (verdict.Info, verdict.Media!, verdict.Cap!);
 
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.SampleCount);
             var quality = settings.Quality.WithSampleCount(sampleCount).WithSizeCap(cap);
@@ -247,6 +233,72 @@ public sealed class JobProcessor(
         {
             return await FailAsync(job, databasePath, stage, exception.Message, ExitCode.ProcessingFailure, progress, cancellationToken, (exception as AbAv1StageException)?.LogPath);
         }
+    }
+
+    /// <summary>
+    /// Whether <see cref="ProcessAsync"/> would reach a remote stage for this original, so a run creates a server only when a
+    /// job will use it (VOPT-68). It makes the same decisions in the same order and writes nothing. A probe that fails means
+    /// no: processing would fail the job locally.
+    /// </summary>
+    public async Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default)
+    {
+        if (!string.Equals(settings.Processing.Mode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase)) return false;
+        var path = Path.GetFullPath(sourcePath);
+        if (!File.Exists(path)) return false;
+        var job = await jobs.FindOpenBySourceAsync(databasePath, path, cancellationToken);
+        // Ready, or a finalisation that was interrupted: ProcessAsync returns before any stage. Covers an Immich finalisation too.
+        if (job is not null && (job.Status is JobStatus.ReadyToFinalize or JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)) return false;
+        if (job is not null && JobCompatibility.Evaluate(job, settings).Status == JobCompatibilityStatus.Incompatible) return false;
+        try
+        {
+            return (await CheckSourceAsync(path, job?.SourceKind ?? JobSourceKind.File, settings, force, cancellationToken)).Proceeds;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The checks on the original before anything is staged, shared by <see cref="ProcessAsync"/> and <see cref="NeedsWorkerAsync"/>
+    /// so the prediction cannot drift from processing. Reads only; a probe failure throws.
+    /// </summary>
+    private async Task<SourceVerdict> CheckSourceAsync(string path, JobSourceKind kind, AppSettings settings, bool force, CancellationToken cancellationToken)
+    {
+        var info = new FileInfo(path);
+        // An Immich job's original is the staged copy, which lives under immich.stagingDirectory rather than a watch root.
+        if (!force && kind == JobSourceKind.Immich && !(settings.Immich.StagingDirectory.Length > 0 && IsWithinRoot(path, settings.Immich.StagingDirectory))) return SourceVerdict.Fail(info, "SourceOutsideWatchRoot", "Staged Immich original is outside immich.stagingDirectory. Use --force to bypass this check.", ExitCode.ProcessingFailure);
+        if (!force && kind == JobSourceKind.File && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return SourceVerdict.Fail(info, "SourceOutsideWatchRoot", "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure);
+        var readinessResult = await readiness.CheckAsync(path, cancellationToken);
+        if (!readinessResult.IsReady) return SourceVerdict.Fail(info, "SourceNotReady", $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure);
+
+        var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
+        if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return SourceVerdict.Fail(info, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles) with { Media = media };
+
+        // Before staging, and whatever --force says: a video that cannot save savings.minimumBytesSaved would only fail
+        // validation after a full upload, search and encode.
+        var cap = SizeCap.For(media, info.Length, settings.Quality, settings.Savings);
+        if (cap.RulesOutEverything)
+        {
+            var measured = cap.MeasuredIsFile ? $"the file is {HumanReadableValues.FormatSize(cap.MeasuredBytes)}" : $"the video stream is about {HumanReadableValues.FormatSize(cap.MeasuredBytes)}";
+            return new SourceVerdict(info) { Media = media, Skip = true, Message = $"{measured}, so it cannot save {cap.MinimumText} (savings.minimumBytesSaved)." };
+        }
+        return new SourceVerdict(info) { Media = media, Cap = cap };
+    }
+
+    /// <summary>What <see cref="CheckSourceAsync"/> found. <see cref="Media"/> is set once the probe ran, so a refused job still records its video facts.</summary>
+    private sealed record SourceVerdict(FileInfo Info)
+    {
+        public MediaInfo? Media { get; init; }
+        public SizeCap? Cap { get; init; }
+        public string? FailureCategory { get; init; }
+        public string? Message { get; init; }
+        public ExitCode ExitCode { get; init; }
+        public bool Skip { get; init; }
+        public bool Proceeds => FailureCategory is null && !Skip;
+
+        public static SourceVerdict Fail(FileInfo info, string category, string message, ExitCode exitCode) =>
+            new(info) { FailureCategory = category, Message = message, ExitCode = exitCode };
     }
 
     /// <summary>

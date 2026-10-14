@@ -478,11 +478,15 @@ public sealed class JobCompatibilityTests : IDisposable
 
     private sealed class UnexpectedProcessor : IJobProcessor
     {
+        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
         public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new InvalidOperationException("Processing is not expected during preparation.");
     }
 
     private sealed class ReadyProcessor : IJobProcessor
     {
+        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
         public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
             Task.FromResult(new JobProcessingResult(new JobRecord { Id = Guid.NewGuid(), SourcePath = sourcePath, Status = JobStatus.ReadyToFinalize }, ExitCode.Success, "Ready."));
     }

@@ -126,6 +126,8 @@ public sealed class UnreachableWorkerRunTests : IDisposable
     /// <summary>Records the job interrupted by an unreachable worker, as <see cref="JobProcessor"/> does, at the encode stage.</summary>
     private sealed class UnreachableProcessor : IJobProcessor
     {
+        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
         public int Calls { get; private set; }
 
         public async Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)

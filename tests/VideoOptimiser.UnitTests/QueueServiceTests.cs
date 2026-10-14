@@ -307,6 +307,8 @@ public sealed class QueueServiceTests : IDisposable
     /// <summary>Makes the first <paramref name="readyBefore"/> jobs ready, then reports every job after as interrupted by an unreachable worker.</summary>
     private sealed class UnreachableAfterProcessor(int readyBefore) : IJobProcessor
     {
+        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
         public int Calls { get; private set; }
 
         public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
@@ -349,6 +351,8 @@ public sealed class QueueServiceTests : IDisposable
 
     private sealed class ResultProcessor(JobProcessingResult result) : IJobProcessor
     {
+        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
         public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(result);
     }
 
@@ -359,6 +363,8 @@ public sealed class QueueServiceTests : IDisposable
 
     private sealed class ReportingProcessor : IJobProcessor
     {
+        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
         public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             progress?.Report(JobProgress.Step($"processed {Path.GetFileName(sourcePath)}"));
@@ -368,6 +374,8 @@ public sealed class QueueServiceTests : IDisposable
 
     private sealed class NoopProcessor : IJobProcessor
     {
+        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
         public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

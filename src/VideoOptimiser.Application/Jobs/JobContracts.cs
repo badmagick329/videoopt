@@ -171,6 +171,9 @@ public interface IJobProcessor
         bool force,
         IProgress<JobProgress>? progress = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Whether <see cref="ProcessAsync"/> would reach a remote stage for this original. Read-only: a run asks before creating a server.</summary>
+    Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default);
 }
 
 public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0, int PreviouslySkipped = 0);
