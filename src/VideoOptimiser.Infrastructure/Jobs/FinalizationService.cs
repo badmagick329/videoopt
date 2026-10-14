@@ -55,9 +55,16 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         if (!resumingFile && MissingFile(job, fromImmich) is { } missing) return new FinalizationResult(job, ExitCode.FinalisationFailure, missing);
         if (await TryLoadManifestAsync(job.OutputPath, cancellationToken) is not { } manifest)
         {
+            // Without the record an interrupted file finalisation cannot show that nothing moved, and converting again (F2's
+            // advice) would queue a path that may now hold the AV1 or nothing at all.
+            if (resumingFile) return await RequireReviewAsync(databasePath, job);
             return new FinalizationResult(job, ExitCode.FinalisationFailure, $"The AV1's validation record is missing or unreadable: {manifests.GetPath(job.OutputPath)}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue cancel {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.");
         }
-        if (manifest.Validation?.Passed != true) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job validation did not pass.");
+        if (manifest.Validation?.Passed != true)
+        {
+            if (resumingFile) return await RequireReviewAsync(databasePath, job);
+            return new FinalizationResult(job, ExitCode.ValidationFailure, "Job validation did not pass.");
+        }
         // Everything up to the Finalizing write only reads, so Ctrl+C there leaves the job as it was. Once written, the state
         // writes use CancellationToken.None: a cancelled write would leave the stored state behind what the files did.
         var finalizing = false;

@@ -769,7 +769,8 @@ internal static partial class CliApplication
         var store = services.GetRequiredService<IOutputManifestStore>();
         var manifest = await store.LoadAsync(job.OutputPath, cancellationToken);
         manifest.Validation = await services.GetRequiredService<IOutputValidationService>().ValidateAsync(manifest, configuration.Settings, cancellationToken);
-        await store.SaveAsync(manifest, cancellationToken);
+        // From here the record and the job must agree, so Ctrl+C cannot leave one written without the other.
+        await store.SaveAsync(manifest, CancellationToken.None);
         job.ValidationPassed = manifest.Validation.Passed;
         job.SourceSizeBytes = manifest.Validation.SourceSizeBytes;
         job.OutputSizeBytes = manifest.Validation.OutputSizeBytes;
@@ -778,7 +779,7 @@ internal static partial class CliApplication
         job.ResumeStatus = null;
         if (manifest.Validation.Passed) { job.FailureCategory = null; job.FailureMessage = null; }
         else { job.FailureCategory = "ValidationFailed"; job.FailureMessage = string.Join("; ", manifest.Validation.Failures); job.CompletedUtc = DateTimeOffset.UtcNow; }
-        await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
+        await repository.UpdateAsync(configuration.Settings.Database.Path, job, CancellationToken.None);
         Console.WriteLine(manifest.Validation.Passed ? $"Validation passed: saved {manifest.Validation.PercentageSaved:F1}%" : "Validation failed: " + string.Join("; ", manifest.Validation.Failures));
         return manifest.Validation.Passed ? (int)ExitCode.Success : (int)ExitCode.ValidationFailure;
     }

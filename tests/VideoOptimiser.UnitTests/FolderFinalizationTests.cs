@@ -119,6 +119,22 @@ public sealed class FolderFinalizationTests : IDisposable
         File.Exists(output).Should().BeTrue();
     }
 
+    /// <summary>Without the validation record nothing proves the files never moved, so it is reviewed, not converted again.</summary>
+    [Fact]
+    public async Task AnInterruptedFinalisationWithoutItsValidationRecordNeedsReview()
+    {
+        var (settings, job, _, output) = await ReadyJobAsync();
+        await InterruptFinalizationAsync(settings, job);
+        File.Delete(_manifests.GetPath(output));
+
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.Message.Should().Be("Finalisation was interrupted and requires manual review.");
+        var stored = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+        stored.FailureCategory.Should().Be("ManualInterventionRequired");
+        TemporaryOutputClassifier.AbandonedReason(stored, stored.Attempt).Should().BeNull();
+    }
+
     /// <summary>F4 (VOPT-60): the job stays ready, since the AV1 may now be the only copy and cancelling it lets cleanup delete it.</summary>
     [Fact]
     public async Task AMissingOriginalStopsOnlyThisJobWhichStaysReady()
