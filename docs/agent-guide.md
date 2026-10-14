@@ -140,7 +140,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 
 **Failed, cancelled or skipped jobs** stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` queues one again; run it only at the user's request.
 
-**Retained Hetzner worker.** After a remote run with any failed or interrupted job (a skipped one does not count), the server stays up so the work can resume, and it keeps billing. After `Ctrl+C` or a killed command, a CRF search or encode keeps running on it too: the rerun picks it up. With `deleteAfterRun: false` it stays after every run. `worker status` shows it, whatever `processing.mode` says. Tell the user; deleting it is gated, because outputs not yet downloaded are lost with it.
+**Kept Hetzner worker.** A remote run that finishes deletes the worker when `deleteAfterRun` is `true`, failed videos included; with `false`, or when the run never used a worker kept from an earlier one, it ends with `The worker <name> stays up, billed hourly, until it is deleted.` A worker that stops answering, an error once the worker exists, and a run stopped with `Ctrl+C` under redirected input keep it too, and say so with the `worker delete` command. After a stop now or a killed command, a CRF search or encode keeps running on it: the rerun picks it up. Interactively, `Ctrl+C` asks the user whether to delete the worker; under redirected input it never asks. `worker status` shows a kept worker, whatever `processing.mode` says. Tell the user it bills; deleting it is gated, because outputs not yet downloaded are lost with it.
 
 ## Reference
 

@@ -149,7 +149,7 @@ Exit code `0` means success. The other exit codes are listed in [docs/agent-guid
 
 - Originals are only read until you finalise. `finalize` moves the original aside, puts the AV1 in place, and moves the original back if anything fails.
 - A video that failed, was cancelled or was skipped is not queued again until its file changes or you run `queue retry`.
-- The job database (`jobs.db` by default) tracks every job, so a crash or `Ctrl+C` never loses track of a file.
+- The job database (`jobs.db` by default) tracks every job, so a crash or `Ctrl+C` never loses track of a file. One run uses it at a time: a second `queue run`, `immich run` or `process` refuses and names the one running.
 - Temporary files live in a `.video-optimiser` folder beside each original. `cleanup` deletes the ones no job needs.
 - The Hetzner token and the Immich API key load from environment variables or a `.env` file, never from the YAML. Copy `.env.example` to `.env` to start.
 

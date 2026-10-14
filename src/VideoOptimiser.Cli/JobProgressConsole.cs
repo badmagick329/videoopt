@@ -18,6 +18,7 @@ internal sealed class JobProgressConsole(TextWriter writer, TerminalStyle style)
     // the console's signal thread.
     private readonly object _gate = new();
     private TimeSpan? _encodeTimeLeft;
+    private List<JobProgress>? _held;
 
     /// <summary>
     /// The latest encode estimate, while the encode is the step in progress: any header or step line clears it, so the
@@ -28,10 +29,43 @@ internal sealed class JobProgressConsole(TextWriter writer, TerminalStyle style)
         get { lock (_gate) return _encodeTimeLeft; }
     }
 
-    /// <summary>A line of the run's own, such as Ctrl+C's, at column 0 between the job's lines.</summary>
+    /// <summary>A line of the run's own, such as Ctrl+C's, at column 0 between the job's lines. Printed even while lines are held.</summary>
     public void WriteNote(string line)
     {
         lock (_gate) writer.WriteLine(line);
+    }
+
+    /// <summary>A question waiting for its answer on the same line. Printed even while lines are held.</summary>
+    public void WritePrompt(string prompt)
+    {
+        lock (_gate) writer.Write(prompt);
+    }
+
+    /// <summary>
+    /// Holds the job's lines while a question waits for its answer, so they do not run into the typing. The video keeps
+    /// converting meanwhile.
+    /// </summary>
+    public void Hold()
+    {
+        lock (_gate) _held ??= [];
+    }
+
+    /// <summary>
+    /// Prints the held lines. Of a run of progress lines only the last prints: the earlier ones are out of date, and a long
+    /// wait for an answer would otherwise flood the screen. Safe to call when nothing is held.
+    /// </summary>
+    public void Release()
+    {
+        lock (_gate)
+        {
+            if (_held is not { } held) return;
+            _held = null;
+            for (var index = 0; index < held.Count; index++)
+            {
+                var stale = held[index].Kind == JobProgressKind.Detail && index + 1 < held.Count && held[index + 1].Kind == JobProgressKind.Detail;
+                if (!stale) Write(held[index]);
+            }
+        }
     }
 
     public void Report(JobProgress value)
@@ -40,19 +74,25 @@ internal sealed class JobProgressConsole(TextWriter writer, TerminalStyle style)
         {
             if (value.TimeLeft is { } left) _encodeTimeLeft = left;
             else if (value.Kind is JobProgressKind.Header or JobProgressKind.Step) _encodeTimeLeft = null;
-            switch (value.Kind)
-            {
-                case JobProgressKind.Header:
-                    writer.WriteLine();
-                    writer.WriteLine(style.Bold(value.Text));
-                    break;
-                case JobProgressKind.Step:
-                    writer.WriteLine(StepIndent + style.Tone(value.Tone, value.Text));
-                    break;
-                default:
-                    writer.WriteLine(DetailIndent + style.Dim(value.Text));
-                    break;
-            }
+            if (_held is not null) _held.Add(value);
+            else Write(value);
+        }
+    }
+
+    private void Write(JobProgress value)
+    {
+        switch (value.Kind)
+        {
+            case JobProgressKind.Header:
+                writer.WriteLine();
+                writer.WriteLine(style.Bold(value.Text));
+                break;
+            case JobProgressKind.Step:
+                writer.WriteLine(StepIndent + style.Tone(value.Tone, value.Text));
+                break;
+            default:
+                writer.WriteLine(DetailIndent + style.Dim(value.Text));
+                break;
         }
     }
 }

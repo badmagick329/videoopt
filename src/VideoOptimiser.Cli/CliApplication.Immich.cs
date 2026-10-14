@@ -17,7 +17,7 @@ internal static partial class CliApplication
     {
         if (!RequireImmich(configuration) || ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
         // Before discovery, which marks active jobs interrupted and queues new ones.
-        using var runLock = TakeRunLock(configuration, "immich run");
+        using var runLock = TakeRunLock(services, configuration, "immich run");
         if (runLock is null) return (int)ExitCode.GeneralFailure;
         var (limit, modeOverride) = (command.Limit, command.ModeOverride);
         // Discovery downloads originals, so the banner comes first.
@@ -59,9 +59,10 @@ internal static partial class CliApplication
         FailedQueueJob[] failures;
         bool workerUnreachable;
         bool stopped;
+        bool workerHandled;
         try
         {
-            (ready, _, failures, workerUnreachable, stopped) = await ProcessPreparedJobsAsync(services, configuration, command, preparation.Queue, (ready, skipped, failures) =>
+            (ready, _, failures, workerUnreachable, stopped, workerHandled) = await ProcessPreparedJobsAsync(services, configuration, command, preparation.Queue, (ready, skipped, failures) =>
             {
                 Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
                 PrintFailedJobs(failures);
@@ -77,6 +78,7 @@ internal static partial class CliApplication
         }
 
         if (stopped) return (int)ExitCode.Cancelled;
+        if (!workerHandled) return (int)ExitCode.GeneralFailure;
         var exitCode = QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
         // Guard hits are the guard working; its issues, discovery issues and exclusions each need the user to look.
         if (exitCode == ExitCode.Success && (guard.Issues.Count > 0 || discovery.Issues > 0 || discovery.Excluded > 0)) exitCode = ExitCode.PartialSuccess;

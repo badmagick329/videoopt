@@ -440,23 +440,6 @@ public sealed class JobCompatibilityTests : IDisposable
         QueueExitCode.Calculate(run.ReadyToFinalize, preparation.FailedJobs.Count + run.FailedJobs.Count).Should().Be(ExitCode.PartialSuccess);
     }
 
-    [Fact]
-    public void DeletionPolicyDecidesNothingWhenNoWorkerWasUsed() =>
-        ManagedWorkerDeletionPolicy.Decide(false, true, hasFailures: false, interrupted: false).Should().Be(ManagedWorkerDeletionDecision.None);
-
-    [Theory]
-    [InlineData("y", true)]
-    [InlineData("yes", true)]
-    [InlineData("Y", true)]
-    [InlineData("n", false)]
-    [InlineData("", false)]
-    [InlineData(null, false)]
-    [InlineData("delete", false)]
-    public void OnlyExplicitAffirmativeConfirmationDeletesAFailedWorker(string? response, bool expected)
-    {
-        ManagedWorkerDeletionPolicy.IsAffirmative(response).Should().Be(expected);
-    }
-
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private static AppSettings ManagedSettings() => new()

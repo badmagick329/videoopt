@@ -65,7 +65,7 @@ public sealed class WorkerCreationTests : IDisposable
         ConsoleCapture.RunCliAsync(services =>
         {
             CliFakes.AcceptAnySettings(services);
-            CliFakes.NeverConfirm(services);
+            CliFakes.NotInteractive(services);
             services.AddSingleton<IRemoteWorkerLifecycle>(_lifecycle);
             services.AddSingleton<IJobProcessor, IneligibleByNameProcessor>();
         }, args);

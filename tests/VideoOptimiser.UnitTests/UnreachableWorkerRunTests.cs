@@ -85,7 +85,7 @@ public sealed class UnreachableWorkerRunTests : IDisposable
         ConsoleCapture.RunCliAsync(services =>
         {
             CliFakes.AcceptAnySettings(services);
-            CliFakes.NeverConfirm(services);
+            CliFakes.NotInteractive(services);
             services.AddSingleton<IRemoteWorkerLifecycle>(_lifecycle);
             services.AddSingleton<IJobProcessor>(_processor);
         }, args);

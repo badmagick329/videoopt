@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Infrastructure.Jobs;
@@ -9,12 +10,16 @@ using VideoOptimiser.Infrastructure.Jobs;
 /// </summary>
 internal static partial class CliApplication
 {
-    /// <summary>The run lock, or null after saying who holds it.</summary>
+    /// <summary>The run lock, or null after saying who holds it. Taking it starts the run: from then on every end decides the worker's fate (<see cref="RunGuardedAsync"/>).</summary>
     /// <param name="command">How the refusal names this run to a later one, such as <c>queue run</c>.</param>
-    private static DatabaseLock? TakeRunLock(LoadedConfiguration configuration, string command)
+    private static DatabaseLock? TakeRunLock(IServiceProvider services, LoadedConfiguration configuration, string command)
     {
         var taken = DatabaseLock.TryAcquire(DatabaseLock.RunPath(configuration.Settings.Database.Path), command, out var holder);
-        if (taken is not null) return taken;
+        if (taken is not null)
+        {
+            services.GetRequiredService<RunWorkerState>().Started = true;
+            return taken;
+        }
         if (holder is null)
         {
             WriteError("Another run is starting on this database. Try again in a few seconds.");

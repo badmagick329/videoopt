@@ -67,6 +67,47 @@ internal static class StoppedRunMessage
         ];
     }
 
+    /// <summary>
+    /// A stop now on a managed worker, with the question still to ask: <see cref="Lines"/> without its delete line, which the
+    /// question replaces. With nothing running there, the first line no longer says the worker stays "so the job can resume":
+    /// a video resumes on a new worker too.
+    /// </summary>
+    public static IReadOnlyList<string> LinesBeforeQuestion(JobInterruptedException? interrupted, string worker, CliCommand command, int? immichJobsLeft = null)
+    {
+        var lines = Lines(interrupted, worker, managed: true, command, immichJobsLeft).SkipLast(1).ToList();
+        if (Lost(interrupted?.Remote == true ? interrupted.Stage : null) is null) lines[0] = $"Stopped. Nothing is running on the worker {worker}, but it stays up, billed hourly.";
+        return lines;
+    }
+
+    /// <param name="remoteStage">The stage the video stopped in on the worker, or null when it was not on the worker.</param>
+    public static string DeleteNowQuestion(JobStatus? remoteStage) => Lost(remoteStage) switch
+    {
+        LostWork.InProgress => $"Delete the worker now? The {(remoteStage == JobStatus.Encoding ? "encode" : "CRF search")} in progress is lost. [y/N] ",
+        LostWork.FinishedEncode => "Delete the worker now? The finished encode is lost. [y/N] ",
+        _ => WorkerEndMessage.QuestionAtEnd
+    };
+
+    /// <summary>The answer N to <see cref="DeleteNowQuestion"/>.</summary>
+    public static string DeleteLater(JobStatus? remoteStage, CliCommand command) => $"To delete it later: {DeleteCommand(command)}{LostSuffix(remoteStage)}";
+
+    /// <summary>What deleting the worker throws away when a video stopped in <paramref name="remoteStage"/> on it.</summary>
+    public static string LostSuffix(JobStatus? remoteStage) => Lost(remoteStage) switch
+    {
+        LostWork.InProgress => " (the work in progress is lost)",
+        LostWork.FinishedEncode => " (the finished encode is lost)",
+        _ => string.Empty
+    };
+
+    private enum LostWork { InProgress, FinishedEncode }
+
+    // A CRF search or encode keeps running on the worker after a stop now; a finished encode waits there until downloaded.
+    private static LostWork? Lost(JobStatus? remoteStage) => remoteStage switch
+    {
+        JobStatus.CrfSearching or JobStatus.Encoding => LostWork.InProgress,
+        JobStatus.Downloading => LostWork.FinishedEncode,
+        _ => null
+    };
+
     /// <summary>The command the user ran, with the flags that change what it does; <c>--config</c> only when it was typed.</summary>
     /// <param name="immichJobsLeft">
     /// The Immich jobs a rerun would pick up (queued, or interrupted outside finalisation). <c>immich run --limit N</c> tops the
