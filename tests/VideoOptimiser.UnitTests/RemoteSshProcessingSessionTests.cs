@@ -116,6 +116,100 @@ public sealed class RemoteSshProcessingSessionTests
         Directory.Delete(directory, true);
     }
 
+    /// <summary>An upload whose connection drops resumes from what reached the worker, not from 0.</summary>
+    [Fact]
+    public async Task AnUploadThatLosesItsConnectionResumesFromTheVerifiedPartial()
+    {
+        var (source, bytes) = await CreateSourceAsync();
+        var runner = new DroppedUploadRunner($"40 {Sha256(bytes.AsSpan(0, 40))}");
+        var progress = new CaptureProgress();
+
+        await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", progress);
+
+        runner.Transfers.Should().Equal("put", "reput");
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Uploading 100 B to the worker..."),
+            JobProgress.Step("Lost the connection to the worker; resuming the upload at 40 B of 100 B..."),
+            JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
+        Directory.Delete(Path.GetDirectoryName(source)!, true);
+    }
+
+    /// <summary>Nothing usable on the worker after the drop: an empty partial, or one that is not a prefix of the original
+    /// (which is deleted), uploads from the start again.</summary>
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(40, true)]
+    public async Task AnUploadThatLosesItsConnectionWithNothingUsableOnTheWorkerStartsAgain(int partialLength, bool mismatched)
+    {
+        var (source, bytes) = await CreateSourceAsync();
+        var runner = new DroppedUploadRunner($"{partialLength} {(mismatched ? new string('0', 64) : Sha256(bytes.AsSpan(0, partialLength)))}");
+        var progress = new CaptureProgress();
+
+        await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", progress);
+
+        runner.Transfers.Should().Equal("put", "put");
+        runner.PartialRemovedAfterDrop.Should().BeTrue();
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Uploading 100 B to the worker..."),
+            JobProgress.Step("Lost the connection to the worker; uploading 100 B again from the start..."),
+            JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
+        Directory.Delete(Path.GetDirectoryName(source)!, true);
+    }
+
+    /// <summary>A drop after the last byte leaves a complete partial, which reput would refuse with a permanent failure.</summary>
+    [Fact]
+    public async Task AnUploadThatLosesItsConnectionAfterTheLastByteGoesStraightToVerification()
+    {
+        var (source, bytes) = await CreateSourceAsync();
+        var runner = new DroppedUploadRunner($"100 {Sha256(bytes)}");
+        var progress = new CaptureProgress();
+
+        await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", progress);
+
+        runner.Transfers.Should().Equal("put");
+        runner.Verified.Should().BeTrue();
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Uploading 100 B to the worker..."),
+            JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
+        Directory.Delete(Path.GetDirectoryName(source)!, true);
+    }
+
+    /// <summary>The dropped session can still finish the partial after the re-check; the reput it then refuses is not a failure,
+    /// but a refusal with the partial still short is.</summary>
+    [Theory]
+    [InlineData(100, true)]
+    [InlineData(60, false)]
+    public async Task AResumedUploadRefusedBecauseTheDroppedSessionFinishedThePartialGoesToVerification(int lengthAfterRefusal, bool succeeds)
+    {
+        var (source, bytes) = await CreateSourceAsync();
+        var runner = new DroppedUploadRunner($"40 {Sha256(bytes.AsSpan(0, 40))}", $"{lengthAfterRefusal} {Sha256(bytes.AsSpan(0, lengthAfterRefusal))}");
+        var progress = new CaptureProgress();
+
+        var action = async () => await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", progress);
+
+        if (succeeds)
+        {
+            await action.Should().NotThrowAsync();
+            progress.Lines[^1].Should().Be(JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
+        }
+        else await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("SFTP transfer failed: destination file*");
+        runner.Transfers.Should().Equal("put", "reput");
+        Directory.Delete(Path.GetDirectoryName(source)!, true);
+    }
+
+    [Fact]
+    public async Task AnUploadWhoseRecheckCannotReachTheWorkerFailsAsUnreachable()
+    {
+        var (source, _) = await CreateSourceAsync();
+        var runner = new DroppedUploadRunner(afterDrop: null);
+
+        var action = async () => await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", new CaptureProgress());
+
+        await action.Should().ThrowAsync<RemoteConnectionException>();
+        runner.Transfers.Should().Equal("put");
+        Directory.Delete(Path.GetDirectoryName(source)!, true);
+    }
+
     [Theory]
     [InlineData(40, false)]
     [InlineData(150, true)]
@@ -751,6 +845,17 @@ public sealed class RemoteSshProcessingSessionTests
         return directory;
     }
 
+    /// <summary>A 100-byte original whose bytes count up from 0, so every prefix has its own checksum.</summary>
+    private static async Task<(string Path, byte[] Bytes)> CreateSourceAsync()
+    {
+        var source = Path.Combine(CreateTemporaryDirectory(), "source.mkv");
+        var bytes = Enumerable.Range(0, 100).Select(value => (byte)value).ToArray();
+        await File.WriteAllBytesAsync(source, bytes);
+        return (source, bytes);
+    }
+
+    private static string Sha256(ReadOnlySpan<byte> bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
     private static class NoWorthwhileCrfLog
     {
         public const string Text = """
@@ -847,6 +952,40 @@ public sealed class RemoteSshProcessingSessionTests
         }
 
         private static Task<ExternalProcessResult> Ok(string output) => Task.FromResult(new ExternalProcessResult(0, output, string.Empty));
+    }
+
+    /// <summary>
+    /// A worker with nothing uploaded yet whose first sftp call loses its connection (exit 255). After the drop, the partial
+    /// check answers <paramref name="afterDrop"/>, or every SSH call fails to connect when it is null.
+    /// </summary>
+    /// <param name="afterRefusedRetry">When set, the second sftp call exits 1, as reput does onto a partial the dropped session
+    /// finished after the re-check, and the partial check then answers this.</param>
+    private sealed class DroppedUploadRunner(string? afterDrop, string? afterRefusedRetry = null) : IExternalProcessRunner
+    {
+        public List<string> Transfers { get; } = [];
+        public bool PartialRemovedAfterDrop { get; private set; }
+        public bool Verified { get; private set; }
+
+        public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request.FileName == "sftp")
+            {
+                Transfers.Add(request.StandardInput!.Split(' ')[0]);
+                if (Transfers.Count == 1) return Result(255, "Connection closed");
+                return Transfers.Count == 2 && afterRefusedRetry is not null ? Result(1, "destination file bigger or same size as source file") : Result(0);
+            }
+            var command = request.Arguments[^1];
+            if (command.Contains("nproc", StringComparison.Ordinal)) return Result(0, "8 20000000000 100000000000");
+            if (Transfers.Count == 0) return Result(0);
+            if (afterDrop is null) return Result(255, "Connection timed out");
+            if (command.Contains("head -c", StringComparison.Ordinal)) return Result(0, Transfers.Count == 1 ? afterDrop : afterRefusedRetry ?? afterDrop);
+            if (command.Contains("rm -f --", StringComparison.Ordinal)) PartialRemovedAfterDrop = true;
+            if (command.Contains("mv -f --", StringComparison.Ordinal)) Verified = true;
+            return Result(0);
+        }
+
+        private static Task<ExternalProcessResult> Result(int exitCode, string output = "") =>
+            Task.FromResult(exitCode == 0 ? new ExternalProcessResult(0, output, string.Empty) : new ExternalProcessResult(exitCode, string.Empty, output));
     }
 
     private sealed class CaptureProgress : IProgress<JobProgress>

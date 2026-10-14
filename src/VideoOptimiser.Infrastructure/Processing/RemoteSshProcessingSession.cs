@@ -87,39 +87,64 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         if (disk < requiredDisk) throw new InvalidOperationException($"Remote host has {disk} free bytes; {requiredDisk} are required for this original.");
 
         var partial = RemoteSourcePath + ".partial";
-        var verifiedPartialLength = 0L;
-        var partialState = await SshAsync($"if test -f {Quote(partial)}; then stat -c '%s' {Quote(partial)}; sha256sum {Quote(partial)} | cut -d' ' -f1; fi", cancellationToken: cancellationToken);
-        var partialParts = partialState.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (partialParts.Length == 2 && long.TryParse(partialParts[0], CultureInfo.InvariantCulture, out var partialLength) && partialLength > 0 && partialLength <= source.Length)
-        {
-            var localPrefixHash = await HashFilePrefixAsync(sourcePath, partialLength, progress, cancellationToken);
-            if (string.Equals(localPrefixHash, partialParts[1], StringComparison.OrdinalIgnoreCase))
-                verifiedPartialLength = partialLength;
-            else
-                _ = await SshAsync($"rm -f -- {Quote(partial)}", cancellationToken: cancellationToken);
-        }
-        else if (partialParts.Length != 0)
-        {
-            _ = await SshAsync($"rm -f -- {Quote(partial)}", cancellationToken: cancellationToken);
-        }
-
+        var verifiedPartialLength = await VerifyPartialUploadAsync(sourcePath, partial, source.Length, progress, cancellationToken);
         var size = HumanReadableValues.FormatSize(source.Length);
         var started = _clock();
+        var transferred = false;
         if (verifiedPartialLength < source.Length)
         {
             progress?.Report(JobProgress.Step(verifiedPartialLength > 0
                 ? $"Resuming the upload at {HumanReadableValues.FormatSize(verifiedPartialLength)} of {size}..."
                 : $"Uploading {size} to the worker..."));
+        }
+        // The retry lives here, not in SftpCoreAsync, because each attempt must resume from what reached the worker: resending
+        // the same `put` would upload the whole original again. Each attempt gets its own monitor, so a rate never counts the stall.
+        for (var attempt = 1; verifiedPartialLength < source.Length; attempt++)
+        {
+            transferred = true;
             var transferCommand = verifiedPartialLength > 0 ? "reput" : "put";
-            await SftpAsync($"{transferCommand} {SftpQuote(sourcePath)} {SftpQuote(partial)}\n", cancellationToken,
-                new TransferMonitor(new ThrottledProgress(progress, _clock, source.Length, verifiedPartialLength, showRate: true), verifiedPartialLength, async token => await RemoteFileSizeAsync(partial, token)));
+            var transfer = await SftpAsync($"{transferCommand} {SftpQuote(sourcePath)} {SftpQuote(partial)}\n",
+                new TransferMonitor(new ThrottledProgress(progress, _clock, source.Length, verifiedPartialLength, showRate: true), verifiedPartialLength, async token => await RemoteFileSizeAsync(partial, token)),
+                retryLostConnection: false, cancellationToken);
+            if (transfer.ExitCode == 0) break;
+            if (transfer.ExitCode != 255)
+            {
+                // The dropped session can finish the partial after the re-check, and reput then refuses the equal-size destination.
+                if (attempt == 1 || await VerifyPartialUploadAsync(sourcePath, partial, source.Length, progress, cancellationToken) != source.Length)
+                    throw SftpTransferFailed(transfer);
+                break;
+            }
+            if (attempt >= TransferAttempts) throw LostSftpConnection(transfer);
+            // A drop after the last byte leaves a complete partial, which reput would refuse; it goes straight to the verify step.
+            verifiedPartialLength = await VerifyPartialUploadAsync(sourcePath, partial, source.Length, progress, cancellationToken);
+            if (verifiedPartialLength == source.Length) break;
+            progress?.Report(JobProgress.Step(verifiedPartialLength > 0
+                ? $"Lost the connection to the worker; resuming the upload at {HumanReadableValues.FormatSize(verifiedPartialLength)} of {size}..."
+                : $"Lost the connection to the worker; uploading {size} again from the start..."));
         }
         var verify = await SshAsync($"test \"$(stat -c '%s' {Quote(partial)})\" = {source.Length.ToString(CultureInfo.InvariantCulture)} && test \"$(sha256sum {Quote(partial)} | cut -d' ' -f1)\" = {Quote(localHash.ToLowerInvariant())} && mv -f -- {Quote(partial)} {Quote(RemoteSourcePath)}", cancellationToken: cancellationToken);
         EnsureSuccess(verify, "Remote original verification");
         // A complete partial left by an earlier run needed no transfer now, so there is no duration to report.
-        progress?.Report(JobProgress.Step(verifiedPartialLength < source.Length
+        progress?.Report(JobProgress.Step(transferred
             ? $"Uploaded {size} in {HumanReadableValues.FormatDuration(_clock() - started)}, checksum verified."
             : "Already on the worker, checksum verified."));
+    }
+
+    /// <summary>
+    /// Returns how many bytes of the worker's partial upload are a verified prefix of the original, deleting a partial that is not.
+    /// Only the stat'ed length is hashed: after a dropped connection the old session can still be appending, and hashing the
+    /// whole file would then fail the prefix check and delete a good partial.
+    /// </summary>
+    private async Task<long> VerifyPartialUploadAsync(string sourcePath, string partial, long sourceLength, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    {
+        var state = await SshAsync($"if test -f {Quote(partial)}; then n=$(stat -c '%s' {Quote(partial)}); printf '%s ' \"$n\"; head -c \"$n\" {Quote(partial)} | sha256sum | cut -d' ' -f1; fi", cancellationToken: cancellationToken);
+        var parts = state.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0) return 0;
+        if (parts.Length == 2 && long.TryParse(parts[0], CultureInfo.InvariantCulture, out var length) && length > 0 && length <= sourceLength
+            && string.Equals(await HashFilePrefixAsync(sourcePath, length, progress, cancellationToken), parts[1], StringComparison.OrdinalIgnoreCase))
+            return length;
+        _ = await SshAsync($"rm -f -- {Quote(partial)}", cancellationToken: cancellationToken);
+        return 0;
     }
 
     public async Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
@@ -195,9 +220,10 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         progress?.Report(JobProgress.Step($"Downloaded {size} in {HumanReadableValues.FormatDuration(_clock() - started)}, checksum verified."));
     }
 
-    private Task DownloadAsync(string remoteOutput, string partial, long outputLength, long partialStart, IProgress<JobProgress>? progress, CancellationToken cancellationToken) =>
-        SftpAsync($"reget {SftpQuote(remoteOutput)} {SftpQuote(partial)}\n", cancellationToken,
-            new TransferMonitor(new ThrottledProgress(progress, _clock, outputLength, partialStart, showRate: true), partialStart, _ => Task.FromResult(File.Exists(partial) ? new FileInfo(partial).Length : 0)));
+    private async Task DownloadAsync(string remoteOutput, string partial, long outputLength, long partialStart, IProgress<JobProgress>? progress, CancellationToken cancellationToken) =>
+        await SftpAsync($"reget {SftpQuote(remoteOutput)} {SftpQuote(partial)}\n",
+            new TransferMonitor(new ThrottledProgress(progress, _clock, outputLength, partialStart, showRate: true), partialStart, _ => Task.FromResult(File.Exists(partial) ? new FileInfo(partial).Length : 0)),
+            retryLostConnection: true, cancellationToken);
 
     public async Task CleanupAsync(CancellationToken cancellationToken = default)
     {
@@ -344,15 +370,12 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         }
     }
 
-    private async Task SftpAsync(string batch, CancellationToken cancellationToken, TransferMonitor? monitor = null)
-    {
-        if (monitor is null)
-        {
-            await SftpCoreAsync(batch, cancellationToken);
-            return;
-        }
+    private const int TransferAttempts = 3;
 
-        var transfer = SftpCoreAsync(batch, cancellationToken);
+    /// <param name="retryLostConnection">False returns any failed exit to the caller instead of resending the same batch or throwing.</param>
+    private async Task<ExternalProcessResult> SftpAsync(string batch, TransferMonitor monitor, bool retryLostConnection, CancellationToken cancellationToken)
+    {
+        var transfer = SftpCoreAsync(batch, retryLostConnection, cancellationToken);
         try
         {
             while (!transfer.IsCompleted)
@@ -362,7 +385,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 await monitor.ReportAsync(cancellationToken);
             }
 
-            await transfer;
+            return await transfer;
         }
         catch
         {
@@ -374,9 +397,9 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         }
     }
 
-    private async Task SftpCoreAsync(string batch, CancellationToken cancellationToken)
+    private async Task<ExternalProcessResult> SftpCoreAsync(string batch, bool retryLostConnection, CancellationToken cancellationToken)
     {
-        for (var attempt = 1; attempt <= 3; attempt++)
+        for (var attempt = 1; ; attempt++)
         {
             ExternalProcessResult result;
             try
@@ -387,7 +410,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 arguments.Add(RemoteHost!);
                 result = await _processes.RunAsync(new ExternalProcessRequest(_settings.Tools.SftpPath, arguments, batch), cancellationToken);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException && attempt == 3)
+            catch (Exception exception) when (exception is not OperationCanceledException && attempt >= TransferAttempts)
             {
                 throw new RemoteConnectionException("Could not connect to the remote processing host for file transfer.", exception);
             }
@@ -396,12 +419,18 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
                 continue;
             }
-            if (result.ExitCode == 0) return;
-            if (result.ExitCode != 255) throw new InvalidOperationException($"SFTP transfer failed: {FirstLine(result.StandardError)}");
-            if (attempt == 3) throw new RemoteConnectionException($"SFTP connection failed: {FirstLine(result.StandardError)}");
+            if (result.ExitCode == 0 || !retryLostConnection) return result;
+            if (result.ExitCode != 255) throw SftpTransferFailed(result);
+            if (attempt >= TransferAttempts) throw LostSftpConnection(result);
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
     }
+
+    private static InvalidOperationException SftpTransferFailed(ExternalProcessResult result) =>
+        new($"SFTP transfer failed: {FirstLine(result.StandardError)}");
+
+    private static RemoteConnectionException LostSftpConnection(ExternalProcessResult result) =>
+        new($"SFTP connection failed: {FirstLine(result.StandardError)}");
 
     internal static string Quote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
     internal static string SftpQuote(string value) => "\"" + value.Replace('\\', '/').Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
