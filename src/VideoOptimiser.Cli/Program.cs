@@ -349,8 +349,8 @@ internal static partial class CliApplication
             else WriteError(result.Message);
         }
 
-        // Only an unreachable worker leaves the job Interrupted here (Ctrl+C throws). It resumes, so it is not a failed job.
-        var unreachableWorkerJob = result.Job.Status == JobStatus.Interrupted ? result.Job : null;
+        // An unreachable worker leaves the job Interrupted and resumable, so it is not a failed job. (Ctrl+C throws instead.)
+        var unreachableWorkerJob = result.Job is { Status: JobStatus.Interrupted, FailureCategory: JobProcessor.RemoteUnavailableCategory } ? result.Job : null;
         FailedQueueJob[] failedJobs = result.ExitCode == ExitCode.Success || unreachableWorkerJob is not null ? [] : [ToFailedQueueJob(result.Job, result.Message)];
         PrintFailedJobs(failedJobs);
         if (result.Job.Status == JobStatus.ReadyToFinalize) Console.WriteLine($"Next: review the output, then run 'video-optimiser finalize {result.Job.Id:N}'.");
@@ -378,7 +378,8 @@ internal static partial class CliApplication
     private static async Task<int> RunQueueCancelAsync(IJobRepository repository, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         JobRecord[] jobs = command.All
-            ? (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Where(job => job.Status is JobStatus.Queued or JobStatus.Interrupted).ToArray()
+            // Not an interrupted finalisation: finalize resumes it, and cancelling it would only hide a finished encode.
+            ? (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Where(job => job.Status is JobStatus.Queued or JobStatus.Interrupted && job.ResumeStatus != JobStatus.Finalizing).ToArray()
             : Guid.TryParse(command.JobId, out var id) ? (await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken) is { } foundJob ? [foundJob] : Array.Empty<JobRecord>()) : Array.Empty<JobRecord>();
         if (jobs.Length == 0) { Console.WriteLine("No cancellable jobs found."); return (int)ExitCode.Success; }
         foreach (var job in jobs)
@@ -494,6 +495,8 @@ internal static partial class CliApplication
     private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
+        // F8 (VOPT-70): finalize checks whether anything moved and resumes, so the run leaves these jobs alone.
+        foreach (var job in preparation.InterruptedFinalizations) Console.WriteLine($"{Path.GetFileName(job.SourcePath)} was interrupted while being finalised. Run 'video-optimiser finalize --ready' to finish it.");
         if (preparation.RunnableJobs.Count == 0)
         {
             report(0, 0, [.. preparation.FailedJobs]);
@@ -781,7 +784,7 @@ internal static partial class CliApplication
         }
 
         var ready = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken))
-            .Where(job => job.Status == JobStatus.ReadyToFinalize || FinalizationService.IsInterruptedImmichFinalization(job))
+            .Where(job => job.Status == JobStatus.ReadyToFinalize || FinalizationService.IsInterruptedImmichFinalization(job) || FinalizationService.IsInterruptedFileFinalization(job))
             .ToArray();
         if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
         foreach (var job in ready) Console.WriteLine(FinalizationConsole.DescribeReady(job));

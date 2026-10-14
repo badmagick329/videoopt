@@ -422,6 +422,32 @@ public sealed class JobProcessorTests : IDisposable
         (await repository.ListAsync(settings.Database.Path, terminal: false)).Should().BeEmpty();
     }
 
+    /// <summary>
+    /// F0 (VOPT-70): an interrupted finalisation belongs to finalize, which checks whether anything moved. A file job is left
+    /// as it is; an Immich one goes back to ready, since each of its steps can run again.
+    /// </summary>
+    [Theory]
+    [InlineData(JobSourceKind.File, "Run 'video-optimiser finalize {0}' to check and resume it.", JobStatus.Interrupted)]
+    [InlineData(JobSourceKind.Immich, "Run 'video-optimiser immich finalize' to check and resume it.", JobStatus.ReadyToFinalize)]
+    public async Task ProcessingAnInterruptedFinalisationPointsAtFinalize(JobSourceKind kind, string advice, JobStatus expected)
+    {
+        var source = Path.Combine(_directory, "finalising.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var databasePath = Path.Combine(_directory, "finalising.db");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var job = await repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceKind = kind, Status = JobStatus.ReadyToFinalize });
+        job.Status = JobStatus.Finalizing;
+        await repository.UpdateAsync(databasePath, job);
+        await repository.MarkActiveJobsInterruptedAsync(databasePath);
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+
+        var result = await processor.ProcessAsync(databasePath, source, Settings("finalising.db"), force: false);
+
+        result.ExitCode.Should().Be(ExitCode.Success);
+        result.Message.Should().Be($"Job {job.Id:N} was interrupted during finalisation. {string.Format(System.Globalization.CultureInfo.InvariantCulture, advice, job.Id.ToString("N"))}");
+        (await repository.GetAsync(databasePath, job.Id))!.Status.Should().Be(expected);
+    }
+
     /// <summary>A ready job, or one whose finalisation was interrupted, returns before any stage.</summary>
     [Theory]
     [InlineData(JobStatus.ReadyToFinalize, null, false)]

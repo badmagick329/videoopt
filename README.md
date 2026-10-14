@@ -133,7 +133,7 @@ All commands take `--config <path>`.
 | `process <file> [--force] [--dry-run]` | Convert one file now. `--force` skips the rules. |
 | `status`, `history`, `queue list` | Open jobs, finished jobs, or open jobs only. Add `--json` for scripts. |
 | `calibrate [--json]` | Show how your rules fit your library. Changes nothing. |
-| `queue cancel <job-id>`, `queue cancel --all` | Cancel one job, or every queued and interrupted job. |
+| `queue cancel <job-id>`, `queue cancel --all` | Cancel one job, or every queued and interrupted job except an interrupted finalisation. |
 | `queue retry <job-id>` | Queue a failed, cancelled or skipped video again. |
 | `validate <job-id>` | Re-run the checks on a job's output. |
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one. |

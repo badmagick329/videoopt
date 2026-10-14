@@ -16,9 +16,19 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
     /// An Immich job that a crash left mid-finalisation: still <see cref="JobStatus.Finalizing"/>, or marked interrupted on
     /// its way out of it. Unlike a local file, nothing is half-moved, so it is ready again rather than needing review.
     /// </summary>
-    public static bool IsInterruptedImmichFinalization(JobRecord job) =>
-        job.SourceKind == JobSourceKind.Immich &&
-        (job.Status == JobStatus.Finalizing || job.Status == JobStatus.Interrupted && job.ResumeStatus == JobStatus.Finalizing);
+    public static bool IsInterruptedImmichFinalization(JobRecord job) => job.SourceKind == JobSourceKind.Immich && IsInterruptedFinalization(job);
+
+    /// <summary>
+    /// A file job that Ctrl+C or a crash left mid-finalisation. <see cref="FinalizeAsync"/> resumes it only after checking that
+    /// nothing moved; otherwise it needs review (VOPT-70).
+    /// </summary>
+    public static bool IsInterruptedFileFinalization(JobRecord job) => job.SourceKind == JobSourceKind.File && IsInterruptedFinalization(job);
+
+    private static bool IsInterruptedFinalization(JobRecord job) =>
+        job.Status == JobStatus.Finalizing || job.Status == JobStatus.Interrupted && job.ResumeStatus == JobStatus.Finalizing;
+
+    public const string ManualReviewCategory = "ManualInterventionRequired";
+    public const string ManualReviewMessage = "Finalisation was interrupted and requires manual review.";
 
     public static void ReturnToReady(JobRecord job, string message)
     {
@@ -37,15 +47,35 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             ReturnToReady(job, InterruptedMessage);
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
         }
-        if (job.Status != JobStatus.ReadyToFinalize || job.OutputPath is null) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job is not ready to finalise.");
+        var resumingFile = IsInterruptedFileFinalization(job);
+        if (job.Status != JobStatus.ReadyToFinalize && !resumingFile || job.OutputPath is null) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job is not ready to finalise.");
         var manifest = await manifests.LoadAsync(job.OutputPath, cancellationToken);
         if (manifest.Validation?.Passed != true) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job validation did not pass.");
         var fromImmich = job.SourceKind == JobSourceKind.Immich;
-        job.Status = JobStatus.Finalizing;
-        await jobs.UpdateAsync(databasePath, job, cancellationToken);
+        // Everything up to the Finalizing write only reads, so Ctrl+C there leaves the job as it was. Once written, the state
+        // writes use CancellationToken.None: a cancelled write would leave the stored state behind what the files did.
+        var finalizing = false;
         try
         {
-            if (await fingerprints.CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint) throw new FinalizationRefusedException("Original changed after encoding.");
+            if (resumingFile)
+            {
+                // The installer moves the original aside before the AV1 takes its place and puts it back on failure, and keep
+                // never moves the original, so both files where they started, with the original unchanged, means nothing moved.
+                if (!File.Exists(manifest.SourcePath) || !File.Exists(manifest.OutputPath) || await fingerprints.CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint)
+                {
+                    return await RequireReviewAsync(databasePath, job);
+                }
+                ClearToReady(job);
+                await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
+            }
+            else if (await fingerprints.CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint)
+            {
+                throw new FinalizationRefusedException("Original changed after encoding.");
+            }
+
+            job.Status = JobStatus.Finalizing;
+            await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
+            finalizing = true;
             var message = fromImmich
                 ? await immich.ReplaceAsync(databasePath, job, manifest, settings, cancellationToken)
                 : Describe(manifest.SourcePath, settings.Original, await installer.InstallAsync(manifest.SourcePath, manifest.OutputPath, settings.Original, cancellationToken));
@@ -53,22 +83,24 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             job.FailureCategory = null;
             job.FailureMessage = null;
             job.CompletedUtc = DateTimeOffset.UtcNow;
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
+            await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
             if (fromImmich) message += immich.DeleteStaging(job, manifest, settings);
             return new FinalizationResult(job, ExitCode.Success, message);
         }
         catch (OperationCanceledException) when (fromImmich)
         {
-            await ReturnToReadyAsync(databasePath, job, InterruptedMessage);
+            if (finalizing) await ReturnToReadyAsync(databasePath, job, InterruptedMessage);
             throw;
         }
         catch (OperationCanceledException)
         {
-            job.ResumeStatus = JobStatus.Finalizing;
-            job.Status = JobStatus.Interrupted;
-            job.FailureCategory = "ManualInterventionRequired";
-            job.FailureMessage = "Finalisation was interrupted and requires manual review.";
-            await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
+            // A file job's last cancellation point is the installer's first line; after it the installer runs to the end
+            // without one. So a cancelled file finalisation moved nothing, and the job is simply ready again.
+            if (finalizing)
+            {
+                ClearToReady(job);
+                await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
+            }
             throw;
         }
         catch (Exception exception) when (fromImmich && exception is not FinalizationRefusedException)
@@ -84,9 +116,33 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             job.FailureCategory = "FinalizationFailed";
             job.FailureMessage = exception.Message;
             job.CompletedUtc = DateTimeOffset.UtcNow;
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
+            await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
             return new FinalizationResult(job, ExitCode.FinalisationFailure, exception.Message);
         }
+    }
+
+    /// <summary>Plain ready, with no failure category: unlike <see cref="ReturnToReady"/>, which marks an Immich finalisation that stopped partway.</summary>
+    private static void ClearToReady(JobRecord job)
+    {
+        job.Status = JobStatus.ReadyToFinalize;
+        job.ResumeStatus = null;
+        job.FailureCategory = null;
+        job.FailureMessage = null;
+    }
+
+    /// <summary>
+    /// A file finalisation interrupted after something moved. <see cref="JobRecord.ResumeStatus"/> stays <see cref="JobStatus.Finalizing"/>,
+    /// which keeps <c>cleanup</c> off the AV1: it may be the only copy left.
+    /// </summary>
+    private async Task<FinalizationResult> RequireReviewAsync(string databasePath, JobRecord job)
+    {
+        job.Status = JobStatus.Failed;
+        job.ResumeStatus = JobStatus.Finalizing;
+        job.FailureCategory = ManualReviewCategory;
+        job.FailureMessage = ManualReviewMessage;
+        job.CompletedUtc = DateTimeOffset.UtcNow;
+        await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
+        return new FinalizationResult(job, ExitCode.FinalisationFailure, ManualReviewMessage);
     }
 
     private async Task ReturnToReadyAsync(string databasePath, JobRecord job, string message)

@@ -18,10 +18,13 @@ internal static class ConsoleCapture
     {
         var originalError = Console.Error;
         var originalOut = Console.Out;
+        var originalIn = Console.In;
         using var error = new StringWriter();
         using var output = new StringWriter();
         Console.SetError(error);
         Console.SetOut(output);
+        // No input, as when nothing is piped: every [y/N] prompt reads end of input and declines.
+        Console.SetIn(TextReader.Null);
         try
         {
             var code = await CliApplication.RunAsync(args, configureServices);
@@ -31,6 +34,7 @@ internal static class ConsoleCapture
         {
             Console.SetError(originalError);
             Console.SetOut(originalOut);
+            Console.SetIn(originalIn);
         }
     }
 }

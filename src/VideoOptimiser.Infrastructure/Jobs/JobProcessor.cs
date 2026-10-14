@@ -59,11 +59,12 @@ public sealed class JobProcessor(
         {
             FinalizationService.ReturnToReady(job, FinalizationService.InterruptedMessage);
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            return Outcome(job, ExitCode.Success, $"Job {job.Id:N} was interrupted during finalisation. Run finalize to resume it.", progress);
+            return Outcome(job, ExitCode.Success, $"Job {job.Id:N} was interrupted during finalisation. Run 'video-optimiser immich finalize' to check and resume it.", progress);
         }
-        else if (job.Status == JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)
+        else if (FinalizationService.IsInterruptedFileFinalization(job))
         {
-            return await FailAsync(job, databasePath, "ManualInterventionRequired", "Finalisation was interrupted and requires manual review.", ExitCode.FinalisationFailure, progress, cancellationToken);
+            // F0 (VOPT-70): left as it is; finalize checks whether anything moved before it resumes.
+            return Outcome(job, ExitCode.Success, $"Job {job.Id:N} was interrupted during finalisation. Run 'video-optimiser finalize {job.Id:N}' to check and resume it.", progress);
         }
         var compatibility = JobCompatibility.Evaluate(job, settings);
         if (compatibility.Status == JobCompatibilityStatus.Incompatible)

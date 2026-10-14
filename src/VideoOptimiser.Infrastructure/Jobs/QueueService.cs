@@ -135,6 +135,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         var runnable = new List<JobRecord>();
         var failed = new List<FailedQueueJob>();
         var skipped = new List<JobRecord>();
+        var interruptedFinalizations = new List<JobRecord>();
         foreach (var job in candidates)
         {
             if (FinalizationService.IsInterruptedImmichFinalization(job))
@@ -145,14 +146,9 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             }
 
             if (job.SourceKind != sourceKind) continue;
-            if (job.Status == JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)
+            if (FinalizationService.IsInterruptedFileFinalization(job))
             {
-                job.Status = JobStatus.Failed;
-                job.FailureCategory = "ManualInterventionRequired";
-                job.FailureMessage = "Finalisation was interrupted and requires manual review.";
-                job.CompletedUtc = DateTimeOffset.UtcNow;
-                await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                failed.Add(new FailedQueueJob(job.Id, job.SourcePath, job.FailureCategory, job.FailureMessage));
+                interruptedFinalizations.Add(job);
                 continue;
             }
 
@@ -181,7 +177,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             runnable.Add(job);
         }
 
-        return new QueuePreparationResult(runnable, failed, skipped);
+        return new QueuePreparationResult(runnable, failed, skipped, interruptedFinalizations);
     }
 
     public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)

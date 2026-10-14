@@ -135,7 +135,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `Cancelled` | `queue cancel` stopped it | Nothing. `queue retry <id>` queues it again, only if the user asks. |
 | `Ineligible`, `SourceNotReady`, `SourceOutsideWatchRoot`, `SourceChanged`, `SourceMissing` | The file did not qualify, changed, or was gone when the job ran | Nothing. The next `queue discover` or `immich run` re-checks it. |
 | `FinalizationIncomplete` | An Immich finalisation stopped partway | Gate, then `'y' | video-optimiser immich finalize`. |
-| `FinalizationFailed`, `ManualInterventionRequired` | Replacing a file original failed or was cut off | Stop. Show the user the job, its `sourcePath` and `outputPath`, and let them decide. |
+| `FinalizationFailed`, `ManualInterventionRequired` | Replacing a file original failed, or was cut off after a file moved | Stop. Show the user the job, its `sourcePath` and `outputPath`, and let them decide. |
 
 **Failed, cancelled or skipped jobs** stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` queues one again; run it only at the user's request.
 
@@ -164,7 +164,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 - **Open** (`status`, `queue list`): `Queued`, `Staging`, `CrfSearching`, `Encoding`, `Downloading`, `Validating`, `ReadyToFinalize`, `Finalizing`, `Interrupted`.
 - **Finished** (`history`): `Completed`, `Failed`, `Cancelled`, `Skipped`.
 
-`Staging` and `Downloading` are transfers to and from a remote worker. `ReadyToFinalize` jobs can be finalised, and so can an Immich job whose finalisation was cut off (`Finalizing` or `Interrupted`).
+`Staging` and `Downloading` are transfers to and from a remote worker. `ReadyToFinalize` jobs can be finalised, and so can a job whose finalisation was cut off (`Finalizing`, or `Interrupted` after it): `finalize --ready` lists it, and `queue run` leaves it alone and says so. A cut-off Immich finalisation simply continues. A file job continues only when its original and AV1 are both where they started and the original is unchanged; otherwise it fails as `ManualInterventionRequired` and `cleanup` keeps its AV1. Ctrl+C during `finalize` stops before any file moves, so the job stays ready.
 
 ### JSON output
 

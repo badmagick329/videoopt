@@ -101,8 +101,8 @@ public static class JobStateTransitions
         (JobStatus.Downloading, JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Validating, JobStatus.ReadyToFinalize or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.ReadyToFinalize, JobStatus.Validating or JobStatus.Finalizing or JobStatus.Failed or JobStatus.Cancelled) => true,
-        // An Immich finalisation that stops before completing returns to ready, from Finalizing or after a crash from
-        // Interrupted: each of its steps can run again.
+        // A finalisation that stops before completing returns to ready, from Finalizing or after a crash from Interrupted:
+        // each Immich step can run again, and a file job returns only when nothing moved (VOPT-70).
         (JobStatus.Finalizing, JobStatus.ReadyToFinalize or JobStatus.Completed or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Interrupted, JobStatus.ReadyToFinalize or JobStatus.Queued or JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Downloading or JobStatus.Validating or JobStatus.Failed or JobStatus.Cancelled) => true,
         _ => false
@@ -184,7 +184,9 @@ public sealed record SkippedQueueJob(Guid Id, string SourcePath, string Message)
 
 /// <param name="SkippedJobs">Started jobs left untouched because <c>--local</c> or <c>--remote</c> chose the other mode; see
 /// <see cref="JobCompatibility.IsBoundToOtherMode"/>. They are neither runnable nor failed.</param>
-public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs);
+/// <param name="InterruptedFinalizations">File jobs whose finalisation Ctrl+C or a crash interrupted. Left as they are: only
+/// <c>finalize</c> can tell whether anything moved (VOPT-70).</param>
+public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs, IReadOnlyList<JobRecord> InterruptedFinalizations);
 
 /// <param name="UnreachableWorkerJob">The job the run stopped at because the worker could not be reached, or null. Every later
 /// job would fail the same way, so the run ends there (VOPT-69). The job is <see cref="JobStatus.Interrupted"/> and resumes from

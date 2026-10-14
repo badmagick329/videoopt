@@ -263,11 +263,13 @@ public sealed class JobCompatibilityTests : IDisposable
 
         var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
 
+        // Neither run nor failed: finalize checks whether anything moved and resumes it (VOPT-70).
         result.RunnableJobs.Should().BeEmpty();
-        result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be("ManualInterventionRequired");
+        result.FailedJobs.Should().BeEmpty();
+        result.InterruptedFinalizations.Should().ContainSingle().Which.Id.Should().Be(id);
         var stored = (await repository.GetAsync(settings.Database.Path, id))!;
-        stored.Status.Should().Be(JobStatus.Failed);
-        stored.FailureCategory.Should().Be("ManualInterventionRequired");
+        stored.Status.Should().Be(JobStatus.Interrupted);
+        stored.ResumeStatus.Should().Be(JobStatus.Finalizing);
     }
 
     [Fact]
