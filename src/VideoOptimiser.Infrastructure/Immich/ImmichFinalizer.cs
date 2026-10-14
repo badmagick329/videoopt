@@ -137,7 +137,7 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
     /// </summary>
     private static async Task<string> OriginalNotFoundAsync(IImmichClient client, JobRecord job, string originalId, CancellationToken cancellationToken)
     {
-        var cancel = $"'video-optimiser queue cancel {job.Id:N}'";
+        var cancel = $"'video-optimiser queue drop {job.Id:N}'";
         string? deleted = null;
         if (job.ImmichNewAssetId is { } uploaded)
         {

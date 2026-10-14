@@ -104,9 +104,9 @@ If it stops partway, run it again: it continues where it left off. Until step 3,
 
 A video that cannot be finalised yet stays ready, and the others carry on. The message says what to do:
 
-- **Immich can't find the original.** It was deleted for good or moved to the Locked Folder; Immich gives the same answer for both. Move it out of the Locked Folder and run `immich finalize` again. If it was deleted, the message names the copies that are left: the AV1 already in Immich (restore it first if it is in the trash), or the download and the AV1 on this PC. Move local copies somewhere safe before you `queue cancel` the job, because `cleanup` deletes a cancelled job's files.
+- **Immich can't find the original.** It was deleted for good or moved to the Locked Folder; Immich gives the same answer for both. Move it out of the Locked Folder and run `immich finalize` again. If it was deleted, the message names the copies that are left: the AV1 already in Immich (restore it first if it is in the trash), or the download and the AV1 on this PC. Move local copies somewhere safe before you `queue drop` the job, because `cleanup` deletes a dropped job's files; until then `queue drop` refuses.
 - **The original or the AV1 is in Immich's trash.** Restore it, then run `immich finalize` again.
-- **The local AV1 is missing.** Put it back, or cancel and retry the job to convert it again. Once the AV1 is uploaded, the local file is no longer needed.
+- **The local AV1 is missing.** Put it back, or drop and retry the job to convert it again. Once the AV1 is uploaded, the local file is no longer needed.
 - **The download in the staging directory is missing.** Nothing is wrong: finalising compares the original in Immich with the one that was converted, not with the download.
 
 ## What you should know
@@ -117,7 +117,7 @@ A video that cannot be finalised yet stays ready, and the others carry on. The m
 - **Changing `eligibility.rules`** makes every earlier "ineligible" decision stale, so each of those videos is downloaded once more on the next run.
 - **Changing the quality bar checks skipped videos again.** A video that ended `Not worth converting` is left alone while `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat`, `crfSearch.minCrf`/`maxCrf` and `savings.minimumBytesSaved` stay the same; changing any of them, or the video's file, downloads it again on the next run. It is not a failure: it does not change the exit code, and `immich run` counts it in its closing tally as `Not worth converting: N.`
 - **`calibrate` includes Immich without downloading anything.** It searches the same videos `immich run` would. Immich reports no codec, so a video no run has downloaded is listed by resolution and by a bitrate worked out from its size and length, which includes the audio. `calibrate` can name one of those videos for you to test, but no command converts a single Immich video.
-- **Failed, cancelled or skipped videos keep their download** in the staging directory until you run `cleanup`, which deletes the download with the job's temporary files and asset folder. A download an open job still needs is never deleted. After `queue retry`, the next `immich run` downloads the video again.
+- **Failed, dropped or skipped videos keep their download** in the staging directory until you run `cleanup`, which deletes the download with the job's temporary files and asset folder. A download an open job still needs is never deleted. After `queue retry`, the next `immich run` downloads the video again.
 - **Exit codes after `immich run`:** `6` means videos failed and none is ready to finalise. `10` means some failed while others are ready, or something else needs a look: a guard or search issue, or an asset Immich returned that its filter should have excluded. Videos not worth converting change neither. Read the output.
 
 ## The age rule

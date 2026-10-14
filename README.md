@@ -133,8 +133,10 @@ All commands take `--config <path>`.
 | `process <file> [--force] [--dry-run]` | Convert one file now. `--force` skips the rules. |
 | `status`, `history`, `queue list` | Open jobs, finished jobs, or open jobs only. Add `--json` for scripts. |
 | `calibrate [--json]` | Show how your rules fit your library. Changes nothing. |
-| `queue cancel <job-id>`, `queue cancel --all` | Cancel one job, or every queued and interrupted job except an interrupted finalisation. |
-| `queue retry <job-id>` | Queue a failed, cancelled or skipped video again. |
+| `queue hold <job-id>`, `queue release <job-id>` | Make runs pass over a waiting or stopped video, or take it again. |
+| `queue next <job-id>` | Convert a waiting or stopped video next. A `queue run` that is going takes it after the current video. |
+| `queue drop <job-id>`, `queue drop --all` | Take one video, or every waiting, stopped and held one, out of the queue. Refuses while `cleanup` would then delete the only copy of a video. |
+| `queue retry <job-id>` | Queue a failed, dropped or skipped video again. |
 | `validate <job-id>` | Re-run the checks on a job's output. |
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one. |
 | `cleanup [--dry-run]` | Delete temporary files no job will use again. |
@@ -148,7 +150,7 @@ Exit code `0` means success. The other exit codes are listed in [docs/agent-guid
 ## Safety
 
 - Originals are only read until you finalise. `finalize` moves the original aside, puts the AV1 in place, and moves the original back if anything fails.
-- A video that failed, was cancelled or was skipped is not queued again until its file changes or you run `queue retry`.
+- A video that failed, was dropped or was skipped is not queued again until its file changes or you run `queue retry`.
 - The job database (`jobs.db` by default) tracks every job, so a crash or `Ctrl+C` never loses track of a file. One run uses it at a time: a second `queue run`, `immich run` or `process` refuses and names the one running.
 - Temporary files live in a `.video-optimiser` folder beside each original. `cleanup` deletes the ones no job needs.
 - The Hetzner token and the Immich API key load from environment variables or a `.env` file, never from the YAML. Copy `.env.example` to `.env` to start.

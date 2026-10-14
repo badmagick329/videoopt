@@ -367,6 +367,50 @@ public sealed class JobCompatibilityTests : IDisposable
         stored.ImmichChecksum.Should().Be("checksum");
     }
 
+    /// <summary>R6: a video queued outside the rules once stays outside them, or the retry would only fail it as ineligible.</summary>
+    [Fact]
+    public async Task RetryKeepsAForcedVideoForced()
+    {
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = ManagedSettings();
+        settings.Database.Path = Path.Combine(_directory, "retry-forced.db");
+        var original = new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "movie.mp4"), SourceFingerprint = "source", Status = JobStatus.Failed, FailureCategory = "EncodeFailed", Forced = true };
+        await repository.CreateAsync(settings.Database.Path, original);
+
+        var result = await new JobRetryService(repository).RetryAsync(settings.Database.Path, original.Id, settings);
+
+        (await repository.GetAsync(settings.Database.Path, result.Replacement!.Id))!.Forced.Should().BeTrue();
+    }
+
+    /// <summary>R11: a retry that loses the race to another command names the job that command queued.</summary>
+    [Fact]
+    public async Task RetryThatLosesARaceNamesTheOpenJob()
+    {
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var settings = ManagedSettings();
+        settings.Database.Path = Path.Combine(_directory, "retry-race.db");
+        var original = new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "movie.mp4"), SourceFingerprint = "source", Status = JobStatus.Failed, FailureCategory = "EncodeFailed" };
+        await repository.CreateAsync(settings.Database.Path, original);
+        var raced = await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = original.SourcePath, SourceFingerprint = "source", Status = JobStatus.Queued });
+
+        var result = await new JobRetryService(new FirstLookupMisses(repository)).RetryAsync(settings.Database.Path, original.Id, settings);
+
+        result.Error.Should().Be($"An open job already exists for this original: {raced.Id:N} (Queued).");
+    }
+
+    /// <summary>Misses the open job once, as a retry that checked just before another command queued the original would.</summary>
+    private sealed class FirstLookupMisses(IJobRepository inner) : DelegatingJobRepository(inner)
+    {
+        private bool _missed;
+
+        public override Task<JobRecord?> FindOpenBySourceAsync(string databasePath, string sourcePath, CancellationToken cancellationToken = default)
+        {
+            if (_missed) return Inner.FindOpenBySourceAsync(databasePath, sourcePath, cancellationToken);
+            _missed = true;
+            return Task.FromResult<JobRecord?>(null);
+        }
+    }
+
     [Theory]
     [InlineData(JobStatus.ReadyToFinalize)]
     public async Task RetryIsBlockedByAnyExistingOpenJob(JobStatus openStatus)
@@ -435,7 +479,7 @@ public sealed class JobCompatibilityTests : IDisposable
         var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new ReadyProcessor());
 
         var preparation = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
-        var run = await queue.RunAsync(settings.Database.Path, settings, preparation.RunnableJobs);
+        var run = await queue.RunAsync(settings.Database.Path, settings, preparation);
 
         QueueExitCode.Calculate(run.ReadyToFinalize, preparation.FailedJobs.Count + run.FailedJobs.Count).Should().Be(ExitCode.PartialSuccess);
     }
@@ -463,16 +507,21 @@ public sealed class JobCompatibilityTests : IDisposable
 
     private sealed class UnexpectedProcessor : IJobProcessor
     {
-        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(true);
 
-        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new InvalidOperationException("Processing is not expected during preparation.");
+        public Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new InvalidOperationException("Processing is not expected during preparation.");
     }
 
     private sealed class ReadyProcessor : IJobProcessor
     {
-        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(true);
 
-        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new JobProcessingResult(new JobRecord { Id = Guid.NewGuid(), SourcePath = sourcePath, Status = JobStatus.ReadyToFinalize }, ExitCode.Success, "Ready."));
+        private readonly HashSet<Guid> _seen = [];
+
+        // It writes nothing, so a run that forgot which videos it tried would loop on the same one forever.
+        public Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
+            _seen.Add(job.Id)
+                ? Task.FromResult(new JobProcessingResult(new JobRecord { Id = Guid.NewGuid(), SourcePath = job.SourcePath, Status = JobStatus.ReadyToFinalize }, ExitCode.Success, "Ready."))
+                : throw new InvalidOperationException($"{job.SourcePath} was given to the processor twice.");
     }
 }

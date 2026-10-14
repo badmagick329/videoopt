@@ -571,12 +571,11 @@ public sealed class WorkerEndRunTests : IDisposable
         public Guid[] Ids { get; set; } = [];
         public int Calls { get; set; }
 
-        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(true);
 
-        public async Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public async Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             var index = Calls++;
-            var job = (await repository.FindOpenBySourceAsync(databasePath, Path.GetFullPath(sourcePath), CancellationToken.None))!;
             job.Status = JobStatus.Encoding;
             await repository.UpdateAsync(databasePath, job, CancellationToken.None);
             progress?.Report(JobProgress.Step("Encoding..."));

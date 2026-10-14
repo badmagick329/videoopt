@@ -22,7 +22,7 @@ public sealed class SqliteJobRepositoryTests : IDisposable
     public async Task MarksOnlyInFlightJobsInterrupted()
     {
         var encoding = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Encoding));
-        var ready = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.ReadyToFinalize));
+        var ready = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.ReadyToFinalize, "C:\\Videos\\other.mp4"));
 
         await _repository.MarkActiveJobsInterruptedAsync(_databasePath, includeFinalizing: true);
 
@@ -156,12 +156,159 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*unknown source kind 'future-kind'*");
     }
 
+    /// <summary>
+    /// A run holds its copy of a job while it checks the original; a drop from another terminal in that window must win, not
+    /// be undone by the run's next write (VOPT-54 step 5).
+    /// </summary>
+    [Fact]
+    public async Task AWriteFromACopyReadBeforeAQueueVerbFailsAndLeavesTheVerbsChange()
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        var runCopy = (await _repository.GetAsync(_databasePath, job.Id))!;
+        var verbCopy = (await _repository.GetAsync(_databasePath, job.Id))!;
+        (await _repository.SetHeldAsync(_databasePath, verbCopy, held: true)).Should().BeTrue();
+
+        runCopy.Status = JobStatus.Staging;
+        var write = async () => await _repository.UpdateAsync(_databasePath, runCopy);
+
+        await write.Should().ThrowAsync<JobChangedException>();
+        var stored = (await _repository.GetAsync(_databasePath, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Queued);
+        stored.Held.Should().BeTrue();
+    }
+
+    /// <summary>Nothing writes a held job, so a hold can never be half applied: a stopped job keeps its resume point.</summary>
+    [Fact]
+    public async Task AHeldJobRefusesEveryWriteButTheQueueVerbs()
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        (await _repository.SetHeldAsync(_databasePath, job, held: true)).Should().BeTrue();
+
+        job.Status = JobStatus.CrfSearching;
+        var write = async () => await _repository.UpdateAsync(_databasePath, job);
+
+        await write.Should().ThrowAsync<JobChangedException>();
+        job.Status = JobStatus.Queued;
+        (await _repository.SetHeldAsync(_databasePath, job, held: false)).Should().BeTrue();
+        job.Status = JobStatus.CrfSearching;
+        await _repository.UpdateAsync(_databasePath, job);
+        (await _repository.GetAsync(_databasePath, job.Id))!.Status.Should().Be(JobStatus.CrfSearching);
+    }
+
+    [Fact]
+    public async Task AStaleCopyOfADroppedJobFailsAsChangedNotAsAnIllegalTransition()
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        var runCopy = (await _repository.GetAsync(_databasePath, job.Id))!;
+        (await _repository.DropAsync(_databasePath, job)).Should().BeTrue();
+
+        runCopy.Status = JobStatus.Failed;
+        var write = async () => await _repository.UpdateAsync(_databasePath, runCopy);
+
+        await write.Should().ThrowAsync<JobChangedException>();
+        (await _repository.GetAsync(_databasePath, job.Id))!.Status.Should().Be(JobStatus.Cancelled);
+    }
+
+    /// <summary>R9: crash recovery is a write too, so a copy read before it cannot undo it.</summary>
+    [Fact]
+    public async Task AWriteFromACopyReadBeforeCrashRecoveryIsRefused()
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        job.Status = JobStatus.Encoding;
+        await _repository.UpdateAsync(_databasePath, job);
+        var staleCopy = (await _repository.GetAsync(_databasePath, job.Id))!;
+        await _repository.MarkActiveJobsInterruptedAsync(_databasePath, includeFinalizing: true);
+
+        staleCopy.Status = JobStatus.Validating;
+        var write = async () => await _repository.UpdateAsync(_databasePath, staleCopy);
+
+        await write.Should().ThrowAsync<JobChangedException>();
+        (await _repository.GetAsync(_databasePath, job.Id))!.Status.Should().Be(JobStatus.Interrupted);
+    }
+
+    /// <summary>A verb that read the job before a run started it refuses rather than dropping a video mid-conversion.</summary>
+    [Fact]
+    public async Task AQueueVerbOnACopyReadBeforeARunStartedTheJobChangesNothing()
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        var verbCopy = (await _repository.GetAsync(_databasePath, job.Id))!;
+        job.Status = JobStatus.CrfSearching;
+        await _repository.UpdateAsync(_databasePath, job);
+
+        (await _repository.DropAsync(_databasePath, verbCopy)).Should().BeFalse();
+        (await _repository.SetHeldAsync(_databasePath, verbCopy, held: true)).Should().BeFalse();
+        (await _repository.RunNextAsync(_databasePath, verbCopy)).Should().BeFalse();
+        var stored = (await _repository.GetAsync(_databasePath, job.Id))!;
+        stored.Status.Should().Be(JobStatus.CrfSearching);
+        stored.Held.Should().BeFalse();
+        stored.Priority.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RunNextPutsAJobAheadOfEveryOpenJobAndReleasesIt()
+    {
+        var first = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued, @"C:\Videos\a.mp4"));
+        var second = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued, @"C:\Videos\b.mp4"));
+        var third = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued, @"C:\Videos\c.mp4"));
+        (await _repository.SetHeldAsync(_databasePath, third, held: true)).Should().BeTrue();
+
+        (await _repository.RunNextAsync(_databasePath, second)).Should().BeTrue();
+        (await _repository.RunNextAsync(_databasePath, third)).Should().BeTrue();
+
+        var order = JobRunOrder.Sort(await _repository.ListAsync(_databasePath, terminal: false)).Select(job => job.Id);
+        order.Should().Equal(third.Id, second.Id, first.Id);
+        (await _repository.GetAsync(_databasePath, third.Id))!.Held.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ADropKeepsTheResumePointSoCleanupStillKnowsAnInterruptedFinalisation()
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Interrupted));
+        job.ResumeStatus = JobStatus.Finalizing;
+        await _repository.UpdateAsync(_databasePath, job);
+
+        (await _repository.DropAsync(_databasePath, job)).Should().BeTrue();
+
+        var stored = (await _repository.GetAsync(_databasePath, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Cancelled);
+        stored.ResumeStatus.Should().Be(JobStatus.Finalizing);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Videos\movie.mp4", null, true)]
+    [InlineData(@"c:\videos\MOVIE.mp4", null, true)]
+    [InlineData(@"C:\Staging\asset-1\other.mp4", "asset-1", true)]
+    [InlineData(@"C:\Videos\other.mp4", null, false)]
+    public async Task AnOriginalGetsOneOpenJobHoweverManyCommandsQueueIt(string path, string? assetId, bool refused)
+    {
+        await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        await _repository.CreateAsync(_databasePath, NewImmichJob("asset-1", JobStatus.Queued));
+        var duplicate = NewJob(JobStatus.Queued, path);
+        duplicate.ImmichAssetId = assetId;
+
+        var create = async () => await _repository.CreateAsync(_databasePath, duplicate);
+
+        if (refused) await create.Should().ThrowAsync<OpenJobExistsException>();
+        else await create.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task AFinishedJobDoesNotBlockANewOneForTheSameOriginal()
+    {
+        var done = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        (await _repository.DropAsync(_databasePath, done)).Should().BeTrue();
+
+        var again = async () => await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+
+        await again.Should().NotThrowAsync();
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private static JobRecord NewJob(JobStatus status) => new()
+    private static JobRecord NewJob(JobStatus status, string sourcePath = "C:\\Videos\\movie.mp4") => new()
     {
         Id = Guid.NewGuid(),
-        SourcePath = "C:\\Videos\\movie.mp4",
+        SourcePath = sourcePath,
         SourceFingerprint = "fingerprint",
         Status = status
     };

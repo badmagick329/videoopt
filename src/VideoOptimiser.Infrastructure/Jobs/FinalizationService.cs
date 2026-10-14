@@ -58,7 +58,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             // Without the record an interrupted file finalisation cannot show that nothing moved, and converting again (F2's
             // advice) would queue a path that may now hold the AV1 or nothing at all.
             if (resumingFile) return await RequireReviewAsync(databasePath, job);
-            return new FinalizationResult(job, ExitCode.FinalisationFailure, $"The AV1's validation record is missing or unreadable: {manifests.GetPath(job.OutputPath)}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue cancel {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.");
+            return new FinalizationResult(job, ExitCode.FinalisationFailure, $"The AV1's validation record is missing or unreadable: {manifests.GetPath(job.OutputPath)}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue drop {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.");
         }
         if (manifest.Validation?.Passed != true)
         {
@@ -175,11 +175,11 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         if (!fromImmich && !File.Exists(job.SourcePath))
         {
             // If the user deleted the original, the AV1 is the only copy, and cancelling the job lets cleanup delete it.
-            return $"{OriginalMissing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. If you deleted it on purpose, the AV1 at {job.OutputPath} is now the only copy: move it somewhere safe before running 'video-optimiser queue cancel {job.Id:N}'.";
+            return $"{OriginalMissing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. If you deleted it on purpose, the AV1 at {job.OutputPath} is now the only copy: move it somewhere safe before running 'video-optimiser queue drop {job.Id:N}'.";
         }
         if (!File.Exists(job.OutputPath) && !(fromImmich && job.ImmichNewAssetId is not null))
         {
-            return $"{Av1Missing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue cancel {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.";
+            return $"{Av1Missing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue drop {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.";
         }
         return null;
     }

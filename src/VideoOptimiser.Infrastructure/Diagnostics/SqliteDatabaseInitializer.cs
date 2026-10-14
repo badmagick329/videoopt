@@ -6,7 +6,7 @@ namespace VideoOptimiser.Infrastructure.Diagnostics;
 public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
 {
     /// <summary>The newest migration below. <see cref="SqliteSchemaCheck"/> refuses a database without it; raise both together.</summary>
-    public const int CurrentVersion = 8;
+    public const int CurrentVersion = 9;
 
     public async Task InitializeAsync(string databasePath, CancellationToken cancellationToken = default)
     {
@@ -154,6 +154,19 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
                   AND (jobs.source_size_bytes IS NULL OR jobs.source_size_bytes = cache.source_size_bytes);
                 """, cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (8, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
+        if (!await HasMigrationAsync(connection, 9, cancellationToken))
+        {
+            // The queue verbs (VOPT-54 step 5): held parks a video, priority is "run next", forced is "queue add --force".
+            // row_version makes every job write a compare-and-swap, so a run holding an older copy of a job cannot undo a
+            // drop, hold or next made from another terminal while it ran.
+            await ExecuteAsync(connection, """
+                ALTER TABLE jobs ADD COLUMN held INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE jobs ADD COLUMN forced INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE jobs ADD COLUMN row_version INTEGER NOT NULL DEFAULT 0;
+                """, cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (9, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
         await transaction.CommitAsync(cancellationToken);
     }

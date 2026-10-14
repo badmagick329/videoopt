@@ -145,7 +145,7 @@ public sealed class FolderFinalizationTests : IDisposable
         var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
 
         result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
-        result.Message.Should().Be($"Original does not exist: {source}. If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. If you deleted it on purpose, the AV1 at {output} is now the only copy: move it somewhere safe before running 'video-optimiser queue cancel {job.Id:N}'.");
+        result.Message.Should().Be($"Original does not exist: {source}. If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. If you deleted it on purpose, the AV1 at {output} is now the only copy: move it somewhere safe before running 'video-optimiser queue drop {job.Id:N}'.");
         (await _repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
         File.Exists(output).Should().BeTrue();
     }
@@ -158,7 +158,7 @@ public sealed class FolderFinalizationTests : IDisposable
 
         var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
 
-        result.Message.Should().Be($"The AV1 is missing: {output}. If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue cancel {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.");
+        result.Message.Should().Be($"The AV1 is missing: {output}. If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue drop {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.");
         (await _repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 
@@ -182,7 +182,7 @@ public sealed class FolderFinalizationTests : IDisposable
         var (code, output, error) = await ConsoleCapture.RunCliWithInputAsync("y", null, "finalize", "--ready", "--config", config);
 
         code.Should().Be((int)ExitCode.PartialSuccess);
-        error.Should().Contain($"The AV1's validation record is missing or unreadable: {manifestPath}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue cancel {broken.Id:N}', then 'video-optimiser queue retry {broken.Id:N}'.");
+        error.Should().Contain($"The AV1's validation record is missing or unreadable: {manifestPath}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue drop {broken.Id:N}', then 'video-optimiser queue retry {broken.Id:N}'.");
         output.Should().Contain("Finalised: 1.");
         (await _repository.GetAsync(settings.Database.Path, good.Id))!.Status.Should().Be(JobStatus.Completed);
         (await File.ReadAllTextAsync(goodSource)).Should().Be("av1");

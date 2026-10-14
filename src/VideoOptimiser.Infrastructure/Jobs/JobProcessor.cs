@@ -22,52 +22,16 @@ public sealed class JobProcessor(
 
     private const string SourceNotReadyCategory = "SourceNotReady";
 
-    public async Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        var path = Path.GetFullPath(sourcePath);
-        if (!File.Exists(path))
-        {
-            // An open job left as it is would fail the same way on every run, and keep discovery from queueing the file
-            // or asset again once it is back.
-            var orphan = await jobs.FindOpenBySourceAsync(databasePath, path, cancellationToken);
-            if (orphan is not null && orphan.Status is JobStatus.Queued or JobStatus.Interrupted && orphan.ResumeStatus != JobStatus.Finalizing)
-                return await FailAsync(orphan, databasePath, QueueService.SourceMissingCategory, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
-            return FailureWithoutJob(ExitCode.ProcessingFailure, $"Original does not exist: {path}");
-        }
+        var path = Path.GetFullPath(job.SourcePath);
+        // Left queued, the job would fail the same way on every run, and keep discovery from queueing the file or asset
+        // again once it is back.
+        if (!File.Exists(path)) return await FailAsync(job, databasePath, QueueService.SourceMissingCategory, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
 
         var fingerprint = await fingerprints.CreateAsync(path, cancellationToken);
-        var job = await jobs.FindOpenBySourceAsync(databasePath, path, cancellationToken);
-        var resumeStatus = job?.ResumeStatus;
-        if (job is null)
-        {
-            var id = Guid.NewGuid();
-            var remote = string.Equals(settings.Processing.Mode, "remoteSsh", StringComparison.OrdinalIgnoreCase);
-            job = await jobs.CreateAsync(databasePath, new JobRecord
-            {
-                Id = id,
-                SourcePath = path,
-                SourceFingerprint = fingerprint,
-                Status = JobStatus.Queued,
-                ExecutionMode = remote ? "remoteSsh" : "local",
-                RemoteHost = remote ? RemoteExecutionIdentity.Host(settings.Processing.RemoteSsh) : null,
-                RemoteWorkspace = remote ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{id:N}" : null
-            }, cancellationToken);
-        }
-        else if (job.Status == JobStatus.ReadyToFinalize)
-        {
-            return Outcome(job, ExitCode.Success, $"Job {job.Id:N} is already ready to finalise.", progress);
-        }
-        else if (FinalizationService.IsInterruptedImmichFinalization(job))
-        {
-            FinalizationService.ReturnToReady(job, FinalizationService.InterruptedMessage);
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            return Outcome(job, ExitCode.Success, $"Job {job.Id:N} was interrupted during finalisation. Run 'video-optimiser immich finalize' to check and resume it.", progress);
-        }
-        else if (FinalizationService.IsInterruptedFileFinalization(job))
-        {
-            // F0 (VOPT-70): left as it is; finalize checks whether anything moved before it resumes.
-            return Outcome(job, ExitCode.Success, $"Job {job.Id:N} was interrupted during finalisation. Run 'video-optimiser finalize {job.Id:N}' to check and resume it.", progress);
-        }
+        var resumeStatus = job.ResumeStatus;
+        var force = job.Forced;
         var compatibility = JobCompatibility.Evaluate(job, settings);
         if (compatibility.Status == JobCompatibilityStatus.Incompatible)
         {
@@ -232,6 +196,8 @@ public sealed class JobProcessor(
             progress?.Report(JobProgress.Outcome(JobTone.Failure, $"Worker unreachable: {exception.Message.TrimEnd('.')}."));
             return new JobProcessingResult(job, ExitCode.ProcessingFailure, exception.Message);
         }
+        // A job held or dropped since the run read it fails this write too, so its JobChangedException reaches the run,
+        // which passes over the job.
         catch (Exception exception)
         {
             return await FailAsync(job, databasePath, stage, exception.Message, ExitCode.ProcessingFailure, progress, cancellationToken, (exception as AbAv1StageException)?.LogPath);
@@ -243,21 +209,19 @@ public sealed class JobProcessor(
     /// job will use it (VOPT-68). It makes the same decisions in the same order and writes nothing. A condition that can
     /// clear before the job runs (a file not ready yet, a failed probe) counts as needing it.
     /// </summary>
-    public async Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default)
+    public async Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(settings.Processing.Mode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase)) return false;
-        var path = Path.GetFullPath(sourcePath);
+        var path = Path.GetFullPath(job.SourcePath);
         if (!File.Exists(path)) return false;
-        var job = await jobs.FindOpenBySourceAsync(databasePath, path, cancellationToken);
-        // Ready, or a finalisation that was interrupted: ProcessAsync returns before any stage. Covers an Immich finalisation too.
-        if (job is not null && (job.Status is JobStatus.ReadyToFinalize or JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)) return false;
-        if (job is not null && JobCompatibility.Evaluate(job, settings).Status == JobCompatibilityStatus.Incompatible) return false;
+        if (!job.IsQueued) return false;
+        if (JobCompatibility.Evaluate(job, settings).Status == JobCompatibilityStatus.Incompatible) return false;
         // A file still being written or briefly unreadable by ffprobe may be fine by the time the job runs, and a job that
         // reaches a remote stage with no worker ensured stops with nothing to resume on. So a passing condition that can
         // change counts as needing the worker; only the lasting refusals (roots, rules, size) count as not.
         try
         {
-            var verdict = await CheckSourceAsync(path, job?.SourceKind ?? JobSourceKind.File, settings, force, cancellationToken);
+            var verdict = await CheckSourceAsync(path, job.SourceKind, settings, job.Forced, cancellationToken);
             return verdict.Proceeds || verdict.FailureCategory == SourceNotReadyCategory;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -324,13 +288,6 @@ public sealed class JobProcessor(
     private static IProgress<JobProgress>? Translating(IProgress<JobProgress>? progress, AbAv1Stage stage, QualitySettings quality) =>
         progress is null ? null : new AbAv1OutputTranslator(stage, quality.MinimumVmaf, quality.MaxEncodedPercent).Wrap(progress);
 
-    /// <summary>A result for a job that reached no stage: its message is already the job's outcome, so it is reported as the last line.</summary>
-    private static JobProcessingResult Outcome(JobRecord job, ExitCode exitCode, string message, IProgress<JobProgress>? progress)
-    {
-        progress?.Report(JobProgress.Outcome(exitCode == ExitCode.Success ? JobTone.Success : JobTone.Failure, message));
-        return new JobProcessingResult(job, exitCode, message);
-    }
-
     /// <summary>
     /// Matches by job ID and attempt rather than by <see cref="JobRecord.OutputPath"/>, because ab-av1 writes the encode
     /// under a temporary name of its own and renames it only on success. A failed delete is reported, not fatal: the new
@@ -355,8 +312,6 @@ public sealed class JobProcessor(
             }
         }
     }
-
-    private static JobProcessingResult FailureWithoutJob(ExitCode exitCode, string message) => new(new JobRecord { Status = JobStatus.Failed }, exitCode, message);
 
     /// <param name="logPath">The kept ab-av1 log of the stage that failed. It is named in the job's failure message too, so
     /// <c>history</c> shows where to look after the console output has scrolled away.</param>

@@ -129,12 +129,12 @@ internal static class StoppedRunMessage
     }
 
     /// <summary>
-    /// The Immich jobs a rerun would pick up: queued, or interrupted outside finalisation, the set restaging and the limit
-    /// count. Not every open Immich job: ready and finalising ones would inflate the limit, and the rerun would download that
-    /// many new videos.
+    /// The Immich jobs a rerun would pick up: queued, or interrupted outside finalisation, and not held, the set restaging
+    /// and the limit count. Not every open Immich job: ready, finalising and held ones would inflate the limit, and the rerun
+    /// would download that many new videos.
     /// </summary>
     public static int CountImmichJobsLeft(IEnumerable<JobRecord> openJobs) =>
-        openJobs.Count(job => job.SourceKind == JobSourceKind.Immich && job.Status is JobStatus.Queued or JobStatus.Interrupted && job.ResumeStatus != JobStatus.Finalizing);
+        openJobs.Count(job => job.SourceKind == JobSourceKind.Immich && job.IsQueued && !job.Held);
 
     public static string DeleteCommand(CliCommand command) => $"video-optimiser worker delete{ConfigArgument(command)}";
 

@@ -69,8 +69,44 @@ public sealed class JobRecord
     public string ExecutionMode { get; set; } = "local";
     public string? RemoteHost { get; set; }
     public string? RemoteWorkspace { get; set; }
+    /// <summary><c>queue hold</c>: runs pass over the job, and nothing but the queue verbs writes it until it is released.</summary>
+    public bool Held { get; set; }
+    /// <summary><c>queue next</c>: the run order sorts on it, highest first, before <see cref="CreatedUtc"/>.</summary>
+    public int Priority { get; set; }
+    /// <summary><c>queue add &lt;file&gt; --force</c>: the run skips the watch-root and eligibility checks for it.</summary>
+    public bool Forced { get; set; }
+    /// <summary>
+    /// The version of the row this copy was read at. Every write requires it unchanged and raises it, so a copy that another
+    /// process changed since (a drop during a run, a hold from a second terminal) fails with <see cref="JobChangedException"/>.
+    /// </summary>
+    public long RowVersion { get; set; }
 
     public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Skipped;
+
+    /// <summary>In the queue: a run may start it, now or once it is released. An interrupted finalisation belongs to finalize.</summary>
+    public bool IsQueued => Status is JobStatus.Queued or JobStatus.Interrupted && ResumeStatus != JobStatus.Finalizing;
+}
+
+/// <summary>The order a run takes queued jobs in: <c>queue next</c> first, latest first, then oldest queued first.</summary>
+public static class JobRunOrder
+{
+    public static IOrderedEnumerable<JobRecord> Sort(IEnumerable<JobRecord> jobs) =>
+        jobs.OrderByDescending(job => job.Priority).ThenBy(job => job.CreatedUtc);
+}
+
+/// <summary>
+/// A write lost to a change made since the job was read: another process wrote it (a queue verb, a run), or it is held. The
+/// writer passes over the job, or tells the user to try again; it never overwrites the change.
+/// </summary>
+public sealed class JobChangedException(Guid jobId) : InvalidOperationException($"Job {jobId:N} changed while this command was using it. Run the command again.")
+{
+    public Guid JobId { get; } = jobId;
+}
+
+/// <summary>A new job for an original that already has an open one. Callers check first; this catches the race between two commands.</summary>
+public sealed class OpenJobExistsException(string sourcePath) : InvalidOperationException($"An open job already exists for {sourcePath}.")
+{
+    public string SourcePath { get; } = sourcePath;
 }
 
 public sealed record JobProcessingResult(JobRecord Job, ExitCode ExitCode, string Message);
@@ -113,8 +149,22 @@ public interface IJobRepository
 {
     Task<JobRecord?> FindOpenBySourceAsync(string databasePath, string sourcePath, CancellationToken cancellationToken = default);
     Task<JobRecord?> GetAsync(string databasePath, Guid id, CancellationToken cancellationToken = default);
+    /// <summary>Inserts the job unless its original (path, or Immich asset) already has an open one: then <see cref="OpenJobExistsException"/>.</summary>
     Task<JobRecord> CreateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Writes every column but the queue verbs' (<see cref="JobRecord.Held"/>, <see cref="JobRecord.Priority"/>), if the row
+    /// is still at <see cref="JobRecord.RowVersion"/> and not held; otherwise <see cref="JobChangedException"/>.
+    /// </summary>
     Task UpdateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
+    /// <summary><c>queue hold</c> and <c>release</c>. False when the row changed since <paramref name="job"/> was read.</summary>
+    Task<bool> SetHeldAsync(string databasePath, JobRecord job, bool held, CancellationToken cancellationToken = default);
+    /// <summary><c>queue next</c>: above every open job's priority, and released. False when the row changed since it was read.</summary>
+    Task<bool> RunNextAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// <c>queue drop</c>: <see cref="JobStatus.Cancelled"/> and released, held or not, keeping <see cref="JobRecord.ResumeStatus"/>
+    /// so cleanup still recognises an interrupted finalisation. False when the row changed since it was read.
+    /// </summary>
+    Task<bool> DropAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default);
     /// <summary>
     /// Marks jobs a dead process left mid-stage <see cref="JobStatus.Interrupted"/>, so they resume from that stage. Only the
@@ -169,16 +219,15 @@ public interface IMediaDecodeTester
 
 public interface IJobProcessor
 {
-    Task<JobProcessingResult> ProcessAsync(
-        string databasePath,
-        string sourcePath,
-        AppSettings settings,
-        bool force,
-        IProgress<JobProgress>? progress = null,
-        CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Runs a queued job, read just before, through the stages it has left. <see cref="JobRecord.Forced"/> skips the
+    /// watch-root and rules checks. A write that finds the job changed since it was read (held or dropped from another
+    /// terminal) throws <see cref="JobChangedException"/>, which the run takes as "pass over it".
+    /// </summary>
+    Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Whether <see cref="ProcessAsync"/> would reach a remote stage for this original. Read-only: a run asks before creating a server.</summary>
-    Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default);
+    /// <summary>Whether <see cref="ProcessAsync"/> would reach a remote stage for this job. Read-only: a run asks before creating a server.</summary>
+    Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default);
 }
 
 public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0, int PreviouslySkipped = 0);
@@ -191,7 +240,11 @@ public sealed record SkippedQueueJob(Guid Id, string SourcePath, string Message)
 /// <see cref="JobCompatibility.IsBoundToOtherMode"/>. They are neither runnable nor failed.</param>
 /// <param name="InterruptedFinalizations">File jobs whose finalisation Ctrl+C or a crash interrupted. Left as they are: only
 /// <c>finalize</c> can tell whether anything moved (VOPT-70).</param>
-public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs, IReadOnlyList<JobRecord> InterruptedFinalizations);
+/// <param name="RunnableJobs">In run order: the run's first view of the queue.</param>
+/// <param name="FollowQueue">The run takes each next video from the queue as it is then, so a video added, released or moved
+/// next during the run joins it. False keeps the run to <paramref name="RunnableJobs"/>: <c>immich run</c>'s set, fixed by its
+/// <c>--limit</c> (until phase A step 7).</param>
+public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs, IReadOnlyList<JobRecord> InterruptedFinalizations, JobSourceKind SourceKind = JobSourceKind.File, bool FollowQueue = true);
 
 /// <param name="UnreachableWorkerJob">The job the run stopped at because the worker could not be reached, or null. Every later
 /// job would fail the same way, so the run ends there (VOPT-69). The job is <see cref="JobStatus.Interrupted"/> and resumes from
@@ -227,8 +280,13 @@ public interface IQueueService
     /// <param name="modeOverridden">Whether <c>--local</c> or <c>--remote</c> set the mode in <paramref name="settings"/>. The settings
     /// alone cannot say so, and only then is a started job from the other mode skipped instead of failed.</param>
     Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind sourceKind, bool modeOverridden = false, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Converts the queued videos of <paramref name="preparation"/>'s source, one at a time, each tried at most once: the
+    /// first queued, unheld one in <see cref="JobRunOrder"/> that this run has not tried, read again as it starts.
+    /// </summary>
+    /// <param name="passOver">Asked before each video starts; true leaves it queued for a later run, after the caller has said why.</param>
     /// <param name="stopAfterThisVideo">Checked before each job, never during one, so a stop after this video keeps the current job's work.</param>
-    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<JobProgress>? progress = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default);
+    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default);
 }
 
 public interface IJobRetryService

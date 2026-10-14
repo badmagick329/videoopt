@@ -35,10 +35,24 @@ public sealed class JobRetryService(IJobRepository jobs) : IJobRetryService
             SourceKind = original.SourceKind,
             ImmichAssetId = original.ImmichAssetId,
             ImmichChecksum = original.ImmichChecksum,
-            VideoFacts = original.VideoFacts
+            VideoFacts = original.VideoFacts,
+            // Queued outside the rules once, it stays outside them: the run would otherwise fail it as ineligible.
+            Forced = original.Forced
         };
         JobCompatibility.Apply(replacement, JobCompatibility.ExpectedBinding(replacement.Id, settings));
-        await jobs.CreateAsync(databasePath, replacement, cancellationToken);
+        try
+        {
+            await jobs.CreateAsync(databasePath, replacement, cancellationToken);
+        }
+        catch (OpenJobExistsException)
+        {
+            // Queued from another terminal since the check above.
+            var raced = original.ImmichAssetId is { } assetId
+                ? await jobs.FindOpenByImmichAssetAsync(databasePath, assetId, cancellationToken)
+                : await jobs.FindOpenBySourceAsync(databasePath, original.SourcePath, cancellationToken);
+            if (raced is null) throw;
+            return new JobRetryResult(null, $"An open job already exists for this original: {raced.Id:N} ({raced.Status}).");
+        }
         return new JobRetryResult(replacement, null);
     }
 }

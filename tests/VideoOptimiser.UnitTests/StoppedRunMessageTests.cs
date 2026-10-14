@@ -29,7 +29,7 @@ public sealed class StoppedRunMessageTests
     [Fact]
     public void TheJobsLeftAreTheImmichJobsARerunWouldPickUp()
     {
-        JobRecord Job(JobStatus status, JobStatus? resume = null, JobSourceKind kind = JobSourceKind.Immich) => new() { Status = status, ResumeStatus = resume, SourceKind = kind };
+        JobRecord Job(JobStatus status, JobStatus? resume = null, JobSourceKind kind = JobSourceKind.Immich, bool held = false) => new() { Status = status, ResumeStatus = resume, SourceKind = kind, Held = held };
 
         StoppedRunMessage.CountImmichJobsLeft(
         [
@@ -38,7 +38,9 @@ public sealed class StoppedRunMessageTests
             Job(JobStatus.Interrupted, JobStatus.Finalizing),
             Job(JobStatus.ReadyToFinalize),
             Job(JobStatus.Finalizing),
-            Job(JobStatus.Queued, kind: JobSourceKind.File)
+            Job(JobStatus.Queued, kind: JobSourceKind.File),
+            // R7: a held video waits for its release, not for the rerun.
+            Job(JobStatus.Queued, held: true)
         ]).Should().Be(2);
     }
 

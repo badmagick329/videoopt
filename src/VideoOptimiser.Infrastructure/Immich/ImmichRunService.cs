@@ -18,8 +18,9 @@ public sealed class ImmichRunService(IImmichClientFactory clients, IImmichReuplo
         var guarded = await guard.CheckAsync(databasePath, settings, guardProgress, cancellationToken);
         var discovered = await discovery.DiscoverAsync(databasePath, settings, limit, discoveryProgress, cancellationToken);
         var prepared = await queue.PrepareAsync(databasePath, settings, JobSourceKind.Immich, modeOverridden, cancellationToken);
-        // A limit bounds the round to review and finalise, however many jobs were already open.
+        // A limit bounds the round to review and finalise, however many jobs were already open. The set stays fixed for the
+        // run: a video queued, released or moved next meanwhile waits for the next round.
         if (prepared.RunnableJobs.Count > limit) prepared = prepared with { RunnableJobs = prepared.RunnableJobs.Take(limit.Value).ToArray() };
-        return new ImmichRunPreparation(guarded, discovered, prepared);
+        return new ImmichRunPreparation(guarded, discovered, prepared with { FollowQueue = false });
     }
 }

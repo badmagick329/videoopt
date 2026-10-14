@@ -17,7 +17,7 @@ public sealed class JobProcessorTests : IDisposable
     public JobProcessorTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
-    public async Task ProcessAsyncPersistsAReadyToFinalizeJobAndReusesIt()
+    public async Task ProcessAsyncTakesAQueuedJobToReadyToFinalize()
     {
         var source = Path.Combine(_directory, "movie.mp4");
         await File.WriteAllTextAsync(source, "original video data");
@@ -40,20 +40,15 @@ public sealed class JobProcessorTests : IDisposable
         };
 
         var first = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
-        var reported = new List<JobProgress>();
-        var second = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
 
         first.ExitCode.Should().Be(ExitCode.Success);
         first.Job.Status.Should().Be(JobStatus.ReadyToFinalize);
         first.Job.Crf.Should().Be(42);
         first.Job.ValidationPassed.Should().BeTrue();
         File.Exists(first.Job.OutputPath).Should().BeTrue();
-        // process creates its job without a probe; the run's own probe supplies the facts.
+        // A job queued without a probe gets its facts from the run's own probe.
         (await repository.GetAsync(settings.Database.Path, first.Job.Id))!.VideoFacts.Should().Be(new VideoFacts("h264", 1920, 1080, 10_000_000, 120, "original video data".Length));
-        second.Job.Id.Should().Be(first.Job.Id);
         encoder.CallCount.Should().Be(1);
-        Steps(reported).Should().Equal($"Job {first.Job.Id:N} is already ready to finalise.");
-        reported.Single().Tone.Should().Be(JobTone.Success);
     }
 
     [Theory]
@@ -122,7 +117,6 @@ public sealed class JobProcessorTests : IDisposable
     [Theory]
     [InlineData(JobStatus.Queued, JobStatus.Failed)]
     [InlineData(JobStatus.Interrupted, JobStatus.Failed)]
-    [InlineData(JobStatus.ReadyToFinalize, JobStatus.ReadyToFinalize)]
     public async Task AMissingOriginalFailsItsQueuedOrInterruptedJobSoItIsNotStuck(JobStatus status, JobStatus expected)
     {
         var missing = Path.Combine(_directory, "gone.mp4");
@@ -460,32 +454,6 @@ public sealed class JobProcessorTests : IDisposable
 
         needed.Should().Be(expected);
         (await repository.ListAsync(settings.Database.Path, terminal: false)).Should().BeEmpty();
-    }
-
-    /// <summary>
-    /// F0 (VOPT-70): an interrupted finalisation belongs to finalize, which checks whether anything moved. A file job is left
-    /// as it is; an Immich one goes back to ready, since each of its steps can run again.
-    /// </summary>
-    [Theory]
-    [InlineData(JobSourceKind.File, "Run 'video-optimiser finalize {0}' to check and resume it.", JobStatus.Interrupted)]
-    [InlineData(JobSourceKind.Immich, "Run 'video-optimiser immich finalize' to check and resume it.", JobStatus.ReadyToFinalize)]
-    public async Task ProcessingAnInterruptedFinalisationPointsAtFinalize(JobSourceKind kind, string advice, JobStatus expected)
-    {
-        var source = Path.Combine(_directory, "finalising.mp4");
-        await File.WriteAllTextAsync(source, "original video data");
-        var databasePath = Path.Combine(_directory, "finalising.db");
-        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
-        var job = await repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceKind = kind, Status = JobStatus.ReadyToFinalize });
-        job.Status = JobStatus.Finalizing;
-        await repository.UpdateAsync(databasePath, job);
-        await repository.MarkActiveJobsInterruptedAsync(databasePath, includeFinalizing: true);
-        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
-
-        var result = await processor.ProcessAsync(databasePath, source, Settings("finalising.db"), force: false);
-
-        result.ExitCode.Should().Be(ExitCode.Success);
-        result.Message.Should().Be($"Job {job.Id:N} was interrupted during finalisation. {string.Format(System.Globalization.CultureInfo.InvariantCulture, advice, job.Id.ToString("N"))}");
-        (await repository.GetAsync(databasePath, job.Id))!.Status.Should().Be(expected);
     }
 
     /// <summary>A ready job, or one whose finalisation was interrupted, returns before any stage.</summary>

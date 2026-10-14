@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 
 namespace VideoOptimiser.Infrastructure.Jobs;
@@ -13,9 +14,18 @@ public sealed class DatabaseLock : IDisposable
 {
     private const int SharingViolation = 32;
     private const int LockViolation = 33;
+    // The paths this process holds. A lock file keeps its last holder's details after release, so for this process's own
+    // ID the set, not the file, says whether it still holds it.
+    private static readonly HashSet<string> HeldHere = new(StringComparer.OrdinalIgnoreCase);
     private readonly FileStream _stream;
+    private readonly string _path;
 
-    private DatabaseLock(FileStream stream) => _stream = stream;
+    private DatabaseLock(FileStream stream, string path)
+    {
+        _stream = stream;
+        _path = path;
+        lock (HeldHere) HeldHere.Add(path);
+    }
 
     /// <param name="Command">What holds it, such as <c>queue run</c>.</param>
     public sealed record Holder(string Command, DateTimeOffset StartedUtc, int ProcessId);
@@ -48,7 +58,37 @@ public sealed class DatabaseLock : IDisposable
         }
         stream.Flush(flushToDisk: true);
         holder = null;
-        return new DatabaseLock(stream);
+        return new DatabaseLock(stream, Path.GetFullPath(path));
+    }
+
+    /// <summary>
+    /// Who holds the lock, read without taking it, so asking never refuses a run that starts meanwhile; null when nobody does.
+    /// The file outlives its holder, so its details count only while that process is alive and started no later than they
+    /// say (a reused process ID started later). A process whose start time cannot be read counts as alive.
+    /// </summary>
+    public static Holder? ReadLiveHolder(string path)
+    {
+        path = Path.GetFullPath(path);
+        if (!File.Exists(path) || Read(path) is not { } holder) return null;
+        if (holder.ProcessId == Environment.ProcessId)
+        {
+            lock (HeldHere) return HeldHere.Contains(path) ? holder : null;
+        }
+        try
+        {
+            using var process = Process.GetProcessById(holder.ProcessId);
+            if (process.HasExited) return null;
+            return process.StartTime.ToUniversalTime() <= holder.StartedUtc.UtcDateTime ? holder : null;
+        }
+        catch (ArgumentException)
+        {
+            // No process has that ID.
+            return null;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return holder;
+        }
     }
 
     /// <summary>
@@ -87,5 +127,9 @@ public sealed class DatabaseLock : IDisposable
         }
     }
 
-    public void Dispose() => _stream.Dispose();
+    public void Dispose()
+    {
+        lock (HeldHere) HeldHere.Remove(_path);
+        _stream.Dispose();
+    }
 }

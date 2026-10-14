@@ -390,7 +390,7 @@ public sealed class ImmichFinalizationTests : IDisposable
 
         var result = await FinalizeAsync(job);
 
-        var cancel = $"'video-optimiser queue cancel {job.Id:N}'";
+        var cancel = $"'video-optimiser queue drop {job.Id:N}'";
         var deleted = situation switch
         {
             "nothing uploaded" => $"If it was deleted, the downloaded copy at {job.SourcePath} and its AV1 at {job.OutputPath} may be the only copies left: move them somewhere safe before running {cancel}.",

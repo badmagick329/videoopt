@@ -79,9 +79,11 @@ public sealed class ImmichRunTests : IDisposable
         var original = _immich.Add("PXL_20260301.mp4", "hevc original");
 
         var preparation = await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null);
-        var processed = await _queue.RunAsync(_settings.Database.Path, _settings, preparation.Queue.RunnableJobs);
+        var processed = await _queue.RunAsync(_settings.Database.Path, _settings, preparation.Queue);
 
         preparation.Guard.Checked.Should().Be(0);
+        // The round is the set its limit chose (until phase A step 7): a video queued meanwhile waits for the next round.
+        preparation.Queue.FollowQueue.Should().BeFalse();
         var job = preparation.Discovery.Queued.Should().ContainSingle().Subject;
         processed.ReadyToFinalize.Should().Be(1);
         _immich.Get(original.Id).IsTrashed.Should().BeFalse("nothing touches Immich before finalize");
@@ -142,7 +144,7 @@ public sealed class ImmichRunTests : IDisposable
     {
         _immich.Add("PXL.mp4", "hevc original");
         var preparation = await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null);
-        await _queue.RunAsync(_settings.Database.Path, _settings, preparation.Queue.RunnableJobs);
+        await _queue.RunAsync(_settings.Database.Path, _settings, preparation.Queue);
         await _finalizer.FinalizeAsync(_settings.Database.Path, preparation.Discovery.Queued.Single().Id, _settings);
         var original = preparation.Discovery.Queued.Single().ImmichAssetId!;
         _immich.Remove(original);
@@ -162,8 +164,9 @@ public sealed class ImmichRunTests : IDisposable
     public async Task QueueRunReturnsACrashedImmichFinalisationToReadyToo()
     {
         _immich.Add("PXL.mp4", "hevc original");
-        var job = (await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null)).Discovery.Queued.Single();
-        await _queue.RunAsync(_settings.Database.Path, _settings, [job]);
+        var preparation = await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null);
+        var job = preparation.Discovery.Queued.Single();
+        await _queue.RunAsync(_settings.Database.Path, _settings, preparation.Queue);
         var crashed = (await _repository.GetAsync(_settings.Database.Path, job.Id))!;
         crashed.Status = JobStatus.Finalizing;
         await _repository.UpdateAsync(_settings.Database.Path, crashed);

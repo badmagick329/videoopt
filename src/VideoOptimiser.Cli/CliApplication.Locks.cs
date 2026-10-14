@@ -30,11 +30,16 @@ internal static partial class CliApplication
         return null;
     }
 
+    /// <summary>How a run names itself in the run lock, and so to a command refused by it.</summary>
+    private const string QueueRunHolder = "queue run";
+    private const string ImmichRunHolder = "immich run";
+
     /// <summary>
     /// The finalise lock, or null after saying who holds it. A run holds it while it prepares, which takes moments, so this
     /// waits for a run however long it takes and refuses only another finalise.
     /// </summary>
-    private static async Task<DatabaseLock?> TakeFinalizeLockAsync(LoadedConfiguration configuration, string command, CancellationToken cancellationToken)
+    /// <param name="refusal">What to say instead when a finalise holds it, for a command other than finalize.</param>
+    private static async Task<DatabaseLock?> TakeFinalizeLockAsync(LoadedConfiguration configuration, string command, CancellationToken cancellationToken, string? refusal = null)
     {
         DatabaseLock? taken;
         DatabaseLock.Holder? holder;
@@ -44,9 +49,9 @@ internal static partial class CliApplication
         }
         while (taken is null && holder?.Command == DatabaseLock.RunPreparing);
         if (taken is not null) return taken;
-        WriteError(holder is null
+        WriteError(refusal ?? (holder is null
             ? "Another finalise is running on this database. Wait for it to finish."
-            : $"Another finalise is running on this database, started {FormatStarted(holder.StartedUtc)} (process {holder.ProcessId}). Wait for it to finish.");
+            : $"Another finalise is running on this database, started {FormatStarted(holder.StartedUtc)} (process {holder.ProcessId}). Wait for it to finish."));
         return null;
     }
 

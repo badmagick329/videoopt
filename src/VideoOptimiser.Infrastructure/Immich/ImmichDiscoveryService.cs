@@ -61,6 +61,8 @@ public sealed class ImmichDiscoveryService(
                 continue;
             }
 
+            // A held video is parked: it neither counts towards the limit nor can be queued twice.
+            if (history.HeldAssets.Contains(asset.Id)) continue;
             if (history.OpenAssets.Contains(asset.Id)) { alreadyQueued++; continue; }
             if (history.IsConverted(asset)) { alreadyConverted++; continue; }
             if (history.IsSettledSkip(asset, qualityFingerprint)) { previouslySkipped++; continue; }
@@ -131,7 +133,16 @@ public sealed class ImmichDiscoveryService(
                     VideoFacts = videoFacts
                 };
                 JobCompatibility.Apply(job, JobCompatibility.ExpectedBinding(job.Id, settings));
-                queued.Add(await jobs.CreateAsync(databasePath, job, cancellationToken));
+                try
+                {
+                    queued.Add(await jobs.CreateAsync(databasePath, job, cancellationToken));
+                }
+                catch (OpenJobExistsException)
+                {
+                    // A queue retry from another terminal queued the asset since the history was read. Its job reads the
+                    // same staged path, so the copy stays, and the asset is queued either way.
+                    alreadyQueued++;
+                }
                 keepStaged = true;
                 progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, queued.Count + alreadyQueued, facts, rule));
             }
@@ -167,10 +178,11 @@ public sealed class ImmichDiscoveryService(
     private async Task<(int Restaged, int Issues)> RestageMissingAsync(IImmichClient client, string databasePath, AppSettings settings, int? limit, IProgress<ImmichDiscoveryProgress>? progress, CancellationToken cancellationToken)
     {
         int restaged = 0, issues = 0;
-        // Ready jobs no longer read the original, and a job interrupted during finalisation needs it left as it is.
-        var candidates = (await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
-            .Where(job => job.SourceKind == JobSourceKind.Immich && job.Status is not (JobStatus.ReadyToFinalize or JobStatus.Finalizing) && job.ResumeStatus != JobStatus.Finalizing)
-            .OrderBy(job => job.CreatedUtc)
+        // Ready jobs no longer read the original, and a job interrupted during finalisation needs it left as it is. A held job
+        // is parked: nothing but the queue verbs writes it, and the run passes over it. Run order, so the limit takes the
+        // jobs the run will.
+        var candidates = JobRunOrder.Sort((await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
+                .Where(job => job.SourceKind == JobSourceKind.Immich && job.Status is not (JobStatus.ReadyToFinalize or JobStatus.Finalizing) && job.ResumeStatus != JobStatus.Finalizing && !job.Held))
             .Take(limit ?? int.MaxValue);
         foreach (var job in candidates)
         {
@@ -304,6 +316,7 @@ public sealed class ImmichDiscoveryService(
     internal sealed class ImmichHistory
     {
         public HashSet<string> OpenAssets { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> HeldAssets { get; } = new(StringComparer.Ordinal);
         private readonly HashSet<string> _convertedAssets = new(StringComparer.Ordinal);
         private readonly HashSet<string> _convertedChecksums = new(StringComparer.Ordinal);
         private readonly HashSet<string> _replacements = new(StringComparer.Ordinal);
@@ -314,7 +327,7 @@ public sealed class ImmichDiscoveryService(
             var history = new ImmichHistory();
             foreach (var job in await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
             {
-                if (job.ImmichAssetId is { } assetId) history.OpenAssets.Add(assetId);
+                if (job.ImmichAssetId is { } assetId) (job.Held ? history.HeldAssets : history.OpenAssets).Add(assetId);
                 if (job.ImmichNewAssetId is { } replacement) history._replacements.Add(replacement);
             }
 

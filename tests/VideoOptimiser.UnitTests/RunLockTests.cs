@@ -175,6 +175,48 @@ public sealed class RunLockTests : IDisposable
         return config;
     }
 
+    /// <summary>
+    /// W5, W13: whether a run is going is read from the lock file without taking the lock, so asking never refuses a run that
+    /// starts meanwhile. The file outlives its holder, so its details count only while that process lives and started
+    /// before them; a reused process ID started after.
+    /// </summary>
+    [Fact]
+    public async Task ALockFileCountsAsHeldOnlyWhileItsProcessLivesAndStartedBeforeIt()
+    {
+        var path = DatabaseLock.RunPath(DatabasePath);
+        using var other = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", "/c ping -n 30 127.0.0.1 > nul") { CreateNoWindow = true, UseShellExecute = false })!;
+        try
+        {
+            var started = new DateTimeOffset(other.StartTime.ToUniversalTime());
+            await File.WriteAllTextAsync(path, $"queue run\n{started.AddSeconds(1):O}\n{other.Id}\n");
+            DatabaseLock.ReadLiveHolder(path)!.ProcessId.Should().Be(other.Id);
+
+            await File.WriteAllTextAsync(path, $"queue run\n{started.AddSeconds(-1):O}\n{other.Id}\n");
+            DatabaseLock.ReadLiveHolder(path).Should().BeNull("a process that started after the lock was taken reused a dead holder's ID");
+        }
+        finally
+        {
+            other.Kill(entireProcessTree: true);
+            await other.WaitForExitAsync();
+        }
+
+        await File.WriteAllTextAsync(path, $"queue run\n{DateTimeOffset.UtcNow:O}\n{other.Id}\n");
+        DatabaseLock.ReadLiveHolder(path).Should().BeNull("its process has ended");
+    }
+
+    /// <summary>This process's own lock counts while it holds it, though the file keeps its details after.</summary>
+    [Fact]
+    public void ThisProcesssOwnLockCountsOnlyWhileItIsHeld()
+    {
+        var path = DatabaseLock.RunPath(DatabasePath);
+        using (DatabaseLock.TryAcquire(path, "queue run", out _))
+        {
+            DatabaseLock.ReadLiveHolder(path)!.Command.Should().Be("queue run");
+        }
+
+        DatabaseLock.ReadLiveHolder(path).Should().BeNull();
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private sealed class NoFiles : IFileScanner
@@ -185,9 +227,9 @@ public sealed class RunLockTests : IDisposable
 
     private sealed class NoProcessing : IJobProcessor
     {
-        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(false);
 
-        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
+        public Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("Preparing processes nothing.");
     }
 }

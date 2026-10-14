@@ -529,6 +529,65 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         _immich.Downloads.Should().Equal(oldest.Id, middle.Id);
     }
 
+    /// <summary>
+    /// R11: an asset queued from another terminal after discovery read the open jobs counts as queued, and keeps its staged
+    /// copy, which that job reads at the same path.
+    /// </summary>
+    [Fact]
+    public async Task AnAssetQueuedMeanwhileCountsAsQueuedAndKeepsItsCopy()
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        var job = await CreateJobAsync(asset, JobStatus.Queued);
+
+        var result = await DiscoverAsync(repository: new BlindToOpenJobs(_repository));
+
+        result.AlreadyQueued.Should().Be(1);
+        result.Queued.Should().BeEmpty();
+        File.Exists(job.SourcePath).Should().BeTrue();
+        (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().ContainSingle();
+    }
+
+    /// <summary>R7: <c>queue next</c> moves a video up the run's order, so the limit downloads again the ones the run will take.</summary>
+    [Fact]
+    public async Task ALimitDownloadsAgainInRunOrder()
+    {
+        var oldest = _immich.Add("oldest.mp4", "hevc oldest");
+        var newest = _immich.Add("newest.mp4", "hevc newest");
+        await CreateJobAsync(oldest, JobStatus.Queued, staged: false);
+        await Task.Delay(20);
+        var movedNext = await CreateJobAsync(newest, JobStatus.Queued, staged: false);
+        (await _repository.RunNextAsync(_settings.Database.Path, movedNext)).Should().BeTrue();
+
+        _ = await DiscoverAsync(limit: 1);
+
+        _immich.Downloads.Should().Equal(newest.Id);
+    }
+
+    /// <summary>
+    /// R7, R10: a held video is parked. It neither counts towards the limit nor is downloaded again or failed behind the
+    /// user's back, and its asset is not queued a second time.
+    /// </summary>
+    [Fact]
+    public async Task ALimitLeavesHeldVideosOutOfItsCountAndAlone()
+    {
+        var held = _immich.Add("held.mp4", "hevc held");
+        var open = _immich.Add("open.mp4", "hevc open");
+        _immich.Add("next1.mp4", "hevc next1");
+        _immich.Add("next2.mp4", "hevc next2");
+        var heldJob = await CreateJobAsync(held, JobStatus.Queued, staged: false);
+        (await _repository.SetHeldAsync(_settings.Database.Path, heldJob, held: true)).Should().BeTrue();
+        await CreateJobAsync(open, JobStatus.Queued);
+
+        var result = await DiscoverAsync(limit: 2);
+
+        result.AlreadyQueued.Should().Be(1);
+        result.Queued.Should().ContainSingle().Which.SourcePath.Should().EndWith("next1.mp4");
+        _immich.Downloads.Should().NotContain(held.Id);
+        var stored = (await _repository.GetAsync(_settings.Database.Path, heldJob.Id))!;
+        stored.Status.Should().Be(JobStatus.Queued);
+        stored.Held.Should().BeTrue();
+    }
+
     [Fact]
     public async Task NeverDownloadsAgainToAPathOutsideTheAssetFolder()
     {
@@ -680,9 +739,16 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private Task<ImmichDiscoveryResult> DiscoverAsync(int? limit = null, IProgress<ImmichDiscoveryProgress>? progress = null) =>
-        new ImmichDiscoveryService(_immich, _repository, _ => new ContentProbe(), new FileFingerprintService(), () => Now)
+    private Task<ImmichDiscoveryResult> DiscoverAsync(int? limit = null, IProgress<ImmichDiscoveryProgress>? progress = null, IJobRepository? repository = null) =>
+        new ImmichDiscoveryService(_immich, repository ?? _repository, _ => new ContentProbe(), new FileFingerprintService(), () => Now)
             .DiscoverAsync(_settings.Database.Path, _settings, limit, progress);
+
+    /// <summary>Reads open jobs as if there were none yet, as discovery would just before a retry from another terminal queued one.</summary>
+    private sealed class BlindToOpenJobs(IJobRepository inner) : DelegatingJobRepository(inner)
+    {
+        public override async Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default) =>
+            terminal ? await Inner.ListAsync(databasePath, terminal, cancellationToken) : [];
+    }
 
     /// <summary>An Immich job for the asset. An open one has its staged copy unless <paramref name="staged"/> is false.</summary>
     private async Task<JobRecord> CreateJobAsync(ImmichAsset asset, JobStatus status, string? failureCategory = null, bool staged = true)

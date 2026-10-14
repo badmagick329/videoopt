@@ -32,13 +32,14 @@ public sealed class InterruptedFinalizationCliTests : IDisposable
     }
 
     [Fact]
-    public async Task QueueCancelAllSkipsIt()
+    public async Task QueueDropAllLeavesItAndSaysHowToResumeIt()
     {
         var (config, job) = await ArrangeAsync();
 
-        var (_, output, _) = await ConsoleCapture.RunCliAsync("queue", "cancel", "--all", "--config", config);
+        var (code, output, _) = await ConsoleCapture.RunCliAsync("queue", "drop", "--all", "--config", config);
 
-        output.Should().Contain("No cancellable jobs found.");
+        code.Should().Be(0);
+        output.Should().Be($"Left 1 video stopped while being finalised; 'video-optimiser finalize {job.Id:N} --config \"{config}\"' checks and resumes it.{Environment.NewLine}");
         await ShouldBeUntouchedAsync(job);
     }
 
