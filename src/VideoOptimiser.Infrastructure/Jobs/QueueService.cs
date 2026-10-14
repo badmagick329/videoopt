@@ -189,7 +189,6 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         var ready = 0;
         var failed = new List<FailedQueueJob>();
         var skipped = new List<SkippedQueueJob>();
-        var interrupted = false;
         for (var index = 0; index < jobs.Count; index++)
         {
             var job = jobs[index];
@@ -198,13 +197,18 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             var result = await processor.ProcessAsync(databasePath, job.SourcePath, settings, force: false, progress, cancellationToken);
             if (result.Job.Status == JobStatus.ReadyToFinalize) ready++;
             else if (result.Job.Status == JobStatus.Skipped) skipped.Add(new SkippedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureMessage ?? result.Message));
+            else if (result.Job is { Status: JobStatus.Interrupted, FailureCategory: JobProcessor.RemoteUnavailableCategory })
+            {
+                // Each later job would retry the dead worker three times and end the same way, so the run stops here.
+                var notStarted = jobs.Count - index - 1;
+                return new QueueRunResult(ready, failed, skipped, result.Job, notStarted, QueueExitCode.Calculate(ready, failed.Count, workerUnreachable: true));
+            }
             else if (result.ExitCode != ExitCode.Success)
             {
                 failed.Add(new FailedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureCategory ?? "ProcessingFailed", result.Job.FailureMessage ?? result.Message));
-                interrupted |= result.Job.Status == JobStatus.Interrupted;
             }
         }
 
-        return new QueueRunResult(ready, failed, skipped, interrupted, QueueExitCode.Calculate(ready, failed.Count));
+        return new QueueRunResult(ready, failed, skipped, UnreachableWorkerJob: null, NotStarted: 0, QueueExitCode.Calculate(ready, failed.Count));
     }
 }

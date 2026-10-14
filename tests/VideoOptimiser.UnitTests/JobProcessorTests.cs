@@ -305,7 +305,7 @@ public sealed class JobProcessorTests : IDisposable
 
         var result = await processor.ProcessAsync(databasePath, source, settings, force: false, new SynchronousProgress(reported.Add));
 
-        Steps(reported).Should().Equal("Worker unreachable: Remote unavailable. Run the same command again to resume.");
+        Steps(reported).Should().Equal("Worker unreachable: Remote unavailable.");
         reported.Single().Tone.Should().Be(JobTone.Failure);
         result.Job.Status.Should().Be(JobStatus.Interrupted);
         result.Job.ResumeStatus.Should().Be(JobStatus.Staging);

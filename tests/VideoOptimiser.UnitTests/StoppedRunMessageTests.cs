@@ -16,6 +16,32 @@ public sealed class StoppedRunMessageTests
         StoppedRunMessage.RerunCommand(CliCommand.Parse(args)).Should().Be(expected);
     }
 
+    /// <summary>--limit tops the open jobs up to N, so the rerun limits to the jobs left; a typed N would download new videos on top (VOPT-69).</summary>
+    [Theory]
+    [InlineData(new[] { "--first", "immich", "run", "--remote" }, "immich run --limit 5 --remote")]
+    [InlineData(new[] { "immich", "run", "--limit", "50" }, "immich run --limit 5")]
+    [InlineData(new[] { "immich", "run" }, "immich run")]
+    public void ALimitedImmichRerunLimitsItselfToTheJobsLeft(string[] args, string expected)
+    {
+        StoppedRunMessage.RerunCommand(CliCommand.Parse(args), immichJobsLeft: 5).Should().Be(expected);
+    }
+
+    [Fact]
+    public void TheJobsLeftAreTheImmichJobsARerunWouldPickUp()
+    {
+        JobRecord Job(JobStatus status, JobStatus? resume = null, JobSourceKind kind = JobSourceKind.Immich) => new() { Status = status, ResumeStatus = resume, SourceKind = kind };
+
+        StoppedRunMessage.CountImmichJobsLeft(
+        [
+            Job(JobStatus.Queued),
+            Job(JobStatus.Interrupted, JobStatus.Encoding),
+            Job(JobStatus.Interrupted, JobStatus.Finalizing),
+            Job(JobStatus.ReadyToFinalize),
+            Job(JobStatus.Finalizing),
+            Job(JobStatus.Queued, kind: JobSourceKind.File)
+        ]).Should().Be(2);
+    }
+
     [Fact]
     public void AStoppedRemoteEncodeSaysItIsStillRunningAndBilledAndHowToContinueOrStopIt()
     {

@@ -33,7 +33,8 @@ internal static partial class CliApplication
     /// <summary>An error or a refusal, in red on a terminal. Usage text and other help are written as they are.</summary>
     private static void WriteError(string? text) => Console.Error.WriteLine(ErrorStyle.Red(text ?? string.Empty));
 
-    public static async Task<int> RunAsync(string[] args)
+    /// <param name="configureServices">Replaces services after the real ones are registered; tests use it to put fakes behind the real CLI.</param>
+    public static async Task<int> RunAsync(string[] args, Action<IServiceCollection>? configureServices = null)
     {
         try
         {
@@ -59,7 +60,7 @@ internal static partial class CliApplication
                 return (int)ExitCode.InvalidArguments;
             }
 
-            using var host = BuildHost();
+            using var host = BuildHost(configureServices);
             using var cancellationSource = new CancellationTokenSource();
             ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
             {
@@ -121,7 +122,7 @@ internal static partial class CliApplication
         }
     }
 
-    private static IHost BuildHost()
+    private static IHost BuildHost(Action<IServiceCollection>? configureServices)
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton<IConfigurationLoader, YamlConfigurationLoader>();
@@ -163,6 +164,7 @@ internal static partial class CliApplication
         builder.Services.AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
         builder.Services.AddSingleton<IInteractiveConfirmation, ConsoleInteractiveConfirmation>();
         builder.Services.AddSingleton<IManagedWorkerCleanupOrchestrator, ManagedWorkerCleanupOrchestrator>();
+        configureServices?.Invoke(builder.Services);
         return builder.Build();
     }
 
@@ -334,7 +336,7 @@ internal static partial class CliApplication
         }
         catch
         {
-            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command.ConfigurationPath, managedWork, [], interrupted: false, unexpectedFailure: true, processRoute: true, cancellationToken);
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command, managedWork, [], unreachableWorkerJob: null, unexpectedFailure: true, processRoute: true, cancellationToken);
             throw;
         }
         // A job that exists ended with an outcome line through the progress reporter. Only a failure before any job was
@@ -345,18 +347,13 @@ internal static partial class CliApplication
             else WriteError(result.Message);
         }
 
-        if (result.ExitCode != ExitCode.Success) PrintFailedJobs([ToFailedQueueJob(result.Job, result.Message)]);
-        else if (result.Job.Status == JobStatus.ReadyToFinalize) Console.WriteLine($"Next: review the output, then run 'video-optimiser finalize {result.Job.Id:N}'.");
-        await ApplyManagedWorkerDeletionPolicyAsync(
-            services,
-            configuration,
-            command.ConfigurationPath,
-            managedWork,
-            result.ExitCode == ExitCode.Success ? [] : [ToFailedQueueJob(result.Job, result.Message)],
-            result.Job.Status == JobStatus.Interrupted,
-            unexpectedFailure: false,
-            processRoute: true,
-            cancellationToken);
+        // Only an unreachable worker leaves the job Interrupted here (Ctrl+C throws). It resumes, so it is not a failed job.
+        var unreachableWorkerJob = result.Job.Status == JobStatus.Interrupted ? result.Job : null;
+        FailedQueueJob[] failedJobs = result.ExitCode == ExitCode.Success || unreachableWorkerJob is not null ? [] : [ToFailedQueueJob(result.Job, result.Message)];
+        PrintFailedJobs(failedJobs);
+        if (result.Job.Status == JobStatus.ReadyToFinalize) Console.WriteLine($"Next: review the output, then run 'video-optimiser finalize {result.Job.Id:N}'.");
+        await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command, managedWork, failedJobs, unreachableWorkerJob, unexpectedFailure: false, processRoute: true, cancellationToken);
+        if (unreachableWorkerJob is not null) await ReportUnreachableManualHostAsync(services, configuration, command, unreachableWorkerJob);
 
         return (int)result.ExitCode;
     }
@@ -440,13 +437,13 @@ internal static partial class CliApplication
         if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
         await PrintRunBannerAsync(services, configuration, command.ModeOverride, cancellationToken);
         var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, modeOverridden: command.ModeOverride is not null, cancellationToken);
-        var (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, command, preparation, (ready, skipped, failures) =>
+        var (ready, _, failures, workerUnreachable) = await ProcessPreparedJobsAsync(services, configuration, command, preparation, (ready, skipped, failures) =>
         {
             Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
             PrintFailedJobs(failures);
             if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser finalize --ready'.");
         }, cancellationToken);
-        return (int)QueueExitCode.Calculate(ready, failures.Length);
+        return (int)QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
     }
 
     /// <summary>
@@ -492,13 +489,13 @@ internal static partial class CliApplication
     /// Processes prepared jobs, creating a managed worker only when there is work for it. <paramref name="report"/> prints the
     /// outcome before the worker's deletion policy speaks, so its retention messages follow the failures they refer to.
     /// </summary>
-    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
+    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
         if (preparation.RunnableJobs.Count == 0)
         {
             report(0, 0, [.. preparation.FailedJobs]);
-            return (0, 0, [.. preparation.FailedJobs]);
+            return (0, 0, [.. preparation.FailedJobs], false);
         }
 
         var queue = services.GetRequiredService<IQueueService>();
@@ -522,18 +519,51 @@ internal static partial class CliApplication
         }
         catch
         {
-            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command.ConfigurationPath, managedWork, [], interrupted: false, unexpectedFailure: true, processRoute: false, cancellationToken);
+            await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command, managedWork, [], unreachableWorkerJob: null, unexpectedFailure: true, processRoute: false, cancellationToken);
             throw;
         }
 
         var failures = preparation.FailedJobs.Concat(result.FailedJobs).ToArray();
+        if (result.UnreachableWorkerJob is not null)
+        {
+            Console.WriteLine();
+            Console.WriteLine(UnreachableWorkerMessage.Stopped(await WorkerNameAsync(services, configuration.Settings), result.NotStarted + 1));
+        }
         report(result.ReadyToFinalize, result.SkippedJobs.Count, failures);
-        await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command.ConfigurationPath, managedWork, failures, result.Interrupted, unexpectedFailure: false, processRoute: false, cancellationToken);
-        if (!managedWork && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
+        await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command, managedWork, failures, result.UnreachableWorkerJob, unexpectedFailure: false, processRoute: false, cancellationToken);
+        if (result.UnreachableWorkerJob is not null)
+        {
+            await ReportUnreachableManualHostAsync(services, configuration, command, result.UnreachableWorkerJob);
+        }
+        else if (!managedWork && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the server; powering it off still bills.");
         }
-        return (result.ReadyToFinalize, result.SkippedJobs.Count, failures);
+        return (result.ReadyToFinalize, result.SkippedJobs.Count, failures, result.UnreachableWorkerJob is not null);
+    }
+
+    /// <summary>U3m (VOPT-69): a manual host that stopped answering is neither billed nor deleted by this tool, so the user hears only how to resume.</summary>
+    private static async Task ReportUnreachableManualHostAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, JobRecord unreachableWorkerJob)
+    {
+        if (services.GetRequiredService<IRemoteWorkerLifecycle>().IsManaged(configuration.Settings)) return;
+        Console.WriteLine();
+        foreach (var line in UnreachableWorkerMessage.Lines(unreachableWorkerJob, managed: false, command, await ImmichJobsLeftAsync(services, configuration, command))) Console.WriteLine(line);
+    }
+
+    /// <summary>The managed server's name, or the SSH host of a manual one. Read without the run's token, which may be cancelled.</summary>
+    private static async Task<string> WorkerNameAsync(IServiceProvider services, AppSettings settings)
+    {
+        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
+        // Not the settings host for a managed worker: connecting replaced it with the server's IP address.
+        var managedName = lifecycle.IsManaged(settings) ? (await lifecycle.ReadRecordedAsync(settings.Database.Path, CancellationToken.None))?.Name : null;
+        return managedName ?? settings.Processing.RemoteSsh.Host;
+    }
+
+    /// <summary>For an <c>immich run</c> the user limited, <see cref="StoppedRunMessage.CountImmichJobsLeft"/>; null otherwise.</summary>
+    private static async Task<int?> ImmichJobsLeftAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command)
+    {
+        if (command.Kind != CliCommandKind.ImmichRun || command.Limit is null) return null;
+        return StoppedRunMessage.CountImmichJobsLeft(await services.GetRequiredService<IJobRepository>().ListAsync(configuration.Settings.Database.Path, terminal: false, CancellationToken.None));
     }
 
     private static FailedQueueJob ToFailedQueueJob(JobRecord job, string message) => new(job.Id, job.SourcePath, job.FailureCategory ?? "ProcessingFailed", job.FailureMessage ?? message);
@@ -572,22 +602,24 @@ internal static partial class CliApplication
     {
         var settings = configuration.Settings;
         if (!settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase)) return;
-        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        var managed = lifecycle.IsManaged(settings);
-        var worker = managed ? (await lifecycle.ReadRecordedAsync(settings.Database.Path, CancellationToken.None))?.Name : settings.Processing.RemoteSsh.Host;
+        var managed = services.GetRequiredService<IRemoteWorkerLifecycle>().IsManaged(settings);
+        var worker = await WorkerNameAsync(services, settings);
         if (string.IsNullOrEmpty(worker)) return;
         // Sets the message apart from the job's block, and ends a creation prompt that Ctrl+C left open.
         Console.WriteLine();
-        foreach (var line in StoppedRunMessage.Lines(exception as JobInterruptedException, worker, managed, command)) Console.WriteLine(line);
+        foreach (var line in StoppedRunMessage.Lines(exception as JobInterruptedException, worker, managed, command, await ImmichJobsLeftAsync(services, configuration, command))) Console.WriteLine(line);
     }
 
-    /// <param name="explicitConfigPath">The <c>--config</c> argument as typed, or null. Only then does the command the user is told to run need it: otherwise the worker's settings are found the same way without it.</param>
-    private static async Task ApplyManagedWorkerDeletionPolicyAsync(IServiceProvider services, LoadedConfiguration configuration, string? explicitConfigPath, bool workerWasUsed, FailedQueueJob[] failedJobs, bool interrupted, bool unexpectedFailure, bool processRoute, CancellationToken cancellationToken)
+    /// <param name="command">The command the user ran; the commands it prints keep its <c>--config</c> only when that was typed, since otherwise the worker's settings are found the same way without it.</param>
+    /// <param name="unreachableWorkerJob">The job a worker that stopped answering left interrupted, or null.</param>
+    private static async Task ApplyManagedWorkerDeletionPolicyAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, bool workerWasUsed, FailedQueueJob[] failedJobs, JobRecord? unreachableWorkerJob, bool unexpectedFailure, bool processRoute, CancellationToken cancellationToken)
     {
+        var interrupted = unreachableWorkerJob is not null;
         var decision = ManagedWorkerDeletionPolicy.Decide(workerWasUsed, configuration.Settings.Processing.RemoteSsh.Hetzner.DeleteAfterRun, failedJobs.Length > 0, interrupted, unexpectedFailure);
         if (decision == ManagedWorkerDeletionDecision.RetainInterrupted)
         {
-            Console.WriteLine("Managed Hetzner worker retained so interrupted jobs can resume.");
+            Console.WriteLine();
+            foreach (var line in UnreachableWorkerMessage.Lines(unreachableWorkerJob!, managed: true, command, await ImmichJobsLeftAsync(services, configuration, command))) Console.WriteLine(line);
         }
         else if (decision == ManagedWorkerDeletionDecision.RetainAfterUnexpectedFailure)
         {
@@ -597,7 +629,7 @@ internal static partial class CliApplication
         {
             Console.WriteLine();
             Console.WriteLine("Managed Hetzner worker retained so the failed job can be inspected or retried.");
-            Console.WriteLine($"Delete it when finished: video-optimiser worker delete{(explicitConfigPath is null ? string.Empty : $" --config \"{explicitConfigPath}\"")}");
+            Console.WriteLine($"Delete it when finished: {StoppedRunMessage.DeleteCommand(command)}");
         }
         var cleanup = services.GetRequiredService<IManagedWorkerCleanupOrchestrator>();
         var progress = new InlineProgress<string>(Console.WriteLine);

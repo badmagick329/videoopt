@@ -103,7 +103,7 @@ The upload and download lines appear only on a remote worker. When `savings.mini
 | `Not worth converting: …` | `Skipped` |
 | `Failed validation: …` | `Failed`, `ValidationFailed` |
 | `Failed during the upload`, `the CRF search`, `encoding` or `the download: …`, then `Full log: <path>` | `Failed`; the full ab-av1 log stays at that path |
-| `Worker unreachable: … Run the same command again to resume.` | `Interrupted` |
+| `Worker unreachable: …` | `Interrupted`, `RemoteUnavailable`. The run stops there: `queue run` and `immich run` print `Stopped: the worker <name> can't be reached, so <N> videos were not converted.`, and the jobs after it stay `Queued`. Then `To resume: <command>`; with a Hetzner worker also that it stays up, billed hourly, and `To delete it instead: video-optimiser worker delete` |
 
 **Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints a progress line about every 15 seconds and states its expected length when it starts; its progress lines add `about <time> left` only after 30 seconds and 5 percentage points, so early lines without it are normal. A running job that prints nothing new for 15 minutes is stuck: report it with the job's last lines and `status --json`.
 
@@ -127,7 +127,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | --- | --- | --- |
 | A `Skipped <file>: started on ...` line | The job started in the other mode, and `--local` or `--remote` chose this one | Nothing is lost. Run the command without the flag to resume it; a remote resume is gated as paid encoding. |
 | `Interrupted` | Stopped by `Ctrl+C`, a crash or a lost connection. A remote CRF search or encode keeps running on the worker | Run the same command again (`queue run`, `immich run` or `process`). It resumes, following a remote stage that is still running or using its result. |
-| `RemoteUnavailable` | The remote worker could not be reached | Run the command again. A Hetzner worker is kept for the resume. |
+| `RemoteUnavailable` | The remote worker could not be reached; the run stopped at this job | Run the `To resume:` command it printed; for a limited `immich run` it names `--limit` with the number of jobs left, not the number typed. A Hetzner worker is kept for the resume, billed hourly; deleting it is gated. |
 | `Skipped`, `NotWorthConverting` | No CRF met both `quality.minimumVmaf` and the video's size cap: the stricter of `quality.maxEncodedPercent` and `savings.minimumBytesSaved`. A video too small to save `savings.minimumBytesSaved` is skipped before its CRF search, with nothing uploaded. A normal outcome, not a failure | Report `failureMessage`. It names the setting that ruled the video out and the best CRF found, or, when even `quality.crfSearch.minCrf` missed the VMAF, that CRF's score. Discovery checks the video again once the file, those quality settings or `savings.minimumBytesSaved` change. |
 | `ValidationFailed` | The AV1 failed a check, such as saving less than `savings.minimumBytesSaved` when the encode came out larger than the search predicted | Report it. The original stays as it is, and discovery won't queue it again until the file changes. |
 | `StagingFailed`, `CrfSearchFailed`, `EncodeFailed`, `DownloadFailed`, `ProcessingFailed` | A processing step failed | Report `failureMessage`. Run `queue retry <id>` only if the user asks, once the cause is fixed. |

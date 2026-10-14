@@ -12,10 +12,11 @@ internal static class StoppedRunMessage
     /// <param name="interrupted">The job Ctrl+C stopped, or null when it came between jobs or before the first one.</param>
     /// <param name="worker">The managed server's name, or the SSH host of a manual one.</param>
     /// <param name="managed">A manual host is not billed or deleted by this tool, so it gets only the lines that hold for it.</param>
-    public static IReadOnlyList<string> Lines(JobInterruptedException? interrupted, string worker, bool managed, CliCommand command)
+    /// <param name="immichJobsLeft">See <see cref="RerunCommand"/>.</param>
+    public static IReadOnlyList<string> Lines(JobInterruptedException? interrupted, string worker, bool managed, CliCommand command, int? immichJobsLeft = null)
     {
-        var rerun = $"video-optimiser {RerunCommand(command)}";
-        var delete = $"video-optimiser worker delete{ConfigArgument(command)}";
+        var rerun = $"video-optimiser {RerunCommand(command, immichJobsLeft)}";
+        var delete = DeleteCommand(command);
         var stillRunning = interrupted is { Remote: true, Stage: JobStatus.CrfSearching or JobStatus.Encoding }
             ? $"{(interrupted.Stage == JobStatus.Encoding ? "The encode" : "The CRF search")} of {Path.GetFileName(interrupted.Job.SourcePath)} is still running on the worker {worker}."
             : null;
@@ -41,18 +42,34 @@ internal static class StoppedRunMessage
     }
 
     /// <summary>The command the user ran, with the flags that change what it does; <c>--config</c> only when it was typed.</summary>
-    public static string RerunCommand(CliCommand command)
+    /// <param name="immichJobsLeft">
+    /// The Immich jobs a rerun would pick up (queued, or interrupted outside finalisation). <c>immich run --limit N</c> tops the
+    /// open jobs up to N, so rerunning with the N the user typed would download new videos on top of the ones left; a typed
+    /// <c>--limit</c> or <c>--first</c> becomes <c>--limit</c> with this count instead (VOPT-69). Null or 0 keeps the typed flag.
+    /// </param>
+    public static string RerunCommand(CliCommand command, int? immichJobsLeft = null)
     {
         var verb = command.Kind switch
         {
             CliCommandKind.Process => $"process \"{command.ProcessPath}\"{(command.Force ? " --force" : string.Empty)}",
             CliCommandKind.QueueRun => "queue run",
+            CliCommandKind.ImmichRun when command.Limit is not null && immichJobsLeft > 0 => $"immich run --limit {immichJobsLeft}",
             // --first is parsed as --limit 1, so the flag the user typed is checked first.
             CliCommandKind.ImmichRun => $"immich run{(command.First ? " --first" : command.Limit is { } limit ? $" --limit {limit}" : string.Empty)}",
             _ => throw new ArgumentOutOfRangeException(nameof(command), command.Kind, "Only processing commands can be stopped mid-run.")
         };
         return $"{verb}{(command.ModeOverride is null ? string.Empty : $" {command.ModeOverride.Flag}")}{ConfigArgument(command)}";
     }
+
+    /// <summary>
+    /// The Immich jobs a rerun would pick up: queued, or interrupted outside finalisation, the set restaging and the limit
+    /// count. Not every open Immich job: ready and finalising ones would inflate the limit, and the rerun would download that
+    /// many new videos.
+    /// </summary>
+    public static int CountImmichJobsLeft(IEnumerable<JobRecord> openJobs) =>
+        openJobs.Count(job => job.SourceKind == JobSourceKind.Immich && job.Status is JobStatus.Queued or JobStatus.Interrupted && job.ResumeStatus != JobStatus.Finalizing);
+
+    public static string DeleteCommand(CliCommand command) => $"video-optimiser worker delete{ConfigArgument(command)}";
 
     private static string ConfigArgument(CliCommand command) =>
         command.ConfigurationPath is null ? string.Empty : $" --config \"{command.ConfigurationPath}\"";

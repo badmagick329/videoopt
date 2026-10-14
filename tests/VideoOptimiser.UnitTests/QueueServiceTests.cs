@@ -279,7 +279,50 @@ public sealed class QueueServiceTests : IDisposable
             JobProgress.Step("processed gone.mp4"));
     }
 
+    /// <summary>
+    /// Every later job would retry the dead worker and fail the same way, so the run stops at the first unreachable result.
+    /// That job resumes, so it is not a failure, but the exit code counts it as one, as before (VOPT-69).
+    /// </summary>
+    [Theory]
+    [InlineData(0, 2, ExitCode.ProcessingFailure)]
+    [InlineData(1, 1, ExitCode.PartialSuccess)]
+    public async Task RunAsyncStopsAtTheFirstJobWhoseWorkerCannotBeReached(int readyBefore, int notStarted, ExitCode exitCode)
+    {
+        var jobs = Enumerable.Range(1, 3).Select(index => new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, $"{index}.mp4"), Status = JobStatus.Queued }).ToArray();
+        var processor = new UnreachableAfterProcessor(readyBefore);
+        var queue = new QueueService(new FixedScanner(), new SqliteJobRepository(new SqliteDatabaseInitializer()), new FileFingerprintService(), processor);
+
+        var result = await queue.RunAsync(Path.Combine(_directory, "jobs.db"), new AppSettings(), jobs);
+
+        processor.Calls.Should().Be(readyBefore + 1);
+        result.UnreachableWorkerJob!.SourcePath.Should().Be(jobs[readyBefore].SourcePath);
+        result.NotStarted.Should().Be(notStarted);
+        result.FailedJobs.Should().BeEmpty();
+        result.ReadyToFinalize.Should().Be(readyBefore);
+        result.ExitCode.Should().Be(exitCode);
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    /// <summary>Makes the first <paramref name="readyBefore"/> jobs ready, then reports every job after as interrupted by an unreachable worker.</summary>
+    private sealed class UnreachableAfterProcessor(int readyBefore) : IJobProcessor
+    {
+        public int Calls { get; private set; }
+
+        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = sourcePath };
+            if (Calls++ < readyBefore)
+            {
+                job.Status = JobStatus.ReadyToFinalize;
+                return Task.FromResult(new JobProcessingResult(job, ExitCode.Success, "ready"));
+            }
+            job.Status = JobStatus.Interrupted;
+            job.ResumeStatus = JobStatus.Staging;
+            job.FailureCategory = JobProcessor.RemoteUnavailableCategory;
+            return Task.FromResult(new JobProcessingResult(job, ExitCode.ProcessingFailure, "SSH connection failed"));
+        }
+    }
 
     /// <summary>An eligible item as the real scanner gives it: with the probe it was judged on and the file's size.</summary>
     private static ScanItem Eligible(string path) => new(path, ScanItemStatus.Eligible, "Eligible", 6, ScannedMedia);

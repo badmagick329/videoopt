@@ -183,14 +183,20 @@ public sealed record SkippedQueueJob(Guid Id, string SourcePath, string Message)
 /// <see cref="JobCompatibility.IsBoundToOtherMode"/>. They are neither runnable nor failed.</param>
 public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs);
 
-public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<SkippedQueueJob> SkippedJobs, bool Interrupted, ExitCode ExitCode)
+/// <param name="UnreachableWorkerJob">The job the run stopped at because the worker could not be reached, or null. Every later
+/// job would fail the same way, so the run ends there (VOPT-69). The job is <see cref="JobStatus.Interrupted"/> and resumes from
+/// its stage, so it is not in <paramref name="FailedJobs"/>.</param>
+/// <param name="NotStarted">The jobs after <paramref name="UnreachableWorkerJob"/> that the run never started; they stay queued.</param>
+public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<SkippedQueueJob> SkippedJobs, JobRecord? UnreachableWorkerJob, int NotStarted, ExitCode ExitCode)
 {
     public int Failed => FailedJobs.Count;
 }
 
 public static class QueueExitCode
 {
-    public static ExitCode Calculate(int readyToFinalize, int failures) => failures == 0
+    /// <param name="workerUnreachable">Counts as one failure, so a run the worker stopped exits as it did when that job was
+    /// listed among the failures.</param>
+    public static ExitCode Calculate(int readyToFinalize, int failures, bool workerUnreachable = false) => failures == 0 && !workerUnreachable
         ? ExitCode.Success
         : readyToFinalize > 0 ? ExitCode.PartialSuccess : ExitCode.ProcessingFailure;
 }

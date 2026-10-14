@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Cli;
 
 namespace VideoOptimiser.UnitTests;
@@ -10,7 +11,10 @@ internal static class ConsoleCapture
 {
     public const string Collection = "Console capture";
 
-    public static async Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(params string[] args)
+    public static Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(params string[] args) => RunCliAsync(null, args);
+
+    /// <param name="configureServices">Replaces real services with fakes; see <see cref="CliApplication.RunAsync"/>.</param>
+    public static async Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(Action<IServiceCollection>? configureServices, params string[] args)
     {
         var originalError = Console.Error;
         var originalOut = Console.Out;
@@ -20,7 +24,7 @@ internal static class ConsoleCapture
         Console.SetOut(output);
         try
         {
-            var code = await CliApplication.RunAsync(args);
+            var code = await CliApplication.RunAsync(args, configureServices);
             return (code, output.ToString(), error.ToString());
         }
         finally

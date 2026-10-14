@@ -54,9 +54,10 @@ internal static partial class CliApplication
 
         int ready;
         FailedQueueJob[] failures;
+        bool workerUnreachable;
         try
         {
-            (ready, _, failures) = await ProcessPreparedJobsAsync(services, configuration, command, preparation.Queue, (ready, skipped, failures) =>
+            (ready, _, failures, workerUnreachable) = await ProcessPreparedJobsAsync(services, configuration, command, preparation.Queue, (ready, skipped, failures) =>
             {
                 Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
                 PrintFailedJobs(failures);
@@ -71,7 +72,7 @@ internal static partial class CliApplication
             throw;
         }
 
-        var exitCode = QueueExitCode.Calculate(ready, failures.Length);
+        var exitCode = QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
         // Guard hits are the guard working; its issues, discovery issues and exclusions each need the user to look.
         if (exitCode == ExitCode.Success && (guard.Issues.Count > 0 || discovery.Issues > 0 || discovery.Excluded > 0)) exitCode = ExitCode.PartialSuccess;
         return (int)exitCode;

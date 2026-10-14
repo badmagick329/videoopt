@@ -17,6 +17,9 @@ public sealed class JobProcessor(
     IOutputManifestStore manifests,
     IOutputValidationService validator) : IJobProcessor
 {
+    /// <summary>An <see cref="JobStatus.Interrupted"/> job whose worker stopped answering; it resumes from its stage.</summary>
+    public const string RemoteUnavailableCategory = "RemoteUnavailable";
+
     public async Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var path = Path.GetFullPath(sourcePath);
@@ -233,10 +236,11 @@ public sealed class JobProcessor(
         {
             job.ResumeStatus = ResumePoint(job.Status, resumeStatus);
             job.Status = JobStatus.Interrupted;
-            job.FailureCategory = "RemoteUnavailable";
+            job.FailureCategory = RemoteUnavailableCategory;
             job.FailureMessage = exception.Message;
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
-            progress?.Report(JobProgress.Outcome(JobTone.Failure, $"Worker unreachable: {exception.Message.TrimEnd('.')}. Run the same command again to resume."));
+            // How to resume comes once, from the command, after the run stops: it depends on the worker kind and the command.
+            progress?.Report(JobProgress.Outcome(JobTone.Failure, $"Worker unreachable: {exception.Message.TrimEnd('.')}."));
             return new JobProcessingResult(job, ExitCode.ProcessingFailure, exception.Message);
         }
         catch (Exception exception)
