@@ -14,6 +14,7 @@ namespace VideoOptimiser.UnitTests;
 /// A fake ffprobe stands in for the real one: it prints a valid H.264 probe for any path, and fails with
 /// ffprobe's own "moov atom not found" for a path containing "truncated". Windows-only, like the tool itself.
 /// </summary>
+[Collection(ConsoleCapture.Collection)]
 public sealed class ProbeFailureReportingTests : IDisposable
 {
     private const string MoovAtomMessage = "[mov,mp4,m4a,3gp,3g2,mj2 @ 000001] moov atom not found";
@@ -53,7 +54,7 @@ public sealed class ProbeFailureReportingTests : IDisposable
     {
         var (jobId, config, repository, databasePath) = await ArrangeJobAsync(source: "movie.mp4", output: "movie.truncated.mp4");
 
-        var (exitCode, stderr) = await RunCliAsync("validate", jobId.ToString("N"), "--config", config);
+        var (exitCode, _, stderr) = await ConsoleCapture.RunCliAsync("validate", jobId.ToString("N"), "--config", config);
 
         exitCode.Should().Be((int)ExitCode.ValidationFailure);
         stderr.Should().NotContain("Configuration could not be read");
@@ -71,7 +72,7 @@ public sealed class ProbeFailureReportingTests : IDisposable
     {
         var (jobId, config, _, _) = await ArrangeJobAsync(source: "movie.truncated.mp4", output: "movie.mp4");
 
-        var (exitCode, stderr) = await RunCliAsync("validate", jobId.ToString("N"), "--config", config);
+        var (exitCode, _, stderr) = await ConsoleCapture.RunCliAsync("validate", jobId.ToString("N"), "--config", config);
 
         exitCode.Should().Be((int)ExitCode.ProcessingFailure);
         stderr.Should().NotContain("Configuration could not be read").And.Contain("movie.truncated.mp4").And.Contain("moov atom not found");
@@ -83,7 +84,7 @@ public sealed class ProbeFailureReportingTests : IDisposable
         var config = Path.Combine(_directory, "bad.yaml");
         await File.WriteAllTextAsync(config, "tools:\n  ffprobePath: [unterminated\n");
 
-        var (exitCode, stderr) = await RunCliAsync("validate", Guid.NewGuid().ToString("N"), "--config", config);
+        var (exitCode, _, stderr) = await ConsoleCapture.RunCliAsync("validate", Guid.NewGuid().ToString("N"), "--config", config);
 
         exitCode.Should().Be((int)ExitCode.InvalidConfiguration);
         stderr.Should().Contain("Configuration could not be read");
@@ -110,25 +111,6 @@ public sealed class ProbeFailureReportingTests : IDisposable
         });
         await new OutputManifestStore().SaveAsync(new OutputManifest { SourcePath = sourcePath, OutputPath = outputPath });
         return (job.Id, config, repository, databasePath);
-    }
-
-    // Console streams are process-wide, so this briefly captures them for the whole test run. Nothing else asserts on them.
-    private static async Task<(int ExitCode, string Stderr)> RunCliAsync(params string[] args)
-    {
-        var originalError = Console.Error;
-        var originalOut = Console.Out;
-        using var error = new StringWriter();
-        Console.SetError(error);
-        Console.SetOut(TextWriter.Null);
-        try
-        {
-            return (await CliApplication.RunAsync(args), error.ToString());
-        }
-        finally
-        {
-            Console.SetError(originalError);
-            Console.SetOut(originalOut);
-        }
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);

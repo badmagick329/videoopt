@@ -139,7 +139,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 
 **Failed, cancelled or skipped jobs** stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` queues one again; run it only at the user's request.
 
-**Retained Hetzner worker.** After a remote run with any failed or interrupted job (a skipped one does not count), the server stays up so the work can resume, and it keeps billing. After `Ctrl+C` or a killed command, a CRF search or encode keeps running on it too: the rerun picks it up. With `deleteAfterRun: false` it stays after every run. `worker status` shows it. Tell the user; deleting it is gated, because outputs not yet downloaded are lost with it.
+**Retained Hetzner worker.** After a remote run with any failed or interrupted job (a skipped one does not count), the server stays up so the work can resume, and it keeps billing. After `Ctrl+C` or a killed command, a CRF search or encode keeps running on it too: the rerun picks it up. With `deleteAfterRun: false` it stays after every run. `worker status` shows it, whatever `processing.mode` says. Tell the user; deleting it is gated, because outputs not yet downloaded are lost with it.
 
 ## Reference
 
@@ -150,7 +150,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `0` | Success, or a confirmation answered "no" |
 | `1` | General failure, including a `doctor` failure outside configuration and dependencies, and `calibrate` on a database an older version wrote |
 | `2` | Invalid arguments, including an invalid job ID, or `queue retry` on a job it cannot retry (not found, not failed, cancelled or skipped, or the original already has an open job) |
-| `3` | Invalid configuration, or an Immich API key that is missing, rejected or lacks a permission |
+| `3` | Invalid configuration, including `worker create` or `worker delete` without `remoteSsh.lifecycle: "hetzner"`, or an Immich API key that is missing, rejected or lacks a permission |
 | `4` | A failed dependency check in `doctor`: a media tool, the Immich server (unreachable, not Immich 3, its key, or its trash off) or the Hetzner API. Also `remote setup` when it cannot run `ssh-keygen` or list or upload the Hetzner key |
 | `5` | `process` on a file the rules exclude; add `--force` to convert it anyway |
 | `6` | Processing failed and nothing is ready, including a `process` whose job failed or whose file is missing; an Immich request failed; ffprobe could not read a file; Hetzner had no server capacity; or `validate` or `finalize <job-id>` named a job that does not exist |

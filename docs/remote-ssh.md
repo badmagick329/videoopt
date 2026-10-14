@@ -221,6 +221,8 @@ Inspect or remove a retained worker with:
 
 The delete command verifies the exact server ID and ownership labels. It refuses ambiguous or unowned resources.
 
+The `worker` commands follow `lifecycle` alone, so they still work after you set `mode` back to `"local"`, and they take no `--local` or `--remote`. With any other `lifecycle`, `worker create` and `worker delete` exit `3` and `worker status` exits `0`; each names the setting and its current value.
+
 ## Failed jobs and retained workers
 
 Before creating a managed worker, `queue run` checks each queued or resumable job against the current processing mode, remote identity, and deterministic workspace. A never-started queued job adopts the current configuration. A partially processed or interrupted job with a different configuration fails before provisioning. Under `--local` or `--remote`, which set the mode for one run, a job started in the other mode is skipped instead and printed as `Skipped <file>: started on ...`; the next run without the flag resumes it.

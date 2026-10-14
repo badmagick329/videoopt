@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+
+- `worker create`, `worker status` and `worker delete` work when `processing.mode` is `"local"`, as long as `remoteSsh.lifecycle` is `"hetzner"`. Before, a server left billing after switching back to local could not be deleted without editing the config. With another lifecycle, the message names the setting, the config file and the current value: `'worker delete' needs processing.remoteSsh.lifecycle set to "hetzner" in <config>; it is "manual".` An empty `lifecycle:` no longer crashes these commands.
 
 ## [0.7.1] - 2026-10-13
 ### Changed
