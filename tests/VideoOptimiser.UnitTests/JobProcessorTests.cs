@@ -379,6 +379,45 @@ public sealed class JobProcessorTests : IDisposable
         result.Job.Attempt.Should().Be(1);
     }
 
+    /// <summary>
+    /// The night case (UX redesign, assumption 1): a managed server is deleted with a job stopped on it, and the next run
+    /// creates another at a new address with an empty disk. The job must resume there rather than fail as a changed
+    /// configuration, keep its CRF, and upload and encode again, since the old workspace went with the old server.
+    /// </summary>
+    [Theory]
+    [InlineData(CancellationStage.Encoding)]
+    [InlineData(CancellationStage.Downloading)]
+    public async Task AJobStoppedOnADeletedManagedServerFinishesOnANewOneWithoutSearchingAgain(CancellationStage stoppedIn)
+    {
+        var source = Path.Combine(_directory, "swap.mp4");
+        await File.WriteAllTextAsync(source, "original video data");
+        var databasePath = Path.Combine(_directory, "swap.db");
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        AppSettings Settings(WorkerServer server) => new()
+        {
+            Database = new DatabaseSettings { Path = databasePath },
+            Savings = new SavingsSettings { MinimumBytesSaved = "0B" },
+            Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory }] },
+            Eligibility = Rules(),
+            // The address is what the Hetzner lifecycle writes into the settings for the server it ensured.
+            Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Lifecycle = RemoteLifecycleModes.Hetzner, Host = server.Address, WorkingDirectory = "/var/tmp/video-optimiser" } }
+        };
+        JobProcessor Processor(WorkerServer server, CancellationStage stopIn) => new(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new ServerSession(server, stopIn)), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        var deleted = new WorkerServer("203.0.113.10");
+        var created = new WorkerServer("203.0.113.20");
+
+        var stopped = async () => await Processor(deleted, stoppedIn).ProcessAsync(databasePath, source, Settings(deleted), force: false);
+        await stopped.Should().ThrowAsync<JobInterruptedException>();
+        var result = await Processor(created, CancellationStage.None).ProcessAsync(databasePath, source, Settings(created), force: false);
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize);
+        result.Job.Crf.Should().Be(42);
+        result.Job.RemoteHost.Should().Be(RemoteExecutionIdentity.ManagedHetzner);
+        created.Searches.Should().Be(0);
+        created.Uploads.Should().Be(1);
+        created.EncodedAttempts.Should().Equal(1);
+    }
+
     [Theory]
     [InlineData(JobStatus.Staging, JobStatus.Encoding, JobStatus.Encoding)]
     [InlineData(JobStatus.Queued, null, JobStatus.Queued)]
@@ -925,6 +964,58 @@ public sealed class JobProcessorTests : IDisposable
         public async Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default)
         {
             if (cancellationStage == CancellationStage.Downloading) throw new OperationCanceledException();
+            await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
+        }
+
+        public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>One server's disk: what was uploaded to it and what it encoded. A new server starts empty.</summary>
+    private sealed class WorkerServer(string address)
+    {
+        public string Address { get; } = address;
+        public int Uploads { get; set; }
+        public int Searches { get; set; }
+        public List<int> EncodedAttempts { get; } = [];
+    }
+
+    /// <summary>
+    /// A session on one <see cref="WorkerServer"/>. Each stage needs what the one before left on that server's disk, as
+    /// ab-av1 needs the uploaded source and the download needs the encoded output, and it stops with Ctrl+C in the given stage.
+    /// </summary>
+    private sealed class ServerSession(WorkerServer server, CancellationStage stopIn) : IProcessingSession
+    {
+        public bool IsRemote => true;
+        public string ExecutionMode => "remoteSsh";
+        public string? RemoteHost => server.Address;
+        public string? RemoteWorkspace => null;
+
+        public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default)
+        {
+            server.Uploads++;
+            return Task.CompletedTask;
+        }
+
+        public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            if (server.Uploads == 0) throw new InvalidOperationException("No source on this server.");
+            server.Searches++;
+            return Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
+        }
+
+        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            if (server.Uploads == 0) throw new InvalidOperationException("No source on this server.");
+            if (stopIn == CancellationStage.Encoding) throw new OperationCanceledException();
+            server.EncodedAttempts.Add(attempt);
+            return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));
+        }
+
+        public async Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default)
+        {
+            if (!server.EncodedAttempts.Contains(attempt)) throw new InvalidOperationException($"No output of attempt {attempt} on this server.");
+            if (stopIn == CancellationStage.Downloading) throw new OperationCanceledException();
             await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
         }
 
