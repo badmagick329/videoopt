@@ -25,6 +25,15 @@ public sealed class RemoteSshProcessingSessionTests
         arguments.Should().Contain("StrictHostKeyChecking=yes");
     }
 
+    /// <summary>Every ssh and sftp call goes through Build, so this is what stops a dead worker hanging the run.</summary>
+    [Fact]
+    public void ConnectionArgumentsDetectADeadConnectionWithinAboutAMinute()
+    {
+        var arguments = OpenSshConnectionArguments.Build(new RemoteSshSettings());
+
+        arguments.Should().ContainInOrder("-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4");
+    }
+
     [Theory]
     [InlineData(false, "StrictHostKeyChecking=yes")]
     [InlineData(true, "StrictHostKeyChecking=accept-new")]

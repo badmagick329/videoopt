@@ -4,6 +4,7 @@
 ### Fixed
 
 - `worker create`, `worker status` and `worker delete` work when `processing.mode` is `"local"`, as long as `remoteSsh.lifecycle` is `"hetzner"`. Before, a server left billing after switching back to local could not be deleted without editing the config. With another lifecycle, the message names the setting, the config file and the current value: `'worker delete' needs processing.remoteSsh.lifecycle set to "hetzner" in <config>; it is "manual".` An empty `lifecycle:` no longer crashes these commands.
+- A remote run no longer hangs when the worker stops answering mid-command. Every SSH and SFTP connection now sends OpenSSH keepalives (`ServerAliveInterval=15`, `ServerAliveCountMax=4`), so a dead connection ends within about a minute and takes the normal retry. A live transfer is never cut off.
 
 ## [0.7.1] - 2026-10-13
 ### Changed

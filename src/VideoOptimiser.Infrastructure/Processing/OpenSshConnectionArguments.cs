@@ -13,7 +13,12 @@ internal static class OpenSshConnectionArguments
         var arguments = new List<string>
         {
             "-o", "BatchMode=yes",
-            "-o", $"ConnectTimeout={connectTimeoutSeconds}"
+            "-o", $"ConnectTimeout={connectTimeoutSeconds}",
+            // ConnectTimeout covers only the handshake. Without keepalives, a worker that vanishes mid-session leaves ssh or
+            // sftp waiting forever (VOPT-55); with them a dead link exits 255 within about a minute and takes the normal
+            // retry. They probe only after 15 s with nothing received, so a long live transfer is never cut off.
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=4"
         };
         var user = userOverride ?? settings.User;
         if (!string.IsNullOrWhiteSpace(user))
