@@ -754,7 +754,18 @@ internal static partial class CliApplication
         if (!Guid.TryParse(jobId, out var id)) { WriteError("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
         var repository = services.GetRequiredService<IJobRepository>();
         var job = await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken);
-        if (job?.OutputPath is null) { WriteError("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
+        if (job is null) { WriteError("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
+        // F7 (VOPT-60). A finished job's manifest must not be rewritten, and a failed one cannot become ready again.
+        if (!(job.Status is JobStatus.ReadyToFinalize or JobStatus.Validating || job is { Status: JobStatus.Interrupted, ResumeStatus: JobStatus.Validating }))
+        {
+            WriteError($"validate re-checks a job that is ready to finalise; {job.Id:N} is {job.Status}.");
+            return (int)ExitCode.ProcessingFailure;
+        }
+        if (job.OutputPath is null) { WriteError("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
+        // Validation would fail the job, and cleanup then deletes an AV1 that may be the only copy, so a missing file is
+        // reported and the job left as it is.
+        var missing = !File.Exists(job.SourcePath) ? FinalizationService.OriginalMissing(job) : !File.Exists(job.OutputPath) ? FinalizationService.Av1Missing(job) : null;
+        if (missing is not null) { WriteError(missing); return (int)ExitCode.ProcessingFailure; }
         var store = services.GetRequiredService<IOutputManifestStore>();
         var manifest = await store.LoadAsync(job.OutputPath, cancellationToken);
         manifest.Validation = await services.GetRequiredService<IOutputValidationService>().ValidateAsync(manifest, configuration.Settings, cancellationToken);
@@ -764,7 +775,9 @@ internal static partial class CliApplication
         job.OutputSizeBytes = manifest.Validation.OutputSizeBytes;
         job.PercentageSaved = manifest.Validation.PercentageSaved;
         job.Status = manifest.Validation.Passed ? JobStatus.ReadyToFinalize : JobStatus.Failed;
-        if (!manifest.Validation.Passed) { job.FailureCategory = "ValidationFailed"; job.FailureMessage = string.Join("; ", manifest.Validation.Failures); job.CompletedUtc = DateTimeOffset.UtcNow; }
+        job.ResumeStatus = null;
+        if (manifest.Validation.Passed) { job.FailureCategory = null; job.FailureMessage = null; }
+        else { job.FailureCategory = "ValidationFailed"; job.FailureMessage = string.Join("; ", manifest.Validation.Failures); job.CompletedUtc = DateTimeOffset.UtcNow; }
         await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
         Console.WriteLine(manifest.Validation.Passed ? $"Validation passed: saved {manifest.Validation.PercentageSaved:F1}%" : "Validation failed: " + string.Join("; ", manifest.Validation.Failures));
         return manifest.Validation.Passed ? (int)ExitCode.Success : (int)ExitCode.ValidationFailure;

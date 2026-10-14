@@ -102,6 +102,13 @@ It lists each ready video with its capture date, so you can find it in Immich, p
 
 If it stops partway, run it again: it continues where it left off. Until step 3, the original is untouched.
 
+A video that cannot be finalised yet stays ready, and the others carry on. The message says what to do:
+
+- **Immich can't find the original.** It was deleted for good or moved to the Locked Folder; Immich gives the same answer for both. Move it out of the Locked Folder and run `immich finalize` again. If it was deleted, the message names the copy that is left, either the download in the staging directory or the AV1 already uploaded. Keep that copy before you `queue cancel` the job, because `cleanup` deletes a cancelled job's download.
+- **The original or the AV1 is in Immich's trash.** Restore it, then run `immich finalize` again.
+- **The local AV1 is missing.** Put it back, or cancel and retry the job to convert it again. Once the AV1 is uploaded, the local file is no longer needed.
+- **The download in the staging directory is missing.** Nothing is wrong: finalising compares the original in Immich with the one that was converted, not with the download.
+
 ## What you should know
 
 - **Immich's trash must stay on.** VideoOptimiser never deletes from Immich; it moves originals to the trash, which is your undo. With the trash off, Immich would delete them for good, so `doctor` fails and `immich run` and `immich finalize` stop with exit code 3 until you turn it back on under **Administration → Settings → Trash Settings**. `doctor` warns when the trash keeps videos for fewer than 7 days.

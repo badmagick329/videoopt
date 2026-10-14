@@ -25,7 +25,17 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         var client = clients.Create(settings.Immich);
         // Before the upload, so a trash that is off leaves no AV1 beside the original; the job returns to ready.
         await ImmichTrash.RequireOnAsync(client, cancellationToken);
-        var original = await client.GetAssetAsync(originalId, cancellationToken);
+        ImmichAsset original;
+        try
+        {
+            original = await client.GetAssetAsync(originalId, cancellationToken);
+        }
+        catch (ImmichApiException exception) when (exception.StatusCode is 400 or 404)
+        {
+            // F5. Immich answers 400 "Not found or no asset.read access" for a deleted asset and for one in the Locked Folder,
+            // so the message offers both. A trashed asset stays readable and never gets here.
+            throw new FinalizationWaitsException(OriginalNotFound(job, originalId));
+        }
         if (!string.Equals(original.Checksum, checksum, StringComparison.Ordinal))
         {
             throw new FinalizationRefusedException($"Original changed in Immich: asset {originalId} no longer holds the file that was converted.");
@@ -36,7 +46,7 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         {
             // Most likely an earlier run trashed it and stopped before marking the job completed, but the user may have
             // trashed it by hand before the copy finished, so the copy steps run again below.
-            if (job.ImmichNewAssetId is not { } replaced) throw new InvalidOperationException($"The original, asset {originalId}, is in Immich's trash. Restore it, then run finalize again.");
+            if (job.ImmichNewAssetId is not { } replaced) throw new FinalizationWaitsException($"The original, asset {originalId}, is in Immich's trash. Restore it, then run 'video-optimiser immich finalize' again.");
             replacement = await RequireLiveAsync(client, replaced, originalId, cancellationToken);
         }
         else
@@ -116,7 +126,20 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
     {
         var asset = await client.GetAssetAsync(assetId, cancellationToken);
         if (asset.Id == originalId) throw new FinalizationRefusedException($"Immich returned the original, asset {originalId}, as the AV1.");
-        if (asset.IsTrashed) throw new InvalidOperationException($"The uploaded AV1, asset {assetId}, is in Immich's trash. Restore it or delete it permanently, then run finalize again.");
+        if (asset.IsTrashed) throw new FinalizationWaitsException($"The uploaded AV1, asset {assetId}, is in Immich's trash. Restore it or delete it permanently, then run 'video-optimiser immich finalize' again.");
         return asset.Id;
+    }
+
+    /// <summary>
+    /// F5. The job stays ready: if the original went to the Locked Folder, finalising works once it is moved out. If it was
+    /// deleted, the staged download may be the last copy, and cancelling the job lets cleanup delete it, so it is moved first;
+    /// once the AV1 is uploaded, that is the copy that survives.
+    /// </summary>
+    private static string OriginalNotFound(JobRecord job, string originalId)
+    {
+        var deleted = job.ImmichNewAssetId is { } uploaded
+            ? $"If it was deleted, its AV1 is already in Immich as asset {uploaded}; run 'video-optimiser queue cancel {job.Id:N}' to finish."
+            : $"If it was deleted, the downloaded copy at {job.SourcePath} may be the only one left: move it somewhere safe before running 'video-optimiser queue cancel {job.Id:N}'.";
+        return $"Immich can't find the original, asset {originalId}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again. {deleted}";
     }
 }

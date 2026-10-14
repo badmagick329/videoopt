@@ -10,6 +10,7 @@ using VideoOptimiser.Infrastructure.Processing;
 
 namespace VideoOptimiser.UnitTests;
 
+[Collection(ConsoleCapture.Collection)]
 public sealed class FolderFinalizationTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
@@ -118,6 +119,60 @@ public sealed class FolderFinalizationTests : IDisposable
         File.Exists(output).Should().BeTrue();
     }
 
+    /// <summary>F4 (VOPT-60): the job stays ready, since the AV1 may now be the only copy and cancelling it lets cleanup delete it.</summary>
+    [Fact]
+    public async Task AMissingOriginalStopsOnlyThisJobWhichStaysReady()
+    {
+        var (settings, job, source, output) = await ReadyJobAsync();
+        File.Delete(source);
+
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Be($"Original does not exist: {source}. If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. If you deleted it on purpose, the AV1 at {output} is now the only copy: move it somewhere safe before running 'video-optimiser queue cancel {job.Id:N}'.");
+        (await _repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
+        File.Exists(output).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AMissingAv1StopsOnlyThisJobWhichStaysReady()
+    {
+        var (settings, job, _, output) = await ReadyJobAsync();
+        File.Delete(output);
+
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.Message.Should().Be($"The AV1 is missing: {output}. If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue cancel {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.");
+        (await _repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    /// <summary>
+    /// F2: a missing validation record used to end the whole batch with exit 3 and no summary. Now only its job stops, and the
+    /// rest finalise.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AMissingOrUnreadableValidationRecordStopsOnlyItsJob(bool deleted)
+    {
+        var (settings, broken, _, brokenOutput) = await ReadyJobAsync();
+        var manifestPath = _manifests.GetPath(brokenOutput);
+        if (deleted) File.Delete(manifestPath);
+        else await File.WriteAllTextAsync(manifestPath, "{ not json");
+        var (_, good, goodSource, _) = await ReadyJobAsync("second.mp4");
+        var config = Path.Combine(_directory, "config.yaml");
+        await File.WriteAllTextAsync(config, $"database:\n  path: '{settings.Database.Path}'\n");
+
+        var (code, output, error) = await ConsoleCapture.RunCliWithInputAsync("y", null, "finalize", "--ready", "--config", config);
+
+        code.Should().Be((int)ExitCode.PartialSuccess);
+        error.Should().Contain($"The AV1's validation record is missing or unreadable: {manifestPath}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue cancel {broken.Id:N}', then 'video-optimiser queue retry {broken.Id:N}'.");
+        output.Should().Contain("Finalised: 1.");
+        (await _repository.GetAsync(settings.Database.Path, good.Id))!.Status.Should().Be(JobStatus.Completed);
+        (await File.ReadAllTextAsync(goodSource)).Should().Be("av1");
+        (await _repository.GetAsync(settings.Database.Path, broken.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
     /// <summary>As a Ctrl+C in the old code, or a crash marked interrupted by the next run, left it.</summary>
     private async Task InterruptFinalizationAsync(AppSettings settings, JobRecord job)
     {
@@ -140,11 +195,11 @@ public sealed class FolderFinalizationTests : IDisposable
         // A folder job never reaches the Immich finalizer, so it gets no client.
         new(_repository, _manifests, _fingerprints, installer, new ImmichFinalizer(null!, _repository, _manifests));
 
-    private async Task<(AppSettings Settings, JobRecord Job, string Source, string Output)> ReadyJobAsync(bool validationPassed = true)
+    private async Task<(AppSettings Settings, JobRecord Job, string Source, string Output)> ReadyJobAsync(string name = "movie.mp4", bool validationPassed = true)
     {
         Directory.CreateDirectory(Path.Combine(_directory, ".video-optimiser"));
-        var source = Path.Combine(_directory, "movie.mp4");
-        var output = Path.Combine(_directory, ".video-optimiser", "movie.encoding.mp4");
+        var source = Path.Combine(_directory, name);
+        var output = Path.Combine(_directory, ".video-optimiser", $"{Path.GetFileNameWithoutExtension(name)}.encoding.mp4");
         await File.WriteAllTextAsync(source, "original");
         await File.WriteAllTextAsync(output, "av1");
         var fingerprint = await _fingerprints.CreateAsync(source);

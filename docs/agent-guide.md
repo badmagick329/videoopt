@@ -51,7 +51,7 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 2. **Convert.** `queue run`. Done when it exits. A video can take an hour or more on a PC; run it in the background if your harness allows, and check progress with `status --json`. Exit `0`: no job failed; each is ready or not worth converting. Exit `10`: some failed and some are ready. Exit `6`: some failed and none is ready.
 3. **Report.** From `status --json`, list each `ReadyToFinalize` job's `sourcePath`, `outputPath` and `percentageSaved`, and each failed job's `failureCategory` and `failureMessage`. Ask the user to watch the outputs.
 4. **Gate.** Say what `original.action` will do to each original: `delete`, `archive` or `keep`.
-5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` per job to standard output, or `Failed  <file>: <message>` to standard error, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out), then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed, so check `status --json`.
+5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` per job to standard output, or `Failed  <file>: <message>` to standard error, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out), then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed, so check `status --json`. A job whose original, AV1 or validation record is missing stays `ReadyToFinalize`, and its message says how to recover; pass it to the user exactly. Never run the `queue cancel` it mentions without the user: their AV1 or original may be the only copy left.
 
 ## Workflow: Immich
 
@@ -153,7 +153,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `3` | Invalid configuration, including `worker create` or `worker delete` without `remoteSsh.lifecycle: "hetzner"`, or an Immich API key that is missing, rejected or lacks a permission |
 | `4` | A failed dependency check in `doctor`: a media tool, the Immich server (unreachable, not Immich 3, its key, or its trash off) or the Hetzner API. Also `remote setup` when it cannot run `ssh-keygen` or list or upload the Hetzner key |
 | `5` | `process` on a file the rules exclude; add `--force` to convert it anyway |
-| `6` | Processing failed and nothing is ready, including a `process` whose job failed or whose file is missing; an Immich request failed; ffprobe could not read a file; Hetzner had no server capacity; or `validate` or `finalize <job-id>` named a job that does not exist |
+| `6` | Processing failed and nothing is ready, including a `process` whose job failed or whose file is missing; an Immich request failed; ffprobe could not read a file; Hetzner had no server capacity; `validate` or `finalize <job-id>` named a job that does not exist; or `validate` named a job that is not on its way to finalising (`validate re-checks a job that is ready to finalise; ...`) or whose original or AV1 is missing, which it leaves as it is |
 | `7` | The output failed validation, including an output ffprobe cannot read (`validate`, `process`), or `finalize <job-id>` named a job that is not ready |
 | `8` | `finalize <job-id>` failed, or `immich finalize` failed for every job |
 | `9` | Cancelled with `Ctrl+C` |

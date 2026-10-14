@@ -341,7 +341,7 @@ public sealed class ImmichHttpClient : IImmichClient
             {
                 HttpStatusCode.Unauthorized => new ImmichApiException("ImmichApiKeyRejected", $"Immich rejected the API key in {_settings.ApiKeyEnvironmentVariable} (HTTP 401). Create a new key in Immich under Account settings > API keys."),
                 HttpStatusCode.Forbidden => new ImmichApiException("ImmichPermissionMissing", $"The Immich API key lacks the {permission} permission (HTTP 403). Add it to the key in Immich under Account settings > API keys."),
-                var status => new ImmichApiException("ImmichRequestFailed", $"Immich returned HTTP {(int)status} for {method} /api/{path}{await ErrorDetailAsync(response, cancellationToken)}")
+                var status => new ImmichApiException("ImmichRequestFailed", $"Immich returned HTTP {(int)status} for {method} /api/{path}{await ErrorDetailAsync(response, cancellationToken)}", (int)status)
             };
         }
     }

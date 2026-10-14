@@ -120,7 +120,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         var failed = await FinalizeAsync(job);
 
         failed.ExitCode.Should().Be(ExitCode.FinalisationFailure);
-        failed.Message.Should().Contain($"during {step}").And.Contain("Run finalize again");
+        failed.Message.Should().Contain($"during {step}").And.EndWith("Run 'video-optimiser immich finalize' again to resume.");
         _immich.Get(original.Id).IsTrashed.Should().Be(step == "trash" && responseLost);
         var waiting = await JobAsync(job);
         waiting.Status.Should().Be(JobStatus.ReadyToFinalize);
@@ -331,6 +331,79 @@ public sealed class ImmichFinalizationTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
+    /// <summary>F3 (VOPT-60): the staged copy is only a download, and Immich's checksum still guards the asset that is replaced.</summary>
+    [Fact]
+    public async Task AMissingStagedCopyStillFinalises()
+    {
+        var original = _immich.Add("PXL.mp4", "original");
+        var job = await ReadyJobAsync(original);
+        File.Delete(job.SourcePath);
+
+        var result = await FinalizeAsync(job);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        (await JobAsync(job)).Status.Should().Be(JobStatus.Completed);
+    }
+
+    /// <summary>Once uploaded, finalisation uses the asset in Immich and never reads the local AV1.</summary>
+    [Fact]
+    public async Task AMissingLocalAv1IsNoObstacleOnceItIsUploaded()
+    {
+        var original = _immich.Add("PXL.mp4", "original");
+        var job = await ReadyJobAsync(original);
+        _immich.FailOnce["copy"] = new ImmichApiException("ImmichRequestFailed", "Immich answered 500.", 500);
+        await FinalizeAsync(job);
+        File.Delete(job.OutputPath!);
+
+        var result = await FinalizeAsync(job);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        _immich.Uploads.Should().ContainSingle();
+    }
+
+    /// <summary>
+    /// F5: Immich answers 400 for a deleted original and for one in the Locked Folder alike. The job stays ready, and the
+    /// message names the copy that survives a deletion: the staged download, or the AV1 once uploaded.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnOriginalImmichCannotFindLeavesTheJobReadyAndNamesTheCopyThatSurvives(bool uploaded)
+    {
+        var original = _immich.Add("PXL.mp4", "original");
+        var job = await ReadyJobAsync(original);
+        if (uploaded)
+        {
+            _immich.FailOnce["copy"] = new ImmichApiException("ImmichRequestFailed", "Immich answered 500.", 500);
+            await FinalizeAsync(job);
+        }
+        _immich.Remove(original.Id);
+        var av1 = (await JobAsync(job)).ImmichNewAssetId;
+
+        var result = await FinalizeAsync(job);
+
+        var deleted = uploaded
+            ? $"If it was deleted, its AV1 is already in Immich as asset {av1}; run 'video-optimiser queue cancel {job.Id:N}' to finish."
+            : $"If it was deleted, the downloaded copy at {job.SourcePath} may be the only one left: move it somewhere safe before running 'video-optimiser queue cancel {job.Id:N}'.";
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Be($"Immich can't find the original, asset {original.Id}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again. {deleted}");
+        (await JobAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
+        File.Exists(job.SourcePath).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AServerErrorReadingTheOriginalStaysOnTheResumablePath()
+    {
+        var original = _immich.Add("PXL.mp4", "original");
+        var job = await ReadyJobAsync(original);
+        _immich.FailOnce["get"] = new ImmichApiException("ImmichRequestFailed", "Immich returned HTTP 502 for GET /api/assets/x.", 502);
+
+        var result = await FinalizeAsync(job);
+
+        result.Message.Should().Be("Immich returned HTTP 502 for GET /api/assets/x. Run 'video-optimiser immich finalize' again to resume.");
+        (await JobAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
     private Task<FinalizationResult> FinalizeAsync(JobRecord job) => _finalizer.FinalizeAsync(_settings.Database.Path, job.Id, _settings);
 
     private async Task<JobRecord> JobAsync(JobRecord job) => (await _repository.GetAsync(_settings.Database.Path, job.Id))!;
@@ -411,7 +484,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         public IImmichClient Create(ImmichSettings settings) => this;
 
         public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) => Step("get", $"get {assetId}", () =>
-            _assets.SingleOrDefault(asset => asset.Id == assetId) ?? throw new ImmichApiException("ImmichRequestFailed", $"Immich returned HTTP 404 for GET /api/assets/{assetId}."));
+            _assets.SingleOrDefault(asset => asset.Id == assetId) ?? throw new ImmichApiException("ImmichRequestFailed", $"Immich returned HTTP 400 for GET /api/assets/{assetId}: Not found or no asset.read access.", 400));
 
         public Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => Step("upload", "upload", () =>
         {

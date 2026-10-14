@@ -14,7 +14,10 @@ internal static class ConsoleCapture
     public static Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(params string[] args) => RunCliAsync(null, args);
 
     /// <param name="configureServices">Replaces real services with fakes; see <see cref="CliApplication.RunAsync"/>.</param>
-    public static async Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(Action<IServiceCollection>? configureServices, params string[] args)
+    public static Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(Action<IServiceCollection>? configureServices, params string[] args) => RunCliWithInputAsync(null, configureServices, args);
+
+    /// <param name="input">What the user types, such as "y" for a [y/N] prompt; null is no input at all, which declines.</param>
+    public static async Task<(int ExitCode, string Stdout, string Stderr)> RunCliWithInputAsync(string? input, Action<IServiceCollection>? configureServices, params string[] args)
     {
         var originalError = Console.Error;
         var originalOut = Console.Out;
@@ -23,8 +26,7 @@ internal static class ConsoleCapture
         using var output = new StringWriter();
         Console.SetError(error);
         Console.SetOut(output);
-        // No input, as when nothing is piped: every [y/N] prompt reads end of input and declines.
-        Console.SetIn(TextReader.Null);
+        Console.SetIn(input is null ? TextReader.Null : new StringReader(input));
         try
         {
             var code = await CliApplication.RunAsync(args, configureServices);

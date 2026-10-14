@@ -10,7 +10,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
 {
     /// <summary>A ready Immich job whose last finalisation stopped early carries this category until it completes.</summary>
     public const string IncompleteCategory = "FinalizationIncomplete";
-    public const string InterruptedMessage = "Finalisation was interrupted. Run finalize again to resume.";
+    public const string InterruptedMessage = "Finalisation was interrupted. Run 'video-optimiser immich finalize' again to resume.";
 
     /// <summary>
     /// An Immich job that a crash left mid-finalisation: still <see cref="JobStatus.Finalizing"/>, or marked interrupted on
@@ -49,9 +49,15 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         }
         var resumingFile = IsInterruptedFileFinalization(job);
         if (job.Status != JobStatus.ReadyToFinalize && !resumingFile || job.OutputPath is null) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job is not ready to finalise.");
-        var manifest = await manifests.LoadAsync(job.OutputPath, cancellationToken);
-        if (manifest.Validation?.Passed != true) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job validation did not pass.");
         var fromImmich = job.SourceKind == JobSourceKind.Immich;
+        // VOPT-60: a missing file stops only this job, which stays as it is, so a batch finalises the rest and prints its
+        // summary. An interrupted file finalisation skips these: a missing file there means something moved, which it reviews.
+        if (!resumingFile && MissingFile(job, fromImmich) is { } missing) return new FinalizationResult(job, ExitCode.FinalisationFailure, missing);
+        if (await TryLoadManifestAsync(job.OutputPath, cancellationToken) is not { } manifest)
+        {
+            return new FinalizationResult(job, ExitCode.FinalisationFailure, $"The AV1's validation record is missing or unreadable: {manifests.GetPath(job.OutputPath)}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue cancel {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.");
+        }
+        if (manifest.Validation?.Passed != true) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job validation did not pass.");
         // Everything up to the Finalizing write only reads, so Ctrl+C there leaves the job as it was. Once written, the state
         // writes use CancellationToken.None: a cancelled write would leave the stored state behind what the files did.
         var finalizing = false;
@@ -68,7 +74,9 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
                 ClearToReady(job);
                 await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
             }
-            else if (await fingerprints.CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint)
+            // F3: an Immich job's staged copy is only a download. Without it there is nothing to compare here, and Immich's
+            // checksum check in ImmichFinalizer still guards the asset that is replaced.
+            else if (!(fromImmich && !File.Exists(manifest.SourcePath)) && await fingerprints.CreateAsync(manifest.SourcePath, cancellationToken) != manifest.SourceFingerprint)
             {
                 throw new FinalizationRefusedException("Original changed after encoding.");
             }
@@ -103,12 +111,18 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             }
             throw;
         }
+        catch (FinalizationWaitsException exception)
+        {
+            // The user has to act in Immich first, and the message says how; a resume suffix would contradict it.
+            await ReturnToReadyAsync(databasePath, job, exception.Message);
+            return new FinalizationResult(job, ExitCode.FinalisationFailure, exception.Message);
+        }
         catch (Exception exception) when (fromImmich && exception is not FinalizationRefusedException)
         {
             // Every Immich step before the trash can run again, and the AV1's asset ID is already saved once uploaded, so
             // the job goes back to ready rather than failing: the next finalize continues where this one stopped.
             await ReturnToReadyAsync(databasePath, job, exception.Message);
-            return new FinalizationResult(job, ExitCode.FinalisationFailure, $"{exception.Message} Run finalize again to resume.");
+            return new FinalizationResult(job, ExitCode.FinalisationFailure, $"{exception.Message} Run 'video-optimiser immich finalize' again to resume.");
         }
         catch (Exception exception)
         {
@@ -145,6 +159,42 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         return new FinalizationResult(job, ExitCode.FinalisationFailure, ManualReviewMessage);
     }
 
+    /// <summary>
+    /// F4 for a folder job's original and F1 for the AV1, or null. An Immich job's missing staged copy is not one (F3), and
+    /// neither is its AV1 once uploaded: finalisation then uses the asset and never reads the local file.
+    /// </summary>
+    private static string? MissingFile(JobRecord job, bool fromImmich)
+    {
+        if (!fromImmich && !File.Exists(job.SourcePath))
+        {
+            // If the user deleted the original, the AV1 is the only copy, and cancelling the job lets cleanup delete it.
+            return $"{OriginalMissing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. If you deleted it on purpose, the AV1 at {job.OutputPath} is now the only copy: move it somewhere safe before running 'video-optimiser queue cancel {job.Id:N}'.";
+        }
+        if (!File.Exists(job.OutputPath) && !(fromImmich && job.ImmichNewAssetId is not null))
+        {
+            return $"{Av1Missing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue cancel {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.";
+        }
+        return null;
+    }
+
+    /// <summary>The first sentence of F4; <c>validate</c> prints it alone.</summary>
+    public static string OriginalMissing(JobRecord job) => $"Original does not exist: {job.SourcePath}.";
+
+    /// <summary>The first sentence of F1; <c>validate</c> prints it alone.</summary>
+    public static string Av1Missing(JobRecord job) => $"The AV1 is missing: {job.OutputPath}.";
+
+    private async Task<OutputManifest?> TryLoadManifestAsync(string outputPath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await manifests.LoadAsync(outputPath, cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
     private async Task ReturnToReadyAsync(string databasePath, JobRecord job, string message)
     {
         ReturnToReady(job, message);
@@ -167,3 +217,9 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
 
 /// <summary>A finalisation that running again cannot fix: the original no longer matches what was converted.</summary>
 internal sealed class FinalizationRefusedException(string message) : Exception(message);
+
+/// <summary>
+/// An Immich finalisation that waits on the user: the job returns to ready, and the message, which says what to do in Immich
+/// and which command to run next, is shown as it is.
+/// </summary>
+internal sealed class FinalizationWaitsException(string message) : Exception(message);

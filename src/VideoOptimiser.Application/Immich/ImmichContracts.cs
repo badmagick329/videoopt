@@ -231,7 +231,10 @@ public interface IImmichRunService
 /// An Immich request that failed, with a message that says what to fix. <see cref="Code"/> is the diagnostic code doctor
 /// reports. The message names the key's environment variable, never the key.
 /// </summary>
-public sealed class ImmichApiException(string code, string message) : Exception(message)
+public sealed class ImmichApiException(string code, string message, int? statusCode = null) : Exception(message)
 {
     public string Code { get; } = code;
+
+    /// <summary>The HTTP status of a request Immich answered with an error; null when it never answered.</summary>
+    public int? StatusCode { get; } = statusCode;
 }
