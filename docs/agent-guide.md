@@ -51,7 +51,7 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 2. **Convert.** `queue run`. Done when it exits. A video can take an hour or more on a PC; run it in the background if your harness allows, and check progress with `status --json`. Exit `0`: no job failed; each is ready or not worth converting. Exit `10`: some failed and some are ready. Exit `6`: some failed and none is ready.
 3. **Report.** From `status --json`, list each `ReadyToFinalize` job's `sourcePath`, `outputPath` and `percentageSaved`, and each failed job's `failureCategory` and `failureMessage`. Ask the user to watch the outputs.
 4. **Gate.** Say what `original.action` will do to each original: `delete`, `archive` or `keep`.
-5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` per job to standard output, or `Failed  <file>: <message>` to standard error, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out), then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed, so check `status --json`. A job whose original, AV1 or validation record is missing stays `ReadyToFinalize`, and its message says how to recover; pass it to the user exactly. Never run the `queue cancel` it mentions without the user: their AV1 or original may be the only copy left.
+5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` per job to standard output, or `Failed  <file>: <message>` to standard error, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out), then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed: find each `Failed` line in *Recovery*.
 
 ## Workflow: Immich
 
@@ -62,7 +62,7 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
    Discovery prints many lines before the first encode; *Immich discovery lines* under *Reading run output* says which are normal and which summary to report.
 3. **Report.** As in the folders workflow; filter `status --json` to `"source": "immich"`. Each `outputPath` is under `immich.stagingDirectory`.
 4. **Gate.** Each AV1 is uploaded as a new Immich asset and each original goes to Immich's trash.
-5. **Finalise.** After the go-ahead, `'y' | video-optimiser immich finalize`. Done when it prints `Finalised: N.` with no `Failed:` count and exits `0`. If it stops partway, running it again continues; that rerun needs the gate too.
+5. **Finalise.** After the go-ahead, `'y' | video-optimiser immich finalize`. Done when it prints `Finalised: N.` with no `Failed:` count and exits `0`. Otherwise find each `Failed` line in *Recovery*. If it stops partway, running it again continues; that rerun needs the gate too.
 
 `finalize --ready` also finalises ready Immich jobs. Use `immich finalize` for Immich jobs, so the user sees capture dates before the prompt.
 
@@ -103,7 +103,7 @@ The upload and download lines appear only on a remote worker. When `savings.mini
 | `Not worth converting: …` | `Skipped` |
 | `Failed validation: …` | `Failed`, `ValidationFailed` |
 | `Failed during the upload`, `the CRF search`, `encoding` or `the download: …`, then `Full log: <path>` | `Failed`; the full ab-av1 log stays at that path |
-| `Worker unreachable: …` | `Interrupted`, `RemoteUnavailable`. The run stops there: `queue run` and `immich run` print `Stopped: the worker <name> can't be reached, so <N> videos were not converted.`, and the jobs after it stay `Queued`. Then `To resume: <command>`; with a Hetzner worker also that it stays up, billed hourly, and `To delete it instead: video-optimiser worker delete` |
+| `Worker unreachable: …` | `Interrupted`, `RemoteUnavailable`; the run stops here (see *Recovery*) |
 
 **Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints a progress line about every 15 seconds and states its expected length when it starts; its progress lines add `about <time> left` only after 30 seconds and 5 percentage points, so early lines without it are normal. A running job that prints nothing new for 15 minutes is stuck: report it with the job's last lines and `status --json`.
 
@@ -127,15 +127,16 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | --- | --- | --- |
 | A `Skipped <file>: started on ...` line | The job started in the other mode, and `--local` or `--remote` chose this one | Nothing is lost. Run the command without the flag to resume it; a remote resume is gated as paid encoding. |
 | `Interrupted` | Stopped by `Ctrl+C`, a crash or a lost connection. A remote CRF search or encode keeps running on the worker | Run the same command again (`queue run`, `immich run` or `process`). It resumes, following a remote stage that is still running or using its result. |
-| `RemoteUnavailable` | The remote worker could not be reached; the run stopped at this job | Run the `To resume:` command it printed; for a limited `immich run` it names `--limit` with the number of jobs left, not the number typed. A Hetzner worker is kept for the resume, billed hourly; deleting it is gated. |
+| `RemoteUnavailable` | The remote worker could not be reached. The run stopped at this job and left the rest `Queued`; `queue run` and `immich run` then print `Stopped: the worker <name> can't be reached, ...` | Run the `To resume:` command it printed. After a limited `immich run`, its `--limit` is the number of jobs left, not the number typed. A Hetzner worker stays up for the resume, billed hourly. Its `To delete it instead:` command is gated; the line names the work that deleting loses. |
 | `Skipped`, `NotWorthConverting` | No CRF met both `quality.minimumVmaf` and the video's size cap: the stricter of `quality.maxEncodedPercent` and `savings.minimumBytesSaved`. A video too small to save `savings.minimumBytesSaved` is skipped before its CRF search, with nothing uploaded. A normal outcome, not a failure | Report `failureMessage`. It names the setting that ruled the video out and the best CRF found, or, when even `quality.crfSearch.minCrf` missed the VMAF, that CRF's score. Discovery checks the video again once the file, those quality settings or `savings.minimumBytesSaved` change. |
 | `ValidationFailed` | The AV1 failed a check, such as saving less than `savings.minimumBytesSaved` when the encode came out larger than the search predicted | Report it. The original stays as it is, and discovery won't queue it again until the file changes. |
 | `StagingFailed`, `CrfSearchFailed`, `EncodeFailed`, `DownloadFailed`, `ProcessingFailed` | A processing step failed | Report `failureMessage`. Run `queue retry <id>` only if the user asks, once the cause is fixed. |
 | `RemoteConfigurationChanged` | The job started under a different processing setup | Report it. `queue retry <id>` starts a fresh job under the current setup, if the user wants. |
 | `Cancelled` | `queue cancel` stopped it | Nothing. `queue retry <id>` queues it again, only if the user asks. |
 | `Ineligible`, `SourceNotReady`, `SourceOutsideWatchRoot`, `SourceChanged`, `SourceMissing` | The file did not qualify, changed, or was gone when the job ran | Nothing. The next `queue discover` or `immich run` re-checks it. |
-| `FinalizationIncomplete` | An Immich finalisation stopped partway | Gate, then `'y' | video-optimiser immich finalize`. |
-| `FinalizationFailed`, `ManualInterventionRequired` | Replacing a file original failed, or was cut off after a file moved | Stop. Show the user the job, its `sourcePath` and `outputPath`, and let them decide. |
+| A `Failed  <file>: <message>` line from `finalize` or `immich finalize`, with the job still `ReadyToFinalize` | A file is missing (the original, the AV1 or its validation record), the user must act in Immich first, or an Immich request failed partway. The original was not replaced | Pass the message to the user word for word; it names each copy left and the next command. Run a `queue cancel` it names only at the user's request, after they have moved those copies: `cleanup` deletes a cancelled job's files, and they may be the last ones. A message ending `again to resume.` needs only the gate and the rerun. |
+| `FinalizationIncomplete` | An Immich finalisation stopped partway, or waits on the user | Show the user `failureMessage`. Once they have done any step it names in Immich, gate, then `'y' | video-optimiser immich finalize`. |
+| `FinalizationFailed`, `ManualInterventionRequired` | Replacing a file original failed, or a cut-off one could not be shown to have left both files untouched | Stop. Show the user the job, its `sourcePath` and `outputPath`, and let them decide. `cleanup` keeps the AV1 of a `ManualInterventionRequired` job. |
 
 **Failed, cancelled or skipped jobs** stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` queues one again; run it only at the user's request.
 
@@ -153,7 +154,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `3` | Invalid configuration, including `worker create` or `worker delete` without `remoteSsh.lifecycle: "hetzner"`, or an Immich API key that is missing, rejected or lacks a permission |
 | `4` | A failed dependency check in `doctor`: a media tool, the Immich server (unreachable, not Immich 3, its key, or its trash off) or the Hetzner API. Also `remote setup` when it cannot run `ssh-keygen` or list or upload the Hetzner key |
 | `5` | `process` on a file the rules exclude; add `--force` to convert it anyway |
-| `6` | Processing failed and nothing is ready, including a `process` whose job failed or whose file is missing; an Immich request failed; ffprobe could not read a file; Hetzner had no server capacity; `validate` or `finalize <job-id>` named a job that does not exist; or `validate` named a job that is not on its way to finalising (`validate re-checks a job that is ready to finalise; ...`) or whose original or AV1 is missing, which it leaves as it is |
+| `6` | Processing failed and nothing is ready, including a `process` whose job failed or whose file is missing; an Immich request failed; ffprobe could not read a file; Hetzner had no server capacity; `validate` or `finalize <job-id>` named a job that does not exist; or `validate` named a job that is not ready to finalise, or whose original or AV1 is missing (the job stays as it was) |
 | `7` | The output failed validation, including an output ffprobe cannot read (`validate`, `process`), or `finalize <job-id>` named a job that is not ready |
 | `8` | `finalize <job-id>` failed, or `immich finalize` failed for every job |
 | `9` | Cancelled with `Ctrl+C` |
@@ -164,7 +165,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 - **Open** (`status`, `queue list`): `Queued`, `Staging`, `CrfSearching`, `Encoding`, `Downloading`, `Validating`, `ReadyToFinalize`, `Finalizing`, `Interrupted`.
 - **Finished** (`history`): `Completed`, `Failed`, `Cancelled`, `Skipped`.
 
-`Staging` and `Downloading` are transfers to and from a remote worker. `ReadyToFinalize` jobs can be finalised, and so can a job whose finalisation was cut off (`Finalizing`, or `Interrupted` after it): `finalize --ready` lists it, and `queue run` leaves it alone and says so. A cut-off Immich finalisation simply continues. A file job continues only when its original and AV1 are both where they started and the original is unchanged; otherwise it fails as `ManualInterventionRequired` and `cleanup` keeps its AV1. Ctrl+C during `finalize` stops before any file moves, so the job stays ready.
+`Staging` and `Downloading` are transfers to and from a remote worker. A job whose finalisation was cut off (`Finalizing`, or `Interrupted` after it) is finalised like a `ReadyToFinalize` one, and `finalize --ready` lists it. An Immich one continues where it stopped. A file one continues only if its original and AV1 are where they started and the original is unchanged, and fails as `ManualInterventionRequired` otherwise; `queue run` leaves it alone and says so. `Ctrl+C` during `finalize` leaves the job ready.
 
 ### JSON output
 
