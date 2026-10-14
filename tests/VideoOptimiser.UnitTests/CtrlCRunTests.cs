@@ -39,7 +39,7 @@ public sealed class CtrlCRunTests : IDisposable
         var jobs = await QueueJobsAsync(3);
         _processor.PressDuring[0] = 1;
 
-        var (code, output, _) = await RunAsync("queue", "run", "--config", config);
+        var (code, output, _) = await RunAsync("run", "--config", config);
 
         output.Should().Be(Transcript(
             "Encoding on this PC.",
@@ -54,7 +54,7 @@ public sealed class CtrlCRunTests : IDisposable
             "Stopped after 1.mp4; 2 videos are still waiting.",
             "Ready to finalise: 1.",
             "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
-            $"To convert the rest: video-optimiser queue run --config \"{config}\""));
+            $"To convert the rest: video-optimiser run --config \"{config}\""));
         code.Should().Be((int)ExitCode.Cancelled);
         _processor.Calls.Should().Be(1);
         (await StatusesAsync(jobs)).Should().Equal(JobStatus.ReadyToFinalize, JobStatus.Queued, JobStatus.Queued);
@@ -69,7 +69,7 @@ public sealed class CtrlCRunTests : IDisposable
         _processor.PressDuring[0] = 1;
         _processor.StepBeforePress = "Checking the AV1...";
 
-        var (_, output, _) = await RunAsync("queue", "run", "--config", config);
+        var (_, output, _) = await RunAsync("run", "--config", config);
 
         Lines(output).Should().ContainInOrder(
             "      Checking the AV1...",
@@ -86,7 +86,7 @@ public sealed class CtrlCRunTests : IDisposable
         await QueueJobsAsync(1);
         _processor.PressDuring[0] = 1;
 
-        var (code, output, _) = await RunAsync("queue", "run", "--config", config);
+        var (code, output, _) = await RunAsync("run", "--config", config);
 
         output.Should().Be(Transcript(
             "Encoding on this PC.",
@@ -109,7 +109,7 @@ public sealed class CtrlCRunTests : IDisposable
         var jobs = await QueueJobsAsync(3);
         _processor.PressDuring[0] = 2;
 
-        var (code, output, _) = await RunAsync("queue", "run", "--config", config);
+        var (code, output, _) = await RunAsync("run", "--config", config);
 
         output.Should().Be(Transcript(
             "Encoding on this PC.",
@@ -121,7 +121,7 @@ public sealed class CtrlCRunTests : IDisposable
             "Stopping after this video (the encode has about 7m 36s left). Press Ctrl+C again to stop now.",
             "",
             "Stopped now. 1.mp4 continues from its last finished step on the next run.",
-            $"To resume: video-optimiser queue run --config \"{config}\""));
+            $"To resume: video-optimiser run --config \"{config}\""));
         code.Should().Be((int)ExitCode.Cancelled);
         var stored = await _repository.GetAsync(DatabasePath, jobs[0].Id);
         stored!.Status.Should().Be(JobStatus.Interrupted);

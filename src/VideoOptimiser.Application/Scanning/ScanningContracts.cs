@@ -109,4 +109,14 @@ public interface IFileScanner
         IReadOnlySet<string>? openSourcePaths = null,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The verdict a scan would give one file, for <c>queue add &lt;file&gt;</c>. With <paramref name="force"/> the extension,
+    /// name, excluded-directory and rule checks are skipped, but the size cap still applies: no AV1 of a video that small
+    /// could save <c>savings.minimumBytesSaved</c>. The caller checks the watch roots and the archive directory.
+    /// </summary>
+    Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default);
 }
+
+/// <param name="TooSmall">The size cap ruled the file out, which <c>--force</c> does not lift.</param>
+public sealed record FileVerdict(ScanItem Item, bool TooSmall = false);

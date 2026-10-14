@@ -24,7 +24,7 @@ public sealed class InterruptedFinalizationCliTests : IDisposable
     {
         var (config, job) = await ArrangeAsync();
 
-        var (_, output, _) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, "queue", "run", "--config", config);
+        var (_, output, _) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, "run", "--config", config);
 
         output.Should().Contain("movie.mp4 was interrupted while being finalised. Run 'video-optimiser finalize --ready' to finish it.");
         output.Should().NotContain("Failed jobs:");

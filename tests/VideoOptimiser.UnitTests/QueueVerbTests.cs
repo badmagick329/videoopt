@@ -66,10 +66,12 @@ public sealed class QueueVerbTests : IDisposable
     [Theory]
     [InlineData(false, null, "clip.mp4 runs next.")]
     [InlineData(true, null, "clip.mp4 runs next; it's no longer held.")]
-    [InlineData(false, "immich run", "clip.mp4 is now first in the queue.")]
-    [InlineData(true, "immich run", "clip.mp4 is now first in the queue; it's no longer held.")]
-    [InlineData(false, "queue run", "clip.mp4 runs next.")]
-    [InlineData(false, "queue run", "IMG_0001.MOV is now first in the queue.")]
+    [InlineData(false, "video-optimiser immich run", "clip.mp4 is now first in the queue.")]
+    [InlineData(true, "video-optimiser immich run", "clip.mp4 is now first in the queue; it's no longer held.")]
+    [InlineData(false, "video-optimiser run", "clip.mp4 runs next.")]
+    [InlineData(false, "video-optimiser run", "IMG_0001.MOV runs next.")]
+    [InlineData(false, "queue run", "clip.mp4 is now first in the queue.")]
+    [InlineData(false, "queue drop", "clip.mp4 runs next.")]
     public async Task NextPutsAVideoFirstAndSaysWhetherTheRunGoingNowTakesIt(bool held, string? runGoing, string line)
     {
         var earlier = await QueuedAsync("earlier.mp4");
@@ -90,7 +92,7 @@ public sealed class QueueVerbTests : IDisposable
     {
         var job = await QueuedAsync("clip.mp4");
         await MoveAsync(job, JobStatus.Encoding);
-        using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), "queue run", out _);
+        using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), "video-optimiser run", out _);
 
         (await RunAsync("queue", "next", job.Id.ToString("N"))).Should().Be((0, Lines("clip.mp4 is converting now."), ""));
         (await StoredAsync(job)).Priority.Should().Be(0);
@@ -103,7 +105,7 @@ public sealed class QueueVerbTests : IDisposable
     {
         var job = await QueuedAsync("clip.mp4");
         await MoveAsync(job, JobStatus.Encoding);
-        using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), "queue run", out _);
+        using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), "video-optimiser run", out _);
 
         (await RunAsync("queue", verb, job.Id.ToString("N"))).Should().Be((1, "", Lines($"clip.mp4 is converting now (encoding). {advice}, press Ctrl+C twice in the run's window first.")));
         (await StoredAsync(job)).Status.Should().Be(JobStatus.Encoding);

@@ -66,7 +66,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "Stopped after 1.mp4; 2 videos are still waiting.",
             "Ready to finalise: 1.",
             "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
-            $"To convert the rest: video-optimiser queue run {Config}",
+            $"To convert the rest: video-optimiser run {Config}",
             "Deleting Hetzner server 42.",
             "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
         code.Should().Be((int)ExitCode.Cancelled);
@@ -119,7 +119,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "Stopped after 1.mp4; 1 video is still waiting.",
             "Ready to finalise: 1.",
             "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
-            $"To convert the rest: video-optimiser queue run {Config}",
+            $"To convert the rest: video-optimiser run {Config}",
             $"The worker {Worker} stays up, billed hourly, until it is deleted.",
             $"To delete it: video-optimiser worker delete {Config}"));
         code.Should().Be((int)ExitCode.Cancelled);
@@ -151,7 +151,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             $"Stopped watching. The encode of 1.mp4 is still running on the worker {Worker}.",
             "The worker is billed hourly until it is deleted.",
-            $"To pick it up again: video-optimiser queue run {Config}",
+            $"To pick it up again: video-optimiser run {Config}",
             $"Delete the worker now? The encode in progress is lost. [y/N] To delete it later: video-optimiser worker delete {Config} (the work in progress is lost)"));
         _input.Reads.Should().Be(2);
     }
@@ -182,7 +182,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "Stopped after 1.mp4; 1 video is still waiting.",
             "Ready to finalise: 1.",
             "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
-            $"To convert the rest: video-optimiser queue run {Config}",
+            $"To convert the rest: video-optimiser run {Config}",
             "Delete the worker now? [y/N] Deleting Hetzner server 42.",
             "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
         code.Should().Be((int)ExitCode.Cancelled);
@@ -218,7 +218,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             $"Stopped watching. The encode of 1.mp4 is still running on the worker {Worker}.",
             "The worker is billed hourly until it is deleted.",
-            $"To pick it up again: video-optimiser queue run {Config}",
+            $"To pick it up again: video-optimiser run {Config}",
             $"Delete the worker now? The encode in progress is lost. [y/N] To delete it later: video-optimiser worker delete {Config} (the work in progress is lost)"));
         code.Should().Be((int)ExitCode.Cancelled);
         _lifecycle.DeleteCalls.Should().Be(0);
@@ -240,7 +240,7 @@ public sealed class WorkerEndRunTests : IDisposable
         output.Should().EndWith(Transcript(
             "",
             $"Stopped. The encoded output is waiting on the worker {Worker}, which stays up, billed hourly.",
-            $"To resume: video-optimiser queue run {Config}",
+            $"To resume: video-optimiser run {Config}",
             "Delete the worker now? The finished encode is lost. [y/N] Deleting Hetzner server 42.",
             "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
         code.Should().Be((int)ExitCode.Cancelled);
@@ -262,7 +262,7 @@ public sealed class WorkerEndRunTests : IDisposable
         output.Should().EndWith(Transcript(
             "",
             "Stopped now. 1.mp4 continues from its last finished step on the next run.",
-            $"To resume: video-optimiser queue run {Config}",
+            $"To resume: video-optimiser run {Config}",
             "Deleting Hetzner server 42.",
             "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
         code.Should().Be((int)ExitCode.Cancelled);
@@ -282,7 +282,7 @@ public sealed class WorkerEndRunTests : IDisposable
         output.Should().EndWith(Transcript(
             "",
             $"Stopped. Nothing is running on the worker {Worker}, but it stays up, billed hourly.",
-            $"To resume: video-optimiser queue run {Config}",
+            $"To resume: video-optimiser run {Config}",
             $"Delete the worker now? [y/N] To delete it later: video-optimiser worker delete {Config}"));
     }
 
@@ -303,7 +303,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             $"Stopped watching. The encode of 1.mp4 is still running on the worker {Worker}.",
             "The worker is billed hourly until it is deleted.",
-            $"To pick it up again: video-optimiser queue run {Config}",
+            $"To pick it up again: video-optimiser run {Config}",
             $"To stop it instead: video-optimiser worker delete {Config} (the work in progress is lost)"));
         code.Should().Be((int)ExitCode.Cancelled);
         _input.Reads.Should().Be(0);
@@ -321,7 +321,7 @@ public sealed class WorkerEndRunTests : IDisposable
         var (_, output, _) = await RunAsync();
 
         output.Should().EndWith(Transcript(
-            $"To convert the rest: video-optimiser queue run {Config}",
+            $"To convert the rest: video-optimiser run {Config}",
             $"The worker {Worker} stays up, billed hourly, until it is deleted.",
             $"To delete it: video-optimiser worker delete {Config}"));
         _input.Reads.Should().Be(0);
@@ -491,7 +491,7 @@ public sealed class WorkerEndRunTests : IDisposable
             services.AddSingleton(_state);
             services.AddSingleton<IRemoteWorkerLifecycle>(_lifecycle);
             services.AddSingleton<IJobProcessor>(_processor);
-        }, "queue", "run", "--config", _config);
+        }, "run", "--config", _config);
 
     /// <summary>A new command: its own Ctrl+C, input and worker state.</summary>
     private void NextRun()

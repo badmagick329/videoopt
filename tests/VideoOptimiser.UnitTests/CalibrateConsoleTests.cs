@@ -30,7 +30,7 @@ public sealed class CalibrateConsoleTests
             [
                 new RaiseMinimumBitrateSuggestion(2, 30, 5, new IntRange(20, 25), 2, 40),
                 new AddRuleSuggestion(Converts, 40),
-                new TestOneSuggestion(NeverTried, "clip.mp4", @"C:\Music\uhdkpop\clip.mp4", null),
+                new TestOneSuggestion(NeverTried, "clip.mp4", @"D:\Videos\clip.mp4", null),
                 new TestOneSuggestion(Unknown, "PXL_20240512_101500.mp4", null, "asset-1")
             ]);
 
@@ -50,7 +50,7 @@ public sealed class CalibrateConsoleTests
             "Suggestions",
             "  - Rule 2: all 5 results from 20 to 25 Mbps were not worth it; the 2 from 40 Mbps up converted. Consider minimumVideoBitrate: \"30Mbps\".",
             "  - hevc 4k+ 40-60 Mbps: 4 of 5 earlier results converted, saving 41-55%. Consider a rule: codecs [\"hevc\"], resolution \"4k+\", minimumVideoBitrate \"40Mbps\".",
-            "  - Never tried: h264 1080p-1440p 10-15 Mbps (340 videos, 10.0 GiB). Test one: video-optimiser process \"C:\\Music\\uhdkpop\\clip.mp4\" --force",
+            "  - Never tried: h264 1080p-1440p 10-15 Mbps (340 videos, 10.0 GiB). Test one: video-optimiser queue add \"D:\\Videos\\clip.mp4\" --force",
             "  - Never tried in Immich: 1080p-1440p 15-20 Mbps (220 videos, 3.0 GiB). A typical one: PXL_20240512_101500.mp4");
     }
 

@@ -180,7 +180,19 @@ public interface IImmichDiscoveryService
     /// a download to judge are downloaded under <see cref="ImmichSettings.StagingDirectory"/>.
     /// </summary>
     Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ImmichDiscoveryProgress>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Downloads again the staged original of each of <paramref name="jobs"/> that lost it, for <c>run</c> before it converts
+    /// them; each is a queued, unheld Immich job the run is about to take. A job whose bytes Immich no longer returns fails as <c>SourceMissing</c> and is in <see cref="ImmichRestageResult.Failed"/>.
+    /// When Immich can't be used (unreachable, a missing or rejected key, a server error), restaging stops and
+    /// <see cref="ImmichRestageResult.Unusable"/> says why.
+    /// </summary>
+    Task<ImmichRestageResult> RestageMissingAsync(string databasePath, AppSettings settings, IReadOnlyCollection<JobRecord> jobs, IProgress<ImmichDiscoveryProgress>? progress = null, CancellationToken cancellationToken = default);
 }
+
+/// <param name="Failed">The jobs marked failed because their staged copy could not be brought back.</param>
+/// <param name="Unusable">Why Immich can't be used, when it stopped the restaging; null when every job was tried.</param>
+public sealed record ImmichRestageResult(int Restaged, IReadOnlyList<JobRecord> Failed, string? Unusable = null);
 
 /// <summary>
 /// An asset holding a converted original's checksum, as the user would look for it on the phone: the file name and the

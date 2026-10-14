@@ -118,8 +118,7 @@ internal static class StoppedRunMessage
     {
         var verb = command.Kind switch
         {
-            CliCommandKind.Process => $"process \"{command.ProcessPath}\"{(command.Force ? " --force" : string.Empty)}",
-            CliCommandKind.QueueRun => "queue run",
+            CliCommandKind.Run => "run",
             CliCommandKind.ImmichRun when command.Limit is not null && immichJobsLeft > 0 => $"immich run --limit {immichJobsLeft}",
             // --first is parsed as --limit 1, so the flag the user typed is checked first.
             CliCommandKind.ImmichRun => $"immich run{(command.First ? " --first" : command.Limit is { } limit ? $" --limit {limit}" : string.Empty)}",

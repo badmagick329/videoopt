@@ -484,7 +484,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         var asset = _immich.Add("clip.mp4", "hevc video");
         var job = await CreateJobAsync(asset, JobStatus.Queued, staged: false);
         _immich.Remove(asset);
-        _immich.Failures[asset.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.");
+        _immich.Failures[asset.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.", 404);
 
         var result = await DiscoverAsync();
 
@@ -720,7 +720,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         var vanished = _immich.Add("vanished.mp4", "hevc vanished");
         var first = await CreateJobAsync(restored, JobStatus.Queued, staged: false);
         var second = await CreateJobAsync(vanished, JobStatus.Queued, staged: false);
-        _immich.Failures[vanished.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.");
+        _immich.Failures[vanished.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.", 404);
         var events = new List<ImmichDiscoveryProgress>();
 
         await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));

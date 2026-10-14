@@ -308,7 +308,7 @@ public sealed class QueueServiceTests : IDisposable
     public async Task RunAsyncTakesTheQueueAsItIsBeforeEachVideo()
     {
         var (databasePath, jobs) = await QueuedAsync("first.mp4", "held.mp4", "later.mp4", "moved-next.mp4");
-        // A queue run takes folder videos only; immich run takes this one.
+        // A run kept to folder videos (Immich can't be used) leaves this one queued.
         await _repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "immich.mp4"), SourceFingerprint = "immich", Status = JobStatus.Queued, SourceKind = JobSourceKind.Immich, ImmichAssetId = "asset" });
         var processor = new ScriptedProcessor();
         processor.During["first.mp4"] = async () =>
@@ -319,10 +319,26 @@ public sealed class QueueServiceTests : IDisposable
         };
         var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor);
 
-        var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
+        var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs) with { SourceKind = JobSourceKind.File });
 
         processor.Processed.Should().Equal("first.mp4", "moved-next.mp4", "later.mp4", "added.mp4");
         result.ReadyToFinalize.Should().Be(4);
+    }
+
+    /// <summary><c>run</c> converts every source: an Immich video takes its place in run order beside folder videos.</summary>
+    [Fact]
+    public async Task RunAsyncWithNoSourceTakesEverySourceInRunOrder()
+    {
+        var (databasePath, jobs) = await QueuedAsync("first.mp4");
+        var immich = await _repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "IMG_0001.MOV"), SourceFingerprint = "immich", Status = JobStatus.Queued, SourceKind = JobSourceKind.Immich, ImmichAssetId = "asset" });
+        await Task.Delay(5);
+        var (_, later) = await QueuedAsync("later.mp4");
+        var processor = new ScriptedProcessor();
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor);
+
+        _ = await queue.RunAsync(databasePath, new AppSettings(), Prepared([.. jobs, immich, .. later]));
+
+        processor.Processed.Should().Equal("first.mp4", "IMG_0001.MOV", "later.mp4");
     }
 
     /// <summary><c>immich run</c> keeps the set its limit chose (until phase A step 7): a video queued meanwhile waits.</summary>
@@ -521,6 +537,7 @@ public sealed class QueueServiceTests : IDisposable
     private sealed class FixedScanner(params string[] paths) : IFileScanner
     {
         public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool stopAfterFirstEligible = false, IReadOnlySet<string>? openSourcePaths = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new ScanReport(paths.Select(Eligible).ToArray(), []));
+        public Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default) => throw new NotSupportedException("Not a queue add <file> test.");
     }
 
     private sealed class FirstAwareScanner(string alreadyOpen, string next, string later) : IFileScanner
@@ -534,6 +551,7 @@ public sealed class QueueServiceTests : IDisposable
                 [Eligible(alreadyOpen), Eligible(next), Eligible(later)],
                 []));
         }
+        public Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default) => throw new NotSupportedException("Not a queue add <file> test.");
     }
 
     private sealed class ResultProcessor(JobProcessingResult result) : IJobProcessor

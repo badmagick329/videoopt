@@ -78,7 +78,7 @@ public sealed class RemoteSetupServiceTests
         fixture.Output.Should().Contain("Hetzner already has this key as \"video-optimiser-hetzner-cx43\".");
         fixture.Output.Should().Contain($"Updated {fixture.ConfigPath}; the previous version is in {fixture.ConfigPath}.bak.");
         fixture.Output.Should().Contain("Remote setup is complete. Nothing was created on Hetzner.");
-        fixture.Output.Last().Should().Be($"Next: video-optimiser queue run --remote --config \"{fixture.ConfigPath}\"");
+        fixture.Output.Last().Should().Be($"Next: video-optimiser run --remote --config \"{fixture.ConfigPath}\"");
         var text = fixture.ReadConfig();
         text.Should().Contain("mode: \"remoteSsh\"").And.Contain("lifecycle: \"hetzner\"")
             .And.Contain("identityFile: \"keys/id_test\"")

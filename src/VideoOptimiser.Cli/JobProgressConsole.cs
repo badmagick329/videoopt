@@ -3,7 +3,7 @@ using VideoOptimiser.Application.Processing;
 namespace VideoOptimiser.Cli;
 
 /// <summary>
-/// Prints a job's <see cref="JobProgress"/> lines as one indented block, so <c>process</c>, <c>queue run</c> and <c>immich run</c>
+/// Prints a job's <see cref="JobProgress"/> lines as one indented block, so <c>run</c> and <c>immich run</c>
 /// read alike: the header at column 0 after a blank line, steps under it, and detail (one CRF attempt, a progress line)
 /// under the steps. A <see cref="JobProgressKind.ToolOutput"/> line reaching here is one the translator did not recognise;
 /// it prints as detail rather than being dropped. On a terminal the header is bold, detail is dim so the steps and the outcome

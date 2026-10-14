@@ -36,7 +36,7 @@ public sealed class WorkerCreationTests : IDisposable
             await Task.Delay(5);
         }
 
-        var (_, output, _) = await RunAsync("queue", "run", "--config", config);
+        var (_, output, _) = await RunAsync("run", "--config", config);
 
         _lifecycle.EnsureCalls.Should().Be(ensured);
         if (ensured == 0)
@@ -62,12 +62,13 @@ public sealed class WorkerCreationTests : IDisposable
         _lifecycle.Exists = false;
         var processor = new IneligibleByNameProcessor { During = async () => (await _repository.SetHeldAsync(DatabasePath, (await _repository.GetAsync(DatabasePath, released.Id))!, held: false)).Should().BeTrue() };
 
-        var (_, output, _) = await RunAsync(processor, "queue", "run", "--config", config);
+        var (_, output, _) = await RunAsync(processor, "run", "--config", config);
 
         _lifecycle.EnsureCalls.Should().Be(0);
         output.Should().Be(string.Concat(new[]
         {
             "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
+            "1 video is held; runs pass over it until it's released.",
             "Converting 1 video.",
             "",
             "[1/1] ineligible.mp4",
@@ -101,7 +102,7 @@ public sealed class WorkerCreationTests : IDisposable
             }
         };
 
-        _ = await RunAsync(processor, "queue", "run", "--config", config);
+        _ = await RunAsync(processor, "run", "--config", config);
 
         _lifecycle.EnsureCalls.Should().Be(1);
         processor.Processed.Should().Equal("first.mp4", "joining.mp4");
@@ -131,11 +132,12 @@ public sealed class WorkerCreationTests : IDisposable
         _lifecycle.Exists = false;
         var processor = new IneligibleByNameProcessor { During = async () => (await _repository.SetHeldAsync(DatabasePath, (await _repository.GetAsync(DatabasePath, remote.Id))!, held: false)).Should().BeTrue() };
 
-        var (_, output, _) = await RunAsync(processor, "queue", "run", "--local", "--config", config);
+        var (_, output, _) = await RunAsync(processor, "run", "--local", "--config", config);
 
         output.Should().Be(string.Concat(new[]
         {
             "Encoding on this PC (--local).",
+            "1 video is held; runs pass over it until it's released.",
             "Converting 1 video.",
             "",
             "[1/1] ineligible.mp4",
@@ -148,20 +150,6 @@ public sealed class WorkerCreationTests : IDisposable
         }.Select(line => line + Environment.NewLine)));
         processor.Processed.Should().Equal("ineligible.mp4");
         (await _repository.GetAsync(DatabasePath, remote.Id))!.Status.Should().Be(JobStatus.Interrupted);
-    }
-
-    [Fact]
-    public async Task ProcessCreatesNoWorkerForAFileThatFailsALocalCheck()
-    {
-        var config = await WriteConfigAsync();
-        var source = Path.Combine(_directory, "ineligible.mp4");
-        await File.WriteAllBytesAsync(source, new byte[16]);
-
-        var (code, output, _) = await RunAsync("process", source, "--config", config);
-
-        _lifecycle.EnsureCalls.Should().Be(0);
-        output.Should().NotContain("Managed Hetzner worker");
-        code.Should().Be((int)ExitCode.NoEligibleFiles);
     }
 
     private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(params string[] args) => RunAsync(new IneligibleByNameProcessor(), args);

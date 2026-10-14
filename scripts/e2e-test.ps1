@@ -4,7 +4,7 @@ param(
     [string] $Executable
 )
 
-# Runs discover -> queue run -> validate -> finalise (archive and keep) -> rediscover -> retry -> cleanup against real ab-av1, ffmpeg and ffprobe, which must be on PATH
+# Runs queue add -> run -> validate -> finalise (archive and keep) -> rediscover -> retry -> cleanup against real ab-av1, ffmpeg and ffprobe, which must be on PATH
 # (ab-av1 itself calls ffmpeg from PATH). Unit tests fake every tool, so this is the only check of their real output. It also checks that the output keeps capture metadata.
 
 $ErrorActionPreference = 'Stop'
@@ -126,11 +126,11 @@ validation:
 "@ | Set-Content -LiteralPath $config -Encoding utf8
 
     Invoke-Cli 0 @('config', 'validate') | Out-Null
-    Invoke-Cli 0 @('queue', 'discover') | Out-Null
+    Invoke-Cli 0 @('queue', 'add') | Out-Null
     $queued = Get-Jobs 'queue list'
-    Assert ($queued.Count -eq 4) "discover should queue all four clips; queued $($queued.Count)."
+    Assert ($queued.Count -eq 4) "queue add should queue all four clips; queued $($queued.Count)."
 
-    Invoke-Cli 0 @('queue', 'run') | Out-Null
+    Invoke-Cli 0 @('run') | Out-Null
     $ready = Get-Jobs 'queue list'
     Assert (@($ready | Where-Object status -eq 'ReadyToFinalize').Count -eq 4) "every job should be ReadyToFinalize; got $(($ready | ForEach-Object status) -join ', ')."
     $jobA = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'a.mp4' }
@@ -199,7 +199,7 @@ validation:
     }
 
     # The archived and kept originals and failed clip b are all still eligible H.264; none may be queued again.
-    $rediscovered = Invoke-Cli 0 @('queue', 'discover')
+    $rediscovered = Invoke-Cli 0 @('queue', 'add')
     Assert ($rediscovered -cmatch '(?m)^Queued: 0\.' -and $rediscovered -match 'Already converted: 1\.' -and $rediscovered -match 'Previously failed or cancelled: 1\.') "rediscovery should queue nothing: $rediscovered"
 
     # calibrate reads the finished jobs and the folder without writing: the three conversions count as history because each
@@ -215,14 +215,14 @@ validation:
     Assert ($calibration.alreadyAv1.videos -eq 3) "calibrate should count three AV1 files; got $($calibration.alreadyAv1.videos)."
     Assert ($calibration.historyLeftOut.otherSettings -eq 0) "every conversion ran at the current settings; got $($calibration.historyLeftOut.otherSettings) left out."
 
-    # queue retry opts clip b back in; cancelling that job leaves it out of the queue again.
+    # queue retry opts clip b back in; dropping that job leaves it out of the queue again.
     $retried = Invoke-Cli 0 @('queue', 'retry', $jobB.id)
-    Assert ($retried -match 'Created fresh queued job ([0-9a-f]{32})') "queue retry should create a job for clip b: $retried"
+    Assert ($retried -match 'again as job ([0-9a-f]{32}).') "queue retry should create a job for clip b: $retried"
     $retryId = $Matches[1]
-    $whileRetried = Invoke-Cli 0 @('queue', 'discover')
+    $whileRetried = Invoke-Cli 0 @('queue', 'add')
     Assert ($whileRetried -match 'Already queued: 1\.') "discovery should count the retried clip b as queued: $whileRetried"
-    Invoke-Cli 0 @('queue', 'cancel', $retryId) | Out-Null
-    $afterCancel = Invoke-Cli 0 @('queue', 'discover')
+    Invoke-Cli 0 @('queue', 'drop', $retryId) | Out-Null
+    $afterCancel = Invoke-Cli 0 @('queue', 'add')
     Assert ($afterCancel -cmatch '(?m)^Queued: 0\.' -and $afterCancel -match 'Previously failed or cancelled: 1\.') "a cancelled clip b should stay out of the queue: $afterCancel"
 
     # Left behind: the manifests of clips a, c and d (completed) and clip b's output and manifest (failed).

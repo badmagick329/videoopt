@@ -211,15 +211,15 @@ internal static partial class CliApplication
             CliCommandKind.WorkerStatus => await RunWorkerStatusAsync(services, configuration, cancellationToken),
             CliCommandKind.WorkerDelete => await RunWorkerDeleteAsync(services, configuration, cancellationToken),
             CliCommandKind.RemoteSetup => (int)await services.GetRequiredService<IRemoteSetupService>().RunAsync(configuration, ConfirmAsync, new InlineProgress<string>(Console.WriteLine), cancellationToken),
-            CliCommandKind.Process => await RunGuardedAsync(services, configuration, command, () => RunProcessAsync(services, configuration, command, cancellationToken)),
-            CliCommandKind.QueueDiscover => await RunQueueDiscoverAsync(services.GetRequiredService<IQueueService>(), configuration, command.First, cancellationToken),
-            CliCommandKind.QueueRun => await RunGuardedAsync(services, configuration, command, () => RunQueueRunAsync(services, configuration, command, cancellationToken)),
+            CliCommandKind.QueueAdd => await RunQueueAddAsync(services.GetRequiredService<IQueueService>(), configuration, command, cancellationToken),
+            CliCommandKind.QueueAddFile => await RunQueueAddFileAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.Run => await RunGuardedAsync(services, configuration, command, () => RunRunAsync(services, configuration, command, cancellationToken)),
             CliCommandKind.QueueList => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.QueueHold => await RunQueueHoldAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
             CliCommandKind.QueueRelease => await RunQueueReleaseAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
             CliCommandKind.QueueNext => await RunQueueNextAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
             CliCommandKind.QueueDrop => await RunQueueDropAsync(services, configuration, command, cancellationToken),
-            CliCommandKind.QueueRetry => await RunQueueRetryAsync(services.GetRequiredService<IJobRetryService>(), configuration, command.JobId!, cancellationToken),
+            CliCommandKind.QueueRetry => await RunQueueRetryAsync(services.GetRequiredService<IJobRetryService>(), configuration, command, cancellationToken),
             CliCommandKind.Status => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.History => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: true, command.Json, cancellationToken),
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
@@ -279,187 +279,6 @@ internal static partial class CliApplication
         return (int)report.ExitCode;
     }
 
-    private static async Task<int> RunProcessAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
-    {
-        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
-        if (diagnostics.Count > 0)
-        {
-            foreach (var diagnostic in diagnostics)
-            {
-                WriteError($"[{diagnostic.Code}] {diagnostic.Message}");
-            }
-
-            return (int)ExitCode.InvalidConfiguration;
-        }
-
-        // A dry run writes nothing, so it runs beside a real one.
-        using var runLock = command.DryRun ? null : TakeRunLock(services, configuration, "process");
-        if (!command.DryRun && runLock is null) return (int)ExitCode.GeneralFailure;
-        await PrintRunBannerAsync(services, configuration, command.ModeOverride, cancellationToken);
-        var sourcePath = Path.GetFullPath(command.ProcessPath!);
-        if (!File.Exists(sourcePath))
-        {
-            WriteError($"Original does not exist: {sourcePath}");
-            return (int)ExitCode.ProcessingFailure;
-        }
-        if (command.DryRun)
-        {
-            Console.WriteLine($"Would create a job for: {sourcePath}");
-            Console.WriteLine("Would run CRF search, encode a temporary AV1, then validate it. The original would not be changed.");
-            return (int)ExitCode.Success;
-        }
-
-        var repository = services.GetRequiredService<IJobRepository>();
-        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        // As in QueueService.PrepareAsync: a finalisation holding its lock owns its Finalizing job.
-        using (var finalizeLock = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(configuration.Settings.Database.Path), DatabaseLock.RunPreparing, out _))
-        {
-            await repository.MarkActiveJobsInterruptedAsync(configuration.Settings.Database.Path, includeFinalizing: finalizeLock is not null, cancellationToken);
-        }
-        var existingJob = await repository.FindOpenBySourceAsync(configuration.Settings.Database.Path, sourcePath, cancellationToken);
-        var compatibility = existingJob is null ? null : JobCompatibility.Evaluate(existingJob, configuration.Settings);
-        if (command.ModeOverride is not null && compatibility is not null && JobCompatibility.IsBoundToOtherMode(existingJob!, compatibility))
-        {
-            Console.WriteLine(JobCompatibility.SkippedMessage(existingJob!));
-            return (int)ExitCode.Success;
-        }
-        if (compatibility?.Status == JobCompatibilityStatus.Adopted)
-        {
-            JobCompatibility.Apply(existingJob!, compatibility.ExpectedBinding);
-            await repository.UpdateAsync(configuration.Settings.Database.Path, existingJob!, cancellationToken);
-        }
-        var job = existingJob ?? await CreateProcessJobAsync(services, configuration, sourcePath, command.Force, cancellationToken);
-        // --force for this command only: the flag is stored only on a job created by it.
-        job.Forced |= command.Force;
-        var processor = services.GetRequiredService<IJobProcessor>();
-        // A server bills from the moment it exists, so it is created only for a job that will reach a remote stage (VOPT-68).
-        var managedWork = lifecycle.IsManaged(configuration.Settings) && job.IsQueued && (compatibility?.CanRun ?? true) &&
-            await processor.NeedsWorkerAsync(job, configuration.Settings, cancellationToken);
-        if (managedWork)
-        {
-            await EnsureWorkerReadyAsync(services, configuration, cancellationToken);
-            services.GetRequiredService<RunWorkerState>().Used = true;
-        }
-        await PrepareWorkerQuestionAsync(services, configuration, cancellationToken);
-        var progress = new JobProgressConsole(Console.Out, OutputStyle);
-        progress.Report(JobProgress.Header(1, 1, sourcePath));
-        JobProcessingResult result;
-        // One video: stopping after it is finishing it.
-        using (StopAfterThisVideoAnnounced(services, progress))
-        {
-            result = job.Status == JobStatus.ReadyToFinalize ? ProcessOutcome(job, $"Job {job.Id:N} is already ready to finalise.", progress)
-                : FinalizationService.IsInterruptedImmichFinalization(job) ? await ReturnImmichFinalizationToReadyAsync(repository, configuration, job, progress, cancellationToken)
-                // F0 (VOPT-70): left as it is; finalize checks whether anything moved before it resumes.
-                : FinalizationService.IsInterruptedFileFinalization(job) ? ProcessOutcome(job, $"Job {job.Id:N} was interrupted during finalisation. Run 'video-optimiser finalize {job.Id:N}' to check and resume it.", progress)
-                : await processor.ProcessAsync(configuration.Settings.Database.Path, job, configuration.Settings, progress, cancellationToken);
-        }
-
-        // An unreachable worker leaves the job Interrupted and resumable, so it is not a failed job. (Ctrl+C throws instead.)
-        var unreachableWorkerJob = result.Job is { Status: JobStatus.Interrupted, FailureCategory: JobProcessor.RemoteUnavailableCategory } ? result.Job : null;
-        FailedQueueJob[] failedJobs = result.ExitCode == ExitCode.Success || unreachableWorkerJob is not null ? [] : [ToFailedQueueJob(result.Job, result.Message)];
-        PrintFailedJobs(failedJobs);
-        if (result.Job.Status == JobStatus.ReadyToFinalize) Console.WriteLine($"Next: review the output, then run 'video-optimiser finalize {result.Job.Id:N}'.");
-        var workerHandled = await ConcludeWorkerAsync(services, configuration, command, unreachableWorkerJob is null ? RunEnd.Finished : RunEnd.WorkerUnreachable, unreachableJob: unreachableWorkerJob);
-        if (unreachableWorkerJob is not null) await ReportUnreachableManualHostAsync(services, configuration, command, unreachableWorkerJob);
-
-        return workerHandled ? (int)result.ExitCode : (int)ExitCode.GeneralFailure;
-    }
-
-    /// <summary>A job for <c>process</c>'s original, which no open job had; another command may have queued it since.</summary>
-    private static async Task<JobRecord> CreateProcessJobAsync(IServiceProvider services, LoadedConfiguration configuration, string sourcePath, bool force, CancellationToken cancellationToken)
-    {
-        var repository = services.GetRequiredService<IJobRepository>();
-        var job = new JobRecord
-        {
-            Id = Guid.NewGuid(),
-            SourcePath = sourcePath,
-            SourceFingerprint = await services.GetRequiredService<IFileFingerprintService>().CreateAsync(sourcePath, cancellationToken),
-            Status = JobStatus.Queued,
-            Forced = force
-        };
-        JobCompatibility.Apply(job, JobCompatibility.ExpectedBinding(job.Id, configuration.Settings));
-        try
-        {
-            return await repository.CreateAsync(configuration.Settings.Database.Path, job, cancellationToken);
-        }
-        catch (OpenJobExistsException)
-        {
-            return await repository.FindOpenBySourceAsync(configuration.Settings.Database.Path, sourcePath, cancellationToken) ?? throw new JobChangedException(job.Id);
-        }
-    }
-
-    /// <summary>A job <c>process</c> takes no stage for: its message is the job's outcome, so it is the block's last line.</summary>
-    private static JobProcessingResult ProcessOutcome(JobRecord job, string message, IProgress<JobProgress> progress)
-    {
-        progress.Report(JobProgress.Outcome(JobTone.Success, message));
-        return new JobProcessingResult(job, ExitCode.Success, message);
-    }
-
-    private static async Task<JobProcessingResult> ReturnImmichFinalizationToReadyAsync(IJobRepository repository, LoadedConfiguration configuration, JobRecord job, IProgress<JobProgress> progress, CancellationToken cancellationToken)
-    {
-        FinalizationService.ReturnToReady(job, FinalizationService.InterruptedMessage);
-        await repository.UpdateAsync(configuration.Settings.Database.Path, job, cancellationToken);
-        return ProcessOutcome(job, $"Job {job.Id:N} was interrupted during finalisation. Run 'video-optimiser immich finalize' to check and resume it.", progress);
-    }
-
-    private static async Task<int> RunQueueDiscoverAsync(IQueueService queue, LoadedConfiguration configuration, bool first, CancellationToken cancellationToken)
-    {
-        // Settings validation allows no roots when Immich is configured; scanning nothing would only print "Queued: 0".
-        if (configuration.Settings.Watch.Roots.Count == 0)
-        {
-            WriteError("queue discover needs at least one watch.roots entry. For Immich videos, use 'immich run'.");
-            return (int)ExitCode.InvalidConfiguration;
-        }
-
-        Console.WriteLine($"Scanning {OutputWords.Count(configuration.Settings.Watch.Roots.Count, "watch root", "watch roots")} for videos to convert; files not seen before are probed with ffprobe.");
-        var result = await queue.DiscoverAsync(configuration.Settings.Database.Path, configuration.Settings, first, new QueueDiscoverConsole(Console.Out), cancellationToken);
-        QueueDiscoverConsole.WriteSummary(Console.Out, result);
-        return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
-    }
-
-    private static async Task<int> RunQueueRetryAsync(IJobRetryService retryService, LoadedConfiguration configuration, string jobId, CancellationToken cancellationToken)
-    {
-        if (!Guid.TryParse(jobId, out var id))
-        {
-            WriteError("Job ID is invalid.");
-            return (int)ExitCode.InvalidArguments;
-        }
-        var result = await retryService.RetryAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
-        if (!result.Succeeded)
-        {
-            WriteError(result.Error);
-            return (int)ExitCode.InvalidArguments;
-        }
-
-        var replacement = result.Replacement!;
-        if (replacement.SourceKind == JobSourceKind.Immich)
-        {
-            Console.WriteLine($"Created fresh queued job {replacement.Id:N}. Run 'immich run' to process it.");
-            if (!File.Exists(replacement.SourcePath)) Console.WriteLine("Its staged copy is gone; 'immich run' downloads it from Immich again first.");
-        }
-        else
-        {
-            Console.WriteLine($"Created fresh queued job {replacement.Id:N}. Run 'queue run' to process it.");
-        }
-        return (int)ExitCode.Success;
-    }
-
-    private static async Task<int> RunQueueRunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
-    {
-        if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
-        using var runLock = TakeRunLock(services, configuration, QueueRunHolder);
-        if (runLock is null) return (int)ExitCode.GeneralFailure;
-        await PrintRunBannerAsync(services, configuration, command.ModeOverride, cancellationToken);
-        var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, modeOverridden: command.ModeOverride is not null, cancellationToken);
-        var (ready, _, failures, workerUnreachable, stopped, workerHandled) = await ProcessPreparedJobsAsync(services, configuration, command, preparation, (ready, skipped, failures) =>
-        {
-            Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
-            PrintFailedJobs(failures);
-            if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser finalize --ready'.");
-        }, cancellationToken);
-        return stopped ? (int)ExitCode.Cancelled : !workerHandled ? (int)ExitCode.GeneralFailure : (int)QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
-    }
-
     /// <summary>
     /// Prints <see cref="RunBanner"/> before any download or encoding, so a config still set to <c>remoteSsh</c> is noticed
     /// before it costs anything. A retained managed worker comes from the local state file, with no Hetzner API call.
@@ -504,11 +323,18 @@ internal static partial class CliApplication
     /// outcome before the worker's fate is decided, so the worker lines come last. With nothing to convert, the run command's
     /// guard decides the fate (<see cref="RunGuardedAsync"/>).
     /// </summary>
-    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
+    /// <param name="beforeWorker">Runs after the preparation's lines and before the worker check, and returns the preparation
+    /// to convert: <c>run</c> readies its Immich videos there (R8).</param>
+    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken, Func<QueuePreparationResult, Task<QueuePreparationResult>>? beforeWorker = null)
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
         // F8 (VOPT-70): finalize checks whether anything moved and resumes, so the run leaves these jobs alone.
         foreach (var job in preparation.InterruptedFinalizations) Console.WriteLine($"{Path.GetFileName(job.SourcePath)} was interrupted while being finalised. Run 'video-optimiser finalize --ready' to finish it.");
+        if (command.Kind == CliCommandKind.Run && preparation.Held > 0)
+        {
+            Console.WriteLine(preparation.Held == 1 ? "1 video is held; runs pass over it until it's released." : $"{preparation.Held} videos are held; runs pass over them until they're released.");
+        }
+        if (beforeWorker is not null) preparation = await beforeWorker(preparation);
         if (preparation.RunnableJobs.Count == 0)
         {
             report(0, 0, [.. preparation.FailedJobs]);
@@ -528,14 +354,15 @@ internal static partial class CliApplication
         await PrepareWorkerQuestionAsync(services, configuration, cancellationToken);
         Console.WriteLine($"Converting {preparation.RunnableJobs.Count} {(preparation.RunnableJobs.Count == 1 ? "video" : "videos")}.");
         var progress = new JobProgressConsole(Console.Out, OutputStyle);
+        var joinFailures = new List<FailedQueueJob>();
         QueueRunResult result;
         using (StopAfterThisVideoAnnounced(services, progress))
         {
-            var passOver = PassOverJoiningVideos(services, configuration, command, preparation, workerEnsured: managedWork, progress);
+            var passOver = PassOverJoiningVideos(services, configuration, command, preparation, workerEnsured: managedWork, progress, joinFailures);
             result = await queue.RunAsync(configuration.Settings.Database.Path, configuration.Settings, preparation, passOver, progress, stopAfterThisVideo: services.GetRequiredService<RunStop>().AfterThisVideo, cancellationToken: cancellationToken);
         }
 
-        var failures = preparation.FailedJobs.Concat(result.FailedJobs).ToArray();
+        var failures = preparation.FailedJobs.Concat(joinFailures).Concat(result.FailedJobs).ToArray();
         if (result.UnreachableWorkerJob is not null)
         {
             Console.WriteLine();
@@ -576,9 +403,11 @@ internal static partial class CliApplication
     /// For a video that joins the run after it prepared (queued, released or moved next from another terminal), the checks
     /// preparation made for the rest. Under <c>--local</c> or <c>--remote</c>, one started in the other mode is skipped, as
     /// preparation skips it. A managed run that created no worker cannot start one that needs it: it would stop at its
-    /// first remote stage with nothing to connect to, so it waits for the next run.
+    /// first remote stage with nothing to connect to, so it waits for the next run. An Immich video whose downloaded copy is
+    /// gone gets it back first, as preparation's do: one Immich no longer has fails into <paramref name="failures"/>, and one
+    /// Immich can't be asked about stays queued.
     /// </summary>
-    private static Func<JobRecord, CancellationToken, Task<bool>> PassOverJoiningVideos(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, bool workerEnsured, JobProgressConsole progress)
+    private static Func<JobRecord, CancellationToken, Task<bool>> PassOverJoiningVideos(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, bool workerEnsured, JobProgressConsole progress, List<FailedQueueJob> failures)
     {
         var prepared = preparation.RunnableJobs.Select(job => job.Id).ToHashSet();
         var needsCheck = !workerEnsured && services.GetRequiredService<IRemoteWorkerLifecycle>().IsManaged(configuration.Settings);
@@ -590,6 +419,12 @@ internal static partial class CliApplication
             {
                 progress.WriteNote(JobCompatibility.SkippedMessage(job));
                 return true;
+            }
+            if (job.SourceKind == JobSourceKind.Immich)
+            {
+                var restage = await RestageAsync(services, configuration, [job], cancellationToken);
+                failures.AddRange(restage.Failed.Select(failed => ToFailedQueueJob(failed, failed.FailureMessage!)));
+                if (restage.Failed.Count > 0 || restage.Unusable is not null) return true;
             }
             if (!needsCheck || !await processor.NeedsWorkerAsync(job, configuration.Settings, cancellationToken)) return false;
             progress.WriteNote($"{Path.GetFileName(job.SourcePath)} waits for the next run: it needs a worker, and this run has none.");
@@ -873,7 +708,7 @@ internal static partial class CliApplication
 
     /// <summary>
     /// <c>calibrate</c>: what the rules admit and keep out, and suggestions. Scan issues end in <see cref="ExitCode.PartialSuccess"/>,
-    /// as for <c>queue discover</c>, because the report is missing the videos they left out.
+    /// as for <c>queue add</c>, because the report is missing the videos they left out.
     /// </summary>
     private static async Task<int> RunCalibrateAsync(IServiceProvider services, LoadedConfiguration configuration, bool json, CancellationToken cancellationToken)
     {
@@ -916,9 +751,9 @@ Usage:
   video-optimiser worker status [--config <path>]
   video-optimiser worker delete [--config <path>]
   video-optimiser remote setup [--config <path>]
-  video-optimiser process <file> [--config <path>] [--force] [--dry-run] [--local | --remote]
-  video-optimiser queue discover [--first] [--config <path>]
-  video-optimiser queue run [--config <path>] [--local | --remote]
+  video-optimiser queue add [--first] [--config <path>]
+  video-optimiser queue add <file> [--force] [--config <path>]
+  video-optimiser run [--config <path>] [--local | --remote]
   video-optimiser queue list [--config <path>] [--json]
   video-optimiser queue hold <job-id> [--config <path>]
   video-optimiser queue release <job-id> [--config <path>]
@@ -953,9 +788,9 @@ internal enum CliCommandKind
     WorkerStatus,
     WorkerDelete,
     RemoteSetup,
-    Process,
-    QueueDiscover,
-    QueueRun,
+    QueueAdd,
+    QueueAddFile,
+    Run,
     QueueList,
     QueueHold,
     QueueRelease,
@@ -972,7 +807,7 @@ internal enum CliCommandKind
     Calibrate
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? ProcessPath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null)
 {
     public bool IsValid => Kind != CliCommandKind.Invalid;
     public bool ShowHelp => Kind == CliCommandKind.Help;
@@ -1040,7 +875,7 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
                     modeOverrides.Add(ProcessingModeOverride.Remote);
                     break;
                 case "--crf":
-                    return Invalid("--crf is no longer supported. process selects CRF automatically.");
+                    return Invalid("--crf is no longer supported. run selects CRF automatically.");
                 case "--help" or "-h" or "help":
                     return new CliCommand(CliCommandKind.Help, null, null, false, false, false, false, null);
                 case "--version":
@@ -1062,9 +897,9 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             ["worker", "status"] => CliCommandKind.WorkerStatus,
             ["worker", "delete"] => CliCommandKind.WorkerDelete,
             ["remote", "setup"] => CliCommandKind.RemoteSetup,
-            ["process", _] => CliCommandKind.Process,
-            ["queue", "discover"] => CliCommandKind.QueueDiscover,
-            ["queue", "run"] => CliCommandKind.QueueRun,
+            ["queue", "add"] => CliCommandKind.QueueAdd,
+            ["queue", "add", _] => CliCommandKind.QueueAddFile,
+            ["run"] => CliCommandKind.Run,
             ["queue", "list"] => CliCommandKind.QueueList,
             ["queue", "hold", _] => CliCommandKind.QueueHold,
             ["queue", "release", _] => CliCommandKind.QueueRelease,
@@ -1084,7 +919,15 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
 
         if (kind == CliCommandKind.Invalid)
         {
-            return remaining is ["queue", "cancel", ..] ? Invalid("'queue cancel' is now 'queue drop'.") : Invalid("Unknown or incomplete command.");
+            // The names phase A replaced, with no aliases: each says what took its place.
+            return Invalid(remaining switch
+            {
+                ["queue", "cancel", ..] => "'queue cancel' is now 'queue drop'.",
+                ["queue", "run", ..] => "'queue run' is now 'run'.",
+                ["queue", "discover", ..] => "'queue discover' is now 'queue add'.",
+                ["process", ..] => "'process' was removed: use 'queue add <file>', then 'run'.",
+                _ => "Unknown or incomplete command."
+            });
         }
 
         if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.QueueList or CliCommandKind.Status or CliCommandKind.History or CliCommandKind.Calibrate))
@@ -1092,32 +935,32 @@ internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath
             return Invalid("--json is only supported by doctor, queue list, status, history and calibrate.");
         }
 
-        if (first && kind is not (CliCommandKind.QueueDiscover or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue discover and immich run.");
+        if (first && kind is not (CliCommandKind.QueueAdd or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue add and immich run.");
         if (limit is not null && kind != CliCommandKind.ImmichRun) return Invalid("--limit is only supported by immich run.");
         if (quality is not null && kind != CliCommandKind.ConfigInit) return Invalid("--quality is only supported by config init.");
         if (first && limit is not null) return Invalid("--first and --limit cannot be used together.");
-        // --first is --limit 1 for immich run; queue discover keeps its own --first.
+        // --first is --limit 1 for immich run; queue add keeps its own --first.
         if (first && kind == CliCommandKind.ImmichRun) limit = 1;
         if (all && kind != CliCommandKind.QueueDrop) return Invalid("--all is only supported by queue drop.");
 
-        if (force && kind != CliCommandKind.Process)
+        if (force && kind != CliCommandKind.QueueAddFile)
         {
-            return Invalid("--force is only supported by process.");
+            return Invalid("--force is only supported by queue add <file>.");
         }
 
-        if (dryRun && kind is not (CliCommandKind.Process or CliCommandKind.Cleanup)) return Invalid("--dry-run is only supported by process and cleanup.");
+        if (dryRun && kind != CliCommandKind.Cleanup) return Invalid("--dry-run is only supported by cleanup.");
         if (finalizeReady && kind != CliCommandKind.Finalize) return Invalid("--ready is only supported by finalize.");
         if (finalizeReady && remaining.Count != 1) return Invalid("finalize --ready does not take a job ID.");
         if (kind == CliCommandKind.QueueDrop && all == (remaining.Count == 3)) return Invalid("queue drop requires a job ID or --all.");
         if (kind == CliCommandKind.QueueRetry && remaining.Count != 3) return Invalid("queue retry requires a job ID.");
         if (modeOverrides.Distinct().Count() > 1) return Invalid("--local and --remote cannot be used together.");
         var modeOverride = modeOverrides.FirstOrDefault();
-        if (modeOverride is not null && kind is not (CliCommandKind.QueueRun or CliCommandKind.Process or CliCommandKind.ImmichRun))
+        if (modeOverride is not null && kind is not (CliCommandKind.Run or CliCommandKind.ImmichRun))
         {
-            return Invalid($"{modeOverride.Flag} is only supported by queue run, process and immich run.");
+            return Invalid($"{modeOverride.Flag} is only supported by run and immich run.");
         }
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.Process ? remaining[1] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);

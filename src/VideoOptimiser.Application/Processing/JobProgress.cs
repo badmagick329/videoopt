@@ -37,8 +37,8 @@ public enum JobTone
 
 /// <summary>
 /// One line of a job's console output. <see cref="Text"/> is the final wording; the console adds only the indentation for
-/// <see cref="Kind"/> and, when it can, the colour for <see cref="Tone"/>, so the same lines read the same in <c>process</c>,
-/// <c>queue run</c> and <c>immich run</c>.
+/// <see cref="Kind"/> and, when it can, the colour for <see cref="Tone"/>, so the same lines read the same in
+/// <c>run</c> and <c>immich run</c>.
 /// </summary>
 /// <param name="TimeLeft">On an encode progress line, the estimate its text shows, so the first Ctrl+C can say how long stopping after this video takes.</param>
 public sealed record JobProgress(JobProgressKind Kind, string Text, JobTone Tone = JobTone.None, TimeSpan? TimeLeft = null)

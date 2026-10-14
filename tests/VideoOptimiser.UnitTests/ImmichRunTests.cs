@@ -126,7 +126,7 @@ public sealed class ImmichRunTests : IDisposable
     }
 
     [Fact]
-    public async Task QueueRunLeavesImmichJobsToImmichRunAndImmichRunLeavesFileJobs()
+    public async Task AFolderOnlyPreparationLeavesImmichJobsAndAnImmichOneLeavesFileJobs()
     {
         _immich.Add("PXL.mp4", "hevc original");
         var immichJob = (await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null)).Discovery.Queued.Single();
@@ -161,7 +161,7 @@ public sealed class ImmichRunTests : IDisposable
     }
 
     [Fact]
-    public async Task QueueRunReturnsACrashedImmichFinalisationToReadyToo()
+    public async Task AFolderOnlyPreparationReturnsACrashedImmichFinalisationToReadyToo()
     {
         _immich.Add("PXL.mp4", "hevc original");
         var preparation = await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null);

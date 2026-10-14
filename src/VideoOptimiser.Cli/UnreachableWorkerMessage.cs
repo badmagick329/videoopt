@@ -8,7 +8,7 @@ namespace VideoOptimiser.Cli;
 /// </summary>
 internal static class UnreachableWorkerMessage
 {
-    /// <summary>U2, printed by <c>queue run</c> and <c>immich run</c> only: <c>process</c> has one video, and its outcome line says it.</summary>
+    /// <summary>U2, printed by <c>run</c> and <c>immich run</c>.</summary>
     /// <param name="notConverted">The interrupted job plus the jobs the run never started.</param>
     public static string Stopped(string worker, int notConverted) =>
         $"Stopped: the worker {worker} can't be reached, so {(notConverted == 1 ? "1 video was" : $"{notConverted} videos were")} not converted.";

@@ -51,7 +51,7 @@ public sealed class SettingsValidator : ISettingsValidator
         }
         AddWhen(string.IsNullOrWhiteSpace(settings.Database.Path), "DatabasePathRequired", "database.path is required.");
 
-        // An Immich-only setup needs no folders; queue discover checks for roots itself.
+        // An Immich-only setup needs no folders; queue add checks for roots itself.
         AddWhen(settings.Watch.Roots.Count == 0 && !settings.Immich.IsConfigured, "WatchRootsRequired", "At least one watch.roots entry is required, or set immich.baseUrl to convert only Immich videos.");
         foreach (var root in settings.Watch.Roots.Where(root => string.IsNullOrWhiteSpace(root.Path)))
         {

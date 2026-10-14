@@ -11,7 +11,7 @@ using VideoOptimiser.Infrastructure.Jobs;
 internal static partial class CliApplication
 {
     /// <summary>The run lock, or null after saying who holds it. Taking it starts the run: from then on every end decides the worker's fate (<see cref="RunGuardedAsync"/>).</summary>
-    /// <param name="command">How the refusal names this run to a later one, such as <c>queue run</c>.</param>
+    /// <param name="command">How the refusal names this run to a later one, such as <c>video-optimiser run</c>.</param>
     private static DatabaseLock? TakeRunLock(IServiceProvider services, LoadedConfiguration configuration, string command)
     {
         var taken = DatabaseLock.TryAcquire(DatabaseLock.RunPath(configuration.Settings.Database.Path), command, out var holder);
@@ -31,8 +31,18 @@ internal static partial class CliApplication
     }
 
     /// <summary>How a run names itself in the run lock, and so to a command refused by it.</summary>
-    private const string QueueRunHolder = "queue run";
-    private const string ImmichRunHolder = "immich run";
+    private const string RunHolder = "video-optimiser run";
+    private const string ImmichRunHolder = "video-optimiser immich run";
+
+    /// <summary>The queue verbs take the run lock for a moment to see whether a run holds it (<see cref="RunHoldsJobsAsync"/>).</summary>
+    private static readonly HashSet<string> QueueVerbHolders = new(StringComparer.Ordinal) { "queue hold", "queue next", "queue drop" };
+
+    /// <summary>
+    /// How the run going on this database names itself, or null when none is: read from the lock file without taking the
+    /// lock (W5). A queue verb holding it for a moment is not a run.
+    /// </summary>
+    private static string? LiveRun(string databasePath) =>
+        DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath)) is { } holder && !QueueVerbHolders.Contains(holder.Command) ? holder.Command : null;
 
     /// <summary>
     /// The finalise lock, or null after saying who holds it. A run holds it while it prepares, which takes moments, so this

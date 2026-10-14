@@ -503,6 +503,7 @@ public sealed class JobCompatibilityTests : IDisposable
     private sealed class EmptyScanner : IFileScanner
     {
         public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool stopAfterFirstEligible = false, IReadOnlySet<string>? openSourcePaths = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new ScanReport([], []));
+        public Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default) => throw new NotSupportedException("Not a queue add <file> test.");
     }
 
     private sealed class UnexpectedProcessor : IJobProcessor

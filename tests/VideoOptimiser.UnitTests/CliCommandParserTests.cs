@@ -35,7 +35,7 @@ public sealed class CliCommandParserTests
         CliCommand.Parse(["immich", "run", "--first", "--limit", "3"]).Error.Should().Be("--first and --limit cannot be used together.");
 
     [Theory]
-    [InlineData("queue", "run")]
+    [InlineData("run")]
     public void LimitOnAnyOtherCommandIsRejected(params string[] args) =>
         CliCommand.Parse([.. args, "--limit", "3"]).Error.Should().Be("--limit is only supported by immich run.");
 
@@ -103,17 +103,37 @@ public sealed class CliCommandParserTests
         CliCommand.Parse(args).IsValid.Should().BeFalse();
 
     [Fact]
-    public void QueueDiscoverStillAcceptsFirst()
+    public void QueueAddStillAcceptsFirst()
     {
-        var command = CliCommand.Parse(["queue", "discover", "--first"]);
+        var command = CliCommand.Parse(["queue", "add", "--first"]);
 
-        command.Kind.Should().Be(CliCommandKind.QueueDiscover);
+        command.Kind.Should().Be(CliCommandKind.QueueAdd);
         command.First.Should().BeTrue();
         command.Limit.Should().BeNull();
     }
 
+    [Fact]
+    public void QueueAddTakesAFileAndForce()
+    {
+        var command = CliCommand.Parse(["queue", "add", @"D:\Videos\clip.mp4", "--force"]);
+
+        command.Kind.Should().Be(CliCommandKind.QueueAddFile, command.Error);
+        command.FilePath.Should().Be(@"D:\Videos\clip.mp4");
+        command.Force.Should().BeTrue();
+    }
+
     [Theory]
-    [InlineData("--local", "process", "movie.mp4")]
+    [InlineData("--force", "queue", "add")]
+    [InlineData("--force", "run")]
+    public void ForceOnAnythingButQueueAddAFileIsRejected(string flag, params string[] args) =>
+        CliCommand.Parse([.. args, flag]).Error.Should().Be("--force is only supported by queue add <file>.");
+
+    [Fact]
+    public void DryRunIsOnlyForCleanup() =>
+        CliCommand.Parse(["run", "--dry-run"]).Error.Should().Be("--dry-run is only supported by cleanup.");
+
+    [Theory]
+    [InlineData("--local", "run")]
     [InlineData("--remote", "immich", "run", "--first")]
     public void RunCommandsTakeAModeOverride(string flag, params string[] args)
     {
@@ -125,12 +145,12 @@ public sealed class CliCommandParserTests
 
     [Fact]
     public void ARunWithoutAFlagHasNoOverride() =>
-        CliCommand.Parse(["queue", "run"]).ModeOverride.Should().BeNull();
+        CliCommand.Parse(["run"]).ModeOverride.Should().BeNull();
 
     [Fact]
     public void LocalAndRemoteTogetherAreRejected()
     {
-        var command = CliCommand.Parse(["queue", "run", "--local", "--remote"]);
+        var command = CliCommand.Parse(["run", "--local", "--remote"]);
 
         command.IsValid.Should().BeFalse();
         command.Error.Should().Be("--local and --remote cannot be used together.");
@@ -155,14 +175,14 @@ public sealed class CliCommandParserTests
     }
 
     [Theory]
-    [InlineData("--local", "queue", "discover")]
+    [InlineData("--local", "queue", "add")]
     [InlineData("--remote", "worker", "create")]
     public void AModeOverrideOnAnyOtherCommandIsRejected(string flag, params string[] args)
     {
         var command = CliCommand.Parse([.. args, flag]);
 
         command.IsValid.Should().BeFalse();
-        command.Error.Should().Be($"{flag} is only supported by queue run, process and immich run.");
+        command.Error.Should().Be($"{flag} is only supported by run and immich run.");
     }
 
     [Fact]

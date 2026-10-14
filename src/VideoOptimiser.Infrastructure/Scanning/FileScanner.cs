@@ -85,8 +85,10 @@ public sealed class FileScanner(
                         continue;
                     }
 
-                    var evaluation = await EvaluateAsync(canonicalPath, settings, cacheByPath, progress, cancellationToken);
+                    var evaluation = await EvaluateAsync(canonicalPath, settings, cacheByPath, progress, force: false, cancellationToken);
                     items.Add(evaluation.Item);
+                    // VOPT-73: every Issue line counts, so a file the scan could not judge is never silently left out.
+                    if (evaluation.Issue) issues.Add(new ScanIssue(canonicalPath, evaluation.Item.Reason));
                     cacheHits += evaluation.CacheHit ? 1 : 0;
                     realProbes += evaluation.RealProbe ? 1 : 0;
                     ReportChecked(canonicalPath);
@@ -108,17 +110,40 @@ public sealed class FileScanner(
         return new ScanReport(items, issues, cacheHits, realProbes);
     }
 
-    private async Task<EvaluationResult> EvaluateAsync(string path, AppSettings settings, Dictionary<string, MediaProbeCacheEntry> cacheByPath, IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    public async Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default)
+    {
+        var canonicalPath = Path.GetFullPath(path);
+        if (!force && IsWithinExcludedDirectory(canonicalPath, settings.Eligibility.ExcludedDirectories))
+        {
+            return new FileVerdict(new ScanItem(canonicalPath, ScanItemStatus.Ineligible, "File is in an excluded directory."));
+        }
+
+        var cacheByPath = new Dictionary<string, MediaProbeCacheEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in await mediaProbeCache.LoadAllAsync(settings.Database.Path, cancellationToken))
+        {
+            if (string.Equals(Path.GetFullPath(entry.SourcePath), canonicalPath, StringComparison.OrdinalIgnoreCase)) cacheByPath[canonicalPath] = entry;
+        }
+        var item = (await EvaluateAsync(canonicalPath, settings, cacheByPath, progress: null, force, cancellationToken)).Item;
+        // Said even when the rules also leave it out: --force would not lift it, so the --force command would be no help.
+        return item is { Status: ScanItemStatus.Ineligible, MediaInfo: { } media, SizeBytes: { } size } && SizeCap.For(media, size, settings.Quality, settings.Savings) is { RulesOutEverything: true } cap
+            ? new FileVerdict(item with { Reason = TooSmallReason(cap) }, TooSmall: true)
+            : new FileVerdict(item);
+    }
+
+    private static string TooSmallReason(SizeCap cap) => $"Too small to save {cap.MinimumText} (savings.minimumBytesSaved).";
+
+    /// <param name="force">Skips the extension, name and rule checks, for <c>queue add &lt;file&gt; --force</c>.</param>
+    private async Task<EvaluationResult> EvaluateAsync(string path, AppSettings settings, Dictionary<string, MediaProbeCacheEntry> cacheByPath, IProgress<ScanProgress>? progress, bool force, CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileName(path);
         var extension = Path.GetExtension(path);
-        if (!settings.Eligibility.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+        if (!force && !settings.Eligibility.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
         {
             return new EvaluationResult(new ScanItem(path, ScanItemStatus.Ineligible, "Extension is not allowed."));
         }
 
-        if (settings.Eligibility.ExcludedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase) ||
-            settings.Eligibility.ExcludedNamePatterns.Any(pattern => IsMatch(fileName, pattern)))
+        if (!force && (settings.Eligibility.ExcludedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase) ||
+            settings.Eligibility.ExcludedNamePatterns.Any(pattern => IsMatch(fileName, pattern))))
         {
             return new EvaluationResult(new ScanItem(path, ScanItemStatus.Ineligible, "File name is excluded by configuration."));
         }
@@ -135,14 +160,14 @@ public sealed class FileScanner(
             cached.SourceSizeBytes == cachedSizeBytes &&
             cached.SourceLastWriteUtcTicks == cachedLastWriteUtcTicks)
         {
-            return new EvaluationResult(Judge(path, info, cached.MediaInfo, cachedSizeBytes, settings), CacheHit: true);
+            return new EvaluationResult(Judge(path, info, cached.MediaInfo, cachedSizeBytes, settings, force), CacheHit: true);
         }
 
         var readiness = await readinessService.CheckAsync(path, cancellationToken);
         if (!readiness.IsReady)
         {
             progress?.Report(new ScanProgress(path, "Issue", readiness.Reason));
-            return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, readiness.Reason, info.Length));
+            return new EvaluationResult(new ScanItem(path, ScanItemStatus.Unavailable, readiness.Reason, info.Length), Issue: true);
         }
 
         try
@@ -167,35 +192,37 @@ public sealed class FileScanner(
                 new MediaProbeCacheEntry(path, sourceSizeBytes, sourceLastWriteUtcTicks, mediaInfo),
                 cancellationToken);
 
-            return new EvaluationResult(Judge(path, info, mediaInfo, sourceSizeBytes, settings), RealProbe: true);
+            return new EvaluationResult(Judge(path, info, mediaInfo, sourceSizeBytes, settings, force), RealProbe: true);
         }
         catch (Exception exception) when (exception is IOException or MediaProbeException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
             progress?.Report(new ScanProgress(path, "Issue", exception.Message));
-            return new EvaluationResult(new ScanItem(path, ScanItemStatus.ProbeFailed, exception.Message, info.Length));
+            return new EvaluationResult(new ScanItem(path, ScanItemStatus.ProbeFailed, exception.Message, info.Length), Issue: true);
         }
     }
 
     /// <summary>
     /// The eligibility rules, then the size cap: a video too small to save <c>savings.minimumBytesSaved</c> is never queued,
-    /// since its job would only skip it.
+    /// since its job would only skip it. <paramref name="force"/> skips the rules, never the cap.
     /// </summary>
-    private static ScanItem Judge(string path, FileInfo info, MediaInfo media, long sizeBytes, AppSettings settings)
+    private static ScanItem Judge(string path, FileInfo info, MediaInfo media, long sizeBytes, AppSettings settings, bool force)
     {
-        if (!EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var reason))
+        var reason = "Queued with --force.";
+        if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out reason))
             return new ScanItem(path, ScanItemStatus.Ineligible, reason, sizeBytes, media);
         var cap = SizeCap.For(media, sizeBytes, settings.Quality, settings.Savings);
         return cap.RulesOutEverything
-            ? new ScanItem(path, ScanItemStatus.Ineligible, $"Too small to save {cap.MinimumText} (savings.minimumBytesSaved).", sizeBytes, media)
+            ? new ScanItem(path, ScanItemStatus.Ineligible, TooSmallReason(cap), sizeBytes, media)
             : new ScanItem(path, ScanItemStatus.Eligible, reason, sizeBytes, media);
     }
 
-    private sealed record EvaluationResult(ScanItem Item, bool CacheHit = false, bool RealProbe = false);
+    /// <param name="Issue">The file could not be judged (unreadable, or ffprobe failed), and an Issue line said so.</param>
+    private sealed record EvaluationResult(ScanItem Item, bool CacheHit = false, bool RealProbe = false, bool Issue = false);
 
     private static bool IsMatch(string fileName, string globPattern) => Regex.IsMatch(fileName, "^" + Regex.Escape(globPattern).Replace("\\*", ".*").Replace("\\?", ".") + "$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     // Archived originals are still eligible H.264, so discovery must never queue them again, whatever excludedDirectories says.
-    private static bool IsWithinArchiveDirectory(string path, string archiveDirectory)
+    internal static bool IsWithinArchiveDirectory(string path, string archiveDirectory)
     {
         if (string.IsNullOrWhiteSpace(archiveDirectory)) return false;
         if (!Path.IsPathFullyQualified(archiveDirectory)) return IsWithinExcludedDirectory(path, [archiveDirectory]);

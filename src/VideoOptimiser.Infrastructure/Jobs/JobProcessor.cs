@@ -68,8 +68,8 @@ public sealed class JobProcessor(
         try
         {
             var verdict = await CheckSourceAsync(path, job.SourceKind, settings, force, cancellationToken);
-            // Saved with the job's next update. This covers a job `process` created without a probe, and one queued before
-            // migration 8; for the rest it describes the file as this run found it.
+            // Saved with the job's next update. This covers a job queued before migration 8; for the rest it describes the
+            // file as this run found it.
             if (verdict.Media is not null) job.VideoFacts = VideoFacts.From(verdict.Media, verdict.Info.Length);
             if (verdict.Skip) return await SkipAsync(job, databasePath, settings, verdict.Message!, progress, cancellationToken);
             if (!verdict.Proceeds) return await FailAsync(job, databasePath, verdict.FailureCategory!, verdict.Message!, verdict.ExitCode, progress, cancellationToken);

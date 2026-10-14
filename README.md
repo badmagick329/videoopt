@@ -69,8 +69,8 @@ The commands below assume you run them there, with the config file beside the ex
 4. Queue one video and convert it:
 
    ```powershell
-   .\video-optimiser.exe queue discover --first --config .\video-optimiser.yaml
-   .\video-optimiser.exe queue run --config .\video-optimiser.yaml
+   .\video-optimiser.exe queue add --first --config .\video-optimiser.yaml
+   .\video-optimiser.exe run --config .\video-optimiser.yaml
    ```
 
    The first line says where encoding runs, such as `Encoding on this PC.` If it names a server you didn't expect, press `Ctrl+C`; nothing has been encoded yet.
@@ -106,7 +106,7 @@ Set `VIDEO_OPTIMISER_CONFIG` to the config's full path and you can leave out `--
 
 With Hetzner, the app shows the hourly price and asks before it creates a server, then deletes the server after a clean run. `maxHourlyPrice` caps the price (€0.30 by default). Validation, review and finalisation always happen on your PC. [docs/remote-ssh.md](docs/remote-ssh.md) covers setup for both remote modes, including `remote setup` for Hetzner.
 
-Add `--local` or `--remote` to `queue run`, `process` or `immich run` to use the other mode for one run without editing the config.
+Add `--local` or `--remote` to `run` or `immich run` to use the other mode for one run without editing the config.
 
 ## Immich
 
@@ -128,13 +128,13 @@ All commands take `--config <path>`.
 | `config init [--quality archive\|standard\|compact]` | Write a starter config. Never overwrites a file. |
 | `config validate`, `config show` | Check the config, or print it. |
 | `doctor [--json]` | Check the config, tools, database, disk space, Immich and any remote worker. |
-| `queue discover [--first]` | Queue the videos in the watch folders that match your rules. |
-| `queue run [--local \| --remote]` | Convert every queued video. Stops before replacing anything. |
-| `process <file> [--force] [--dry-run]` | Convert one file now. `--force` skips the rules. |
+| `queue add [--first]` | Queue the videos in the watch folders that match your rules. |
+| `queue add <file> [--force]` | Queue one file. `--force` skips the watch folders and the rules. |
+| `run [--local \| --remote]` | Convert every queued video, folder and Immich alike. Stops before replacing anything. |
 | `status`, `history`, `queue list` | Open jobs, finished jobs, or open jobs only. Add `--json` for scripts. |
 | `calibrate [--json]` | Show how your rules fit your library. Changes nothing. |
 | `queue hold <job-id>`, `queue release <job-id>` | Make runs pass over a waiting or stopped video, or take it again. |
-| `queue next <job-id>` | Convert a waiting or stopped video next. A `queue run` that is going takes it after the current video. |
+| `queue next <job-id>` | Convert a waiting or stopped video next. A `run` that is going takes it after the current video. |
 | `queue drop <job-id>`, `queue drop --all` | Take one video, or every waiting, stopped and held one, out of the queue. Refuses while `cleanup` would then delete the only copy of a video. |
 | `queue retry <job-id>` | Queue a failed, dropped or skipped video again. |
 | `validate <job-id>` | Re-run the checks on a job's output. |
@@ -151,7 +151,7 @@ Exit code `0` means success. The other exit codes are listed in [docs/agent-guid
 
 - Originals are only read until you finalise. `finalize` moves the original aside, puts the AV1 in place, and moves the original back if anything fails.
 - A video that failed, was dropped or was skipped is not queued again until its file changes or you run `queue retry`.
-- The job database (`jobs.db` by default) tracks every job, so a crash or `Ctrl+C` never loses track of a file. One run uses it at a time: a second `queue run`, `immich run` or `process` refuses and names the one running.
+- The job database (`jobs.db` by default) tracks every job, so a crash or `Ctrl+C` never loses track of a file. One run uses it at a time: a second `run` or `immich run` refuses and names the one running.
 - Temporary files live in a `.video-optimiser` folder beside each original. `cleanup` deletes the ones no job needs.
 - The Hetzner token and the Immich API key load from environment variables or a `.env` file, never from the YAML. Copy `.env.example` to `.env` to start.
 

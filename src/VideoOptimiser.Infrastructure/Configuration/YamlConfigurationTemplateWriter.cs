@@ -77,7 +77,7 @@ processing:
       serverNamePrefix: "video-optimiser"
       bootstrapScriptPath: "scripts/bootstrap-remote-worker.sh"
       bootstrapTimeout: "90m"
-      # Delete after a clean process/queue run. Interrupted or unreachable work is retained.
+      # Delete after a clean run. Interrupted or unreachable work is retained.
       deleteAfterRun: true
 
 database:
@@ -85,7 +85,7 @@ database:
   path: "jobs.db"
 
 watch:
-  # Folders searched by queue discover. Add at least one.
+  # Folders searched by queue add. Add at least one.
   roots:
     # - path: "D:\\Videos"
     #   recursive: true

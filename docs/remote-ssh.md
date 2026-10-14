@@ -43,7 +43,7 @@ It creates the password-disabled, non-sudo `videoopt` SSH user and the `/var/tmp
 2. **Finds or creates the SSH key.** It uses `processing.remoteSsh.identityFile` when that file exists. Otherwise it uses `%USERPROFILE%\.ssh\video-optimiser-hetzner-ed25519`, creating it with `ssh-keygen` if it is missing. A new key has no passphrase, because VideoOptimiser runs ssh without a prompt. It never overwrites a key file.
 3. **Uploads the public key to the Hetzner project**, unless the project already has that key under any name; then it reuses that name. A new upload is named `video-optimiser-hetzner`, or `video-optimiser-hetzner-2` and so on when the name is taken. This is the only change it makes in Hetzner. A read-only token exits `3`.
 4. **Shows the `processing:` section it will write** and asks `Write this to <config>? A backup goes to <config>.bak. [y/N]`. The section keeps your own values, sets `mode: "remoteSsh"` and `lifecycle: "hetzner"`, and fills in `identityFile` and `sshKeyName`. On `y`, it saves the old file as `<config>.bak`, replaces only the `processing:` section, and validates the result; an invalid result restores the backup and exits `3`. Comments inside the old `processing:` section are replaced; everything outside it stays as written. Any other answer, or no input, changes nothing, so you can paste the section yourself.
-5. **Prints the next command**: `immich run --first --remote` when Immich is configured, otherwise `queue run --remote`.
+5. **Prints the next command**: `immich run --first --remote` when Immich is configured, otherwise `run --remote`.
 
 Running it again is safe: it finds the same key file and the same Hetzner entry.
 
@@ -76,7 +76,7 @@ Create the server? [y/N]
 - **The second line** is the most expensive one left. It appears only when that one costs more than the first.
 - **Fallbacks:** availability is only an indicator, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`). The next type and location is then tried without asking again: one `y` approves every candidate up to the second line's price.
 - **Declining:** any answer other than `y` or `yes`, or no input at all, creates nothing. The command prints `No server was created.`, exits `0`, and leaves the jobs queued.
-- **Scripts** approve by piping the answer: `'y' | .\artifacts\local\video-optimiser.exe queue run --config .\video-optimiser.yaml`.
+- **Scripts** approve by piping the answer: `'y' | .\artifacts\local\video-optimiser.exe run --config .\video-optimiser.yaml`.
 - **A server that's already running** is reused without asking; it is already billing.
 
 Before each create request it prints the type, location and price, such as `Creating Hetzner cpx42 in hel1 (EUR 0.134/h incl. VAT).` If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No server is left running.
@@ -182,27 +182,27 @@ During the first build, the controller prints phase-based setup percentages for 
 
 ## 4. Process videos
 
-For one video:
+For the watch folders:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe process "F:\Music\MVs\example.mkv" --config .\video-optimiser.yaml
-```
-
-For the queue:
-
-```powershell
-.\artifacts\local\video-optimiser.exe queue discover --config .\video-optimiser.yaml
-.\artifacts\local\video-optimiser.exe queue run --config .\video-optimiser.yaml
+.\artifacts\local\video-optimiser.exe queue add --config .\video-optimiser.yaml
+.\artifacts\local\video-optimiser.exe run --config .\video-optimiser.yaml
 .\artifacts\local\video-optimiser.exe status --config .\video-optimiser.yaml
 ```
 
-For an initial test with an empty queue, discover only one eligible video:
+For one video, queue it, then run:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe queue discover --first --config .\video-optimiser.yaml
+.\artifacts\local\video-optimiser.exe queue add "D:\Videos\clip.mkv" --config .\video-optimiser.yaml
 ```
 
-`--first` limits only newly discovered videos; it does not remove existing queued jobs. An empty `queue run` does not create a server. With work to do and no server running, `process` and `queue run` show the price and ask `Create the server? [y/N]` first; see [How the server is chosen](#how-the-server-is-chosen).
+For an initial test with an empty queue, queue only one eligible video:
+
+```powershell
+.\artifacts\local\video-optimiser.exe queue add --first --config .\video-optimiser.yaml
+```
+
+`--first` limits only newly found videos; it does not remove existing queued jobs. An empty `run` does not create a server. With work to do and no server running, `run` shows the price and asks `Create the server? [y/N]` first; see [How the server is chosen](#how-the-server-is-chosen).
 
 When a run finishes, failed videos included, `deleteAfterRun: true` deletes the server, after outputs have been downloaded, checksum-verified, and validated locally, and confirms that the separately billable Primary IPv4 was also deleted. With `false` the run ends with `The worker <name> stays up, billed hourly, until it is deleted.` and the `worker delete` command, as does a run that never used a worker kept from an earlier run. The original video remains untouched in `ReadyToFinalize` state.
 
@@ -225,7 +225,7 @@ The `worker` commands follow `lifecycle` alone, so they still work after you set
 
 ## Failed jobs and retained workers
 
-A run creates the managed worker only once a job will use it. Each job is first checked on this PC (the original exists, sits under a watch root, passes the eligibility rules and can save `savings.minimumBytesSaved`); a run in which every job fails those checks, or is already ready to finalise, creates no server and prints nothing about one. A file still being written, or one ffprobe cannot read yet, counts as needing the server, since it may be fine by the time its job runs. Before creating a managed worker, `queue run` checks each queued or resumable job against the current processing mode, remote identity, and deterministic workspace. A never-started queued job adopts the current configuration. A partially processed or interrupted job with a different configuration fails before provisioning. Under `--local` or `--remote`, which set the mode for one run, a job started in the other mode is skipped instead and printed as `Skipped <file>: started on ...`; the next run without the flag resumes it.
+A run creates the managed worker only once a job will use it. Each job is first checked on this PC (the original exists, sits under a watch root, passes the eligibility rules and can save `savings.minimumBytesSaved`); a run in which every job fails those checks, or is already ready to finalise, creates no server and prints nothing about one. A file still being written, or one ffprobe cannot read yet, counts as needing the server, since it may be fine by the time its job runs. Before creating a managed worker, `run` checks each queued or resumable job against the current processing mode, remote identity, and deterministic workspace. A never-started queued job adopts the current configuration. A partially processed or interrupted job with a different configuration fails before provisioning. Under `--local` or `--remote`, which set the mode for one run, a job started in the other mode is skipped instead and printed as `Skipped <file>: started on ...`; the next run without the flag resumes it.
 
 A video that joins a run after it started (released with `queue release`, moved up with `queue next`, or queued from another terminal) is checked the same way when its turn comes. If it needs the worker and the run created none, it waits for the next run: `<file> waits for the next run: it needs a worker, and this run has none.`
 

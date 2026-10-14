@@ -230,7 +230,33 @@ public interface IJobProcessor
     Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default);
 }
 
-public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0, int PreviouslySkipped = 0);
+/// <param name="AlreadyQueued">Eligible files whose open job is waiting or stopped, so a run takes it.</param>
+/// <param name="Held">Eligible files whose open job is held.</param>
+/// <param name="ReadyToFinalize">Eligible files whose open job is ready to finalise, being finalised or stopped while it was.</param>
+public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0, int PreviouslySkipped = 0, int Held = 0, int ReadyToFinalize = 0);
+
+/// <summary>What <c>queue add &lt;file&gt;</c> found. Each outcome but <see cref="Queued"/> leaves the queue as it was.</summary>
+public enum QueueAddOutcome
+{
+    Queued,
+    Missing,
+    /// <summary>A temporary output or a staged Immich copy: queueing it would convert the tool's own file.</summary>
+    MadeByTool,
+    Archived,
+    OpenJob,
+    /// <summary>Its latest job settled it (completed, failed, dropped, not worth converting) and the file is unchanged.</summary>
+    Settled,
+    OutsideRoots,
+    Ineligible,
+    TooSmall,
+    Unreadable,
+    ProbeFailed
+}
+
+/// <param name="Job">The new job, the open job, or the job that settled the file.</param>
+/// <param name="Reason">Why the file is ineligible, too small, unreadable or unprobeable.</param>
+/// <param name="OutsideRules">Queued only because <c>--force</c> lifted the watch-root or rule checks.</param>
+public sealed record QueueAddResult(QueueAddOutcome Outcome, string Path, JobRecord? Job = null, string? Reason = null, bool OutsideRules = false);
 public sealed record FailedQueueJob(Guid Id, string SourcePath, string FailureCategory, string FailureMessage);
 
 /// <summary>A job that ended <see cref="JobStatus.Skipped"/>. Not a failure: it changes neither the exit code nor the managed worker's deletion.</summary>
@@ -244,7 +270,9 @@ public sealed record SkippedQueueJob(Guid Id, string SourcePath, string Message)
 /// <param name="FollowQueue">The run takes each next video from the queue as it is then, so a video added, released or moved
 /// next during the run joins it. False keeps the run to <paramref name="RunnableJobs"/>: <c>immich run</c>'s set, fixed by its
 /// <c>--limit</c> (until phase A step 7).</param>
-public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs, IReadOnlyList<JobRecord> InterruptedFinalizations, JobSourceKind SourceKind = JobSourceKind.File, bool FollowQueue = true);
+/// <param name="SourceKind">The source the run converts; null for every source (<c>run</c>).</param>
+/// <param name="Held">The held videos of that source that a run would otherwise take.</param>
+public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs, IReadOnlyList<JobRecord> InterruptedFinalizations, JobSourceKind? SourceKind = null, bool FollowQueue = true, int Held = 0);
 
 /// <param name="UnreachableWorkerJob">The job the run stopped at because the worker could not be reached, or null. Every later
 /// job would fail the same way, so the run ends there (VOPT-69). The job is <see cref="JobStatus.Interrupted"/> and resumes from
@@ -273,15 +301,23 @@ public sealed record JobRetryResult(JobRecord? Replacement, string? Error)
 public interface IQueueService
 {
     Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
+
     /// <summary>
-    /// Readies the open jobs of one source for processing: <c>queue run</c> takes file jobs, <c>immich run</c> Immich jobs.
-    /// Every source's Immich finalisation that a crash interrupted goes back to ready either way.
+    /// Queues one file after the checks a run makes: inside a watch root, eligible, worth converting. <paramref name="force"/>
+    /// skips the watch-root and rule checks and is stored on the job; nothing admits a file the tool made or archived.
     /// </summary>
+    Task<QueueAddResult> AddFileAsync(string databasePath, AppSettings settings, string path, bool force, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Readies the open jobs of one source, or of every source, for processing: <c>run</c> takes every job, <c>immich run</c>
+    /// Immich jobs. Every source's Immich finalisation that a crash interrupted goes back to ready either way.
+    /// </summary>
+    /// <param name="sourceKind">The source to ready; null for every source.</param>
     /// <param name="modeOverridden">Whether <c>--local</c> or <c>--remote</c> set the mode in <paramref name="settings"/>. The settings
     /// alone cannot say so, and only then is a started job from the other mode skipped instead of failed.</param>
-    Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind sourceKind, bool modeOverridden = false, CancellationToken cancellationToken = default);
+    Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind? sourceKind, bool modeOverridden = false, CancellationToken cancellationToken = default);
     /// <summary>
-    /// Converts the queued videos of <paramref name="preparation"/>'s source, one at a time, each tried at most once: the
+    /// Converts the queued videos of <paramref name="preparation"/>'s source (every source when it has none), one at a time, each tried at most once: the
     /// first queued, unheld one in <see cref="JobRunOrder"/> that this run has not tried, read again as it starts.
     /// </summary>
     /// <param name="passOver">Asked before each video starts; true leaves it queued for a later run, after the caller has said why.</param>

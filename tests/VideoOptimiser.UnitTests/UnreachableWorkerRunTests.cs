@@ -10,7 +10,7 @@ using VideoOptimiser.Infrastructure.Jobs;
 namespace VideoOptimiser.UnitTests;
 
 /// <summary>
-/// What <c>queue run</c> and <c>process</c> print when the worker stops answering (VOPT-69, wording U2, U3, U3m). The real CLI
+/// What <c>run</c> prints when the worker stops answering (VOPT-69, wording U2, U3, U3m). The real CLI
 /// runs with a fake worker and a processor that reports the first job interrupted by an unreachable worker.
 /// </summary>
 [Collection(ConsoleCapture.Collection)]
@@ -31,7 +31,7 @@ public sealed class UnreachableWorkerRunTests : IDisposable
         var config = await WriteConfigAsync(managed: true);
         var jobs = await QueueJobsAsync(3);
 
-        var (code, output, _) = await RunAsync("queue", "run", "--config", config);
+        var (code, output, _) = await RunAsync("run", "--config", config);
 
         _processor.Calls.Should().Be(1);
         Occurrences(output, "can't be reached").Should().Be(1);
@@ -39,7 +39,7 @@ public sealed class UnreachableWorkerRunTests : IDisposable
             "Stopped: the worker video-optimiser-1 can't be reached, so 3 videos were not converted.",
             "Nothing to finalise.",
             "The worker stays up, billed hourly, until it is deleted.",
-            $"To resume: video-optimiser queue run --config \"{config}\"",
+            $"To resume: video-optimiser run --config \"{config}\"",
             $"To delete it instead: video-optimiser worker delete --config \"{config}\" (the work in progress is lost)");
         output.Should().NotContain("Failed jobs:");
         code.Should().Be((int)ExitCode.ProcessingFailure);
@@ -55,29 +55,12 @@ public sealed class UnreachableWorkerRunTests : IDisposable
         var config = await WriteConfigAsync(managed: false);
         await QueueJobsAsync(2);
 
-        var (code, output, _) = await RunAsync("queue", "run", "--config", config);
+        var (code, output, _) = await RunAsync("run", "--config", config);
 
         Lines(output).Should().ContainInOrder(
             "Stopped: the worker my-host can't be reached, so 2 videos were not converted.",
-            $"To resume: video-optimiser queue run --config \"{config}\"");
+            $"To resume: video-optimiser run --config \"{config}\"");
         output.Should().NotContain("billed hourly").And.NotContain("Remote worker lifecycle is manual");
-        code.Should().Be((int)ExitCode.ProcessingFailure);
-    }
-
-    /// <summary><c>process</c> has one video, whose outcome line already says the worker is unreachable.</summary>
-    [Fact]
-    public async Task ProcessPrintsNoStopLineAndNoFailedJob()
-    {
-        var config = await WriteConfigAsync(managed: true);
-        var source = Path.Combine(_directory, "clip.mp4");
-        await File.WriteAllBytesAsync(source, new byte[16]);
-
-        var (code, output, _) = await RunAsync("process", source, "--config", config);
-
-        output.Should().NotContain("can't be reached").And.NotContain("Failed jobs:");
-        Lines(output).Should().ContainInOrder(
-            "The worker stays up, billed hourly, until it is deleted.",
-            $"To resume: video-optimiser process \"{source}\" --config \"{config}\"");
         code.Should().Be((int)ExitCode.ProcessingFailure);
     }
 

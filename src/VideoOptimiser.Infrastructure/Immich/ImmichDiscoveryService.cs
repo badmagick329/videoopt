@@ -34,7 +34,15 @@ public sealed class ImmichDiscoveryService(
         if (!Domain.HumanReadableValues.TryParseSize(settings.Savings.MinimumBytesSaved, out var minimumBytesSaved))
             throw new InvalidOperationException("savings.minimumBytesSaved must be validated before Immich discovery.");
         // Before the history load: a job this fails has ended, so the search below may stage its asset afresh.
-        var (restaged, issues) = await RestageMissingAsync(client, databasePath, settings, limit, progress, cancellationToken);
+        // Ready jobs no longer read the original, and a job interrupted during finalisation needs it left as it is. A held job
+        // is parked: nothing but the queue verbs writes it, and the run passes over it. Run order, so the limit takes the
+        // jobs the run will.
+        var restageCandidates = JobRunOrder.Sort((await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
+                .Where(job => job.SourceKind == JobSourceKind.Immich && job.Status is not (JobStatus.ReadyToFinalize or JobStatus.Finalizing) && job.ResumeStatus != JobStatus.Finalizing && !job.Held))
+            .Take(limit ?? int.MaxValue);
+        var restageFailed = new List<JobRecord>();
+        var restaged = await RestageAsync(client, databasePath, settings, restageCandidates, restageFailed, progress, cancellationToken);
+        var issues = restageFailed.Count;
         var history = await ImmichHistory.LoadAsync(jobs, databasePath, cancellationToken);
         var skips = await jobs.ListImmichSkipsAsync(databasePath, cancellationToken);
         // Said up front because each of these is downloaded again: the user would otherwise see a long run of downloads
@@ -172,25 +180,34 @@ public sealed class ImmichDiscoveryService(
     /// <c>cleanup</c> deleted the copy, or one whose copy was deleted by hand. Such a job could never run, and discovery
     /// skips an asset with an open job, so nothing else would bring the file back. The download must match the job's
     /// checksum, so the job converts the bytes it was created for. When Immich no longer returns them, the job fails as
-    /// <c>SourceMissing</c>, which leaves the asset free for discovery. With a <paramref name="limit"/>, only that many of
-    /// the oldest open jobs count, as they are the ones the run processes.
+    /// <c>SourceMissing</c>, which leaves the asset free for discovery. <c>immich run</c> passes the open jobs its limit takes;
+    /// <c>run</c> passes the jobs it is about to convert. Only Immich's answer that the asset is gone (HTTP 400 or 404) or
+    /// holds other bytes fails a job; any other failure means Immich can't be used now, and the jobs left stay queued.
     /// </summary>
-    private async Task<(int Restaged, int Issues)> RestageMissingAsync(IImmichClient client, string databasePath, AppSettings settings, int? limit, IProgress<ImmichDiscoveryProgress>? progress, CancellationToken cancellationToken)
+    public async Task<ImmichRestageResult> RestageMissingAsync(string databasePath, AppSettings settings, IReadOnlyCollection<JobRecord> jobs, IProgress<ImmichDiscoveryProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        int restaged = 0, issues = 0;
-        // Ready jobs no longer read the original, and a job interrupted during finalisation needs it left as it is. A held job
-        // is parked: nothing but the queue verbs writes it, and the run passes over it. Run order, so the limit takes the
-        // jobs the run will.
-        var candidates = JobRunOrder.Sort((await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
-                .Where(job => job.SourceKind == JobSourceKind.Immich && job.Status is not (JobStatus.ReadyToFinalize or JobStatus.Finalizing) && job.ResumeStatus != JobStatus.Finalizing && !job.Held))
-            .Take(limit ?? int.MaxValue);
+        // Owned here, so the jobs failed before Immich stopped answering are still reported.
+        var failed = new List<JobRecord>();
+        try
+        {
+            return new ImmichRestageResult(await RestageAsync(clients.Create(settings.Immich), databasePath, settings, jobs, failed, progress, cancellationToken), failed);
+        }
+        catch (ImmichApiException exception)
+        {
+            return new ImmichRestageResult(0, failed, exception.Message.TrimEnd('.'));
+        }
+    }
+
+    /// <param name="failed">Receives each job marked failed, as it is.</param>
+    private async Task<int> RestageAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, List<JobRecord> failed, IProgress<ImmichDiscoveryProgress>? progress, CancellationToken cancellationToken)
+    {
+        var restaged = 0;
         foreach (var job in candidates)
         {
             if (File.Exists(job.SourcePath)) continue;
             if (job.ImmichChecksum is null || !ImmichStaging.IsStagedOriginal(settings.Immich.StagingDirectory, job.ImmichAssetId, job.SourcePath))
             {
-                issues++;
-                await FailMissingAsync(databasePath, job, "The staged original is missing, and its path is not in the asset's folder under immich.stagingDirectory, so it is not downloaded again.", cancellationToken);
+                await FailMissingAsync(databasePath, job, "The staged original is missing, and its path is not in the asset's folder under immich.stagingDirectory, so it is not downloaded again.", failed, cancellationToken);
                 progress?.Report(new ImmichDiscoveryProgress.AssetIssue(Path.GetFileName(job.SourcePath), $"job {job.Id:N} is open but its staged copy is missing and cannot be downloaded again; the job is marked failed"));
                 continue;
             }
@@ -204,8 +221,7 @@ public sealed class ImmichDiscoveryService(
                 await client.DownloadOriginalAsync(job.ImmichAssetId!, path, cancellationToken: cancellationToken);
                 if (!string.Equals(await Sha1Base64Async(path, cancellationToken), job.ImmichChecksum, StringComparison.Ordinal))
                 {
-                    issues++;
-                    await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich asset {job.ImmichAssetId} no longer matches the checksum this job was created for.", cancellationToken);
+                    await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich asset {job.ImmichAssetId} no longer matches the checksum this job was created for.", failed, cancellationToken);
                     progress?.Report(new ImmichDiscoveryProgress.Restaged(Path.GetFileName(path), "the download no longer matches the checksum this job was created for; the job is marked failed"));
                     continue;
                 }
@@ -214,10 +230,10 @@ public sealed class ImmichDiscoveryService(
                 restaged++;
                 progress?.Report(new ImmichDiscoveryProgress.Restaged(Path.GetFileName(path), null));
             }
-            catch (ImmichApiException exception) when (exception.Code == "ImmichRequestFailed")
+            // The asset is gone. A server error or a rate limit says nothing about the asset, so it ends the restaging instead.
+            catch (ImmichApiException exception) when (exception.StatusCode is 400 or 404)
             {
-                issues++;
-                await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich did not return asset {job.ImmichAssetId} again: {exception.Message}", cancellationToken);
+                await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich did not return asset {job.ImmichAssetId} again: {exception.Message}", failed, cancellationToken);
                 progress?.Report(new ImmichDiscoveryProgress.Restaged(Path.GetFileName(path), $"Immich did not return the video again ({exception.Message.TrimEnd('.')}); the job is marked failed"));
             }
             finally
@@ -226,17 +242,25 @@ public sealed class ImmichDiscoveryService(
             }
         }
 
-        return (restaged, issues);
+        return restaged;
     }
 
-    private async Task FailMissingAsync(string databasePath, JobRecord job, string message, CancellationToken cancellationToken)
+    private async Task FailMissingAsync(string databasePath, JobRecord job, string message, List<JobRecord> failed, CancellationToken cancellationToken)
     {
         job.Status = JobStatus.Failed;
         job.ResumeStatus = null;
         job.FailureCategory = QueueService.SourceMissingCategory;
         job.FailureMessage = message;
         job.CompletedUtc = _utcNow();
-        await jobs.UpdateAsync(databasePath, job, cancellationToken);
+        try
+        {
+            await jobs.UpdateAsync(databasePath, job, cancellationToken);
+            failed.Add(job);
+        }
+        catch (JobChangedException)
+        {
+            // Held or dropped from another terminal since it was read; that change stands, and the run passes over it.
+        }
     }
 
     /// <summary>

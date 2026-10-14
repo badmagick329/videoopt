@@ -22,11 +22,11 @@ public sealed class UnreachableWorkerMessageTests
     [InlineData(JobStatus.Downloading, " (the finished encode is lost)")]
     public void AManagedWorkerSaysItBillsHowToResumeAndHowToDeleteIt(JobStatus stage, string suffix)
     {
-        var command = CliCommand.Parse(["queue", "run", "--config", "my.yaml"]);
+        var command = CliCommand.Parse(["run", "--config", "my.yaml"]);
 
         UnreachableWorkerMessage.Lines(new JobRecord { ResumeStatus = stage }, managed: true, command, immichJobsLeft: null).Should().Equal(
             "The worker stays up, billed hourly, until it is deleted.",
-            "To resume: video-optimiser queue run --config \"my.yaml\"",
+            "To resume: video-optimiser run --config \"my.yaml\"",
             $"To delete it instead: video-optimiser worker delete --config \"my.yaml\"{suffix}");
     }
 

@@ -105,7 +105,7 @@ internal static class CalibrateConsole
     };
 
     // --force because the group is one the rules keep out; process stops before replacing anything, so this only tests.
-    private static string TestCommand(string path) => $"video-optimiser process \"{path}\" --force";
+    private static string TestCommand(string path) => $"video-optimiser queue add \"{path}\" --force";
 
     private static void WriteGroups(TextWriter output, IReadOnlyList<CalibrationGroup> groups, bool withHistory = true)
     {

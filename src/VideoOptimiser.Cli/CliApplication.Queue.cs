@@ -68,11 +68,9 @@ internal static partial class CliApplication
         }
         if (!job.IsQueued) return Refuse(NotQueuedRefusal(job, "run next", databasePath, command));
         var wasHeld = job.Held;
-        // A queue run takes each next video from the queue as it is, so this one comes after the video converting now. An
-        // immich run keeps the videos it started with (until phase A step 7), a process run has one video, and a queue run
-        // takes only folder videos.
-        var holder = DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath));
-        var runTakesIt = holder is null || holder.Command == QueueRunHolder && job.SourceKind == JobSourceKind.File;
+        // A run takes each next video from the queue as it is, so this one comes after the video converting now. An immich
+        // run keeps the videos it started with (until phase A step 7), as does a run from an older version.
+        var runTakesIt = LiveRun(databasePath) is null or RunHolder;
         if (!await repository.RunNextAsync(databasePath, job, cancellationToken)) throw new JobChangedException(job.Id);
         Console.WriteLine($"{name} {(runTakesIt ? "runs next" : "is now first in the queue")}{(wasHeld ? "; it's no longer held" : string.Empty)}.");
         return (int)ExitCode.Success;

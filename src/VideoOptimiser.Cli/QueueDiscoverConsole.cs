@@ -62,7 +62,7 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
         output.WriteLine($"  Issue: {Path.GetFileName(update.Path)}: {update.Message}");
     }
 
-    /// <summary>What the scan found, folder by folder, then the counts that are not zero and the next command.</summary>
+    /// <summary>What the scan found, folder by folder, then the counts that are not zero. The caller adds the next command.</summary>
     public static void WriteSummary(TextWriter output, QueueDiscoveryResult result)
     {
         foreach (var folder in result.QueuedPaths.GroupBy(path => Path.GetDirectoryName(path) ?? string.Empty, StringComparer.OrdinalIgnoreCase))
@@ -74,6 +74,8 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
         var counts = new List<string> { $"Queued: {result.QueuedPaths.Count}." };
         void Add(int count, string label) { if (count > 0) counts.Add($"{label}: {count}."); }
         Add(result.AlreadyQueued, "Already queued");
+        Add(result.Held, "Held");
+        Add(result.ReadyToFinalize, "Ready to finalise");
         Add(result.AlreadyConverted, "Already converted");
         Add(result.PreviouslyFailed, "Previously failed or cancelled");
         Add(result.PreviouslySkipped, "Previously skipped");
@@ -83,6 +85,5 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
         output.WriteLine(string.Join(' ', counts));
         if (result.PreviouslyFailed > 0) output.WriteLine("Failed or cancelled originals stay out of the queue until they change. 'history' lists their jobs; 'queue retry <job-id>' queues one again.");
         if (result.PreviouslySkipped > 0) output.WriteLine("Skipped originals (AV1 would not save enough) are checked again when the file or the quality settings change; 'queue retry <job-id>' queues one now.");
-        if (result.QueuedPaths.Count + result.AlreadyQueued > 0) output.WriteLine("Next: run 'video-optimiser queue run'.");
     }
 }

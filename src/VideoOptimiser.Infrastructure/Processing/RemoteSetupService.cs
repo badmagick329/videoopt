@@ -216,7 +216,7 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
             : "Remote setup is complete. Nothing was created on Hetzner.");
         output.Report(reloaded!.Settings.Immich.IsConfigured
             ? $"Next: video-optimiser immich run --first --remote --config \"{path}\""
-            : $"Next: video-optimiser queue run --remote --config \"{path}\"");
+            : $"Next: video-optimiser run --remote --config \"{path}\"");
         return ExitCode.Success;
     }
 

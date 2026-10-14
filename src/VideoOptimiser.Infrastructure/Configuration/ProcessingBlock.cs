@@ -50,7 +50,7 @@ internal static class ProcessingBlock
             $"      serverNamePrefix: {Quote(hetzner.ServerNamePrefix)}",
             $"      bootstrapScriptPath: {Quote(hetzner.BootstrapScriptPath)}",
             $"      bootstrapTimeout: {Quote(hetzner.BootstrapTimeout)}",
-            "      # Delete after a clean process/queue run. Interrupted or unreachable work is retained.",
+            "      # Delete after a clean run. Interrupted or unreachable work is retained.",
             $"      deleteAfterRun: {(hetzner.DeleteAfterRun ? "true" : "false")}"
         };
         return string.Join('\n', lines) + '\n';

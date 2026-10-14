@@ -251,7 +251,7 @@ public sealed class HumanOutputConsoleTests
     }
 
     [Fact]
-    public void FileDiscoveryGroupsQueuedFilesByFolderAndPointsToTheNextCommand()
+    public void FileDiscoveryGroupsQueuedFilesByFolderAndCountsHeldAndReadyApart()
     {
         var first = Path.Combine(Path.GetTempPath(), "videos", "2022");
         var second = Path.Combine(Path.GetTempPath(), "videos", "2023");
@@ -259,7 +259,7 @@ public sealed class HumanOutputConsoleTests
 
         QueueDiscoverConsole.WriteSummary(output, new QueueDiscoveryResult(
             [Path.Combine(first, "a.mp4"), Path.Combine(second, "c.mp4"), Path.Combine(first, "b.mp4")],
-            AlreadyQueued: 2, Issues: 0, CacheHits: 5, RealProbes: 4));
+            AlreadyQueued: 2, Issues: 0, CacheHits: 5, RealProbes: 4, Held: 1, ReadyToFinalize: 2));
 
         output.ToString().Should().Be(
             $"Queued in {first}:\n" +
@@ -267,12 +267,11 @@ public sealed class HumanOutputConsoleTests
             "  b.mp4\n" +
             $"Queued in {second}:\n" +
             "  c.mp4\n" +
-            "Queued: 3. Already queued: 2. Cache hits: 5. Real probes: 4.\n" +
-            "Next: run 'video-optimiser queue run'.\n");
+            "Queued: 3. Already queued: 2. Held: 1. Ready to finalise: 2. Cache hits: 5. Real probes: 4.\n");
     }
 
     [Fact]
-    public void FileDiscoverySuggestsNoNextStepWhenNothingIsQueued()
+    public void FileDiscoveryLeavesOutTheCountsThatAreZero()
     {
         var output = new StringWriter { NewLine = "\n" };
 

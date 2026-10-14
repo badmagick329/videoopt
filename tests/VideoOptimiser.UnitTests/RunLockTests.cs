@@ -57,22 +57,21 @@ public sealed class RunLockTests : IDisposable
     }
 
     [Theory]
-    [InlineData("queue run")]
+    [InlineData("run")]
     [InlineData("immich run")]
-    [InlineData("process")]
     public async Task ASecondRunRefusesNamesTheActiveRunAndLeavesItsJobAlone(string command)
     {
         var config = await WriteConfigAsync();
         var active = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "clip.mp4"), Status = JobStatus.Encoding });
-        using var running = HoldLock(DatabaseLock.RunPath(DatabasePath), "queue run", new DateTimeOffset(new DateTime(2026, 1, 2, 14, 2, 0)));
-        string[] args = command == "process" ? ["process", Path.Combine(_directory, "other.mp4"), "--config", config] : [.. command.Split(' '), "--config", config];
+        using var running = HoldLock(DatabaseLock.RunPath(DatabasePath), "video-optimiser run", new DateTimeOffset(new DateTime(2026, 1, 2, 14, 2, 0)));
+        string[] args = [.. command.Split(' '), "--config", config];
 
         var (code, output, error) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, args);
 
         code.Should().Be((int)ExitCode.GeneralFailure);
         output.Should().BeEmpty();
         error.Should().Be(string.Join(Environment.NewLine,
-            "Another run is using this database: queue run, started 2026-01-02 14:02 (process 4321).",
+            "Another run is using this database: video-optimiser run, started 2026-01-02 14:02 (process 4321).",
             "Wait for it to finish, or stop it with Ctrl+C in its window.",
             ""));
         (await _repository.GetAsync(DatabasePath, active.Id))!.Status.Should().Be(JobStatus.Encoding);
@@ -223,6 +222,7 @@ public sealed class RunLockTests : IDisposable
     {
         public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool stopAfterFirstEligible = false, IReadOnlySet<string>? openSourcePaths = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("A run does not scan.");
+        public Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default) => throw new NotSupportedException("Not a queue add <file> test.");
     }
 
     private sealed class NoProcessing : IJobProcessor
