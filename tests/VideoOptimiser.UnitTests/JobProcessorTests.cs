@@ -478,7 +478,7 @@ public sealed class JobProcessorTests : IDisposable
         var job = await repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceKind = kind, Status = JobStatus.ReadyToFinalize });
         job.Status = JobStatus.Finalizing;
         await repository.UpdateAsync(databasePath, job);
-        await repository.MarkActiveJobsInterruptedAsync(databasePath);
+        await repository.MarkActiveJobsInterruptedAsync(databasePath, includeFinalizing: true);
         var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
 
         var result = await processor.ProcessAsync(databasePath, source, Settings("finalising.db"), force: false);

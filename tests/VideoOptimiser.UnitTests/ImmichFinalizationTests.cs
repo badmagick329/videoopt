@@ -151,7 +151,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         var job = await ReadyJobAsync(original);
         job.Status = JobStatus.Finalizing;
         await _repository.UpdateAsync(_settings.Database.Path, job);
-        if (markedInterrupted) await _repository.MarkActiveJobsInterruptedAsync(_settings.Database.Path);
+        if (markedInterrupted) await _repository.MarkActiveJobsInterruptedAsync(_settings.Database.Path, includeFinalizing: true);
 
         var result = await FinalizeAsync(job);
 

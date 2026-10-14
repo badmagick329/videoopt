@@ -59,7 +59,7 @@ public sealed class InterruptedFinalizationCliTests : IDisposable
         var job = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "movie.mp4"), Status = JobStatus.ReadyToFinalize, OutputPath = Path.Combine(_directory, "movie.encoding.mp4") });
         job.Status = JobStatus.Finalizing;
         await _repository.UpdateAsync(DatabasePath, job);
-        await _repository.MarkActiveJobsInterruptedAsync(DatabasePath);
+        await _repository.MarkActiveJobsInterruptedAsync(DatabasePath, includeFinalizing: true);
         return (config, job);
     }
 

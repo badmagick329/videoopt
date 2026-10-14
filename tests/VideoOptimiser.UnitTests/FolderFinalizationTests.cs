@@ -194,7 +194,7 @@ public sealed class FolderFinalizationTests : IDisposable
     {
         job.Status = JobStatus.Finalizing;
         await _repository.UpdateAsync(settings.Database.Path, job);
-        await _repository.MarkActiveJobsInterruptedAsync(settings.Database.Path);
+        await _repository.MarkActiveJobsInterruptedAsync(settings.Database.Path, includeFinalizing: true);
     }
 
     private sealed class CancelledFingerprints : IFileFingerprintService

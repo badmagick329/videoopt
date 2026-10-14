@@ -24,7 +24,7 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         var encoding = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Encoding));
         var ready = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.ReadyToFinalize));
 
-        await _repository.MarkActiveJobsInterruptedAsync(_databasePath);
+        await _repository.MarkActiveJobsInterruptedAsync(_databasePath, includeFinalizing: true);
 
         (await _repository.GetAsync(_databasePath, encoding.Id))!.Status.Should().Be(JobStatus.Interrupted);
         (await _repository.GetAsync(_databasePath, ready.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);

@@ -16,6 +16,9 @@ internal static partial class CliApplication
     private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         if (!RequireImmich(configuration) || ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
+        // Before discovery, which marks active jobs interrupted and queues new ones.
+        using var runLock = TakeRunLock(configuration, "immich run");
+        if (runLock is null) return (int)ExitCode.GeneralFailure;
         var (limit, modeOverride) = (command.Limit, command.ModeOverride);
         // Discovery downloads originals, so the banner comes first.
         await PrintRunBannerAsync(services, configuration, modeOverride, cancellationToken);
@@ -81,8 +84,10 @@ internal static partial class CliApplication
     private static async Task<int> RunImmichFinalizeAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
         if (!RequireImmich(configuration)) return (int)ExitCode.InvalidConfiguration;
+        using var finalizeLock = await TakeFinalizeLockAsync(configuration, "immich finalize", cancellationToken);
+        if (finalizeLock is null) return (int)ExitCode.GeneralFailure;
         var settings = configuration.Settings;
-        var ready = (await services.GetRequiredService<IJobRepository>().ListAsync(settings.Database.Path, terminal: false, cancellationToken))
+        var ready =(await services.GetRequiredService<IJobRepository>().ListAsync(settings.Database.Path, terminal: false, cancellationToken))
             .Where(job => job.SourceKind == JobSourceKind.Immich && (job.Status == JobStatus.ReadyToFinalize || FinalizationService.IsInterruptedImmichFinalization(job)))
             .ToArray();
         if (ready.Length == 0) { Console.WriteLine("No Immich jobs are ready to finalise."); return (int)ExitCode.Success; }

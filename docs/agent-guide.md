@@ -149,7 +149,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | Code | Meaning |
 | --- | --- |
 | `0` | Success, or a confirmation answered "no" |
-| `1` | General failure, including a `doctor` failure outside configuration and dependencies, and `calibrate` on a database an older version wrote |
+| `1` | General failure, including a `doctor` failure outside configuration and dependencies, `calibrate` on a database an older version wrote, and a run or finalise refused because another one is using the database (`Another run is using this database: ...`) |
 | `2` | Invalid arguments, including an invalid job ID, or `queue retry` on a job it cannot retry (not found, not failed, cancelled or skipped, or the original already has an open job) |
 | `3` | Invalid configuration, including `worker create` or `worker delete` without `remoteSsh.lifecycle: "hetzner"`, or an Immich API key that is missing, rejected or lacks a permission |
 | `4` | A failed dependency check in `doctor`: a media tool, the Immich server (unreachable, not Immich 3, its key, or its trash off) or the Hetzner API. Also `remote setup` when it cannot run `ssh-keygen` or list or upload the Hetzner key |

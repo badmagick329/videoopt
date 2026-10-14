@@ -1,0 +1,175 @@
+using FluentAssertions;
+using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Domain;
+using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Infrastructure.Processing;
+
+namespace VideoOptimiser.UnitTests;
+
+/// <summary>
+/// The run lock and the finalise lock (VOPT-54 step 3). Without the run lock a second run marks the first one's active job
+/// interrupted; without the finalise lock a run sets a live finalisation back, and finalize's last write then fails the job.
+/// </summary>
+[Collection(ConsoleCapture.Collection)]
+public sealed class RunLockTests : IDisposable
+{
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
+    private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
+
+    public RunLockTests() => Directory.CreateDirectory(_directory);
+
+    private string DatabasePath => Path.Combine(_directory, "jobs.db");
+
+    [Fact]
+    public void ASecondHolderIsRefusedAndToldWhoHoldsTheLockUntilItIsReleased()
+    {
+        var path = DatabaseLock.RunPath(DatabasePath);
+        var before = DateTimeOffset.UtcNow.AddSeconds(-1);
+
+        using (var first = DatabaseLock.TryAcquire(path, "queue run", out _))
+        {
+            first.Should().NotBeNull();
+            DatabaseLock.TryAcquire(path, "immich run", out var holder).Should().BeNull();
+            holder.Should().NotBeNull();
+            holder!.Command.Should().Be("queue run");
+            holder.ProcessId.Should().Be(Environment.ProcessId);
+            holder.StartedUtc.Should().BeOnOrAfter(before).And.BeOnOrBefore(DateTimeOffset.UtcNow);
+        }
+
+        using var second = DatabaseLock.TryAcquire(path, "immich run", out var none);
+        second.Should().NotBeNull();
+        none.Should().BeNull();
+    }
+
+    /// <summary>The holder opens the file, then writes its details; a refusal in between names nobody.</summary>
+    [Fact]
+    public void AHolderThatHasNotWrittenItsDetailsYetIsReportedAsStarting()
+    {
+        var path = DatabaseLock.RunPath(DatabasePath);
+        using var starting = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+
+        DatabaseLock.TryAcquire(path, "queue run", out var holder).Should().BeNull();
+        holder.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("queue run")]
+    [InlineData("immich run")]
+    [InlineData("process")]
+    public async Task ASecondRunRefusesNamesTheActiveRunAndLeavesItsJobAlone(string command)
+    {
+        var config = await WriteConfigAsync();
+        var active = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "clip.mp4"), Status = JobStatus.Encoding });
+        using var running = HoldLock(DatabaseLock.RunPath(DatabasePath), "queue run", new DateTimeOffset(new DateTime(2026, 1, 2, 14, 2, 0)));
+        string[] args = command == "process" ? ["process", Path.Combine(_directory, "other.mp4"), "--config", config] : [.. command.Split(' '), "--config", config];
+
+        var (code, output, error) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, args);
+
+        code.Should().Be((int)ExitCode.GeneralFailure);
+        output.Should().BeEmpty();
+        error.Should().Be(string.Join(Environment.NewLine,
+            "Another run is using this database: queue run, started 2026-01-02 14:02 (process 4321).",
+            "Wait for it to finish, or stop it with Ctrl+C in its window.",
+            ""));
+        (await _repository.GetAsync(DatabasePath, active.Id))!.Status.Should().Be(JobStatus.Encoding);
+    }
+
+    [Theory]
+    [InlineData("finalize", "--ready")]
+    [InlineData("immich", "finalize")]
+    public async Task ASecondFinalisationRefusesAndNamesTheActiveOne(string verb, string argument)
+    {
+        var config = await WriteConfigAsync();
+        using var finalizing = HoldLock(DatabaseLock.FinalizePath(DatabasePath), "finalize", new DateTimeOffset(DateTime.Today.AddMinutes(1)));
+
+        var (code, output, error) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, verb, argument, "--config", config);
+
+        code.Should().Be((int)ExitCode.GeneralFailure);
+        output.Should().BeEmpty();
+        error.Should().Be($"Another finalise is running on this database, started 00:01 (process 4321). Wait for it to finish.{Environment.NewLine}");
+    }
+
+    [Fact]
+    public async Task ARunLeavesALiveFinalisationAlone()
+    {
+        var (finalizing, interruptedImmich) = await CreateFinalisationsAsync();
+        using var finalizeLock = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(DatabasePath), "finalize", out _);
+
+        var preparation = await PrepareAsync(JobSourceKind.Immich);
+
+        (await _repository.GetAsync(DatabasePath, finalizing.Id))!.Status.Should().Be(JobStatus.Finalizing);
+        var immich = (await _repository.GetAsync(DatabasePath, interruptedImmich.Id))!;
+        immich.Status.Should().Be(JobStatus.Interrupted);
+        immich.ResumeStatus.Should().Be(JobStatus.Finalizing);
+        preparation.RunnableJobs.Should().BeEmpty();
+    }
+
+    /// <summary>With no finalisation running, a Finalizing job is one a dead process left, and the run recovers it as before.</summary>
+    [Fact]
+    public async Task ARunRecoversAFinalisationNoProcessHolds()
+    {
+        var (finalizing, interruptedImmich) = await CreateFinalisationsAsync();
+
+        await PrepareAsync(JobSourceKind.Immich);
+
+        var file = (await _repository.GetAsync(DatabasePath, finalizing.Id))!;
+        file.Status.Should().Be(JobStatus.Interrupted);
+        file.ResumeStatus.Should().Be(JobStatus.Finalizing);
+        (await _repository.GetAsync(DatabasePath, interruptedImmich.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    private async Task<(JobRecord Finalizing, JobRecord InterruptedImmich)> CreateFinalisationsAsync()
+    {
+        var finalizing = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "a.mp4"), Status = JobStatus.Finalizing });
+        var immich = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "b.mp4"), SourceKind = JobSourceKind.Immich, ImmichAssetId = "asset-b", Status = JobStatus.Interrupted, ResumeStatus = JobStatus.Finalizing });
+        return (finalizing, immich);
+    }
+
+    private Task<QueuePreparationResult> PrepareAsync(JobSourceKind source)
+    {
+        var settings = new AppSettings { Database = new DatabaseSettings { Path = DatabasePath } };
+        return new QueueService(new NoFiles(), _repository, new FileFingerprintService(), new NoProcessing()).PrepareAsync(DatabasePath, settings, source);
+    }
+
+    /// <summary>Holds a lock as <see cref="DatabaseLock"/> does, with a start time and process ID fixed so the refusal reads the same on any clock.</summary>
+    private static FileStream HoldLock(string path, string command, DateTimeOffset started)
+    {
+        var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+        var details = System.Text.Encoding.UTF8.GetBytes($"{command}\n{started.ToUniversalTime():O}\n4321\n");
+        stream.Write(details);
+        stream.Flush();
+        return stream;
+    }
+
+    private async Task<string> WriteConfigAsync()
+    {
+        var config = Path.Combine(_directory, "config.yaml");
+        await File.WriteAllTextAsync(config, string.Join('\n',
+            "database:",
+            $"  path: '{DatabasePath}'",
+            "immich:",
+            "  baseUrl: 'http://immich.invalid'",
+            ""));
+        return config;
+    }
+
+    public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    private sealed class NoFiles : IFileScanner
+    {
+        public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool stopAfterFirstEligible = false, IReadOnlySet<string>? openSourcePaths = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("A run does not scan.");
+    }
+
+    private sealed class NoProcessing : IJobProcessor
+    {
+        public Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default) => Task.FromResult(false);
+
+        public Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("Preparing processes nothing.");
+    }
+}

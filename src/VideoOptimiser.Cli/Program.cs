@@ -286,6 +286,9 @@ internal static partial class CliApplication
             return (int)ExitCode.InvalidConfiguration;
         }
 
+        // A dry run writes nothing, so it runs beside a real one.
+        using var runLock = command.DryRun ? null : TakeRunLock(configuration, "process");
+        if (!command.DryRun && runLock is null) return (int)ExitCode.GeneralFailure;
         await PrintRunBannerAsync(services, configuration, command.ModeOverride, cancellationToken);
         var sourcePath = Path.GetFullPath(command.ProcessPath!);
         if (!File.Exists(sourcePath))
@@ -302,7 +305,11 @@ internal static partial class CliApplication
 
         var repository = services.GetRequiredService<IJobRepository>();
         var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        await repository.MarkActiveJobsInterruptedAsync(configuration.Settings.Database.Path, cancellationToken);
+        // As in QueueService.PrepareAsync: a finalisation holding its lock owns its Finalizing job.
+        using (var finalizeLock = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(configuration.Settings.Database.Path), "run", out _))
+        {
+            await repository.MarkActiveJobsInterruptedAsync(configuration.Settings.Database.Path, includeFinalizing: finalizeLock is not null, cancellationToken);
+        }
         var existingJob = await repository.FindOpenBySourceAsync(configuration.Settings.Database.Path, sourcePath, cancellationToken);
         var compatibility = existingJob is null ? null : JobCompatibility.Evaluate(existingJob, configuration.Settings);
         if (command.ModeOverride is not null && compatibility is not null && JobCompatibility.IsBoundToOtherMode(existingJob!, compatibility))
@@ -438,6 +445,8 @@ internal static partial class CliApplication
     private static async Task<int> RunQueueRunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
+        using var runLock = TakeRunLock(configuration, "queue run");
+        if (runLock is null) return (int)ExitCode.GeneralFailure;
         await PrintRunBannerAsync(services, configuration, command.ModeOverride, cancellationToken);
         var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, modeOverridden: command.ModeOverride is not null, cancellationToken);
         var (ready, _, failures, workerUnreachable) = await ProcessPreparedJobsAsync(services, configuration, command, preparation, (ready, skipped, failures) =>
@@ -788,6 +797,8 @@ internal static partial class CliApplication
     {
         var repository = services.GetRequiredService<IJobRepository>();
         var finalizer = services.GetRequiredService<IFinalizationService>();
+        using var finalizeLock = await TakeFinalizeLockAsync(configuration, "finalize", cancellationToken);
+        if (finalizeLock is null) return (int)ExitCode.GeneralFailure;
         if (!command.FinalizeReady)
         {
             if (!Guid.TryParse(command.JobId, out var id)) { WriteError("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }

@@ -71,14 +71,14 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         return jobs;
     }
 
-    public async Task MarkActiveJobsInterruptedAsync(string databasePath, CancellationToken cancellationToken = default)
+    public async Task MarkActiveJobsInterruptedAsync(string databasePath, bool includeFinalizing, CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             UPDATE jobs
             SET resume_status = status, status = $interrupted, failure_category = 'Interrupted', failure_message = 'Application stopped before the job completed.', updated_utc = $updatedUtc
-            WHERE status IN ($staging, $crfSearching, $encoding, $downloading, $validating, $finalizing);
+            WHERE status IN ($staging, $crfSearching, $encoding, $downloading, $validating{(includeFinalizing ? ", $finalizing" : string.Empty)});
             """;
         command.Parameters.AddWithValue("$interrupted", (int)JobStatus.Interrupted);
         command.Parameters.AddWithValue("$crfSearching", (int)JobStatus.CrfSearching);
@@ -86,7 +86,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         command.Parameters.AddWithValue("$encoding", (int)JobStatus.Encoding);
         command.Parameters.AddWithValue("$downloading", (int)JobStatus.Downloading);
         command.Parameters.AddWithValue("$validating", (int)JobStatus.Validating);
-        command.Parameters.AddWithValue("$finalizing", (int)JobStatus.Finalizing);
+        if (includeFinalizing) command.Parameters.AddWithValue("$finalizing", (int)JobStatus.Finalizing);
         command.Parameters.AddWithValue("$updatedUtc", DateTimeOffset.UtcNow.ToString("O"));
         _ = await command.ExecuteNonQueryAsync(cancellationToken);
     }

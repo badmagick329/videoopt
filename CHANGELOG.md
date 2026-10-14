@@ -16,6 +16,8 @@
 - A partial download longer than the output, left by an earlier encode, is discarded instead of failing the job for good.
 - After Ctrl+C or an unreachable worker, the resume command for an `immich run` with `--limit` or `--first` now uses `--limit` with the number of Immich jobs left. Rerunning with the number you typed would have downloaded new videos on top of the unfinished ones.
 - A dropped connection while a remote CRF search or encode starts no longer starts it twice on the worker. Before, the retry could launch a second ab-av1 writing the same log and output, giving a mixed log, a wrong exit code or a damaged encode.
+- `queue run`, `immich run` and `process` refuse to start while another run uses the same database, and name it: `Another run is using this database: queue run, started 14:02 (process 1234).`, exit `1`. Before, the second run marked the first one's active job interrupted. The lock is a `.run.lock` file beside the database, released when the run's process ends, however it ends.
+- A run that starts during `finalize` or `immich finalize` leaves the video being finalised alone. Before, it set the job back, and a correctly installed folder video then ended `FinalizationFailed`. A second finalise while one is running refuses: `Another finalise is running on this database, started 14:02 (process 1234). Wait for it to finish.`, exit `1`.
 - An upload to the worker that loses its connection resumes from the bytes already on the worker instead of uploading the whole original again. It prints `Lost the connection to the worker; resuming the upload at <done> of <size>...`, or `...; uploading <size> again from the start...` when nothing usable reached the worker.
 
 ## [0.7.1] - 2026-10-13

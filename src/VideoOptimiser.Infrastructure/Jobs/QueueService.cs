@@ -127,7 +127,11 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
 
     public async Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind sourceKind, bool modeOverridden = false, CancellationToken cancellationToken = default)
     {
-        await jobs.MarkActiveJobsInterruptedAsync(databasePath, cancellationToken);
+        // Held for the whole preparation, so a finalisation cannot start between reading a job and writing it back; finalize
+        // waits for it. Held by a finalisation instead, its jobs are live and this run leaves every finalisation alone.
+        using var finalizeLock = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(databasePath), "run", out _);
+        var finalizing = finalizeLock is null;
+        await jobs.MarkActiveJobsInterruptedAsync(databasePath, includeFinalizing: !finalizing, cancellationToken);
         var candidates = (await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
             .Where(job => job.Status is JobStatus.Queued or JobStatus.Interrupted)
             .OrderBy(job => job.CreatedUtc)
@@ -138,6 +142,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         var interruptedFinalizations = new List<JobRecord>();
         foreach (var job in candidates)
         {
+            if (finalizing && job.ResumeStatus == JobStatus.Finalizing) continue;
             if (FinalizationService.IsInterruptedImmichFinalization(job))
             {
                 FinalizationService.ReturnToReady(job, FinalizationService.InterruptedMessage);

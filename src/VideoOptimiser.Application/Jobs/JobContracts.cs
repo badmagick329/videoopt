@@ -116,7 +116,12 @@ public interface IJobRepository
     Task<JobRecord> CreateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
     Task UpdateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default);
-    Task MarkActiveJobsInterruptedAsync(string databasePath, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Marks jobs a dead process left mid-stage <see cref="JobStatus.Interrupted"/>, so they resume from that stage. Only the
+    /// holder of the run lock may call it. <paramref name="includeFinalizing"/> is false while a finalisation in another
+    /// process holds its lock: that <see cref="JobStatus.Finalizing"/> job is live, not left behind.
+    /// </summary>
+    Task MarkActiveJobsInterruptedAsync(string databasePath, bool includeFinalizing, CancellationToken cancellationToken = default);
 
     /// <summary>The newest job for the asset that is not completed, failed, cancelled or skipped.</summary>
     Task<JobRecord?> FindOpenByImmichAssetAsync(string databasePath, string assetId, CancellationToken cancellationToken = default);
