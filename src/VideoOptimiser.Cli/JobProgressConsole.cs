@@ -14,13 +14,32 @@ internal sealed class JobProgressConsole(TextWriter writer, TerminalStyle style)
     private const string StepIndent = "      ";
     private const string DetailIndent = "        ";
 
-    // Remote stage lines arrive on a poll thread while the job's own steps print from the caller's.
+    // Remote stage lines arrive on a poll thread while the job's own steps print from the caller's, and Ctrl+C writes from
+    // the console's signal thread.
     private readonly object _gate = new();
+    private TimeSpan? _encodeTimeLeft;
+
+    /// <summary>
+    /// The latest encode estimate, while the encode is the step in progress: any header or step line clears it, so the
+    /// download after an encode never shows the encode's last estimate.
+    /// </summary>
+    public TimeSpan? EncodeTimeLeft
+    {
+        get { lock (_gate) return _encodeTimeLeft; }
+    }
+
+    /// <summary>A line of the run's own, such as Ctrl+C's, at column 0 between the job's lines.</summary>
+    public void WriteNote(string line)
+    {
+        lock (_gate) writer.WriteLine(line);
+    }
 
     public void Report(JobProgress value)
     {
         lock (_gate)
         {
+            if (value.TimeLeft is { } left) _encodeTimeLeft = left;
+            else if (value.Kind is JobProgressKind.Header or JobProgressKind.Step) _encodeTimeLeft = null;
             switch (value.Kind)
             {
                 case JobProgressKind.Header:

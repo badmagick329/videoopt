@@ -61,16 +61,16 @@ internal static partial class CliApplication
             }
 
             using var host = BuildHost(configureServices);
-            using var cancellationSource = new CancellationTokenSource();
+            var stop = host.Services.GetRequiredService<RunStop>();
             ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
             {
                 eventArgs.Cancel = true;
-                cancellationSource.Cancel();
+                stop.Press();
             };
             Console.CancelKeyPress += cancelHandler;
             try
             {
-                return await ExecuteAsync(host.Services, command, cancellationSource.Token);
+                return await ExecuteAsync(host.Services, command, stop.Now);
             }
             finally
             {
@@ -164,6 +164,7 @@ internal static partial class CliApplication
         builder.Services.AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
         builder.Services.AddSingleton<IInteractiveConfirmation, ConsoleInteractiveConfirmation>();
         builder.Services.AddSingleton<IManagedWorkerCleanupOrchestrator, ManagedWorkerCleanupOrchestrator>();
+        builder.Services.AddSingleton<RunStop>();
         configureServices?.Invoke(builder.Services);
         return builder.Build();
     }
@@ -208,9 +209,9 @@ internal static partial class CliApplication
             CliCommandKind.WorkerStatus => await RunWorkerStatusAsync(services, configuration, cancellationToken),
             CliCommandKind.WorkerDelete => await RunWorkerDeleteAsync(services, configuration, cancellationToken),
             CliCommandKind.RemoteSetup => (int)await services.GetRequiredService<IRemoteSetupService>().RunAsync(configuration, ConfirmAsync, new InlineProgress<string>(Console.WriteLine), cancellationToken),
-            CliCommandKind.Process => await RunProcessAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.Process => await ReportingStopsAsync(services, configuration, command, () => RunProcessAsync(services, configuration, command, cancellationToken)),
             CliCommandKind.QueueDiscover => await RunQueueDiscoverAsync(services.GetRequiredService<IQueueService>(), configuration, command.First, cancellationToken),
-            CliCommandKind.QueueRun => await RunQueueRunAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.QueueRun => await ReportingStopsAsync(services, configuration, command, () => RunQueueRunAsync(services, configuration, command, cancellationToken)),
             CliCommandKind.QueueList => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.QueueCancel => await RunQueueCancelAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
             CliCommandKind.QueueRetry => await RunQueueRetryAsync(services.GetRequiredService<IJobRetryService>(), configuration, command.JobId!, cancellationToken),
@@ -219,7 +220,7 @@ internal static partial class CliApplication
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
             CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command, cancellationToken),
             CliCommandKind.Cleanup => await RunCleanupAsync(services.GetRequiredService<ITemporaryOutputCleanupService>(), configuration, command.DryRun, cancellationToken),
-            CliCommandKind.ImmichRun => await RunImmichRunAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.ImmichRun => await ReportingStopsAsync(services, configuration, command, () => RunImmichRunAsync(services, configuration, command, cancellationToken)),
             CliCommandKind.ImmichFinalize => await RunImmichFinalizeAsync(services, configuration, cancellationToken),
             CliCommandKind.Calibrate => await RunCalibrateAsync(services, configuration, command.Json, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
@@ -329,21 +330,20 @@ internal static partial class CliApplication
             await services.GetRequiredService<IJobProcessor>().NeedsWorkerAsync(configuration.Settings.Database.Path, sourcePath, configuration.Settings, command.Force, cancellationToken);
         if (managedWork)
         {
-            await EnsureWorkerReadyAsync(services, configuration, command, cancellationToken);
+            await EnsureWorkerReadyAsync(services, configuration, cancellationToken);
         }
         var progress = new JobProgressConsole(Console.Out, OutputStyle);
         progress.Report(JobProgress.Header(1, 1, sourcePath));
         JobProcessingResult result;
         try
         {
-            result = await services.GetRequiredService<IJobProcessor>().ProcessAsync(configuration.Settings.Database.Path, sourcePath, configuration.Settings, command.Force, progress, cancellationToken);
+            // One video: stopping after it is finishing it.
+            using (StopAfterThisVideoAnnounced(services, progress))
+            {
+                result = await services.GetRequiredService<IJobProcessor>().ProcessAsync(configuration.Settings.Database.Path, sourcePath, configuration.Settings, command.Force, progress, cancellationToken);
+            }
         }
-        catch (OperationCanceledException exception)
-        {
-            await ReportStoppedRunAsync(services, configuration, command, exception);
-            throw;
-        }
-        catch
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command, managedWork, [], unreachableWorkerJob: null, unexpectedFailure: true, processRoute: true, cancellationToken);
             throw;
@@ -449,13 +449,13 @@ internal static partial class CliApplication
         if (runLock is null) return (int)ExitCode.GeneralFailure;
         await PrintRunBannerAsync(services, configuration, command.ModeOverride, cancellationToken);
         var preparation = await services.GetRequiredService<IQueueService>().PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, JobSourceKind.File, modeOverridden: command.ModeOverride is not null, cancellationToken);
-        var (ready, _, failures, workerUnreachable) = await ProcessPreparedJobsAsync(services, configuration, command, preparation, (ready, skipped, failures) =>
+        var (ready, _, failures, workerUnreachable, stopped) = await ProcessPreparedJobsAsync(services, configuration, command, preparation, (ready, skipped, failures) =>
         {
             Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
             PrintFailedJobs(failures);
             if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser finalize --ready'.");
         }, cancellationToken);
-        return (int)QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
+        return stopped ? (int)ExitCode.Cancelled : (int)QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
     }
 
     /// <summary>
@@ -501,7 +501,7 @@ internal static partial class CliApplication
     /// Processes prepared jobs, creating a managed worker only when there is work for it. <paramref name="report"/> prints the
     /// outcome before the worker's deletion policy speaks, so its retention messages follow the failures they refer to.
     /// </summary>
-    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
+    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
         // F8 (VOPT-70): finalize checks whether anything moved and resumes, so the run leaves these jobs alone.
@@ -509,7 +509,7 @@ internal static partial class CliApplication
         if (preparation.RunnableJobs.Count == 0)
         {
             report(0, 0, [.. preparation.FailedJobs]);
-            return (0, 0, [.. preparation.FailedJobs], false);
+            return (0, 0, [.. preparation.FailedJobs], false, false);
         }
 
         var queue = services.GetRequiredService<IQueueService>();
@@ -520,21 +520,19 @@ internal static partial class CliApplication
         var managedWork = managed && await AnyJobNeedsWorkerAsync(services, configuration, preparation.RunnableJobs, cancellationToken);
         if (managedWork)
         {
-            await EnsureWorkerReadyAsync(services, configuration, command, cancellationToken);
+            await EnsureWorkerReadyAsync(services, configuration, cancellationToken);
         }
         Console.WriteLine($"Converting {preparation.RunnableJobs.Count} {(preparation.RunnableJobs.Count == 1 ? "video" : "videos")}.");
         var progress = new JobProgressConsole(Console.Out, OutputStyle);
         QueueRunResult result;
         try
         {
-            result = await queue.RunAsync(configuration.Settings.Database.Path, configuration.Settings, preparation.RunnableJobs, progress, cancellationToken);
+            using (StopAfterThisVideoAnnounced(services, progress))
+            {
+                result = await queue.RunAsync(configuration.Settings.Database.Path, configuration.Settings, preparation.RunnableJobs, progress, stopAfterThisVideo: services.GetRequiredService<RunStop>().AfterThisVideo, cancellationToken: cancellationToken);
+            }
         }
-        catch (OperationCanceledException exception)
-        {
-            await ReportStoppedRunAsync(services, configuration, command, exception);
-            throw;
-        }
-        catch
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command, managedWork, [], unreachableWorkerJob: null, unexpectedFailure: true, processRoute: false, cancellationToken);
             throw;
@@ -546,7 +544,19 @@ internal static partial class CliApplication
             Console.WriteLine();
             Console.WriteLine(UnreachableWorkerMessage.Stopped(await WorkerNameAsync(services, configuration.Settings), result.NotStarted + 1));
         }
+        if (result.StoppedAfter is { } last)
+        {
+            Console.WriteLine();
+            Console.WriteLine(StoppedRunMessage.StoppedAfter(last.SourcePath, result.NotStarted));
+        }
         report(result.ReadyToFinalize, result.SkippedJobs.Count, failures);
+        if (result.StoppedAfter is not null)
+        {
+            Console.WriteLine(StoppedRunMessage.ConvertTheRest(command, await ImmichJobsLeftAsync(services, configuration, command)));
+            // As after any Ctrl+C, the worker is kept, and the lines say how to delete it.
+            await ReportStoppedRunAsync(services, configuration, command, interrupted: null, stoppedNow: false);
+            return (result.ReadyToFinalize, result.SkippedJobs.Count, failures, false, true);
+        }
         await ApplyManagedWorkerDeletionPolicyAsync(services, configuration, command, managedWork, failures, result.UnreachableWorkerJob, unexpectedFailure: false, processRoute: false, cancellationToken);
         if (result.UnreachableWorkerJob is not null)
         {
@@ -556,7 +566,7 @@ internal static partial class CliApplication
         {
             Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the server; powering it off still bills.");
         }
-        return (result.ReadyToFinalize, result.SkippedJobs.Count, failures, result.UnreachableWorkerJob is not null);
+        return (result.ReadyToFinalize, result.SkippedJobs.Count, failures, result.UnreachableWorkerJob is not null, false);
     }
 
     /// <summary>In run order, stopping at the first job that needs the worker: usually only the first job is probed twice.</summary>
@@ -608,34 +618,54 @@ internal static partial class CliApplication
         }
     }
 
-    /// <summary>Ctrl+C while the worker is created or bootstrapped: once a server exists it stays up and bills, so the user hears how to resume or delete it.</summary>
-    private static async Task EnsureWorkerReadyAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
+    private static Task<RemoteWorkerInfo> EnsureWorkerReadyAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken) =>
+        services.GetRequiredService<IRemoteWorkerLifecycle>().EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
+
+    /// <summary>
+    /// While a video converts, the first Ctrl+C stops after it (<see cref="RunStop"/>), and the line printed says so, with the
+    /// encode's time left when it has reported one.
+    /// </summary>
+    private static IDisposable StopAfterThisVideoAnnounced(IServiceProvider services, JobProgressConsole progress) =>
+        services.GetRequiredService<RunStop>().WhileConverting(() => progress.WriteNote(StoppedRunMessage.StoppingAfterThisVideo(progress.EncodeTimeLeft)));
+
+    /// <summary>
+    /// Runs a run command, and after a stop now (Ctrl+C twice, or once with no video converting) says how to pick it up,
+    /// whatever was interrupted: Immich discovery, the worker's creation, a prompt or a video.
+    /// </summary>
+    private static async Task<int> ReportingStopsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, Func<Task<int>> run)
     {
         try
         {
-            await services.GetRequiredService<IRemoteWorkerLifecycle>().EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
+            return await run();
         }
         catch (OperationCanceledException exception)
         {
-            await ReportStoppedRunAsync(services, configuration, command, exception);
+            await ReportStoppedRunAsync(services, configuration, command, exception as JobInterruptedException, stoppedNow: true);
             throw;
         }
     }
 
     /// <summary>
-    /// Ctrl+C on a remote run stops only this side (<see cref="StoppedRunMessage"/>) and deletes nothing: the worker is kept
-    /// so the run can resume. The run's token is already cancelled, so the worker's name is read without it.
+    /// Ctrl+C on a remote run stops only this side (<see cref="StoppedRunMessage.Lines"/>) and deletes nothing: the worker is
+    /// kept so the run can resume. With nothing left running on a worker, a stop now gets <see cref="StoppedRunMessage.StoppedNow"/>.
+    /// The run's token is already cancelled, so the worker's name is read without it.
     /// </summary>
-    private static async Task ReportStoppedRunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, OperationCanceledException exception)
+    /// <param name="interrupted">The video a stop now interrupted, or null.</param>
+    /// <param name="stoppedNow">False after a stop after this video, whose own lines already say how to go on.</param>
+    private static async Task ReportStoppedRunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, JobInterruptedException? interrupted, bool stoppedNow)
     {
         var settings = configuration.Settings;
-        if (!settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase)) return;
-        var managed = services.GetRequiredService<IRemoteWorkerLifecycle>().IsManaged(settings);
-        var worker = await WorkerNameAsync(services, settings);
-        if (string.IsNullOrEmpty(worker)) return;
+        var immichJobsLeft = await ImmichJobsLeftAsync(services, configuration, command);
+        IReadOnlyList<string> lines = [];
+        if (settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase) && await WorkerNameAsync(services, settings) is { Length: > 0 } worker)
+        {
+            lines = StoppedRunMessage.Lines(interrupted, worker, services.GetRequiredService<IRemoteWorkerLifecycle>().IsManaged(settings), command, immichJobsLeft);
+        }
+        if (lines.Count == 0 && stoppedNow) lines = StoppedRunMessage.StoppedNow(interrupted, command, immichJobsLeft);
+        if (lines.Count == 0) return;
         // Sets the message apart from the job's block, and ends a creation prompt that Ctrl+C left open.
         Console.WriteLine();
-        foreach (var line in StoppedRunMessage.Lines(exception as JobInterruptedException, worker, managed, command, await ImmichJobsLeftAsync(services, configuration, command))) Console.WriteLine(line);
+        foreach (var line in lines) Console.WriteLine(line);
     }
 
     /// <param name="command">The command the user ran; the commands it prints keep its <c>--config</c> only when that was typed, since otherwise the worker's settings are found the same way without it.</param>

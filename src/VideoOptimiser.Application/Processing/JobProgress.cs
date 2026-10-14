@@ -40,7 +40,8 @@ public enum JobTone
 /// <see cref="Kind"/> and, when it can, the colour for <see cref="Tone"/>, so the same lines read the same in <c>process</c>,
 /// <c>queue run</c> and <c>immich run</c>.
 /// </summary>
-public sealed record JobProgress(JobProgressKind Kind, string Text, JobTone Tone = JobTone.None)
+/// <param name="TimeLeft">On an encode progress line, the estimate its text shows, so the first Ctrl+C can say how long stopping after this video takes.</param>
+public sealed record JobProgress(JobProgressKind Kind, string Text, JobTone Tone = JobTone.None, TimeSpan? TimeLeft = null)
 {
     /// <summary>The block's first line: <c>[2/5] name.mp4 (1.0 GiB)</c>. The size is left out when the original is already gone.</summary>
     public static JobProgress Header(int number, int total, string sourcePath)

@@ -16,7 +16,7 @@ discover  →  CRF search  →  encode  →  validate  →  you review  →  fin
              right quality)  AV1 file)                                 original)
 ```
 
-Every step before `finalize` works on a temporary file. Press `Ctrl+C` at any point and the next run resumes from a safe stage. On a remote worker, `Ctrl+C` stops only your side: the encode keeps running there, and the server keeps billing, until you rerun the command or delete the worker.
+Every step before `finalize` works on a temporary file. Press `Ctrl+C` once and the run stops after the video it is converting; press it again to stop at once, and the next run resumes that video from a safe stage. On a remote worker, stopping at once stops only your side: the encode keeps running there, and the worker keeps billing, until you rerun the command or delete the worker.
 
 ## Requirements
 

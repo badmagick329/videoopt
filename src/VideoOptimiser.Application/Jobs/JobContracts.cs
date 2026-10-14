@@ -196,8 +196,9 @@ public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJob
 /// <param name="UnreachableWorkerJob">The job the run stopped at because the worker could not be reached, or null. Every later
 /// job would fail the same way, so the run ends there (VOPT-69). The job is <see cref="JobStatus.Interrupted"/> and resumes from
 /// its stage, so it is not in <paramref name="FailedJobs"/>.</param>
-/// <param name="NotStarted">The jobs after <paramref name="UnreachableWorkerJob"/> that the run never started; they stay queued.</param>
-public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<SkippedQueueJob> SkippedJobs, JobRecord? UnreachableWorkerJob, int NotStarted, ExitCode ExitCode)
+/// <param name="NotStarted">The jobs after <paramref name="UnreachableWorkerJob"/> or <paramref name="StoppedAfter"/> that the run never started; they stay queued.</param>
+/// <param name="StoppedAfter">The last job of a run that Ctrl+C stopped after it, with jobs left to start, or null.</param>
+public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<SkippedQueueJob> SkippedJobs, JobRecord? UnreachableWorkerJob, int NotStarted, ExitCode ExitCode, JobRecord? StoppedAfter = null)
 {
     public int Failed => FailedJobs.Count;
 }
@@ -226,7 +227,8 @@ public interface IQueueService
     /// <param name="modeOverridden">Whether <c>--local</c> or <c>--remote</c> set the mode in <paramref name="settings"/>. The settings
     /// alone cannot say so, and only then is a started job from the other mode skipped instead of failed.</param>
     Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind sourceKind, bool modeOverridden = false, CancellationToken cancellationToken = default);
-    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default);
+    /// <param name="stopAfterThisVideo">Checked before each job, never during one, so a stop after this video keeps the current job's work.</param>
+    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<JobProgress>? progress = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default);
 }
 
 public interface IJobRetryService

@@ -114,8 +114,9 @@ public sealed partial class AbAv1OutputTranslator
         _firstProgress ??= (percent, now);
         if (_lastProgress is { } last && now - last < ProgressInterval) return [];
         _lastProgress = now;
-        var eta = EstimateTimeLeft(percent, now) is { } left ? $", about {HumanReadableValues.FormatDuration(left)} left" : string.Empty;
-        return [JobProgress.Detail($"{percent}%, {progress.Groups["fps"].Value} fps{eta}")];
+        var left = EstimateTimeLeft(percent, now);
+        var eta = left is { } value ? $", about {HumanReadableValues.FormatDuration(value)} left" : string.Empty;
+        return [JobProgress.Detail($"{percent}%, {progress.Groups["fps"].Value} fps{eta}") with { TimeLeft = left }];
     }
 
     /// <summary>

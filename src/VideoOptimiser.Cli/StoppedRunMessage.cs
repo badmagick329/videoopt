@@ -1,14 +1,38 @@
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Cli;
 
 /// <summary>
-/// What Ctrl+C on a remote run prints. Ctrl+C stops only this side: a CRF search or encode keeps running on the worker,
-/// which bills hourly until it is deleted, so the lines say what is still running, what it costs, and the command that
-/// picks it up again. The wording was approved by the user (VOPT-47); ask before changing it.
+/// What Ctrl+C prints (<see cref="RunStop"/>). A stop now on a remote run stops only this side: a CRF search or encode keeps
+/// running on the worker, which bills hourly until it is deleted, so <see cref="Lines"/> say what is still running, what it
+/// costs, and the command that picks it up again. The wording was approved by the user (VOPT-47, and VOPT-54 step 3 for the
+/// two presses); ask before changing it.
 /// </summary>
 internal static class StoppedRunMessage
 {
+    /// <summary>The first press while a video converts. The only estimate there is covers the encode, so the line names it as the encode's.</summary>
+    public static string StoppingAfterThisVideo(TimeSpan? encodeTimeLeft) => encodeTimeLeft is { } left
+        ? $"Stopping after this video (the encode has about {HumanReadableValues.FormatDuration(left)} left). Press Ctrl+C again to stop now."
+        : "Stopping after this video. Press Ctrl+C again to stop now.";
+
+    /// <summary>A run that stopped after a video, with videos it never started.</summary>
+    public static string StoppedAfter(string sourcePath, int waiting) =>
+        $"Stopped after {Path.GetFileName(sourcePath)}; {OutputWords.Count(waiting, "video is", "videos are")} still waiting.";
+
+    public static string ConvertTheRest(CliCommand command, int? immichJobsLeft) => $"To convert the rest: video-optimiser {RerunCommand(command, immichJobsLeft)}";
+
+    /// <summary>
+    /// A stop now that leaves nothing running on a worker: on this PC, between a manual host's remote stages, or before any
+    /// worker existed. The video resumes from its last finished step: a saved CRF is kept, a local encode starts again.
+    /// </summary>
+    /// <param name="interrupted">The video Ctrl+C stopped, or null when none was converting (Immich discovery, a prompt).</param>
+    public static IReadOnlyList<string> StoppedNow(JobInterruptedException? interrupted, CliCommand command, int? immichJobsLeft = null) =>
+    [
+        interrupted is null ? "Stopped now." : $"Stopped now. {Path.GetFileName(interrupted.Job.SourcePath)} continues from its last finished step on the next run.",
+        $"To resume: video-optimiser {RerunCommand(command, immichJobsLeft)}"
+    ];
+
     /// <param name="interrupted">The job Ctrl+C stopped, or null when it came between jobs or before the first one.</param>
     /// <param name="worker">The managed server's name, or the SSH host of a manual one.</param>
     /// <param name="managed">A manual host is not billed or deleted by this tool, so it gets only the lines that hold for it.</param>

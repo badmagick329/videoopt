@@ -62,9 +62,9 @@ public sealed class AbAv1OutputTranslatorTests
         Progress(translator, 10, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps"));
         Progress(translator, 20, 20).Should().Equal(JobProgress.Detail("20%, 8.5 fps"));
         // 20 points in 40 s: 70 points left take 140 s.
-        Progress(translator, 40, 30).Should().Equal(JobProgress.Detail("30%, 8.5 fps, about 2m 20s left"));
+        Progress(translator, 40, 30).Should().Equal(JobProgress.Detail("30%, 8.5 fps, about 2m 20s left") with { TimeLeft = TimeSpan.FromSeconds(140) });
         // 80 points in 100 s: 10 points left take 12.5 s.
-        Progress(translator, 100, 90).Should().Equal(JobProgress.Detail("90%, 8.5 fps, about 12s left"));
+        Progress(translator, 100, 90).Should().Equal(JobProgress.Detail("90%, 8.5 fps, about 12s left") with { TimeLeft = TimeSpan.FromSeconds(12.5) });
     }
 
     [Fact]
@@ -80,7 +80,7 @@ public sealed class AbAv1OutputTranslatorTests
         Progress(quick, 0, 10);
         Progress(quick, 20, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps"));
         // Both reached.
-        Progress(translator, 60, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps, about 17m 00s left"));
+        Progress(translator, 60, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps, about 17m 00s left") with { TimeLeft = TimeSpan.FromMinutes(17) });
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public sealed class AbAv1OutputTranslatorTests
         Progress(translator, 0, 10);
         Progress(translator, 3, 11).Should().BeEmpty();
         // 20 points in 50 s: 70 points left take 175 s.
-        Progress(translator, 50, 30).Should().Equal(JobProgress.Detail("30%, 8.5 fps, about 2m 55s left"));
+        Progress(translator, 50, 30).Should().Equal(JobProgress.Detail("30%, 8.5 fps, about 2m 55s left") with { TimeLeft = TimeSpan.FromSeconds(175) });
     }
 
     private IReadOnlyList<JobProgress> Progress(AbAv1OutputTranslator translator, int seconds, int percent)

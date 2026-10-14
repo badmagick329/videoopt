@@ -185,15 +185,21 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         return new QueuePreparationResult(runnable, failed, skipped, interruptedFinalizations);
     }
 
-    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, IReadOnlyList<JobRecord> jobs, IProgress<JobProgress>? progress = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default)
     {
         var ready = 0;
         var failed = new List<FailedQueueJob>();
         var skipped = new List<SkippedQueueJob>();
+        JobRecord? previous = null;
         for (var index = 0; index < jobs.Count; index++)
         {
             var job = jobs[index];
             cancellationToken.ThrowIfCancellationRequested();
+            // A result, not an exception: the videos finished so far get their summary, and the rest stay queued.
+            if (stopAfterThisVideo.IsCancellationRequested && previous is not null)
+            {
+                return new QueueRunResult(ready, failed, skipped, UnreachableWorkerJob: null, NotStarted: jobs.Count - index, ExitCode.Cancelled, StoppedAfter: previous);
+            }
             progress?.Report(JobProgress.Header(index + 1, jobs.Count, job.SourcePath));
             var result = await processor.ProcessAsync(databasePath, job.SourcePath, settings, force: false, progress, cancellationToken);
             if (result.Job.Status == JobStatus.ReadyToFinalize) ready++;
@@ -208,6 +214,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             {
                 failed.Add(new FailedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureCategory ?? "ProcessingFailed", result.Job.FailureMessage ?? result.Message));
             }
+            previous = job;
         }
 
         return new QueueRunResult(ready, failed, skipped, UnreachableWorkerJob: null, NotStarted: 0, QueueExitCode.Calculate(ready, failed.Count));

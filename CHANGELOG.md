@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+
+- `Ctrl+C` during `queue run`, `immich run` or `process` now stops after the video being converted, so its CRF search and encode are kept: `Stopping after this video (the encode has about 7m 36s left). Press Ctrl+C again to stop now.` (the time only while encoding). The run then prints `Stopped after <file>; <N> videos are still waiting.`, its usual summary, and `To convert the rest: video-optimiser queue run`, and exits `9`. A second `Ctrl+C`, or a first one with no video converting (Immich discovery, creating the worker, a prompt), stops at once as before. On this PC, stopping at once now prints `Stopped now. <file> continues from its last finished step on the next run.` and `To resume:` with the command; before, it printed nothing.
+
 ### Fixed
 
 - `worker create`, `worker status` and `worker delete` work when `processing.mode` is `"local"`, as long as `remoteSsh.lifecycle` is `"hetzner"`. Before, a server left billing after switching back to local could not be deleted without editing the config. With another lifecycle, the message names the setting, the config file and the current value: `'worker delete' needs processing.remoteSsh.lifecycle set to "hetzner" in <config>; it is "manual".` An empty `lifecycle:` no longer crashes these commands.
