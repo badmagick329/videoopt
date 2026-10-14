@@ -31,13 +31,15 @@ internal static class StoppedRunMessage
                 $"To stop it instead: {delete} (the work in progress is lost)"
             ];
         }
+        // The finished encode exists only on the worker until it is downloaded; a rerun after deleting it encodes again.
+        var downloading = interrupted is { Remote: true, Stage: JobStatus.Downloading };
         return
         [
-            interrupted is { Remote: true, Stage: JobStatus.Downloading }
+            downloading
                 ? $"Stopped. The encoded output is waiting on the worker {worker}, which stays up, billed hourly."
                 : $"Stopped. Nothing is running on the worker {worker}, but it stays up, billed hourly, so the job can resume.",
             $"To resume: {rerun}",
-            $"To delete it instead: {delete}"
+            $"To delete it instead: {delete}{(downloading ? " (the finished encode is lost)" : string.Empty)}"
         ];
     }
 

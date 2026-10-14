@@ -362,33 +362,47 @@ public sealed class ImmichFinalizationTests : IDisposable
     }
 
     /// <summary>
-    /// F5: Immich answers 400 for a deleted original and for one in the Locked Folder alike. The job stays ready, and the
-    /// message names the copy that survives a deletion: the staged download, or the AV1 once uploaded.
+    /// F5: Immich answers 400 for a deleted original and for one in the Locked Folder alike. The job stays ready, and the last
+    /// sentence names the copies that really survive a deletion, since cancelling lets cleanup delete the local files.
     /// </summary>
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task AnOriginalImmichCannotFindLeavesTheJobReadyAndNamesTheCopyThatSurvives(bool uploaded)
+    [InlineData("nothing uploaded")]
+    [InlineData("nothing uploaded, download gone")]
+    [InlineData("uploaded")]
+    [InlineData("uploaded, AV1 trashed")]
+    [InlineData("uploaded, AV1 gone, local AV1 gone")]
+    [InlineData("uploaded, AV1 gone, nothing local")]
+    public async Task AnOriginalImmichCannotFindLeavesTheJobReadyAndNamesTheCopiesThatSurvive(string situation)
     {
         var original = _immich.Add("PXL.mp4", "original");
         var job = await ReadyJobAsync(original);
-        if (uploaded)
+        if (situation.StartsWith("uploaded", StringComparison.Ordinal))
         {
             _immich.FailOnce["copy"] = new ImmichApiException("ImmichRequestFailed", "Immich answered 500.", 500);
             await FinalizeAsync(job);
         }
-        _immich.Remove(original.Id);
         var av1 = (await JobAsync(job)).ImmichNewAssetId;
+        if (situation.Contains("AV1 trashed", StringComparison.Ordinal)) _immich.Replace(_immich.Get(av1!) with { IsTrashed = true });
+        if (situation.Contains("AV1 gone", StringComparison.Ordinal)) _immich.Remove(av1!);
+        if (situation.Contains("download gone", StringComparison.Ordinal) || situation.EndsWith("nothing local", StringComparison.Ordinal)) File.Delete(job.SourcePath);
+        if (situation.Contains("local AV1 gone", StringComparison.Ordinal) || situation.EndsWith("nothing local", StringComparison.Ordinal)) File.Delete(job.OutputPath!);
+        _immich.Remove(original.Id);
 
         var result = await FinalizeAsync(job);
 
-        var deleted = uploaded
-            ? $"If it was deleted, its AV1 is already in Immich as asset {av1}; run 'video-optimiser queue cancel {job.Id:N}' to finish."
-            : $"If it was deleted, the downloaded copy at {job.SourcePath} may be the only one left: move it somewhere safe before running 'video-optimiser queue cancel {job.Id:N}'.";
+        var cancel = $"'video-optimiser queue cancel {job.Id:N}'";
+        var deleted = situation switch
+        {
+            "nothing uploaded" => $"If it was deleted, the downloaded copy at {job.SourcePath} and its AV1 at {job.OutputPath} may be the only copies left: move them somewhere safe before running {cancel}.",
+            "nothing uploaded, download gone" => $"If it was deleted, its AV1 at {job.OutputPath} may be the only copy left: move it somewhere safe before running {cancel}.",
+            "uploaded" => $"If it was deleted, its AV1 is already in Immich as asset {av1}; run {cancel} to finish.",
+            "uploaded, AV1 trashed" => $"If it was deleted, its AV1, asset {av1}, is in Immich's trash: restore it, then run {cancel}.",
+            "uploaded, AV1 gone, local AV1 gone" => $"If it was deleted, the downloaded copy at {job.SourcePath} may be the only one left: move it somewhere safe before running {cancel}.",
+            _ => $"If it was deleted, no copy is left on this PC and its AV1, asset {av1}, can't be read in Immich: if it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again; otherwise nothing is left to keep, so run {cancel}."
+        };
         result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
         result.Message.Should().Be($"Immich can't find the original, asset {original.Id}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again. {deleted}");
         (await JobAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
-        File.Exists(job.SourcePath).Should().BeTrue();
     }
 
     [Fact]

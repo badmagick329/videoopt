@@ -54,6 +54,14 @@ public sealed class StoppedRunMessageTests
             "To stop it instead: video-optimiser worker delete --config \"my.yaml\" (the work in progress is lost)");
     }
 
+    /// <summary>The finished encode exists only on the worker until it is downloaded, so deleting the worker loses it.</summary>
+    [Fact]
+    public void AStoppedDownloadWarnsThatDeletingTheWorkerLosesTheFinishedEncode()
+    {
+        StoppedRunMessage.Lines(Stopped(JobStatus.Downloading), "w", managed: true, CliCommand.Parse(["queue", "run"]))[^1]
+            .Should().Be("To delete it instead: video-optimiser worker delete (the finished encode is lost)");
+    }
+
     [Fact]
     public void AStoppedUploadSaysNothingIsRunningButTheWorkerStaysUp()
     {

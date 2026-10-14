@@ -104,7 +104,7 @@ If it stops partway, run it again: it continues where it left off. Until step 3,
 
 A video that cannot be finalised yet stays ready, and the others carry on. The message says what to do:
 
-- **Immich can't find the original.** It was deleted for good or moved to the Locked Folder; Immich gives the same answer for both. Move it out of the Locked Folder and run `immich finalize` again. If it was deleted, the message names the copy that is left, either the download in the staging directory or the AV1 already uploaded. Keep that copy before you `queue cancel` the job, because `cleanup` deletes a cancelled job's download.
+- **Immich can't find the original.** It was deleted for good or moved to the Locked Folder; Immich gives the same answer for both. Move it out of the Locked Folder and run `immich finalize` again. If it was deleted, the message names the copies that are left: the AV1 already in Immich (restore it first if it is in the trash), or the download and the AV1 on this PC. Move local copies somewhere safe before you `queue cancel` the job, because `cleanup` deletes a cancelled job's files.
 - **The original or the AV1 is in Immich's trash.** Restore it, then run `immich finalize` again.
 - **The local AV1 is missing.** Put it back, or cancel and retry the job to convert it again. Once the AV1 is uploaded, the local file is no longer needed.
 - **The download in the staging directory is missing.** Nothing is wrong: finalising compares the original in Immich with the one that was converted, not with the download.

@@ -389,8 +389,8 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     /// <summary>
-    /// A run creates a server only for a job that will reach a remote stage (VOPT-68). Each row is one local check that ends the
-    /// job first; the prediction writes nothing, so asking leaves no job behind.
+    /// A run creates a server only for a job that will reach a remote stage (VOPT-68). A lasting refusal (roots, rules, size)
+    /// means no; a condition that can clear before the job runs means yes. The prediction writes nothing, so asking leaves no job behind.
     /// </summary>
     [Theory]
     [InlineData("eligible", true)]
@@ -399,7 +399,8 @@ public sealed class JobProcessorTests : IDisposable
     [InlineData("below the rules' bitrate, --force", true)]
     [InlineData("cannot save the minimum", false)]
     [InlineData("outside the watch roots", false)]
-    [InlineData("unreadable by ffprobe", false)]
+    [InlineData("unreadable by ffprobe", true)]
+    [InlineData("not ready yet", true)]
     public async Task OnlyAJobThatPassesEveryLocalCheckNeedsTheWorker(string situation, bool expected)
     {
         var source = Path.Combine(_directory, "clip.mp4");
@@ -414,7 +415,7 @@ public sealed class JobProcessorTests : IDisposable
             Processing = new ProcessingSettings { Mode = situation == "local mode" ? "local" : "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker" } }
         };
         IMediaProbe probe = situation == "unreadable by ffprobe" ? new FailingProbe() : new H264Probe(bitrate: situation.StartsWith("below", StringComparison.Ordinal) ? 500_000 : 10_000_000);
-        var processor = new JobProcessor(repository, new ReadableFiles(), _ => probe, new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        var processor = new JobProcessor(repository, situation == "not ready yet" ? new UnreadyFiles() : new ReadableFiles(), _ => probe, new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
 
         var needed = await processor.NeedsWorkerAsync(settings.Database.Path, source, settings, force: situation.EndsWith("--force", StringComparison.Ordinal));
 
@@ -798,6 +799,11 @@ public sealed class JobProcessorTests : IDisposable
     private sealed class SynchronousProgress(Action<JobProgress> report) : IProgress<JobProgress>
     {
         public void Report(JobProgress value) => report(value);
+    }
+
+    private sealed class UnreadyFiles : IFileReadinessService
+    {
+        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(false, "it is still being written"));
     }
 
     private sealed class ReadableFiles : IFileReadinessService

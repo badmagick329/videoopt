@@ -20,6 +20,8 @@ public sealed class JobProcessor(
     /// <summary>An <see cref="JobStatus.Interrupted"/> job whose worker stopped answering; it resumes from its stage.</summary>
     public const string RemoteUnavailableCategory = "RemoteUnavailable";
 
+    private const string SourceNotReadyCategory = "SourceNotReady";
+
     public async Task<JobProcessingResult> ProcessAsync(string databasePath, string sourcePath, AppSettings settings, bool force, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var path = Path.GetFullPath(sourcePath);
@@ -238,8 +240,8 @@ public sealed class JobProcessor(
 
     /// <summary>
     /// Whether <see cref="ProcessAsync"/> would reach a remote stage for this original, so a run creates a server only when a
-    /// job will use it (VOPT-68). It makes the same decisions in the same order and writes nothing. A probe that fails means
-    /// no: processing would fail the job locally.
+    /// job will use it (VOPT-68). It makes the same decisions in the same order and writes nothing. A condition that can
+    /// clear before the job runs (a file not ready yet, a failed probe) counts as needing it.
     /// </summary>
     public async Task<bool> NeedsWorkerAsync(string databasePath, string sourcePath, AppSettings settings, bool force, CancellationToken cancellationToken = default)
     {
@@ -250,13 +252,17 @@ public sealed class JobProcessor(
         // Ready, or a finalisation that was interrupted: ProcessAsync returns before any stage. Covers an Immich finalisation too.
         if (job is not null && (job.Status is JobStatus.ReadyToFinalize or JobStatus.Finalizing || job.ResumeStatus == JobStatus.Finalizing)) return false;
         if (job is not null && JobCompatibility.Evaluate(job, settings).Status == JobCompatibilityStatus.Incompatible) return false;
+        // A file still being written or briefly unreadable by ffprobe may be fine by the time the job runs, and a job that
+        // reaches a remote stage with no worker ensured stops with nothing to resume on. So a passing condition that can
+        // change counts as needing the worker; only the lasting refusals (roots, rules, size) count as not.
         try
         {
-            return (await CheckSourceAsync(path, job?.SourceKind ?? JobSourceKind.File, settings, force, cancellationToken)).Proceeds;
+            var verdict = await CheckSourceAsync(path, job?.SourceKind ?? JobSourceKind.File, settings, force, cancellationToken);
+            return verdict.Proceeds || verdict.FailureCategory == SourceNotReadyCategory;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return false;
+            return true;
         }
     }
 
@@ -271,7 +277,7 @@ public sealed class JobProcessor(
         if (!force && kind == JobSourceKind.Immich && !(settings.Immich.StagingDirectory.Length > 0 && IsWithinRoot(path, settings.Immich.StagingDirectory))) return SourceVerdict.Fail(info, "SourceOutsideWatchRoot", "Staged Immich original is outside immich.stagingDirectory. Use --force to bypass this check.", ExitCode.ProcessingFailure);
         if (!force && kind == JobSourceKind.File && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return SourceVerdict.Fail(info, "SourceOutsideWatchRoot", "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure);
         var readinessResult = await readiness.CheckAsync(path, cancellationToken);
-        if (!readinessResult.IsReady) return SourceVerdict.Fail(info, "SourceNotReady", $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure);
+        if (!readinessResult.IsReady) return SourceVerdict.Fail(info, SourceNotReadyCategory, $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure);
 
         var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
         if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return SourceVerdict.Fail(info, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles) with { Media = media };

@@ -19,8 +19,14 @@ internal static class UnreachableWorkerMessage
     {
         var resume = $"To resume: video-optimiser {StoppedRunMessage.RerunCommand(command, immichJobsLeft)}";
         if (!managed) return [resume];
-        // As with Ctrl+C: a CRF search or encode may still be running on the worker, and deleting it loses that work.
-        var lost = job.ResumeStatus is JobStatus.CrfSearching or JobStatus.Encoding ? " (the work in progress is lost)" : string.Empty;
+        // As with Ctrl+C: deleting the worker loses a CRF search or encode that may still be running there, and a finished
+        // encode not yet downloaded.
+        var lost = job.ResumeStatus switch
+        {
+            JobStatus.CrfSearching or JobStatus.Encoding => " (the work in progress is lost)",
+            JobStatus.Downloading => " (the finished encode is lost)",
+            _ => string.Empty
+        };
         return
         [
             "The worker stays up, billed hourly, until it is deleted.",

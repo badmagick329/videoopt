@@ -34,7 +34,7 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         {
             // F5. Immich answers 400 "Not found or no asset.read access" for a deleted asset and for one in the Locked Folder,
             // so the message offers both. A trashed asset stays readable and never gets here.
-            throw new FinalizationWaitsException(OriginalNotFound(job, originalId));
+            throw new FinalizationWaitsException(await OriginalNotFoundAsync(client, job, originalId, cancellationToken));
         }
         if (!string.Equals(original.Checksum, checksum, StringComparison.Ordinal))
         {
@@ -132,14 +132,38 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
 
     /// <summary>
     /// F5. The job stays ready: if the original went to the Locked Folder, finalising works once it is moved out. If it was
-    /// deleted, the staged download may be the last copy, and cancelling the job lets cleanup delete it, so it is moved first;
-    /// once the AV1 is uploaded, that is the copy that survives.
+    /// deleted, the last sentence names the copies that really survive, because cancelling the job lets cleanup delete the
+    /// local download and AV1: the uploaded AV1 when Immich still has it live, otherwise every local file that exists.
     /// </summary>
-    private static string OriginalNotFound(JobRecord job, string originalId)
+    private static async Task<string> OriginalNotFoundAsync(IImmichClient client, JobRecord job, string originalId, CancellationToken cancellationToken)
     {
-        var deleted = job.ImmichNewAssetId is { } uploaded
-            ? $"If it was deleted, its AV1 is already in Immich as asset {uploaded}; run 'video-optimiser queue cancel {job.Id:N}' to finish."
-            : $"If it was deleted, the downloaded copy at {job.SourcePath} may be the only one left: move it somewhere safe before running 'video-optimiser queue cancel {job.Id:N}'.";
+        var cancel = $"'video-optimiser queue cancel {job.Id:N}'";
+        string? deleted = null;
+        if (job.ImmichNewAssetId is { } uploaded)
+        {
+            try
+            {
+                var av1 = await client.GetAssetAsync(uploaded, cancellationToken);
+                deleted = av1.IsTrashed
+                    ? $"If it was deleted, its AV1, asset {uploaded}, is in Immich's trash: restore it, then run {cancel}."
+                    : $"If it was deleted, its AV1 is already in Immich as asset {uploaded}; run {cancel} to finish.";
+            }
+            catch (ImmichApiException exception) when (exception.StatusCode is 400 or 404)
+            {
+                // Purged, or in the Locked Folder: the local files decide. Any other error propagates, so the job goes back to
+                // ready on the usual resumable path rather than with advice built on a guess.
+            }
+        }
+        var download = File.Exists(job.SourcePath);
+        var output = job.OutputPath is not null && File.Exists(job.OutputPath);
+        deleted ??= (download, output) switch
+        {
+            (true, true) => $"If it was deleted, the downloaded copy at {job.SourcePath} and its AV1 at {job.OutputPath} may be the only copies left: move them somewhere safe before running {cancel}.",
+            (true, false) => $"If it was deleted, the downloaded copy at {job.SourcePath} may be the only one left: move it somewhere safe before running {cancel}.",
+            (false, true) => $"If it was deleted, its AV1 at {job.OutputPath} may be the only copy left: move it somewhere safe before running {cancel}.",
+            // Reached only when the AV1 was uploaded (finalise refuses a missing local AV1 otherwise) and the user removed both files.
+            _ => $"If it was deleted, no copy is left on this PC and its AV1, asset {job.ImmichNewAssetId}, can't be read in Immich: if it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again; otherwise nothing is left to keep, so run {cancel}."
+        };
         return $"Immich can't find the original, asset {originalId}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again. {deleted}";
     }
 }

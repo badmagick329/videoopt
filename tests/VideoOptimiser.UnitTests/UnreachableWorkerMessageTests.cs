@@ -14,12 +14,12 @@ public sealed class UnreachableWorkerMessageTests
         UnreachableWorkerMessage.Stopped("w", notConverted).Should().Be(expected);
     }
 
-    /// <summary>Deleting the worker loses a CRF search or encode that may still be running there; at other stages nothing runs.</summary>
+    /// <summary>Deleting the worker loses a CRF search or encode that may still be running there, and a finished encode not yet downloaded.</summary>
     [Theory]
     [InlineData(JobStatus.CrfSearching, " (the work in progress is lost)")]
     [InlineData(JobStatus.Encoding, " (the work in progress is lost)")]
     [InlineData(JobStatus.Staging, "")]
-    [InlineData(JobStatus.Downloading, "")]
+    [InlineData(JobStatus.Downloading, " (the finished encode is lost)")]
     public void AManagedWorkerSaysItBillsHowToResumeAndHowToDeleteIt(JobStatus stage, string suffix)
     {
         var command = CliCommand.Parse(["queue", "run", "--config", "my.yaml"]);
