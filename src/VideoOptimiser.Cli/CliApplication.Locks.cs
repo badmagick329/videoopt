@@ -30,10 +30,19 @@ internal static partial class CliApplication
         return null;
     }
 
-    /// <summary>The finalise lock, or null after saying who holds it. A run holds it for moments while it prepares, so this waits that long first.</summary>
+    /// <summary>
+    /// The finalise lock, or null after saying who holds it. A run holds it while it prepares, which takes moments, so this
+    /// waits for a run however long it takes and refuses only another finalise.
+    /// </summary>
     private static async Task<DatabaseLock?> TakeFinalizeLockAsync(LoadedConfiguration configuration, string command, CancellationToken cancellationToken)
     {
-        var (taken, holder) = await DatabaseLock.AcquireAsync(DatabaseLock.FinalizePath(configuration.Settings.Database.Path), command, TimeSpan.FromSeconds(5), cancellationToken);
+        DatabaseLock? taken;
+        DatabaseLock.Holder? holder;
+        do
+        {
+            (taken, holder) = await DatabaseLock.AcquireAsync(DatabaseLock.FinalizePath(configuration.Settings.Database.Path), command, TimeSpan.FromSeconds(5), cancellationToken);
+        }
+        while (taken is null && holder?.Command == DatabaseLock.RunPreparing);
         if (taken is not null) return taken;
         WriteError(holder is null
             ? "Another finalise is running on this database. Wait for it to finish."

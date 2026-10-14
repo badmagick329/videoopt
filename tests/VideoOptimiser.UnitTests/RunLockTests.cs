@@ -84,13 +84,31 @@ public sealed class RunLockTests : IDisposable
     public async Task ASecondFinalisationRefusesAndNamesTheActiveOne(string verb, string argument)
     {
         var config = await WriteConfigAsync();
-        using var finalizing = HoldLock(DatabaseLock.FinalizePath(DatabasePath), "finalize", new DateTimeOffset(DateTime.Today.AddMinutes(1)));
+        var today = DateTime.Today;
+        using var finalizing = HoldLock(DatabaseLock.FinalizePath(DatabasePath), "finalize", new DateTimeOffset(today.AddMinutes(1)));
 
         var (code, output, error) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, verb, argument, "--config", config);
 
         code.Should().Be((int)ExitCode.GeneralFailure);
         output.Should().BeEmpty();
-        error.Should().Be($"Another finalise is running on this database, started 00:01 (process 4321). Wait for it to finish.{Environment.NewLine}");
+        // The refusal comes after a 5 s wait, which can cross midnight; the time then carries its date.
+        var started = DateTime.Today == today ? "00:01" : $"{today:yyyy-MM-dd} 00:01";
+        error.Should().Be($"Another finalise is running on this database, started {started} (process 4321). Wait for it to finish.{Environment.NewLine}");
+    }
+
+    /// <summary>A run holds the finalise lock only while it prepares, so finalize waits for it rather than calling it a finalise.</summary>
+    [Fact]
+    public async Task AFinalisationWaitsForARunToFinishPreparing()
+    {
+        var config = await WriteConfigAsync();
+        var preparing = HoldLock(DatabaseLock.FinalizePath(DatabasePath), DatabaseLock.RunPreparing, DateTimeOffset.Now);
+        _ = Task.Delay(TimeSpan.FromSeconds(6)).ContinueWith(_ => preparing.Dispose(), TaskScheduler.Default);
+
+        var (code, output, error) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, "finalize", "--ready", "--config", config);
+
+        error.Should().BeEmpty();
+        output.Should().Be($"No jobs are ready to finalise.{Environment.NewLine}");
+        code.Should().Be((int)ExitCode.Success);
     }
 
     [Fact]

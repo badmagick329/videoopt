@@ -42,7 +42,8 @@ public static class WorkerEndPolicy
         if (answer == false) return WorkerFate.Keep;
         return end switch
         {
-            // Failed videos no longer keep the worker: a stage failure has already deleted their remote workspace.
+            // Failed videos no longer keep the worker: a retry is a new job that starts again from the upload, so nothing a failed
+            // video left on the worker is ever reused.
             RunEnd.Finished => workerUsed && deleteAfterRun ? WorkerFate.Delete : WorkerFate.Keep,
             RunEnd.StoppedAfterVideo or RunEnd.StoppedNow => canAsk ? WorkerFate.Ask : WorkerFate.Keep,
             _ => WorkerFate.Keep

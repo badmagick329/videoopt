@@ -102,7 +102,11 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
 
     public Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default) => ReadRecordedAsync(databasePath, cancellationToken);
 
-    public Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default) => Task.FromResult(Exists ? CliFakes.Worker : null);
+    /// <summary>Thrown when the state file is read, as an unreadable one would be.</summary>
+    public Exception? ReadFailure { get; set; }
+
+    public Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default) =>
+        ReadFailure is null ? Task.FromResult(Exists ? CliFakes.Worker : null) : Task.FromException<RemoteWorkerInfo?>(ReadFailure);
 
     public Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {

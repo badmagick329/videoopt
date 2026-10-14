@@ -20,6 +20,9 @@ public sealed class DatabaseLock : IDisposable
     /// <param name="Command">What holds it, such as <c>queue run</c>.</param>
     public sealed record Holder(string Command, DateTimeOffset StartedUtc, int ProcessId);
 
+    /// <summary>How a run names itself while it holds the finalise lock to prepare, which takes moments.</summary>
+    public const string RunPreparing = "run preparing";
+
     public static string RunPath(string databasePath) => Path.GetFullPath(databasePath) + ".run.lock";
     public static string FinalizePath(string databasePath) => Path.GetFullPath(databasePath) + ".finalize.lock";
 

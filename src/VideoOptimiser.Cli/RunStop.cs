@@ -25,26 +25,24 @@ internal sealed class RunStop : IDisposable
 
     public void Press()
     {
-        Action? notify;
+        // The callbacks run under the lock, so a press as the conversion ends never prints "Stopping after this video" once
+        // the run has moved on to its summary: the scope's exit waits for it, or it sees the scope gone.
         lock (_gate)
         {
             if (_onPressWhileDeleting is not null)
             {
-                notify = _onPressWhileDeleting;
+                _onPressWhileDeleting();
+                return;
             }
-            else if (_onStopAfterThisVideo is not null && !_afterThisVideo.IsCancellationRequested)
+            if (_onStopAfterThisVideo is not null && !_afterThisVideo.IsCancellationRequested)
             {
                 _afterThisVideo.Cancel();
-                notify = _onStopAfterThisVideo;
-            }
-            else
-            {
-                notify = null;
+                _onStopAfterThisVideo();
+                return;
             }
         }
 
-        if (notify is null) _now.Cancel();
-        else notify();
+        _now.Cancel();
     }
 
     /// <summary>While the returned scope lasts, a first press stops after this video and calls <paramref name="onStop"/>.</summary>

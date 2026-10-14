@@ -148,6 +148,7 @@ public sealed class WorkerEndRunTests : IDisposable
 
         output.Should().EndWith(Transcript(
             "Delete the worker when the run stops? [y/N] ",
+            "",
             $"Stopped watching. The encode of 1.mp4 is still running on the worker {Worker}.",
             "The worker is billed hourly until it is deleted.",
             $"To pick it up again: video-optimiser queue run {Config}",
@@ -175,7 +176,8 @@ public sealed class WorkerEndRunTests : IDisposable
             "      Encoding...",
             "        41%, 63 fps, about 7m 36s left",
             "Stopping after this video (the encode has about 7m 36s left). Press Ctrl+C again to stop now.",
-            "Delete the worker when the run stops? [y/N]       Ready to finalise.",
+            "Delete the worker when the run stops? [y/N] ",
+            "      Ready to finalise.",
             "",
             "Stopped after 1.mp4; 1 video is still waiting.",
             "Ready to finalise: 1.",
@@ -399,6 +401,28 @@ public sealed class WorkerEndRunTests : IDisposable
             $"To delete it: video-optimiser worker delete {Config}"));
         code.Should().Be((int)ExitCode.Success);
         _lifecycle.DeleteCalls.Should().Be(0);
+    }
+
+    /// <summary>An error while deciding the worker's fate is reported, and a stopped run still exits 9.</summary>
+    [Fact]
+    public async Task AStopWhoseWorkerStateCannotBeReadReportsItAndStillExitsNine()
+    {
+        await WriteConfigAsync();
+        await QueueJobsAsync(1);
+        _input = new ScriptedInput(interactive: false);
+        _state = new RunWorkerState(_input);
+        _processor.During[0] = _ =>
+        {
+            _stop.Press();
+            _stop.Press();
+            _lifecycle.ReadFailure = new IOException("the worker's state file is unreadable");
+            return Task.CompletedTask;
+        };
+
+        var (code, _, error) = await RunAsync();
+
+        error.Should().Be(Transcript("Unexpected failure: the worker's state file is unreadable"));
+        code.Should().Be((int)ExitCode.Cancelled);
     }
 
     [Fact]

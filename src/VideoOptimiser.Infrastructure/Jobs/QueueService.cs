@@ -129,7 +129,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
     {
         // Held for the whole preparation, so a finalisation cannot start between reading a job and writing it back; finalize
         // waits for it. Held by a finalisation instead, its jobs are live and this run leaves every finalisation alone.
-        using var finalizeLock = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(databasePath), "run", out _);
+        using var finalizeLock = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(databasePath), DatabaseLock.RunPreparing, out _);
         var finalizing = finalizeLock is null;
         await jobs.MarkActiveJobsInterruptedAsync(databasePath, includeFinalizing: !finalizing, cancellationToken);
         var candidates = (await jobs.ListAsync(databasePath, terminal: false, cancellationToken))

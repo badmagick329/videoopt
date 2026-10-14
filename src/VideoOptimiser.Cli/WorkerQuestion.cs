@@ -49,6 +49,8 @@ internal sealed class WorkerQuestion(IConsoleInput input)
         lock (_gate)
         {
             if (_takenOver is { } decided) return decided;
+            // A prompt still waiting ends its line, so the held lines start on their own.
+            if (_read is { IsCompleted: false }) _progress!.WriteNote(string.Empty);
             _progress?.Release();
             _takenOver = _read switch
             {

@@ -305,7 +305,7 @@ internal static partial class CliApplication
         var repository = services.GetRequiredService<IJobRepository>();
         var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
         // As in QueueService.PrepareAsync: a finalisation holding its lock owns its Finalizing job.
-        using (var finalizeLock = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(configuration.Settings.Database.Path), "run", out _))
+        using (var finalizeLock = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(configuration.Settings.Database.Path), DatabaseLock.RunPreparing, out _))
         {
             await repository.MarkActiveJobsInterruptedAsync(configuration.Settings.Database.Path, includeFinalizing: finalizeLock is not null, cancellationToken);
         }
@@ -619,18 +619,34 @@ internal static partial class CliApplication
         catch (OperationCanceledException exception) when (state.Started && !state.Concluded)
         {
             // A failed delete still exits 9: the run stopped.
-            await ConcludeWorkerAsync(services, configuration, command, RunEnd.StoppedNow, interrupted: exception as JobInterruptedException);
+            await ConcludeOrReportAsync(() => ConcludeWorkerAsync(services, configuration, command, RunEnd.StoppedNow, interrupted: exception as JobInterruptedException));
             return (int)ExitCode.Cancelled;
         }
         catch (Exception exception) when (state.Started && !state.Concluded && exception is not OperationCanceledException)
         {
             // The error first, then what happens to the worker.
             exitCode = ReportFailure(exception);
-            await ConcludeWorkerAsync(services, configuration, command, RunEnd.Failed);
+            await ConcludeOrReportAsync(() => ConcludeWorkerAsync(services, configuration, command, RunEnd.Failed));
             return exitCode;
         }
-        if (state.Started && !state.Concluded) await ConcludeWorkerAsync(services, configuration, command, RunEnd.Finished);
+        if (state.Started && !state.Concluded) await ConcludeOrReportAsync(() => ConcludeWorkerAsync(services, configuration, command, RunEnd.Finished));
         return exitCode;
+    }
+
+    /// <summary>
+    /// An error while deciding the worker's fate (an unreadable state file, a busy database) is reported, and the run keeps
+    /// the exit code of how it ended: a stop stays 9.
+    /// </summary>
+    private static async Task ConcludeOrReportAsync(Func<Task<bool>> conclude)
+    {
+        try
+        {
+            _ = await conclude();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            _ = ReportFailure(exception);
+        }
     }
 
     /// <summary>
