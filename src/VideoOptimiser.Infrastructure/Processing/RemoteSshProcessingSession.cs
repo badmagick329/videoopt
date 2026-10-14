@@ -166,6 +166,9 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             progress?.Report(JobProgress.Step("Already downloaded, checksum verified."));
             return;
         }
+        // A partial longer than the output belongs to an earlier encode, for example one lost with a deleted worker. sftp
+        // refuses to resume onto a local file larger than the remote one, which would fail the job for good.
+        if (File.Exists(partial) && outputLength > 0 && new FileInfo(partial).Length > outputLength) File.Delete(partial);
         var partialStart = File.Exists(partial) && outputLength > 0
             ? Math.Min(new FileInfo(partial).Length, outputLength)
             : 0;

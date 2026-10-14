@@ -423,6 +423,35 @@ public sealed class RemoteSshProcessingSessionTests
         Directory.Delete(directory, true);
     }
 
+    /// <summary>
+    /// A partial longer than the output is left from an earlier encode (a worker deleted mid-download); sftp would refuse to
+    /// resume onto it and fail the job for good, so the download starts over.
+    /// </summary>
+    [Fact]
+    public async Task APartialLongerThanTheOutputIsDiscardedAndTheDownloadStartsOver()
+    {
+        var directory = CreateTemporaryDirectory();
+        var source = Path.Combine(directory, "source.mkv");
+        var output = Path.Combine(directory, "output.mkv");
+        await File.WriteAllTextAsync(source, "source");
+        var good = Encoding.UTF8.GetBytes("verified-output");
+        await File.WriteAllTextAsync(output + ".partial", "an older, longer encode's partial download");
+        var expectedHash = Convert.ToHexString(SHA256.HashData(good)).ToLowerInvariant();
+        var runner = new CallbackRunner(request =>
+        {
+            if (request.FileName == "ssh") return new ExternalProcessResult(0, $"{good.Length}\n{expectedHash}", string.Empty);
+            File.WriteAllBytes(output + ".partial", good);
+            return new ExternalProcessResult(0, string.Empty, string.Empty);
+        });
+        var progress = new CaptureProgress();
+
+        await CreateSession(Guid.NewGuid(), runner, source).RetrieveOutputAsync(output, 1, progress);
+
+        progress.Lines[0].Should().Be(JobProgress.Step("Downloading 15 B from the worker..."));
+        File.ReadAllBytes(output).Should().Equal(good);
+        Directory.Delete(directory, true);
+    }
+
     [Fact]
     public async Task ADownloadPrintsItsStartAndSummaryLinesOnly()
     {
