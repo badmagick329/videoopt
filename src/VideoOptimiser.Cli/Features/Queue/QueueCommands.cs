@@ -12,7 +12,7 @@ namespace VideoOptimiser.Cli.Features.Queue;
 /// <summary>
 /// The queue commands: the verbs <c>queue hold</c>, <c>release</c>, <c>next</c> and <c>drop</c> (VOPT-54 step 5); the
 /// commands that put videos in the queue, <c>queue add</c> (was <c>queue discover</c>), <c>queue add &lt;file&gt;</c> and
-/// <c>queue retry</c> (<c>queue add immich</c> is the Immich slice's), each ending with what to run next; and the job lists <c>queue list</c>, <c>status</c> and
+/// <c>queue retry</c> (<c>queue add immich</c> is the Immich slice's), each ending with what to run next; and the job lists <c>queue list</c> and
 /// <c>history</c>, as lines or <c>--json</c>. When a verb acts and when it refuses is decided by <see cref="IQueueVerbs"/>
 /// and the discovery and retry services; this holds the wording and the stream each line goes to. Changed wording goes
 /// through the humanizer gate (docs index).
@@ -214,7 +214,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         var result = await discovery.DiscoverAsync(settings.Database.Path, settings, command.First, new QueueDiscoverConsole(Console.Out), cancellationToken);
         QueueDiscoverConsole.WriteSummary(Console.Out, result);
         if (result.QueuedPaths.Count + result.AlreadyQueued > 0) Console.WriteLine(NextRunLine(discovery.NextRun(settings.Database.Path), command));
-        if (result.ReadyToFinalize > 0) Console.WriteLine(ReadyToFinaliseLine(result.ReadyToFinalize, command));
+        if (result.ReadyToFinalize > 0) Console.WriteLine(NextSteps.ReadyToFinaliseLine(result.ReadyToFinalize, command));
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
@@ -293,7 +293,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         return (int)ExitCode.Success;
     }
 
-    /// <param name="terminal">The ended jobs (<c>history</c>) rather than the open ones (<c>queue list</c>, <c>status</c>).</param>
+    /// <param name="terminal">The ended jobs (<c>history</c>) rather than the open ones (<c>queue list</c>).</param>
     public async Task<int> ListAsync(LoadedConfiguration configuration, CliCommand command, bool terminal, CancellationToken cancellationToken)
     {
         var databasePath = configuration.Settings.Database.Path;

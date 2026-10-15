@@ -187,7 +187,7 @@ For the watch folders:
 ```powershell
 .\artifacts\local\video-optimiser.exe queue add --config .\video-optimiser.yaml
 .\artifacts\local\video-optimiser.exe run --config .\video-optimiser.yaml
-.\artifacts\local\video-optimiser.exe status --config .\video-optimiser.yaml
+.\artifacts\local\video-optimiser.exe queue list --config .\video-optimiser.yaml
 ```
 
 For one video, queue it, then run:
@@ -220,6 +220,8 @@ Inspect or remove a retained worker with:
 ```
 
 The delete command verifies the exact server ID and ownership labels. It refuses ambiguous or unowned resources.
+
+`status` shows a worker that bills too, with its type, location, age and hourly price, checked against Hetzner. It takes no lock, so it answers while a run is creating the worker. When Hetzner can't be asked (no API token, no answer within 15 seconds), it shows the worker recorded on this PC and says why it wasn't checked. A worker is `Worker: none.` when Hetzner has no server for this database, and `Worker: <name>'s server is gone, but its IPv4 address still bills.` when only the Primary IPv4 is left; `worker delete` removes it.
 
 The `worker` commands follow `lifecycle` alone, so they still work after you set `mode` back to `"local"`, and they take no `--local` or `--remote`. With any other `lifecycle`, `worker create` and `worker delete` exit `3` and `worker status` exits `0`; each names the setting and its current value.
 

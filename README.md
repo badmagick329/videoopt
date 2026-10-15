@@ -12,7 +12,7 @@ Windows only. If an AI agent runs it for you, point the agent at [docs/agent-gui
 
 ```text
 discover  →  CRF search  →  encode  →  validate  →  you review  →  finalize
-(queue)      (find the       (temporary  (checks)     (status)        (replace the
+(queue)      (find the       (temporary  (checks)     (queue list)    (replace the
              right quality)  AV1 file)                                 original)
 ```
 
@@ -78,11 +78,11 @@ The commands below assume you run them there, with the config file beside the ex
 5. Review the result, then replace the original:
 
    ```powershell
-   .\video-optimiser.exe status --config .\video-optimiser.yaml
+   .\video-optimiser.exe queue list --config .\video-optimiser.yaml
    .\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
    ```
 
-   The converted file waits in a `.video-optimiser` folder beside the original, and `status --json` gives its path as `outputPath`. Watch it before you finalise. By default `finalize` deletes the original; it says what it will do to each one and asks once.
+   The converted file waits in a `.video-optimiser` folder beside the original, and `queue list --json` gives its path as `outputPath`. Watch it before you finalise. By default `finalize` deletes the original; it says what it will do to each one and asks once.
 
 When one video works, drop `--first` to queue everything that matches your rules.
 
@@ -131,7 +131,8 @@ All commands take `--config <path>`.
 | `queue add [--first]` | Queue the videos in the watch folders that match your rules. |
 | `queue add <file> [--force]` | Queue one file. `--force` skips the watch folders and the rules. |
 | `run [--local \| --remote]` | Convert every queued video, folder and Immich alike. Stops before replacing anything. |
-| `status`, `queue list`, `history` | `status` and `queue list` show the open videos in groups: converting now, the queue in run order, held, and ready to finalise. `history` shows the finished ones. Add `--json` for scripts. |
+| `status` (or no command) | A card: the queue's counts, the run going, a Hetzner worker that bills (checked against Hetzner), and the commands worth running next. Add `--json` for scripts. |
+| `queue list`, `history` | `queue list` shows the open videos in groups: converting now, the queue in run order, held, and ready to finalise. `history` shows the finished ones. Add `--json` for scripts. |
 | `calibrate [--json]` | Show how your rules fit your library. Changes nothing. |
 | `queue hold <job-id>`, `queue release <job-id>` | Make runs pass over a waiting or stopped video, or take it again. |
 | `queue next <job-id>` | Convert a waiting or stopped video next. A `run` that is going takes it after the current video. |

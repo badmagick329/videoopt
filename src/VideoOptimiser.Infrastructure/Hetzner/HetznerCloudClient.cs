@@ -316,7 +316,30 @@ internal sealed class HetznerCloudClient : IDisposable
             labels,
             created,
             serverType,
-            location);
+            location,
+            ParseHourlyGross(server, location));
+    }
+
+    /// <summary>
+    /// The server type's hourly gross price in the server's own location, from the <c>prices</c> array a server carries.
+    /// Informational, so a missing or odd array gives null instead of failing the read.
+    /// </summary>
+    private static decimal? ParseHourlyGross(JsonElement server, string location)
+    {
+        if (!server.TryGetProperty("server_type", out var type) || type.ValueKind != JsonValueKind.Object ||
+            !type.TryGetProperty("prices", out var prices) || prices.ValueKind != JsonValueKind.Array)
+            return null;
+        foreach (var price in prices.EnumerateArray())
+        {
+            if (price.ValueKind == JsonValueKind.Object &&
+                price.TryGetProperty("location", out var priceLocation) && priceLocation.ValueKind == JsonValueKind.String &&
+                string.Equals(priceLocation.GetString(), location, StringComparison.OrdinalIgnoreCase) &&
+                price.TryGetProperty("price_hourly", out var hourly) && hourly.ValueKind == JsonValueKind.Object &&
+                hourly.TryGetProperty("gross", out var gross) && gross.ValueKind == JsonValueKind.String &&
+                decimal.TryParse(gross.GetString(), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value))
+                return value;
+        }
+        return null;
     }
 
     public static void VerifyOwnership(ServerSnapshot server, string controller)

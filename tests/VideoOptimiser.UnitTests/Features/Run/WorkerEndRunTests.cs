@@ -66,7 +66,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             "Stopped after 1.mp4; 2 videos are still waiting.",
             "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
+            $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready {Config}'.",
             $"To convert the rest: video-optimiser run {Config}",
             "Deleting Hetzner server 42.",
             "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
@@ -119,7 +119,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             "Stopped after 1.mp4; 1 video is still waiting.",
             "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
+            $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready {Config}'.",
             $"To convert the rest: video-optimiser run {Config}",
             $"The worker {Worker} stays up, billed hourly, until it is deleted.",
             $"To delete it: video-optimiser worker delete {Config}"));
@@ -182,7 +182,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             "Stopped after 1.mp4; 1 video is still waiting.",
             "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
+            $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready {Config}'.",
             $"To convert the rest: video-optimiser run {Config}",
             "Delete the worker now? [y/N] Deleting Hetzner server 42.",
             "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
@@ -343,7 +343,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "Failed jobs:",
             $"{jobs[1].Id:N}  2.mp4",
             "EncodeFailed: the encode broke.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
+            $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready {Config}'.",
             .. worker]));
         code.Should().Be((int)ExitCode.PartialSuccess);
         _lifecycle.DeleteCalls.Should().Be(deleteAfterRun ? 1 : 0);

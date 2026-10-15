@@ -21,10 +21,6 @@ internal static class QueueWords
         _ => $"Next: run '{command.Hint("run")}' once the run going now ends."
     };
 
-    public static string ReadyToFinaliseLine(int count, CliCommand command) => count == 1
-        ? $"1 video is ready to finalise: review it, then run '{command.Hint("finalize --ready")}'."
-        : $"{count} videos are ready to finalise: review them, then run '{command.Hint("finalize --ready")}'.";
-
     public static string StatusPhrase(JobRecord job) => job.Status switch
     {
         JobStatus.ReadyToFinalize => "is ready to finalise",
@@ -69,7 +65,7 @@ internal static class QueueWords
     ];
 
     /// <summary>
-    /// <c>queue list</c> and <c>status</c>: a header per group that has jobs, then one indented line each. The queue is
+    /// <c>queue list</c>: a header per group that has jobs, then one indented line each. The queue is
     /// numbered, and the first two groups carry a status column padded to the widest in the group.
     /// </summary>
     public static IEnumerable<string> OpenJobLines(IReadOnlyList<OpenJobEntry> entries, CliCommand command)

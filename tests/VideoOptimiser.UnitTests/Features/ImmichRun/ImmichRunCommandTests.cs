@@ -151,7 +151,7 @@ public sealed class ImmichRunCommandTests : IDisposable
             "",
             "These converted originals are out of Immich's trash, so both versions exist. The guard left them alone:",
             "  clip-c.mp4  taken 2026-03-04 05:06",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'."]));
+            $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready --config \"{config}\"'."]));
     }
 
     [Fact]
@@ -172,7 +172,7 @@ public sealed class ImmichRunCommandTests : IDisposable
             "",
             "Stopped after clip-a.mp4; 2 videos are still waiting.",
             "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
+            $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready --config \"{config}\"'.",
             $"To convert the rest: video-optimiser run --config \"{config}\""]));
     }
 

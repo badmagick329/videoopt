@@ -3,7 +3,7 @@ using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Features.Queue;
 
-/// <summary>The part of <c>queue list</c> and <c>status</c> a job is shown under.</summary>
+/// <summary>The part of <c>queue list</c> and the status card's counts a job is shown under.</summary>
 public enum OpenJobGroup
 {
     ConvertingNow,

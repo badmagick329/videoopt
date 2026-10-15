@@ -124,8 +124,7 @@ internal sealed class HetznerPlacement(HetznerCloudClient cloud)
         _ => $"{string.Join(", ", items.Take(items.Count - 1))}, {conjunction} {items[^1]}"
     };
 
-    // "EUR", not the euro sign: Windows consoles and redirected output default to an OEM code page that prints it as "?".
-    internal static string FormatPrice(decimal price) => $"EUR {price.ToString("0.000", CultureInfo.InvariantCulture)}/h";
+    internal static string FormatPrice(decimal price) => HourlyPrice.Format(price);
 
     private static string FormatCap(decimal cap) => $"EUR {cap.ToString("0.00##", CultureInfo.InvariantCulture)}/h";
 

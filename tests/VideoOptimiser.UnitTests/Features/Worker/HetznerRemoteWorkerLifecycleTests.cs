@@ -530,6 +530,189 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue();
     }
 
+    [Fact]
+    public async Task CheckAnswersAtOnceWhileAnotherHolderHasTheLifecycleLock()
+    {
+        using var fixture = new Fixture();
+        using (var creating = fixture.CreateLifecycle()) await creating.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        // A run that is creating a worker holds this lock through the whole bootstrap; a status read must not wait for it.
+        await using var held = await WorkerStateStore.AcquireLockAsync(fixture.DatabasePath, CancellationToken.None);
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath).WaitAsync(TimeSpan.FromSeconds(10));
+
+        check.NotCheckedReason.Should().BeNull();
+        check.Worker.Should().NotBeNull();
+        check.Worker!.ServerId.Should().Be(42);
+        check.Worker.Status.Should().Be("running");
+    }
+
+    [Fact]
+    public async Task CheckReadsThePriceForTheServersLocation()
+    {
+        using var fixture = new Fixture();
+        // The other locations keep the catalogue's EUR 0.031, so only the server's own location gives this price.
+        fixture.Handler.Catalogue["cx43"].PriceOverrides["hel1"] = 0.0119m;
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath);
+
+        check.HourlyGross.Should().Be(0.0119m);
+        check.Worker!.ServerType.Should().Be("cx43");
+        check.Worker.Location.Should().Be("hel1");
+        check.Worker.CreatedUtc.Should().Be(new DateTimeOffset(2026, 8, 20, 0, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task CheckWithoutAPriceInTheAnswerStillReportsTheServer()
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.OmitServerPrices = true;
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath);
+
+        check.Worker!.ServerId.Should().Be(42);
+        check.HourlyGross.Should().BeNull();
+        check.NotCheckedReason.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CheckSaysAMissingServerWhoseIpv4IsRetainedStillBills()
+    {
+        using var fixture = new Fixture { AutoDeletePrimaryIpWithServer = false };
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        fixture.Handler.DeleteServerOutOfBand();
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath);
+
+        check.Worker!.Status.Should().Be("server-missing-primary-ip-retained");
+        check.Worker.Name.Should().Be("video-optimiser-test");
+        check.HourlyGross.Should().BeNull();
+        check.NotCheckedReason.Should().BeNull();
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue("a status read leaves the record for worker delete");
+    }
+
+    [Fact]
+    public async Task CheckFindsNoWorkerWhenTheRecordIsStaleAndNothingBills()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        fixture.Handler.DeleteServerAndIpOutOfBand();
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath);
+
+        check.Should().Be(new WorkerCheck(null, null, null));
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue("the check deletes nothing");
+    }
+
+    [Fact]
+    public async Task CheckFindsTheLabelledServerWithoutAStateFileAndWritesNone()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        File.Delete(fixture.DatabasePath + ".hetzner-worker.json");
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath);
+
+        check.Worker!.ServerId.Should().Be(42);
+        check.Worker.Status.Should().Be("running");
+        check.Worker.ServerType.Should().Be("cx43");
+        check.Worker.Location.Should().Be("hel1");
+        check.HourlyGross.Should().Be(0.031m);
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CheckFindsNoWorkerWhenHetznerHasNoLabelledServerAndNoStateIsRecorded()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+
+        (await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath)).Should().Be(new WorkerCheck(null, null, null));
+    }
+
+    [Fact]
+    public async Task CheckWithoutATokenShowsTheRecordedWorkerAndWhyHetznerWasNotAsked()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        fixture.RemoveToken();
+        var requestsBefore = fixture.Handler.RequestCount;
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath);
+
+        check.Worker!.Status.Should().Be("recorded");
+        check.Worker.ServerId.Should().Be(42);
+        check.HourlyGross.Should().BeNull();
+        check.NotCheckedReason.Should().Be("no API token is set");
+        fixture.Handler.RequestCount.Should().Be(requestsBefore);
+    }
+
+    [Fact]
+    public async Task CheckWhenHetznerFailsShowsTheRecordedWorkerAndTheMessage()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        fixture.Handler.Failure = new HttpRequestException("No such host is known.");
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath);
+
+        check.Worker!.Status.Should().Be("recorded");
+        check.HourlyGross.Should().BeNull();
+        check.NotCheckedReason.Should().Be("No such host is known.");
+    }
+
+    [Fact]
+    public async Task CheckGivesUpOnAHetznerThatDoesNotAnswerWithinItsTimeout()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle(checkTimeout: TimeSpan.FromMilliseconds(50));
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        fixture.Handler.Hang = true;
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath).WaitAsync(TimeSpan.FromSeconds(10));
+
+        check.Worker!.Status.Should().Be("recorded");
+        check.NotCheckedReason.Should().Be("Hetzner didn't answer within 15 seconds");
+    }
+
+    [Fact]
+    public async Task CheckWithTwoLabelledServersSaysSoInsteadOfChoosing()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        File.Delete(fixture.DatabasePath + ".hetzner-worker.json");
+        fixture.Handler.ListTwoServers = true;
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath);
+
+        check.Worker.Should().BeNull();
+        check.NotCheckedReason.Should().StartWith("More than one managed Hetzner server has this controller label");
+    }
+
+    [Fact]
+    public async Task CheckHonoursTheCallersCancellation()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var action = () => lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath, cancelled.Token);
+
+        await action.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly string _directory = Path.Combine(Path.GetTempPath(), "video-optimiser-tests", Guid.NewGuid().ToString("N"));
@@ -571,6 +754,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         public RecordingProcessRunner Processes { get; } = new();
         public bool AutoDeletePrimaryIpWithServer { set => Handler.AutoDeletePrimaryIpWithServer = value; }
 
+        public void RemoveToken() => Environment.SetEnvironmentVariable(_tokenVariable, null);
+
         public void UseDotEnvToken()
         {
             Environment.SetEnvironmentVariable(_tokenVariable, null);
@@ -583,14 +768,16 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             TimeSpan? readinessProbeTimeout = null,
             TimeSpan? progressHeartbeatInterval = null,
             Func<DateTimeOffset>? utcNow = null,
-            Func<TimeSpan, CancellationToken, Task>? delay = null) => new(
+            Func<TimeSpan, CancellationToken, Task>? delay = null,
+            TimeSpan? checkTimeout = null) => new(
             Processes,
             new HttpClient(Handler) { BaseAddress = new Uri("https://api.test/v1/") },
             delay ?? ((_, _) => Task.CompletedTask),
             ownsHttpClient: true,
             readinessProbeTimeout: readinessProbeTimeout,
             progressHeartbeatInterval: progressHeartbeatInterval,
-            utcNow: utcNow);
+            utcNow: utcNow,
+            checkTimeout: checkTimeout);
 
         public void Dispose()
         {
@@ -656,15 +843,17 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             foreach (var location in Locations.Keys.ToArray()) Locations[location] = (false, false);
         }
 
+        public string PricesJson() => string.Join(",", Locations.Keys.Select(location =>
+        {
+            var gross = PriceOverrides.GetValueOrDefault(location, hourlyGross).ToString("0.0000000000000000", System.Globalization.CultureInfo.InvariantCulture);
+            return $"{{\"location\":\"{location}\",\"price_hourly\":{{\"gross\":\"{gross}\",\"net\":\"0\"}}}}";
+        }));
+
         public string ToJson()
         {
             static string Bool(bool value) => value ? "true" : "false";
             var locations = string.Join(",", Locations.Select(item => $"{{\"name\":\"{item.Key}\",\"available\":{Bool(item.Value.Available)},\"recommended\":{Bool(item.Value.Recommended)},\"deprecation\":null}}"));
-            var prices = string.Join(",", Locations.Keys.Select(location =>
-            {
-                var gross = PriceOverrides.GetValueOrDefault(location, hourlyGross).ToString("0.0000000000000000", System.Globalization.CultureInfo.InvariantCulture);
-                return $"{{\"location\":\"{location}\",\"price_hourly\":{{\"gross\":\"{gross}\",\"net\":\"0\"}}}}";
-            }));
+            var prices = PricesJson();
             return $"{{\"name\":\"{name}\",\"architecture\":\"{architecture}\",\"cores\":{cores},\"memory\":{memory.ToString(System.Globalization.CultureInfo.InvariantCulture)},\"deprecated\":{Bool(Deprecated)},\"deprecation\":null,\"locations\":[{locations}],\"prices\":[{prices}]}}";
         }
     }
@@ -706,12 +895,28 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         public void DeleteServerOutOfBand() => ServerExists = false;
 
+        public void DeleteServerAndIpOutOfBand() => (ServerExists, PrimaryIpExists) = (false, false);
+
+        /// <summary>Thrown for every request, as a network failure would be.</summary>
+        public Exception? Failure { get; set; }
+
+        /// <summary>Never answers, until the request is cancelled.</summary>
+        public bool Hang { get; set; }
+
+        /// <summary>Answers the server listing with two servers carrying this controller's labels.</summary>
+        public bool ListTwoServers { get; set; }
+
+        /// <summary>Leaves the <c>prices</c> array out of a server's <c>server_type</c>, as an older API answer might.</summary>
+        public bool OmitServerPrices { get; set; }
+
         public int RequestCount { get; private set; }
         public int DeleteRequests { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestCount++;
+            if (Failure is not null) throw Failure;
+            if (Hang) await Task.Delay(Timeout.Infinite, cancellationToken);
             if (request.Method == HttpMethod.Delete) DeleteRequests++;
             request.Headers.Authorization!.Scheme.Should().Be("Bearer");
             request.Headers.Authorization.Parameter.Should().Be("secret-test-token");
@@ -728,7 +933,9 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             }
             if (request.Method == HttpMethod.Get && path.StartsWith("/v1/servers?", StringComparison.Ordinal))
             {
-                var servers = ReturnWrongOwnership ? $"[{ServerJson(wrongOwnership: true)}]" : ServerExists ? $"[{ServerJson()}]" : "[]";
+                var servers = ReturnWrongOwnership ? $"[{ServerJson(wrongOwnership: true)}]"
+                    : ListTwoServers ? $"[{ServerJson()},{ServerJson()}]"
+                    : ServerExists ? $"[{ServerJson()}]" : "[]";
                 return Json($"{{\"servers\":{servers}}}");
             }
             if (request.Method == HttpMethod.Get && path.StartsWith("/v1/primary_ips?", StringComparison.Ordinal))
@@ -789,7 +996,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                   ?? "\"video-optimiser-managed\":\"true\",\"video-optimiser-controller\":\"placeholder\"";
             var placement = CreatePayload is null
                 ? string.Empty
-                : $",\"server_type\":{{\"name\":\"{CreateServerTypes[^1]}\"}},\"datacenter\":{{\"location\":{{\"name\":\"{CreateLocations[^1]}\"}}}}";
+                : $",\"server_type\":{{\"name\":\"{CreateServerTypes[^1]}\"{(OmitServerPrices ? string.Empty : $",\"prices\":[{Catalogue[CreateServerTypes[^1]].PricesJson()}]")}}},\"datacenter\":{{\"location\":{{\"name\":\"{CreateLocations[^1]}\"}}}}";
             return $"{{\"id\":42,\"name\":\"video-optimiser-test\",\"status\":\"running\",\"created\":\"2026-08-20T00:00:00Z\",\"labels\":{{{labels}}},\"public_net\":{{\"ipv4\":{{\"id\":99,\"ip\":\"203.0.113.42\"}}}}{placement}}}";
         }
 

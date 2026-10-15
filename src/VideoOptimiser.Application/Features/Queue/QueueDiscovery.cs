@@ -156,7 +156,7 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
         (await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
             .Count(other => other.Id != job.Id && other.IsQueued && !other.Held && other.ResumeStatus != JobStatus.Finalizing);
 
-    public NextRun NextRun(string databasePath) => NextRunRule.Decide(locks.LiveRun(databasePath));
+    public NextRun NextRun(string databasePath) => NextRunRule.Decide(locks.LiveRun(databasePath)?.Command);
 
     public async Task<IReadOnlyList<OpenJobEntry>> OpenJobsAsync(string databasePath, CancellationToken cancellationToken = default) =>
         OpenJobList.Group(await jobs.ListAsync(databasePath, terminal: false, cancellationToken), locks.LiveRun(databasePath) is not null, locks.IsFinaliseGoing(databasePath));

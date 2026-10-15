@@ -89,7 +89,7 @@ Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the nex
 
 ### 3. Review
 
-The converted files are in the staging directory, under `<asset ID>\.video-optimiser\`. `status --json` gives each one's exact path as `outputPath`. Watch a few.
+The converted files are in the staging directory, under `<asset ID>\.video-optimiser\`. `queue list --json` gives each one's exact path as `outputPath`. Watch a few.
 
 ### 4. Finalise
 

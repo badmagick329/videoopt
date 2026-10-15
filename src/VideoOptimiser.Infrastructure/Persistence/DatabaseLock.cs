@@ -15,8 +15,10 @@ public sealed class DatabaseLocks : IDatabaseLocks
     public bool IsFinaliseGoing(string databasePath) =>
         DatabaseLock.ReadLiveHolder(DatabaseLock.FinalizePath(databasePath)) is { } holder && holder.Command != DatabaseLock.RunPreparing;
 
-    public string? LiveRun(string databasePath) =>
-        DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath)) is { } holder && !LockHolders.QueueVerbs.Contains(holder.Command) ? holder.Command : null;
+    public LiveRunHolder? LiveRun(string databasePath) =>
+        DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath)) is { } holder && !LockHolders.QueueVerbs.Contains(holder.Command)
+            ? new LiveRunHolder(holder.Command, holder.StartedUtc, holder.ProcessId)
+            : null;
 
     public async Task<IDisposable?> TakeFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken) =>
         (await DatabaseLock.AcquireFinalizeAsync(databasePath, command, cancellationToken)).Lock;

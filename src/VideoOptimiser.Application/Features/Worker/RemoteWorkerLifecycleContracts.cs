@@ -7,6 +7,16 @@ namespace VideoOptimiser.Application.Features.Worker;
 /// <param name="Location">Empty when unknown, as for <paramref name="ServerType"/>.</param>
 public sealed record RemoteWorkerInfo(long ServerId, string Name, string Address, string Status, DateTimeOffset? CreatedUtc, string ServerType, string Location);
 
+/// <summary>The <see cref="RemoteWorkerInfo.Status"/> values that are not Hetzner's own server statuses.</summary>
+public static class RemoteWorkerStatuses
+{
+    /// <summary>Read from the local state file only; Hetzner wasn't asked.</summary>
+    public const string Recorded = "recorded";
+
+    /// <summary>The server is gone but its Primary IPv4 still exists, and an address that exists bills.</summary>
+    public const string PrimaryIpRetained = "server-missing-primary-ip-retained";
+}
+
 /// <summary>Why one configured server type produced no server.</summary>
 /// <param name="LocationsTried">The configured locations checked for this type; empty when the type itself was unsuitable.</param>
 public sealed record RemoteWorkerTypeOutcome(string ServerType, IReadOnlyList<string> LocationsTried, string Reason);
@@ -74,12 +84,24 @@ public sealed record RemoteWorkerCreationQuote(RemoteWorkerCreationOption First,
         return string.Join(Environment.NewLine, lines);
     }
 
+    private static string FormatPrice(decimal price) => HourlyPrice.Format(price);
+}
+
+/// <summary>The one way a Hetzner hourly price is printed, so a quote, a placement line and the status card agree.</summary>
+public static class HourlyPrice
+{
     // "EUR" rather than the euro sign: Windows consoles and redirected output use an OEM code page that prints it as "?".
-    private static string FormatPrice(decimal price) => $"EUR {price.ToString("0.000", CultureInfo.InvariantCulture)}/h";
+    public static string Format(decimal price) => $"EUR {price.ToString("0.000", CultureInfo.InvariantCulture)}/h";
 }
 
 /// <summary>The user declined <see cref="RemoteWorkerCreationQuote"/>, so nothing was created and nothing bills.</summary>
 public sealed class RemoteWorkerCreationDeclinedException() : Exception("No server was created.");
+
+/// <summary>What <see cref="IRemoteWorkerLifecycle.CheckAsync"/> found.</summary>
+/// <param name="Worker">Null when Hetzner has no managed server for this database (or, when it couldn't be asked, when the state file records none).</param>
+/// <param name="HourlyGross">EUR per hour incl. VAT for its type in its location, from Hetzner; null when unknown or not asked.</param>
+/// <param name="NotCheckedReason">Why Hetzner wasn't asked or didn't answer; null when it answered. Worker then comes from the state file, status "recorded".</param>
+public sealed record WorkerCheck(RemoteWorkerInfo? Worker, decimal? HourlyGross, string? NotCheckedReason);
 
 public interface IRemoteWorkerLifecycle
 {
@@ -101,4 +123,12 @@ public interface IRemoteWorkerLifecycle
     /// </summary>
     Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default);
     Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// What is billing for this database, asked of Hetzner for at most 15 seconds, without the lifecycle lock and without
+    /// writing or deleting anything, in any <c>processing.mode</c>. <see cref="GetAsync"/> takes the lock, so a read of it
+    /// waits for the whole bootstrap of a run that is creating a worker; a status card must answer at once. Never throws for
+    /// a Hetzner failure: that is <see cref="WorkerCheck.NotCheckedReason"/>.
+    /// </summary>
+    Task<WorkerCheck> CheckAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default);
 }

@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace VideoOptimiser.Infrastructure.Hetzner;
 
-internal readonly record struct ServerSnapshot(long Id, string Name, string Status, string Address, long PrimaryIpv4Id, IReadOnlyDictionary<string, string> Labels, DateTimeOffset? CreatedUtc, string ServerType, string Location);
+internal readonly record struct ServerSnapshot(long Id, string Name, string Status, string Address, long PrimaryIpv4Id, IReadOnlyDictionary<string, string> Labels, DateTimeOffset? CreatedUtc, string ServerType, string Location, decimal? HourlyGross = null);
 
 internal readonly record struct LocationStatus(bool Available, bool Deprecated);
 

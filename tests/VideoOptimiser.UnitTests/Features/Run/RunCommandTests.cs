@@ -67,7 +67,7 @@ public sealed class RunCommandTests : IDisposable
             "[1/1] clip.mp4 (8 B)",
             "      Ready to finalise.",
             "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.")));
+            ReadyLine(1))));
         _processor.Processed.Should().Equal("clip.mp4");
         (await StoredAsync(immich)).Status.Should().Be(JobStatus.Queued);
         (await StoredAsync(folder)).Status.Should().Be(JobStatus.ReadyToFinalize);
@@ -90,7 +90,7 @@ public sealed class RunCommandTests : IDisposable
             "[1/1] IMG_0001.MOV (15 B)",
             "      Ready to finalise.",
             "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.")));
+            ReadyLine(1))));
         (await File.ReadAllTextAsync(job.SourcePath)).Should().Be(Content);
     }
 
@@ -126,7 +126,7 @@ public sealed class RunCommandTests : IDisposable
             "Failed jobs:",
             $"{gone.Id:N}  IMG_0001.MOV",
             $"SourceMissing: The staged original is missing, and Immich did not return asset {gone.ImmichAssetId} again: Immich returned HTTP 404 for GET /api/assets.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.")));
+            ReadyLine(1))));
         (await StoredAsync(erroring)).Status.Should().Be(JobStatus.Queued);
         (await StoredAsync(later)).Status.Should().Be(JobStatus.Queued);
         (await StoredAsync(folder)).Status.Should().Be(JobStatus.ReadyToFinalize);
@@ -152,7 +152,7 @@ public sealed class RunCommandTests : IDisposable
             "Failed jobs:",
             $"{joining.Id:N}  IMG_0001.MOV",
             $"SourceMissing: The staged original is missing, and Immich did not return asset {joining.ImmichAssetId} again: Immich returned HTTP 404 for GET /api/assets.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'."));
+            ReadyLine(1)));
         _processor.Processed.Should().Equal("clip.mp4");
     }
 
@@ -228,6 +228,65 @@ public sealed class RunCommandTests : IDisposable
         _processor.Processed.Should().BeEmpty();
     }
 
+    /// <summary>VOPT-73 B5: a run that converts nothing still names the videos earlier runs left ready, instead of saying there is nothing to finalise.</summary>
+    [Fact]
+    public async Task ARunWithNothingToConvertNamesTheVideosEarlierRunsLeftReady()
+    {
+        await WriteConfigAsync(immich: false);
+        await ReadyJobAsync("clip-a.mp4");
+
+        var (code, output, _) = await RunAsync("run");
+
+        (code, output).Should().Be((0, Transcript(
+            "Encoding on this PC.",
+            ReadyLine(1))));
+    }
+
+    [Fact]
+    public async Task ARunCountsEveryReadyVideoAtItsEndNotOnlyTheOnesItMade()
+    {
+        await WriteConfigAsync(immich: false);
+        await ReadyJobAsync("clip-a.mp4");
+        await ReadyJobAsync("clip-b.mp4");
+        await FolderJobAsync("clip-c.mp4");
+
+        var (code, output, _) = await RunAsync("run");
+
+        (code, output).Should().Be((0, Transcript(
+            "Encoding on this PC.",
+            "Converting 1 video.",
+            "",
+            "[1/1] clip-c.mp4 (8 B)",
+            "      Ready to finalise.",
+            "Ready to finalise: 1.",
+            ReadyLine(3))));
+    }
+
+    [Fact]
+    public async Task ARunWithNothingToConvertAndNothingReadyStillSaysNothingToFinalise()
+    {
+        await WriteConfigAsync(immich: false);
+
+        var (code, output, _) = await RunAsync("run");
+
+        (code, output).Should().Be((0, Transcript("Encoding on this PC.", "Nothing to finalise.")));
+    }
+
+    /// <summary>A video the run failed is not ready, so with none ready elsewhere the line is not printed.</summary>
+    [Fact]
+    public async Task AFailedVideoIsNotCountedAsReady()
+    {
+        await WriteConfigAsync(immich: false);
+        var failed = await FolderJobAsync("clip-a.mp4");
+        _processor.Fail[0] = true;
+
+        var (code, output, _) = await RunAsync("run");
+
+        output.Should().NotContain("ready to finalise");
+        code.Should().Be(6);
+        (await StoredAsync(failed)).Status.Should().Be(JobStatus.Failed);
+    }
+
     [Theory]
     [InlineData("'queue run' is now 'run'.", "queue", "run")]
     [InlineData("'queue discover' is now 'queue add'.", "queue", "discover", "--first")]
@@ -241,6 +300,22 @@ public sealed class RunCommandTests : IDisposable
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    /// <summary>The line that ends a run when videos are ready to finalise; it names the config the run was typed with.</summary>
+    private string ReadyLine(int count) => count == 1
+        ? $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready --config \"{_config}\"'."
+        : $"{count} videos are ready to finalise: review them, then run 'video-optimiser finalize --ready --config \"{_config}\"'.";
+
+    private async Task<JobRecord> ReadyJobAsync(string name)
+    {
+        var job = await FolderJobAsync(name);
+        foreach (var step in new[] { JobStatus.Encoding, JobStatus.Validating, JobStatus.ReadyToFinalize })
+        {
+            job.Status = step;
+            await _repository.UpdateAsync(DatabasePath, job);
+        }
+        return job;
+    }
 
     private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(params string[] args) => RunAsync(_ => { }, args);
 

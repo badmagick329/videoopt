@@ -1,4 +1,5 @@
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Immich;
@@ -14,7 +15,7 @@ namespace VideoOptimiser.Cli.Features.Run;
 /// the worker, each video in turn, and the lines after. <c>immich run</c> adds its videos to the queue first. It decides
 /// flow and prints lines at once (tangle T1 in the slice plan); lifting the flow out of the CLI waits for the TUI.
 /// </summary>
-internal sealed class RunConversion(IQueueService queue, IJobProcessor processor, IRemoteWorkerLifecycle lifecycle, IImmichRestaging restaging, RunWorkerState state, RunStop stop, RunWorkerEnd workerEnd)
+internal sealed class RunConversion(IQueueService queue, IQueueDiscovery discovery, IJobProcessor processor, IRemoteWorkerLifecycle lifecycle, IImmichRestaging restaging, RunWorkerState state, RunStop stop, RunWorkerEnd workerEnd)
 {
     /// <summary>
     /// Prints <see cref="RunBanner"/> before any download or encoding, so a config still set to <c>remoteSsh</c> is noticed
@@ -38,18 +39,22 @@ internal sealed class RunConversion(IQueueService queue, IJobProcessor processor
     public async Task<ExitCode> ConvertQueueAsync(LoadedConfiguration configuration, CliCommand command, Action? beforeNext, CancellationToken cancellationToken)
     {
         var preparation = await queue.PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, sourceKind: null, modeOverridden: command.ModeOverride is not null, cancellationToken);
-        var (ready, _, failures, workerUnreachable, stopped, workerHandled) = await ProcessPreparedJobsAsync(configuration, command, preparation, (ready, skipped, failures) =>
+        var (ready, _, failures, workerUnreachable, stopped, workerHandled) = await ProcessPreparedJobsAsync(configuration, command, preparation, async (ready, skipped, failures) =>
         {
-            Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
+            // The videos earlier runs left ready count too (VOPT-73 B5): saying "Nothing to finalise." with some waiting is wrong.
+            // Read without the run's token, which a second Ctrl+C has cancelled by now, as the worker's name is.
+            // Never fewer than this run made, whatever the read says, so a video it just readied is always named.
+            var readyTotal = Math.Max(ready, (await discovery.OpenJobsAsync(configuration.Settings.Database.Path, CancellationToken.None)).Count(entry => entry.Group == OpenJobGroup.ReadyToFinalise));
+            if (OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle, othersReady: readyTotal > 0) is { } summary) Console.WriteLine(summary);
             PrintFailedJobs(failures);
             beforeNext?.Invoke();
             // finalize --ready finalises every source, so one line serves a queue of folder and Immich videos.
-            if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser finalize --ready'.");
+            if (readyTotal > 0) Console.WriteLine(NextSteps.ReadyToFinaliseLine(readyTotal, command));
         }, cancellationToken);
         return stopped ? ExitCode.Cancelled : !workerHandled ? ExitCode.GeneralFailure : QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
     }
 
-    private async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
+    private async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Func<int, int, FailedQueueJob[], Task> report, CancellationToken cancellationToken)
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
         // F8 (VOPT-70): finalize checks whether anything moved and resumes, so the run leaves these jobs alone.
@@ -61,7 +66,7 @@ internal sealed class RunConversion(IQueueService queue, IJobProcessor processor
         preparation = await ReadyImmichVideosAsync(configuration, preparation, cancellationToken);
         if (preparation.RunnableJobs.Count == 0)
         {
-            report(0, 0, [.. preparation.FailedJobs]);
+            await report(0, 0, [.. preparation.FailedJobs]);
             return (0, 0, [.. preparation.FailedJobs], false, false, true);
         }
 
@@ -95,7 +100,7 @@ internal sealed class RunConversion(IQueueService queue, IJobProcessor processor
             Console.WriteLine();
             Console.WriteLine(StoppedRunMessage.StoppedAfter(last.SourcePath, result.NotStarted));
         }
-        report(result.ReadyToFinalize, result.SkippedJobs.Count, failures);
+        await report(result.ReadyToFinalize, result.SkippedJobs.Count, failures);
         if (result.StoppedAfter is not null) Console.WriteLine(StoppedRunMessage.ConvertTheRest(command));
         var end = result.UnreachableWorkerJob is not null ? RunEnd.WorkerUnreachable : result.StoppedAfter is not null ? RunEnd.StoppedAfterVideo : RunEnd.Finished;
         var workerHandled = await workerEnd.ConcludeAsync(configuration, command, end, unreachableJob: result.UnreachableWorkerJob);

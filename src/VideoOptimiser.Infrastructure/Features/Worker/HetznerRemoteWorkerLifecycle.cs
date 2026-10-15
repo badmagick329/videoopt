@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
@@ -19,6 +20,8 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     private readonly HetznerCloudClient _cloud;
     private readonly HetznerPlacement _placement;
     private readonly WorkerReadiness _readiness;
+    private readonly TimeSpan _checkTimeout;
+    private const string MoreThanOneServerMessage = "More than one managed Hetzner server has this controller label; refusing to choose or delete either one.";
 
     public HetznerRemoteWorkerLifecycle(IExternalProcessRunner processes)
         : this(processes, new HttpClient { BaseAddress = new Uri(HetznerHttp.ApiBase) }, Task.Delay, ownsHttpClient: true)
@@ -32,8 +35,10 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         bool ownsHttpClient = false,
         TimeSpan? readinessProbeTimeout = null,
         TimeSpan? progressHeartbeatInterval = null,
-        Func<DateTimeOffset>? utcNow = null)
+        Func<DateTimeOffset>? utcNow = null,
+        TimeSpan? checkTimeout = null)
     {
+        _checkTimeout = checkTimeout ?? TimeSpan.FromSeconds(15);
         _cloud = new HetznerCloudClient(http, ownsHttpClient, delay);
         _placement = new HetznerPlacement(_cloud);
         _readiness = new WorkerReadiness(processes, delay, readinessProbeTimeout, progressHeartbeatInterval, utcNow);
@@ -87,7 +92,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         if (server is null)
         {
             var status = state.PrimaryIpv4Id > 0 && await _cloud.PrimaryIpExistsAsync(token, state.PrimaryIpv4Id, cancellationToken)
-                ? "server-missing-primary-ip-retained"
+                ? RemoteWorkerStatuses.PrimaryIpRetained
                 : "server-missing";
             return state.ToInfo(status);
         }
@@ -99,13 +104,74 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     {
         try
         {
-            return (await WorkerStateStore.ReadStateAsync(WorkerStateStore.StatePath(databasePath), cancellationToken))?.ToInfo("recorded");
+            return (await WorkerStateStore.ReadStateAsync(WorkerStateStore.StatePath(databasePath), cancellationToken))?.ToInfo(RemoteWorkerStatuses.Recorded);
         }
         catch (FileNotFoundException)
         {
             // Without the lock, a concurrent worker delete can remove the file between the existence check and the read.
             return null;
         }
+    }
+
+    public async Task<WorkerCheck> CheckAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
+    {
+        WorkerState? state;
+        try
+        {
+            state = await WorkerStateStore.ReadStateAsync(WorkerStateStore.StatePath(databasePath), cancellationToken);
+        }
+        catch (FileNotFoundException)
+        {
+            // Without the lock, a concurrent worker delete can remove the file between the existence check and the read.
+            state = null;
+        }
+
+        var hetzner = settings.Processing.RemoteSsh.Hetzner;
+        var token = SecretLoader.Load(hetzner.ApiTokenEnvironmentVariable, hetzner.ApiTokenFile);
+        if (token is null) return new WorkerCheck(state?.ToInfo(RemoteWorkerStatuses.Recorded), null, "no API token is set");
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_checkTimeout);
+        try
+        {
+            return await LookUpAsync(token, ControllerId(databasePath), state, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new WorkerCheck(state?.ToInfo(RemoteWorkerStatuses.Recorded), null, "Hetzner didn't answer within 15 seconds");
+        }
+        // A status read never fails for what Hetzner said or didn't: the card shows the record and the reason. KeyNotFound is
+        // an answer missing a field the parser needs.
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or JsonException or KeyNotFoundException)
+        {
+            return new WorkerCheck(state?.ToInfo(RemoteWorkerStatuses.Recorded), null, exception.Message);
+        }
+    }
+
+    /// <summary>
+    /// The read half of <see cref="ResolveStateAsync"/> and <see cref="GetAsync"/> with every write left out. A recorded server
+    /// that is gone is not cleaned up here: whether its IPv4 still bills is the answer, and <see cref="DeleteAsync"/> removes it.
+    /// </summary>
+    private async Task<WorkerCheck> LookUpAsync(string token, string controller, WorkerState? state, CancellationToken cancellationToken)
+    {
+        if (state is not null)
+        {
+            if (await _cloud.GetServerAsync(token, state.ServerId, cancellationToken) is { } server)
+            {
+                HetznerCloudClient.VerifyOwnership(server, controller);
+                return new WorkerCheck(Refreshed(state, server).ToInfo(server.Status), server.HourlyGross, null);
+            }
+            if (state.PrimaryIpv4Id > 0 && await _cloud.PrimaryIpExistsAsync(token, state.PrimaryIpv4Id, cancellationToken))
+                return new WorkerCheck(state.ToInfo(RemoteWorkerStatuses.PrimaryIpRetained), null, null);
+            // Otherwise the record is stale; the label lookup says whether Hetzner has a server for this database anyway.
+        }
+
+        var servers = await _cloud.ListManagedServersAsync(token, controller, cancellationToken);
+        if (servers.Count > 1) throw new InvalidOperationException(MoreThanOneServerMessage);
+        if (servers.Count == 0) return new WorkerCheck(null, null, null);
+        HetznerCloudClient.VerifyOwnership(servers[0], controller);
+        var found = servers[0];
+        return new WorkerCheck(new RemoteWorkerInfo(found.Id, found.Name, found.Address, found.Status, found.CreatedUtc, found.ServerType, found.Location), found.HourlyGross, null);
     }
 
     public async Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
@@ -154,14 +220,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             if (server is not null)
             {
                 HetznerCloudClient.VerifyOwnership(server.Value, controller);
-                var refreshed = state with
-                {
-                    Address = server.Value.Address,
-                    PrimaryIpv4Id = server.Value.PrimaryIpv4Id,
-                    CreatedUtc = server.Value.CreatedUtc,
-                    Location = server.Value.Location.Length > 0 ? server.Value.Location : state.Location,
-                    ServerType = server.Value.ServerType.Length > 0 ? server.Value.ServerType : state.ServerType
-                };
+                var refreshed = Refreshed(state, server.Value);
                 await WorkerStateStore.WriteStateAsync(statePath, refreshed, cancellationToken);
                 return refreshed;
             }
@@ -172,7 +231,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         }
 
         var servers = await _cloud.ListManagedServersAsync(token, controller, cancellationToken);
-        if (servers.Count > 1) throw new InvalidOperationException("More than one managed Hetzner server has this controller label; refusing to choose or delete either one.");
+        if (servers.Count > 1) throw new InvalidOperationException(MoreThanOneServerMessage);
         if (servers.Count == 0) return null;
         HetznerCloudClient.VerifyOwnership(servers[0], controller);
         var recovered = new WorkerState(
@@ -188,6 +247,16 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         await WorkerStateStore.WriteStateAsync(statePath, recovered, cancellationToken);
         return recovered;
     }
+
+    /// <summary>The record with what Hetzner says now; a type or location it didn't report keeps the recorded one.</summary>
+    private static WorkerState Refreshed(WorkerState state, ServerSnapshot server) => state with
+    {
+        Address = server.Address,
+        PrimaryIpv4Id = server.PrimaryIpv4Id,
+        CreatedUtc = server.CreatedUtc,
+        Location = server.Location.Length > 0 ? server.Location : state.Location,
+        ServerType = server.ServerType.Length > 0 ? server.ServerType : state.ServerType
+    };
 
     private async Task<WorkerState> CreateAsync(
         string token,

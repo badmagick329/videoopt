@@ -61,7 +61,7 @@ public sealed class CtrlCRunTests : IDisposable
             "",
             "Stopped after 1.mp4; 1 video is still waiting.",
             "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
+            $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready --config \"{config}\"'.",
             $"To convert the rest: video-optimiser run --config \"{config}\""));
         code.Should().Be((int)ExitCode.Cancelled);
         _processor.Calls.Should().Be(1);
@@ -88,7 +88,7 @@ public sealed class CtrlCRunTests : IDisposable
             "Stopping after this video (the encode has about 7m 36s left). Press Ctrl+C again to stop now.",
             "      Ready to finalise.",
             "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'."));
+            $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready --config \"{config}\"'."));
         code.Should().Be((int)ExitCode.Success);
     }
 

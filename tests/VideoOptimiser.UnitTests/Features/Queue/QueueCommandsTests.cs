@@ -10,7 +10,7 @@ namespace VideoOptimiser.UnitTests.Features.Queue;
 
 /// <summary>
 /// The branches of the queue commands that no other CLI test pins, with whole output and exit code, so the move of their rules
-/// out of the CLI (VOPT-99) is checked against today's behaviour: the job lists (<c>queue list</c>, <c>status</c>,
+/// out of the CLI (VOPT-99) is checked against today's behaviour: the job lists (<c>queue list</c> and
 /// <c>history</c>, with <c>--json</c> byte for byte), <c>queue drop --all</c> beside a live run or finalise and after a lost
 /// race, and <c>queue retry</c> refusals.
 /// </summary>
@@ -24,7 +24,6 @@ public sealed class QueueCommandsTests : QueueTestBase
     // The empty history as JSON is here too: the array shape of an empty list is the same handler as the text.
     [Theory]
     [InlineData("Nothing is queued or ready to finalise.", "queue", "list")]
-    [InlineData("Nothing is queued or ready to finalise.", "status")]
     [InlineData("No job history.", "history")]
     [InlineData("[]", "history", "--json")]
     public async Task AnEmptyListSaysSo(string line, params string[] args)
@@ -98,7 +97,7 @@ public sealed class QueueCommandsTests : QueueTestBase
         var crashed = Job("clip-a.mp4", JobStatus.CrfSearching, minute: 1);
         var finalising = Job("clip-b.mp4", JobStatus.Finalizing, minute: 2);
 
-        var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new ListingRepository(Repository, [crashed, finalising], [])), "status");
+        var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new ListingRepository(Repository, [crashed, finalising], [])), "queue", "list");
 
         result.Should().Be((0, Transcript(
             "Queue, in run order",
@@ -148,11 +147,8 @@ public sealed class QueueCommandsTests : QueueTestBase
             $"{completed.Id:N}  Completed        clip-b.mp4 CRF 28 60.0% saved"), ""));
     }
 
-    /// <summary>The <c>status</c> row is the only test that <c>status</c> is routed to the active list.</summary>
-    [Theory]
-    [InlineData("queue", "list", "--json")]
-    [InlineData("status", "--json")]
-    public async Task TheJsonListIsCamelCaseIndentedWithNullsKept(params string[] args)
+    [Fact]
+    public async Task TheJsonListIsCamelCaseIndentedWithNullsKept()
     {
         var file = Job("clip-a.mp4", JobStatus.Queued, job => { job.Crf = 27; job.Held = true; });
         var immich = Job("IMG_0001.MOV", JobStatus.Failed, job =>
@@ -166,7 +162,7 @@ public sealed class QueueCommandsTests : QueueTestBase
             job.FailureMessage = "ab-av1 exited with 1.";
         });
 
-        var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new ListingRepository(Repository, [file, immich], [])), args);
+        var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new ListingRepository(Repository, [file, immich], [])), "queue", "list", "--json");
 
         var expected = $$"""
             [

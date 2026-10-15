@@ -78,7 +78,7 @@ public sealed class ImmichRunTranscriptTests : QueueTestBase
             "[2/2] c.mp4 (10 B)",
             "      Ready to finalise.",
             "Ready to finalise: 2.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'."), ""));
+            $"2 videos are ready to finalise: review them, then run 'video-optimiser finalize --ready{ConfigArgument}'."), ""));
     }
 
     /// <summary>Open videos do not count towards the limit: this run adds one more however many are waiting, held or ready.</summary>
@@ -112,7 +112,7 @@ public sealed class ImmichRunTranscriptTests : QueueTestBase
             "[2/2] new1.mp4 (9 B)",
             "      Ready to finalise.",
             "Ready to finalise: 2.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.")));
+            $"3 videos are ready to finalise: review them, then run 'video-optimiser finalize --ready{ConfigArgument}'.")));
         _processor.Processed.Should().Equal("open.mp4", "new1.mp4");
     }
 
@@ -142,7 +142,7 @@ public sealed class ImmichRunTranscriptTests : QueueTestBase
             "[1/1] b.mp4 (8 B)",
             "      Ready to finalise.",
             "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.")));
+            $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready{ConfigArgument}'.")));
     }
 
     [Fact]
@@ -207,7 +207,7 @@ public sealed class ImmichRunTranscriptTests : QueueTestBase
             "[2/2] a.mp4 (8 B)",
             "      Ready to finalise.",
             "Ready to finalise: 2.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.")));
+            $"2 videos are ready to finalise: review them, then run 'video-optimiser finalize --ready{ConfigArgument}'.")));
         _processor.RunLockHolders.Should().AllBe("video-optimiser immich run");
     }
 

@@ -63,7 +63,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
         var wasHeld = job.Held;
         // A run takes each next video from the queue as it is, so this one comes after the video converting now. A run from
         // an older version keeps the videos it started with.
-        var runTakesIt = NextRunRule.Decide(locks.LiveRun(databasePath)) != NextRun.AfterRunEnds;
+        var runTakesIt = NextRunRule.Decide(locks.LiveRun(databasePath)?.Command) != NextRun.AfterRunEnds;
         if (!await repository.RunNextAsync(databasePath, job, cancellationToken)) throw new JobChangedException(job.Id);
         return new JobMovedNext(job, wasHeld, runTakesIt);
     }

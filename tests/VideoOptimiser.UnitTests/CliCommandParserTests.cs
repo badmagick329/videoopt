@@ -77,6 +77,27 @@ public sealed class CliCommandParserTests
         command.Error.Should().Be(error);
     }
 
+    /// <summary>No verb is the status card, marked bare so a missing configuration can say how to create one; typed <c>status</c> is not.</summary>
+    [Theory]
+    [InlineData(true, null)]
+    [InlineData(true, "my.yaml", "--config", "my.yaml")]
+    [InlineData(false, null, "status")]
+    public void NoVerbIsTheBareStatusCard(bool bare, string? config, params string[] args)
+    {
+        var command = CliCommand.Parse(args);
+
+        command.IsValid.Should().BeTrue(command.Error);
+        command.Kind.Should().Be(CliCommandKind.Status);
+        command.Bare.Should().Be(bare);
+        command.ConfigurationPath.Should().Be(config);
+    }
+
+    [Fact]
+    public void UsageStartsWithTheBareCommand()
+    {
+        CliCommand.Usage.ReplaceLineEndings("|").Split('|')[..2].Should().Equal("Usage:", "  video-optimiser [--config <path>]");
+    }
+
     [Fact]
     public void HelpListsTheImmichCommands()
     {

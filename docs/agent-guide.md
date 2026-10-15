@@ -8,7 +8,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 
 | Class | Commands | What to do |
 | --- | --- | --- |
-| Read-only | `doctor`, `status`, `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run` | Run freely. Add `--json` where offered. `doctor` may create the job database and the Immich staging folder. |
+| Read-only | `doctor`, `status` (or no command), `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run` | Run freely. Add `--json` where offered. `doctor` may create the job database and the Immich staging folder. |
 | Working | `config init`, `queue add`, `queue add immich`, `run`, `immich run`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry` | Run when the user's request covers it. They change only the job database and temporary files, and `config init` writes a new config that never replaces an existing one. The one exception: the re-upload guard of `immich run` and `queue add immich` moves converted originals the phone uploaded again back to Immich's trash, which is the intended outcome. |
 | Gated | `finalize`, `immich finalize`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Gate first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
 
@@ -48,8 +48,8 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 ## Workflow: folders
 
 1. **Queue.** `queue add`. On a user's first run, add `--first` to queue one video. Done when it prints its `Queued: N.` summary, which leaves out zero counts, so a missing `Queued` means none. `Held: N.` and `Ready to finalise: N.` count videos a run will not take; its last lines name what to run next for each. With nothing queued, report that and stop. On a large folder it prints `Checked N files so far ...` every 10 seconds; that is progress, not a hang. The starter rules match only large H.264 files at 1080p–1440p and at 4K or above, so phone footage (HEVC) needs a rule change first; `calibrate` shows what the rules leave out.
-2. **Convert.** `run`. It converts every queued video, Immich ones included, and passes over held ones, which it counts first (`2 videos are held; ...`). Done when it exits. A video can take an hour or more on a PC; run it in the background if your harness allows, and check progress with `status --json`. Exit `0`: no job failed; each is ready or not worth converting. Exit `10`: some failed and some are ready. Exit `6`: some failed and none is ready.
-3. **Report.** From `status --json`, list each `ReadyToFinalize` job's `sourcePath`, `outputPath` and `percentageSaved`, and each failed job's `failureCategory` and `failureMessage`. Ask the user to watch the outputs.
+2. **Convert.** `run`. It converts every queued video, Immich ones included, and passes over held ones, which it counts first (`2 videos are held; ...`). Done when it exits. A video can take an hour or more on a PC; run it in the background if your harness allows, and check progress with `status --json` (its `run.converting`) or `queue list --json`. Exit `0`: no job failed; each is ready or not worth converting. Exit `10`: some failed and some are ready. Exit `6`: some failed and none is ready.
+3. **Report.** From `queue list --json`, list each `ReadyToFinalize` job's `sourcePath`, `outputPath` and `percentageSaved`, and each failed job's `failureCategory` and `failureMessage`. Ask the user to watch the outputs.
 4. **Gate.** Say what `original.action` will do to each original: `delete`, `archive` or `keep`.
 5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` per job to standard output, or `Failed  <file>: <message>` to standard error, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out), then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed: find each `Failed` line in *Recovery*.
 
@@ -60,7 +60,7 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
 1. **Phone.** Ask the user whether they have run the Immich app's "Free up space" since the last round, with a cutoff no older than `immich.minimumAgeDays`, and emptied the phone's trash. Only the user can do this. Wait for their answer.
 2. **Convert.** `immich run`, with `--first` on a user's first round and `--limit <n>` when the user names a round size; `--limit` counts new videos only, never the ones already queued. Before a paid remote round, ask the user for that size. `immich run` converts the whole queue, so videos queued from the watch folders convert too. To queue Immich videos without converting, use `queue add immich` with the same flags; it ends with the `Next:` line. Done when it exits. If it lists re-uploaded originals, pass that list to the user exactly as printed: they must delete those files from the phone. Exit `10` also covers guard or search issues; quote those lines.
    Discovery prints many lines before the first encode; *Immich discovery lines* under *Reading run output* says which are normal and which summary to report.
-3. **Report.** As in the folders workflow; filter `status --json` to `"source": "immich"`. Each `outputPath` is under `immich.stagingDirectory`.
+3. **Report.** As in the folders workflow; filter `queue list --json` to `"source": "immich"`. Each `outputPath` is under `immich.stagingDirectory`.
 4. **Gate.** Each AV1 is uploaded as a new Immich asset and each original goes to Immich's trash.
 5. **Finalise.** After the go-ahead, `'y' | video-optimiser immich finalize`. Done when it prints `Finalised: N.` with no `Failed:` count and exits `0`. Otherwise find each `Failed` line in *Recovery*. If it stops partway, running it again continues; that rerun needs the gate too.
 
@@ -70,13 +70,13 @@ Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A 
 
 Use this when the user asks why videos are not converted, or whether their rules fit their library.
 
-1. **Report.** `calibrate --json`. It writes nothing and downloads nothing; with Immich configured it searches the library, which takes seconds. Exit `1` with `... is from an older version of video-optimiser` means run `status` once, then `calibrate` again.
+1. **Report.** `calibrate --json`. It writes nothing and downloads nothing; with Immich configured it searches the library, which takes seconds. Exit `1` with `... is from an older version of video-optimiser` means run `queue list` once, then `calibrate` again.
 2. **Explain.** Per rule, give `videos`, `bytes` and `history`. Then give the largest `keptOut` groups. `codecUnknown` groups are Immich videos no run has downloaded; their bitrate includes audio. When `historyLeftOut.otherSettings` is large, say that conversions from other or unrecorded quality settings are not counted.
 3. **Propose.** Quote each suggestion's `text`. Rule changes are the user's to choose: propose the YAML, then apply it once they agree. A `testOne` suggestion's `command` is a `queue add "<file>" --force`, a Working command that queues one file outside the rules; the `run` that converts it stops before replacing it, and on a paid remote config passes the paid-encoding gate. An Immich `testOne` has no command; name the file to the user.
 
 ## Reading run output
 
-`run` and `immich run` print one block per job, then a tally of the non-zero outcomes (`Ready to finalise: 4. Not worth converting: 1.`, or `Nothing to finalise.`) and, when something is ready, a `Next:` line naming `finalize --ready`, which finalises folder and Immich videos alike. A job block:
+`run` and `immich run` print one block per job, then a tally of the non-zero outcomes (`Ready to finalise: 4. Not worth converting: 1.`, or `Nothing to finalise.` when nothing is ready anywhere) and, when any video is ready to finalise, the ones earlier runs left included, a last line that counts them and names `finalize --ready`, which finalises folder and Immich videos alike. A job block:
 
 ```text
 [2/5] PXL_20250531_041434717.mp4 (1002.4 MiB)
@@ -105,7 +105,7 @@ The upload and download lines appear only on a remote worker. When `savings.mini
 | `Failed during the upload`, `the CRF search`, `encoding` or `the download: …`, then `Full log: <path>` | `Failed`; the full ab-av1 log stays at that path |
 | `Worker unreachable: …` | `Interrupted`, `RemoteUnavailable`; the run stops here (see *Recovery*) |
 
-**Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints a progress line about every 15 seconds and states its expected length when it starts; its progress lines add `about <time> left` only after 30 seconds and 5 percentage points, so early lines without it are normal. A running job that prints nothing new for 15 minutes is stuck: report it with the job's last lines and `status --json`.
+**Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints a progress line about every 15 seconds and states its expected length when it starts; its progress lines add `about <time> left` only after 30 seconds and 5 percentage points, so early lines without it are normal. A running job that prints nothing new for 15 minutes is stuck: report it with the job's last lines and `queue list --json`.
 
 ### Immich discovery lines
 
@@ -121,7 +121,7 @@ Report the summary to the user: `Downloaded and checked X videos: Y queued, Z do
 
 ## Recovery
 
-Match the job's `status` and `failureCategory` from `status --json` or `history --json`:
+Match the job's `status` and `failureCategory` from `queue list --json` or `history --json`:
 
 | What you see | Meaning | Action |
 | --- | --- | --- |
@@ -134,7 +134,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `RemoteConfigurationChanged` | The job started under a different processing setup | Report it. `queue retry <id>` starts a fresh job under the current setup, if the user wants. |
 | `Cancelled` | `queue drop` dropped it | Nothing. `queue retry <id>` queues it again, only if the user asks. |
 | A `N Immich videos stay queued: <reason>.` line from `run` | `immich.baseUrl` isn't set, or Immich can't be used (unreachable, a missing or rejected key) to download a missing copy again. The run converted the other videos | Report the reason. Once the user has fixed it, `run` again converts them. |
-| `Job <id> changed while this command was using it. Run the command again.` (exit `1`) | Another command, such as a run that started the video, changed the job first; its change stands | Check the job with `status --json`, then run the command again if it still applies. |
+| `Job <id> changed while this command was using it. Run the command again.` (exit `1`) | Another command, such as a run that started the video, changed the job first; its change stands | Check the job with `queue list --json`, then run the command again if it still applies. |
 | `Ineligible`, `SourceNotReady`, `SourceOutsideWatchRoot`, `SourceChanged`, `SourceMissing` | The file did not qualify, changed, or was gone when the job ran | Nothing. The next `queue add` or `immich run` re-checks it. |
 | A `Failed  <file>: <message>` line from `finalize` or `immich finalize`, with the job still `ReadyToFinalize` | A file is missing (the original, the AV1 or its validation record), the user must act in Immich first, or an Immich request failed partway. The original was not replaced | Pass the message to the user word for word; it names each copy left and the next command. Run a `queue drop` it names only at the user's request, after they have moved those copies: `cleanup` deletes a dropped job's files, and they may be the last ones. While they are still in place and the original is gone, `queue drop` refuses with exit `1` and names them. A message ending `again to resume.` needs only the gate and the rerun. |
 | `FinalizationIncomplete` | An Immich finalisation stopped partway, or waits on the user | Show the user `failureMessage`. Once they have done any step it names in Immich, gate, then `'y' | video-optimiser immich finalize`. |
@@ -142,7 +142,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 
 **Failed, dropped or skipped jobs** stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` queues one again; run it only at the user's request.
 
-**Kept Hetzner worker.** A remote run that finishes deletes the worker when `deleteAfterRun` is `true`, failed videos included; with `false`, or when the run never used a worker kept from an earlier one, it ends with `The worker <name> stays up, billed hourly, until it is deleted.` A worker that stops answering, an error once the worker exists, and a run stopped with `Ctrl+C` under redirected input keep it too, and say so with the `worker delete` command. After a stop now or a killed command, a CRF search or encode keeps running on it: the rerun picks it up. Interactively, `Ctrl+C` asks the user whether to delete the worker; under redirected input it never asks. `worker status` shows a kept worker, whatever `processing.mode` says. Tell the user it bills; deleting it is gated, because outputs not yet downloaded are lost with it.
+**Kept Hetzner worker.** A remote run that finishes deletes the worker when `deleteAfterRun` is `true`, failed videos included; with `false`, or when the run never used a worker kept from an earlier one, it ends with `The worker <name> stays up, billed hourly, until it is deleted.` A worker that stops answering, an error once the worker exists, and a run stopped with `Ctrl+C` under redirected input keep it too, and say so with the `worker delete` command. After a stop now or a killed command, a CRF search or encode keeps running on it: the rerun picks it up. Interactively, `Ctrl+C` asks the user whether to delete the worker; under redirected input it never asks. `status` and `worker status` show a kept worker, whatever `processing.mode` says; `status` checks it against Hetzner without waiting for a run that is creating one, and shows what it bills per hour. Tell the user it bills; deleting it is gated, because outputs not yet downloaded are lost with it.
 
 ## Reference
 
@@ -164,14 +164,14 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 
 ### Job statuses
 
-- **Open** (`status`, `queue list`): `Queued`, `Staging`, `CrfSearching`, `Encoding`, `Downloading`, `Validating`, `ReadyToFinalize`, `Finalizing`, `Interrupted`.
+- **Open** (`queue list`): `Queued`, `Staging`, `CrfSearching`, `Encoding`, `Downloading`, `Validating`, `ReadyToFinalize`, `Finalizing`, `Interrupted`.
 - **Finished** (`history`): `Completed`, `Failed`, `Cancelled`, `Skipped`.
 
 A held job (`queue hold`) keeps its status, `Queued` or `Interrupted`; runs pass over it until `queue release` or `queue next`. `Staging` and `Downloading` are transfers to and from a remote worker. A job whose finalisation was cut off (`Finalizing`, or `Interrupted` after it) is finalised like a `ReadyToFinalize` one, and `finalize --ready` lists it. An Immich one continues where it stopped. A file one continues only if its original and AV1 are where they started and the original is unchanged, and fails as `ManualInterventionRequired` otherwise; `run` leaves it alone and says so. `Ctrl+C` during `finalize` leaves the job ready.
 
 ### JSON output
 
-`status --json`, `history --json` and `queue list --json` print a flat array of jobs; the human `status` and `queue list` group them instead (converting now, the queue in run order, held, ready to finalise) and leave out asset IDs and failure categories:
+`history --json` and `queue list --json` print a flat array of jobs; the human `queue list` groups them instead (converting now, the queue in run order, held, ready to finalise) and leaves out asset IDs and failure categories:
 
 | Field | Value |
 | --- | --- |
@@ -186,6 +186,15 @@ A held job (`queue hold`) keeps its status, `Queued` or `Interrupted`; runs pass
 | `percentageSaved` | Size saving in percent, or `null` |
 | `failureCategory`, `failureMessage` | Why the job failed or was skipped, or what it needs, or `null` |
 | `updatedUtc` | Last change, ISO 8601 |
+
+`status --json` prints the card as one object, with every field present and `null` where it has no value:
+
+| Field | Value |
+| --- | --- |
+| `queue` | `{ converting, waiting, stopped, held, readyToFinalise }`: counts of the open videos in the groups `queue list` shows. `waiting` and `stopped` are the ones a run takes. |
+| `run` | `null` when no run is going. Otherwise `{ command, startedUtc, processId, converting }`: `command` is how the run named itself, and `converting` is an array of `{ id, file, status }`. |
+| `worker` | `null` unless `processing.remoteSsh.lifecycle` is `hetzner`. Otherwise `{ exists, hetznerChecked, notCheckedReason, name, serverId, status, serverType, location, createdUtc, uptimeSeconds, hourlyGrossEur }`. `exists` is `true` for a server, a retained IPv4 address (`status` `server-missing-primary-ip-retained`) or a worker recorded on this PC; the server fields are `null` when none exists. `hetznerChecked` is `false` with `notCheckedReason` set when Hetzner wasn't asked or didn't answer within 15 seconds; the fields are then the recorded ones (`status` `recorded`) with no uptime or price. `hourlyGrossEur` is EUR per hour including VAT. |
+| `next` | Up to three commands worth running now, in order, as the text card prints them. |
 
 `doctor --json` prints `configurationPath`, `exitCode` and `diagnostics`, an array of `{ category, status, code, message }` where `status` is `Pass`, `Warning` or `Fail`.
 

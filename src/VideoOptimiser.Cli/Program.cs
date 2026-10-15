@@ -12,6 +12,7 @@ using VideoOptimiser.Cli.Features.ImmichRun;
 using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.RemoteSetup;
 using VideoOptimiser.Cli.Features.Run;
+using VideoOptimiser.Cli.Features.Status;
 using VideoOptimiser.Cli.Features.Validate;
 using VideoOptimiser.Cli.Features.Worker;
 using VideoOptimiser.Domain;
@@ -89,7 +90,18 @@ internal static class CliApplication
         if (command.Kind == CliCommandKind.ConfigInit) return await services.GetRequiredService<ConfigCommands>().InitAsync(command, cancellationToken);
 
         var configurationLoader = services.GetRequiredService<IConfigurationLoader>();
-        var configuration = await configurationLoader.LoadAsync(command.ConfigurationPath, cancellationToken);
+        LoadedConfiguration configuration;
+        try
+        {
+            configuration = await configurationLoader.LoadAsync(command.ConfigurationPath, cancellationToken);
+        }
+        catch (FileNotFoundException exception) when (command.Bare)
+        {
+            // Someone who typed nothing may not know there is anything to set up; a typed command already knew what it wanted.
+            var exitCode = ReportFailure(exception);
+            WriteError("To create one, run 'video-optimiser config init'; 'video-optimiser --help' lists every command.");
+            return exitCode;
+        }
         command.ModeOverride?.Apply(configuration.Settings);
         if (command.Kind is CliCommandKind.WorkerCreate or CliCommandKind.WorkerStatus or CliCommandKind.WorkerDelete
             && WorkerCommands.RequireManagedLifecycle(command.Kind, configuration) is { } refused)
@@ -115,7 +127,7 @@ internal static class CliApplication
             CliCommandKind.QueueNext => await services.GetRequiredService<QueueCommands>().NextAsync(configuration, command, cancellationToken),
             CliCommandKind.QueueDrop => await services.GetRequiredService<QueueCommands>().DropAsync(configuration, command, cancellationToken),
             CliCommandKind.QueueRetry => await services.GetRequiredService<QueueCommands>().RetryAsync(configuration, command, cancellationToken),
-            CliCommandKind.Status => await services.GetRequiredService<QueueCommands>().ListAsync(configuration, command, terminal: false, cancellationToken),
+            CliCommandKind.Status => await services.GetRequiredService<StatusCommand>().RunAsync(configuration, command, cancellationToken),
             CliCommandKind.History => await services.GetRequiredService<QueueCommands>().ListAsync(configuration, command, terminal: true, cancellationToken),
             CliCommandKind.Validate => await services.GetRequiredService<ValidateCommand>().RunAsync(configuration, command.JobId!, cancellationToken),
             CliCommandKind.Finalize => await services.GetRequiredService<FinalizeCommands>().FinalizeAsync(configuration, command, cancellationToken),

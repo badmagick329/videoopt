@@ -19,6 +19,12 @@ public static class LockHolders
     public static readonly IReadOnlySet<string> QueueVerbs = new HashSet<string>(StringComparer.Ordinal) { QueueHold, QueueNext, QueueDrop };
 }
 
+/// <summary>The run going on a database, as its lock file records it.</summary>
+/// <param name="Command">How the run names itself, such as <see cref="LockHolders.Run"/>; an older version's run names itself differently.</param>
+/// <param name="StartedUtc">When it took the lock.</param>
+/// <param name="ProcessId">The process holding the lock, so a user can find or stop it.</param>
+public sealed record LiveRunHolder(string Command, DateTimeOffset StartedUtc, int ProcessId);
+
 /// <summary>
 /// The database's lock files as use cases take them. They are OS file locks, so they live behind this port. A run holds the
 /// run lock for the whole command and the finalise lock while it prepares; a finalisation holds the finalise lock. What
@@ -43,10 +49,10 @@ public interface IDatabaseLocks
     bool IsFinaliseGoing(string databasePath);
 
     /// <summary>
-    /// How the run going on this database names itself, or null when none is: read from the lock file without taking the
-    /// lock. A queue verb holding it for a moment is not a run.
+    /// The run going on this database, or null when none is: read from the lock file without taking the lock. A queue verb
+    /// holding it for a moment is not a run.
     /// </summary>
-    string? LiveRun(string databasePath);
+    LiveRunHolder? LiveRun(string databasePath);
 
     /// <summary>
     /// The finalise lock for a command, waiting through a run that is preparing, however long it takes. Null when a

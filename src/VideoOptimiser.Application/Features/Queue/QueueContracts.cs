@@ -40,8 +40,8 @@ public enum NextRun
 /// <summary>The one place that reads a live run's name as what it means for videos queued now.</summary>
 public static class NextRunRule
 {
-    /// <param name="liveRun">How the run going now names itself (<see cref="Jobs.IDatabaseLocks.LiveRun"/>), or null.</param>
-    public static NextRun Decide(string? liveRun) => liveRun switch
+    /// <param name="liveRunCommand">How the run going now names itself (<see cref="Jobs.LiveRunHolder.Command"/>), or null when none is.</param>
+    public static NextRun Decide(string? liveRunCommand) => liveRunCommand switch
     {
         null => NextRun.NoRun,
         Jobs.LockHolders.Run or Jobs.LockHolders.ImmichRun => NextRun.RunTakesThem,
@@ -99,7 +99,7 @@ public interface IQueueDiscovery
 
     Task<int> AheadOfAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
 
-    /// <summary>Every open job in run order with the group <c>queue list</c> and <c>status</c> show it under.</summary>
+    /// <summary>Every open job in run order with the group <c>queue list</c> shows it under and the status card counts it in.</summary>
     Task<IReadOnlyList<OpenJobEntry>> OpenJobsAsync(string databasePath, CancellationToken cancellationToken = default);
 }
 

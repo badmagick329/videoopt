@@ -142,6 +142,9 @@ public sealed partial class ColourOutputTests
             $"{Esc}32mReady to finalise: 1.{Reset} {Esc}33mNot worth converting: 2.{Reset} {Esc}31mFailed: 3.{Reset}");
         OutcomeSummary.Run(0, 0, 0, TerminalStyle.Ansi).Should().Be("Nothing to finalise.");
         OutcomeSummary.Run(1, 2, 3, TerminalStyle.Plain).Should().Be("Ready to finalise: 1. Not worth converting: 2. Failed: 3.");
+        // Earlier runs' ready videos make "Nothing to finalise." false, so a run that made nothing has no tally; one that failed still has.
+        OutcomeSummary.Run(0, 0, 0, TerminalStyle.Plain, othersReady: true).Should().BeNull();
+        OutcomeSummary.Run(0, 0, 1, TerminalStyle.Plain, othersReady: true).Should().Be("Failed: 1.");
     }
 
     private static (string Output, string Error) RenderDiscovery(ImmichProgress[] events, TerminalStyle style)

@@ -35,10 +35,12 @@ internal enum CliCommandKind
     Calibrate
 }
 
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null)
+/// <param name="Bare">Typed with no verb: the same card as <c>status</c>, but a missing configuration also says how to create one.</param>
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false)
 {
     public const string Usage = """
 Usage:
+  video-optimiser [--config <path>]
   video-optimiser config init [--config <path>] [--quality archive|standard|compact]
   video-optimiser version
   video-optimiser config show [--config <path>]
@@ -149,6 +151,7 @@ Usage:
 
         var kind = remaining switch
         {
+            [] => CliCommandKind.Status,
             ["config", "init"] => CliCommandKind.ConfigInit,
             ["config", "show"] => CliCommandKind.ConfigShow,
             ["config", "validate"] => CliCommandKind.ConfigValidate,
@@ -223,7 +226,7 @@ Usage:
             return Invalid($"{modeOverride.Flag} is only supported by run and immich run.");
         }
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0);
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);

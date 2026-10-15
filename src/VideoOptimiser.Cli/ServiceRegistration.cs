@@ -14,6 +14,7 @@ using VideoOptimiser.Cli.Features.ImmichRun;
 using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.RemoteSetup;
 using VideoOptimiser.Cli.Features.Run;
+using VideoOptimiser.Cli.Features.Status;
 using VideoOptimiser.Cli.Features.Validate;
 using VideoOptimiser.Cli.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
@@ -39,6 +40,7 @@ internal static class ServiceRegistration
         .AddRemoteSetup()
         .AddQueue()
         .AddRun()
+        .AddStatus()
         .AddImmichRun()
         .AddValidate()
         .AddFinalize()
@@ -69,6 +71,8 @@ internal static class ServiceRegistration
         services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
         services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
         services.AddSingleton<IConsoleInput, ConsoleInput>();
+        // Injected so a test can fix "now" for what a status card says is up for how long.
+        services.AddSingleton(TimeProvider.System);
         return services;
     }
 }

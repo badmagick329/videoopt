@@ -277,6 +277,15 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
     public Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default) =>
         ReadFailure is null ? Task.FromResult(Exists ? CliFakes.Worker : null) : Task.FromException<RemoteWorkerInfo?>(ReadFailure);
 
+    /// <summary>What the Hetzner check answers; by default the fake's worker with the price a cx43 in hel1 bills, or none while <see cref="Exists"/> is false.</summary>
+    public WorkerCheck? Check { get; set; }
+
+    public Task<WorkerCheck> CheckAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
+    {
+        DatabasePaths.Add(databasePath);
+        return Task.FromResult(Check ?? new WorkerCheck(Exists ? CliFakes.Worker : null, 0.0119m, null));
+    }
+
     public Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

@@ -26,7 +26,7 @@ internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IIm
         if (!RequireImmich(configuration) || ReportInvalidSettings(settingsValidator, configuration)) return (int)ExitCode.InvalidConfiguration;
         var (guard, discovery) = await QueueNewVideosAsync(configuration, command.Limit, cancellationToken);
         if (discovery.Queued.Count + discovery.AlreadyQueued > 0) Console.WriteLine(NextRunLine(queueDiscovery.NextRun(configuration.Settings.Database.Path), command));
-        if (discovery.ReadyToFinalize > 0) Console.WriteLine(ReadyToFinaliseLine(discovery.ReadyToFinalize, command));
+        if (discovery.ReadyToFinalize > 0) Console.WriteLine(NextSteps.ReadyToFinaliseLine(discovery.ReadyToFinalize, command));
         return (int)(NeedsLook(guard, discovery) ? ExitCode.PartialSuccess : ExitCode.Success);
     }
 
