@@ -1,16 +1,16 @@
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Diagnostics;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Cli.Features.Config;
+using VideoOptimiser.Cli.Features.Doctor;
 using VideoOptimiser.Infrastructure.Calibration;
 using VideoOptimiser.Infrastructure.Configuration;
-using VideoOptimiser.Infrastructure.Diagnostics;
 using VideoOptimiser.Infrastructure.Eligibility;
 using VideoOptimiser.Infrastructure.Immich;
 using VideoOptimiser.Infrastructure.Jobs;
@@ -64,14 +64,6 @@ internal static class ServiceRegistration
         services.AddSingleton<IConsoleInput, ConsoleInput>();
         return services;
     }
-
-    public static IServiceCollection AddConfig(this IServiceCollection services) =>
-        services.AddSingleton<IConfigurationTemplateWriter, YamlConfigurationTemplateWriter>();
-
-    public static IServiceCollection AddDoctor(this IServiceCollection services) => services
-        .AddSingleton<IToolVerifier, ProcessToolVerifier>()
-        .AddSingleton<IRemoteEnvironmentVerifier, ProcessRemoteEnvironmentVerifier>()
-        .AddSingleton<IDoctorService, DoctorService>();
 
     public static IServiceCollection AddWorker(this IServiceCollection services) =>
         services.AddSingleton<IRemoteWorkerLifecycle, HetznerRemoteWorkerLifecycle>();

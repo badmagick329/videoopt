@@ -1,13 +1,12 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Features.Doctor;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
 using VideoOptimiser.Infrastructure.Persistence;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Doctor;
 
 public sealed class DoctorServiceTests : IDisposable
 {

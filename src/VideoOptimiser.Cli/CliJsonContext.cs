@@ -2,8 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace VideoOptimiser.Cli;
 
-internal sealed record DoctorJsonOutput(string ConfigurationPath, int ExitCode, DoctorJsonDiagnostic[] Diagnostics);
-internal sealed record DoctorJsonDiagnostic(string Category, string Status, string Code, string Message);
 internal sealed record JobJsonOutput(string Id, string Status, string SourcePath, string Source, string? ImmichAssetId, string? ImmichNewAssetId, int? Crf, string? OutputPath, decimal? PercentageSaved, string? FailureCategory, string? FailureMessage, DateTimeOffset UpdatedUtc);
 
 internal sealed record CalibrationJsonOutput(double MinimumVmaf, CalibrationRuleJson[] Rules, CalibrationGroupJson[] KeptOut, CalibrationUnknownJson[] CodecUnknown, CalibrationTotalJson AlreadyAv1, CalibrationLeftOutJson HistoryLeftOut, CalibrationSuggestionJson[] Suggestions);
@@ -27,7 +25,6 @@ internal sealed record AddRuleJson(string Codec, string Resolution, string Minim
 internal sealed record TestOneJson(string? Codec, string? Resolution, int? MinimumMbps, int? MaximumMbps, string? Path, string? ImmichAssetId, string? Command, string Text) : CalibrationSuggestionJson(Text);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
-[JsonSerializable(typeof(DoctorJsonOutput))]
 [JsonSerializable(typeof(JobJsonOutput[]))]
 [JsonSerializable(typeof(CalibrationJsonOutput))]
 internal sealed partial class CliJsonContext : JsonSerializerContext;

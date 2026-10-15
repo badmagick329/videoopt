@@ -1,5 +1,6 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Config;
 
 internal enum CliCommandKind
 {

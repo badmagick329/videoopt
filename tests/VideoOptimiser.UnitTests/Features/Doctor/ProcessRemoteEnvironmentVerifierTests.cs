@@ -2,9 +2,9 @@ using System.Text.RegularExpressions;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Infrastructure.Features.Doctor;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Doctor;
 
 public sealed class ProcessRemoteEnvironmentVerifierTests
 {

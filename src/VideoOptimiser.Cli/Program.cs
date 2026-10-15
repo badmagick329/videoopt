@@ -4,14 +4,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Diagnostics;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Cli;
+using VideoOptimiser.Cli.Features.Config;
+using VideoOptimiser.Cli.Features.Doctor;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Configuration;
 using static CliLocks;
 using static CliOutput;
 
@@ -84,26 +84,7 @@ internal static partial class CliApplication
 
     private static async Task<int> ExecuteAsync(IServiceProvider services, CliCommand command, CancellationToken cancellationToken)
     {
-        if (command.Kind == CliCommandKind.ConfigInit)
-        {
-            var writer = services.GetRequiredService<IConfigurationTemplateWriter>();
-            try
-            {
-                // Refuse before asking, so nobody answers a question for a file that will not be written.
-                var target = writer.GetDestination(command.ConfigurationPath);
-                if (File.Exists(target)) throw YamlConfigurationTemplateWriter.RefuseOverwrite(target);
-                var quality = ConfigInitQuestion.Choose(command.Quality, new ConsoleInput().IsInteractive, Console.In, Console.Out);
-                var destination = await writer.WriteAsync(command.ConfigurationPath, quality, cancellationToken);
-                Console.WriteLine($"Created editable configuration template: {destination}");
-                Console.WriteLine("Add watch.roots, then run 'video-optimiser config validate'.");
-                return (int)ExitCode.Success;
-            }
-            catch (InvalidOperationException exception)
-            {
-                WriteError(exception.Message);
-                return (int)ExitCode.GeneralFailure;
-            }
-        }
+        if (command.Kind == CliCommandKind.ConfigInit) return await services.GetRequiredService<ConfigCommands>().InitAsync(command, cancellationToken);
 
         var configurationLoader = services.GetRequiredService<IConfigurationLoader>();
         var configuration = await configurationLoader.LoadAsync(command.ConfigurationPath, cancellationToken);
@@ -115,9 +96,9 @@ internal static partial class CliApplication
         }
         return command.Kind switch
         {
-            CliCommandKind.ConfigShow => ShowConfiguration(configuration),
-            CliCommandKind.ConfigValidate => ValidateConfiguration(services.GetRequiredService<ISettingsValidator>(), configuration),
-            CliCommandKind.Doctor => await RunDoctorAsync(services.GetRequiredService<IDoctorService>(), configuration, command.Json, cancellationToken),
+            CliCommandKind.ConfigShow => ConfigCommands.Show(configuration),
+            CliCommandKind.ConfigValidate => services.GetRequiredService<ConfigCommands>().Validate(configuration),
+            CliCommandKind.Doctor => await services.GetRequiredService<DoctorCommand>().RunAsync(configuration, command.Json, cancellationToken),
             CliCommandKind.WorkerCreate => await RunWorkerCreateAsync(services, configuration, cancellationToken),
             CliCommandKind.WorkerStatus => await RunWorkerStatusAsync(services, configuration, cancellationToken),
             CliCommandKind.WorkerDelete => await RunWorkerDeleteAsync(services, configuration, cancellationToken),
@@ -141,53 +122,6 @@ internal static partial class CliApplication
             CliCommandKind.Calibrate => await RunCalibrateAsync(services, configuration, command.Json, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
-    }
-
-    private static int ShowConfiguration(LoadedConfiguration configuration)
-    {
-        Console.WriteLine($"Configuration path: {configuration.Path}");
-        Console.WriteLine();
-        Console.Write(configuration.RawYaml ?? "# Configuration content is not available.\n");
-        return (int)ExitCode.Success;
-    }
-
-    private static int ValidateConfiguration(ISettingsValidator validator, LoadedConfiguration configuration)
-    {
-        var diagnostics = validator.Validate(configuration.Settings);
-        if (diagnostics.Count == 0)
-        {
-            Console.WriteLine($"Valid configuration: {configuration.Path}");
-            return (int)ExitCode.Success;
-        }
-
-        foreach (var diagnostic in diagnostics)
-        {
-            WriteError($"[{diagnostic.Code}] {diagnostic.Message}");
-        }
-
-        return (int)ExitCode.InvalidConfiguration;
-    }
-
-    private static async Task<int> RunDoctorAsync(IDoctorService doctorService, LoadedConfiguration configuration, bool json, CancellationToken cancellationToken)
-    {
-        var report = await doctorService.RunAsync(configuration, cancellationToken);
-        if (json)
-        {
-            var output = new DoctorJsonOutput(
-                configuration.Path,
-                (int)report.ExitCode,
-                report.Diagnostics.Select(diagnostic => new DoctorJsonDiagnostic(diagnostic.Category.ToString(), diagnostic.Status.ToString(), diagnostic.Code, diagnostic.Message)).ToArray());
-            Console.WriteLine(JsonSerializer.Serialize(output, CliJsonContext.Default.DoctorJsonOutput));
-        }
-        else
-        {
-            foreach (var diagnostic in report.Diagnostics)
-            {
-                Console.WriteLine($"{diagnostic.Status,-7} {diagnostic.Category,-13} {diagnostic.Message}");
-            }
-        }
-
-        return (int)report.ExitCode;
     }
 
     /// <summary>

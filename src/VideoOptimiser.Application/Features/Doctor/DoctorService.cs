@@ -1,12 +1,11 @@
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Diagnostics;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
 
-namespace VideoOptimiser.Infrastructure.Diagnostics;
+namespace VideoOptimiser.Application.Features.Doctor;
 
 public sealed class DoctorService(
     ISettingsValidator settingsValidator,

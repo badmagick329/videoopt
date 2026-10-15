@@ -1,7 +1,7 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Domain;
 
-namespace VideoOptimiser.Application.Diagnostics;
+namespace VideoOptimiser.Application.Features.Doctor;
 
 public sealed record ToolVerificationResult(string Name, bool IsAvailable, string Detail);
 

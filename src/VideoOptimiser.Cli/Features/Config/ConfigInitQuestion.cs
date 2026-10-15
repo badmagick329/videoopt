@@ -1,6 +1,6 @@
-using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Config;
 
-namespace VideoOptimiser.Cli;
+namespace VideoOptimiser.Cli.Features.Config;
 
 /// <summary>
 /// The one question <c>config init</c> asks: the quality level, which sets <c>quality.minimumVmaf</c>, the setting that

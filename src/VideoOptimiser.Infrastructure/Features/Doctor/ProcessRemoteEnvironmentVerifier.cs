@@ -2,12 +2,12 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Features.Doctor;
 using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Tools;
 
-namespace VideoOptimiser.Infrastructure.Diagnostics;
+namespace VideoOptimiser.Infrastructure.Features.Doctor;
 
 public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifier
 {

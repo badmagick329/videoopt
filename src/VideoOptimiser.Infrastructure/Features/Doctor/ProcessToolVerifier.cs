@@ -1,8 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Features.Doctor;
 
-namespace VideoOptimiser.Infrastructure.Diagnostics;
+namespace VideoOptimiser.Infrastructure.Features.Doctor;
 
 public sealed class ProcessToolVerifier : IToolVerifier
 {

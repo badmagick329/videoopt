@@ -1,8 +1,8 @@
 using FluentAssertions;
-using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Cli;
+using VideoOptimiser.Application.Features.Config;
+using VideoOptimiser.Cli.Features.Config;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Config;
 
 public sealed class ConfigInitQuestionTests
 {

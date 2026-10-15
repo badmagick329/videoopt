@@ -1,7 +1,8 @@
 using System.Text;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Config;
 
-namespace VideoOptimiser.Infrastructure.Configuration;
+namespace VideoOptimiser.Infrastructure.Features.Config;
 
 public sealed class YamlConfigurationTemplateWriter(IConfigurationLoader configurationLoader) : IConfigurationTemplateWriter
 {
@@ -23,14 +24,11 @@ public sealed class YamlConfigurationTemplateWriter(IConfigurationLoader configu
         }
         catch (IOException) when (File.Exists(destination))
         {
-            throw RefuseOverwrite(destination);
+            throw IConfigurationTemplateWriter.RefuseOverwrite(destination);
         }
 
         return destination;
     }
-
-    public static InvalidOperationException RefuseOverwrite(string destination) =>
-        new($"Refusing to overwrite the existing configuration file '{destination}'.");
 
     private const string Template = """
 # VideoOptimiser configuration

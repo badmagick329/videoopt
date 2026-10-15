@@ -1,4 +1,4 @@
-namespace VideoOptimiser.Application.Configuration;
+namespace VideoOptimiser.Application.Features.Config;
 
 /// <summary>
 /// The quality question <c>config init</c> asks. It exists only there and in the comment it writes: the config keeps
