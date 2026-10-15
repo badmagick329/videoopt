@@ -68,8 +68,8 @@ public sealed class WorkerEndRunTests : IDisposable
             "Ready to finalise: 1.",
             $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready {Config}'.",
             $"To convert the rest: video-optimiser run {Config}",
-            "Deleting Hetzner server 42.",
-            "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
+            "Deleting the worker video-optimiser-1.",
+            "Worker deleted; billing for it and its IPv4 address has stopped."));
         code.Should().Be((int)ExitCode.Cancelled);
         _lifecycle.DeleteCalls.Should().Be(1);
         (await StatusesAsync(_repository, DatabasePath, jobs)).Should().Equal(JobStatus.ReadyToFinalize, JobStatus.Queued, JobStatus.Queued);
@@ -79,7 +79,7 @@ public sealed class WorkerEndRunTests : IDisposable
 
         morningCode.Should().Be((int)ExitCode.Success);
         _lifecycle.EnsureCalls.Should().Be(2);
-        Lines(morning).Should().ContainInOrder("Converting 2 videos.", "[1/2] 2.mp4", "[2/2] 3.mp4", "Ready to finalise: 2.", "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped.");
+        Lines(morning).Should().ContainInOrder("Converting 2 videos.", "[1/2] 2.mp4", "[2/2] 3.mp4", "Ready to finalise: 2.", "Worker deleted; billing for it and its IPv4 address has stopped.");
         _lifecycle.DeleteCalls.Should().Be(2);
         (await StatusesAsync(_repository, DatabasePath, jobs)).Should().OnlyContain(status => status == JobStatus.ReadyToFinalize);
     }
@@ -184,8 +184,8 @@ public sealed class WorkerEndRunTests : IDisposable
             "Ready to finalise: 1.",
             $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready {Config}'.",
             $"To convert the rest: video-optimiser run {Config}",
-            "Delete the worker now? [y/N] Deleting Hetzner server 42.",
-            "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
+            "Delete the worker now? [y/N] Deleting the worker video-optimiser-1.",
+            "Worker deleted; billing for it and its IPv4 address has stopped."));
         code.Should().Be((int)ExitCode.Cancelled);
         _input.Reads.Should().Be(1);
     }
@@ -242,8 +242,8 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             $"Stopped. The encoded output is waiting on the worker {Worker}, which stays up, billed hourly.",
             $"To resume: video-optimiser run {Config}",
-            "Delete the worker now? The finished encode is lost. [y/N] Deleting Hetzner server 42.",
-            "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
+            "Delete the worker now? The finished encode is lost. [y/N] Deleting the worker video-optimiser-1.",
+            "Worker deleted; billing for it and its IPv4 address has stopped."));
         code.Should().Be((int)ExitCode.Cancelled);
         _lifecycle.DeleteCalls.Should().Be(1);
     }
@@ -264,8 +264,8 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             "Stopped now. 1.mp4 continues from its last finished step on the next run.",
             $"To resume: video-optimiser run {Config}",
-            "Deleting Hetzner server 42.",
-            "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
+            "Deleting the worker video-optimiser-1.",
+            "Worker deleted; billing for it and its IPv4 address has stopped."));
         code.Should().Be((int)ExitCode.Cancelled);
     }
 
@@ -307,9 +307,9 @@ public sealed class WorkerEndRunTests : IDisposable
         var (code, output, _) = await RunAsync();
 
         output.Should().Be(Transcript(
-            "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
+            "Encoding on a new Hetzner worker created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
             "",
-            $"Stopped while the worker {Worker} was being set up. It stays up, billed hourly.",
+            $"Stopped while the worker {Worker} was bootstrapping. It stays up, billed hourly.",
             $"To resume: video-optimiser run {Config}",
             $"Delete the worker now? [y/N] To delete it later: video-optimiser worker delete {Config}"));
         code.Should().Be((int)ExitCode.Cancelled);
@@ -334,9 +334,9 @@ public sealed class WorkerEndRunTests : IDisposable
         var (code, output, _) = await RunAsync();
 
         output.Should().Be(Transcript(
-            "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
+            "Encoding on a new Hetzner worker created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
             "",
-            $"Stopped while the worker {Worker} was being set up. It stays up, billed hourly.",
+            $"Stopped while the worker {Worker} was bootstrapping. It stays up, billed hourly.",
             $"To resume: video-optimiser run {Config}",
             $"To delete it instead: video-optimiser worker delete {Config}"));
         code.Should().Be((int)ExitCode.Cancelled);
@@ -379,7 +379,7 @@ public sealed class WorkerEndRunTests : IDisposable
         var (code, output, _) = await RunAsync();
 
         var worker = deleteAfterRun
-            ? new[] { "Deleting Hetzner server 42.", "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped." }
+            ? new[] { "Deleting the worker video-optimiser-1.", "Worker deleted; billing for it and its IPv4 address has stopped." }
             : [$"The worker {Worker} stays up, billed hourly, until it is deleted.", $"To delete it: video-optimiser worker delete {Config}"];
         output.Should().Be(Transcript([
             Banner,
@@ -398,7 +398,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             "Failed jobs:",
             $"{jobs[1].Id:N}  2.mp4",
-            "EncodeFailed: the encode broke.",
+            "Encoding failed: the encode broke.",
             $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready {Config}'.",
             .. worker]));
         code.Should().Be((int)ExitCode.PartialSuccess);
@@ -473,7 +473,7 @@ public sealed class WorkerEndRunTests : IDisposable
 
         var (code, output, error) = await RunAsync();
 
-        output.Should().EndWith(Transcript("Deleting Hetzner server 42."));
+        output.Should().EndWith(Transcript("Deleting the worker video-optimiser-1."));
         error.Should().Be(Transcript(
             $"Couldn't delete the worker {Worker}: Hetzner answered 503",
             $"It's still billing hourly. To delete it: video-optimiser worker delete {Config}"));
@@ -491,9 +491,9 @@ public sealed class WorkerEndRunTests : IDisposable
         var (code, output, _) = await RunAsync();
 
         output.Should().EndWith(Transcript(
-            "Deleting Hetzner server 42.",
+            "Deleting the worker video-optimiser-1.",
             "Deleting the worker; closing this window now leaves it billing.",
-            "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
+            "Worker deleted; billing for it and its IPv4 address has stopped."));
         code.Should().Be((int)ExitCode.Success);
     }
 
@@ -513,13 +513,13 @@ public sealed class WorkerEndRunTests : IDisposable
             "",
             $"Stopped: the worker {Worker} can't be reached, so 2 videos were not converted.",
             "Nothing to finalise.",
-            "Deleting Hetzner server 42.",
-            "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
+            "Deleting the worker video-optimiser-1.",
+            "Worker deleted; billing for it and its IPv4 address has stopped."));
         output.Should().NotContain("stays up");
         code.Should().Be((int)ExitCode.ProcessingFailure);
     }
 
-    private const string Banner = "Encoding on Hetzner cx43 in hel1, kept from an earlier run and still billing.";
+    private const string Banner = "Encoding on the Hetzner worker video-optimiser-1, a cx43 in hel1, kept from an earlier run and still billing.";
 
     private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync() =>
         ConsoleCapture.RunCliAsync(services =>

@@ -211,7 +211,7 @@ public sealed class JobProcessor(
             job.ResumeStatus = stoppedIn;
             job.Status = JobStatus.Interrupted;
             job.FailureCategory = "Interrupted";
-            job.FailureMessage = "Processing was cancelled.";
+            job.FailureMessage = "Stopped before it finished.";
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
             throw new JobInterruptedException(job, stoppedIn, session.IsRemote, cancellationToken);
         }
@@ -371,11 +371,11 @@ public sealed class JobProcessor(
             try
             {
                 File.Delete(file);
-                progress?.Report(JobProgress.Step($"Deleted the partial output of interrupted attempt {job.Attempt}."));
+                progress?.Report(JobProgress.Step("Deleted the unfinished AV1 from the stopped encode."));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                progress?.Report(JobProgress.Step($"Could not delete the partial output of attempt {job.Attempt} ({exception.Message}); run '{hints.Command("cleanup")}' later to remove {Path.GetFileName(file)}."));
+                progress?.Report(JobProgress.Step($"Could not delete the unfinished AV1 from the stopped encode ({exception.Message}); run '{hints.Command("cleanup")}' later to remove {Path.GetFileName(file)}."));
             }
         }
     }

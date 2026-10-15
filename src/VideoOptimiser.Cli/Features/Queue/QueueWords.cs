@@ -40,10 +40,21 @@ internal static class QueueWords
         JobStatus.Encoding => "encoding",
         JobStatus.Downloading => "downloading",
         JobStatus.Validating => "checking",
+        JobStatus.ReadyToFinalize => "ready to finalise",
         JobStatus.Finalizing => "finalising",
+        JobStatus.Completed => "finalised",
         JobStatus.Interrupted => "stopped",
+        JobStatus.Cancelled => "dropped",
+        JobStatus.Skipped => "not worth converting",
         _ => status.ToString().ToLowerInvariant()
     };
+
+    /// <summary>The same word starting a column, as <c>history</c> lists it.</summary>
+    public static string StatusName(JobStatus status)
+    {
+        var word = StatusWord(status);
+        return char.ToUpperInvariant(word[0]) + word[1..];
+    }
 
     /// <summary>The open status in the glossary's words.</summary>
     public static string OpenStatusPhrase(JobRecord job, OpenJobState state) => state switch

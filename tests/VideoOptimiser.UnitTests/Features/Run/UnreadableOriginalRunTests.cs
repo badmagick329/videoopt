@@ -67,7 +67,7 @@ public sealed class UnreadableOriginalRunTests : IDisposable
             "",
             "Failed jobs:",
             $"{jobs[0].Id:N}  a.mp4",
-            $"{category}: {text}",
+            category == "SourceMissing" ? text : $"Failed: {text}",
             $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready --config \"{config}\"'."));
         (await StatusesAsync(_repository, DatabasePath, jobs)).Should().Equal(JobStatus.Failed, JobStatus.ReadyToFinalize);
     }

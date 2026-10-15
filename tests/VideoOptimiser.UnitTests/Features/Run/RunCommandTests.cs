@@ -125,7 +125,7 @@ public sealed class RunCommandTests : IDisposable
             "",
             "Failed jobs:",
             $"{gone.Id:N}  IMG_0001.MOV",
-            $"SourceMissing: The staged original is missing, and Immich did not return asset {gone.ImmichAssetId} again: Immich returned HTTP 404 for GET /api/assets.",
+            $"The staged original is missing, and Immich did not return asset {gone.ImmichAssetId} again: Immich returned HTTP 404 for GET /api/assets.",
             ReadyLine(1))));
         (await StoredAsync(erroring)).Status.Should().Be(JobStatus.Queued);
         (await StoredAsync(later)).Status.Should().Be(JobStatus.Queued);
@@ -151,7 +151,7 @@ public sealed class RunCommandTests : IDisposable
             "",
             "Failed jobs:",
             $"{joining.Id:N}  IMG_0001.MOV",
-            $"SourceMissing: The staged original is missing, and Immich did not return asset {joining.ImmichAssetId} again: Immich returned HTTP 404 for GET /api/assets.",
+            $"The staged original is missing, and Immich did not return asset {joining.ImmichAssetId} again: Immich returned HTTP 404 for GET /api/assets.",
             ReadyLine(1)));
         _processor.Processed.Should().Equal("clip.mp4");
     }

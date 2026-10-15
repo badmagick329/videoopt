@@ -180,7 +180,7 @@ public sealed class StatusCommandTests : QueueTestBase
 
         var result = await RunAsync("status");
 
-        result.Should().Be((0, Card("Queue: empty.", "Run: none.", "Worker: video-optimiser-1's server is gone, but its IPv4 address still bills.", ("worker delete", "stops the worker billing")), ""));
+        result.Should().Be((0, Card("Queue: empty.", "Run: none.", "Worker: video-optimiser-1 is gone from Hetzner, but its IPv4 address still bills.", ("worker delete", "stops the worker billing")), ""));
     }
 
     [Theory]

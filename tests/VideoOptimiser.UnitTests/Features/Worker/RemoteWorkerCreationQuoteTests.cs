@@ -13,11 +13,11 @@ public sealed class RemoteWorkerCreationQuoteTests
 
         new RemoteWorkerCreationQuote(unlistedFirst, unlistedFirst).FormatPrompt().Should().Be(Lines(
             "Will create cx43 in hel1 (price not listed).",
-            "Create the server? [y/N] "));
+            "Create the worker? [y/N] "));
         unlistedFallback.FormatPrompt().Should().Be(Lines(
             "Will create cx43 in hel1 at EUR 0.031/h incl. VAT.",
             "If that placement fails, a fallback may cost more (ccx33 in sin, price not listed).",
-            "Create the server? [y/N] "));
+            "Create the worker? [y/N] "));
     }
 
     private static string Lines(params string[] lines) => string.Join(Environment.NewLine, lines);

@@ -20,7 +20,7 @@ public sealed class OpenJobExistsException(string sourcePath) : InvalidOperation
 /// worker: a run of several jobs cannot tell which <see cref="JobStatus.Interrupted"/> job was the one in progress.
 /// </summary>
 public sealed class JobInterruptedException(JobRecord job, JobStatus stage, bool remote, CancellationToken cancellationToken)
-    : OperationCanceledException("Processing was cancelled.", cancellationToken)
+    : OperationCanceledException("Stopped before it finished.", cancellationToken)
 {
     public JobRecord Job { get; } = job;
     public JobStatus Stage { get; } = stage;

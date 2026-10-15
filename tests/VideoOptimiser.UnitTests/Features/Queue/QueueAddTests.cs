@@ -265,7 +265,7 @@ public sealed class QueueAddTests : QueueTestBase
             "Scanning 1 watch root for videos to convert; files not seen before are probed with ffprobe.",
             $"Queued in {Root}:",
             "  new.mp4",
-            "Queued: 1. Held: 1. Ready to finalise: 2. Real probes: 4.",
+            "Queued: 1. Held: 1. Ready to finalise: 2.",
             $"Next: run 'video-optimiser run{ConfigArgument}'.",
             $"2 videos are ready to finalise: review them, then run 'video-optimiser finalize --ready{ConfigArgument}'."), ""));
     }
@@ -283,7 +283,7 @@ public sealed class QueueAddTests : QueueTestBase
         var (code, output, _) = await RunAsync("queue", "add");
 
         code.Should().Be(0);
-        output.Should().EndWith(Transcript("Queued: 0. Already queued: 1. Real probes: 1.", string.Format(System.Globalization.CultureInfo.InvariantCulture, line, ConfigArgument)));
+        output.Should().EndWith(Transcript("Queued: 0. Already queued: 1.", string.Format(System.Globalization.CultureInfo.InvariantCulture, line, ConfigArgument)));
     }
 
     [Fact]
@@ -293,7 +293,7 @@ public sealed class QueueAddTests : QueueTestBase
 
         var (_, output, _) = await RunAsync("queue", "add");
 
-        output.Should().EndWith(Transcript("Queued: 0. Ready to finalise: 1. Real probes: 1.", $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready{ConfigArgument}'."));
+        output.Should().EndWith(Transcript("Queued: 0. Ready to finalise: 1.", $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready{ConfigArgument}'."));
     }
 
     /// <summary>VOPT-73: every Issue line counts towards the issues total, and the scan exits 10.</summary>

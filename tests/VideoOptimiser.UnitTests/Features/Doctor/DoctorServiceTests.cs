@@ -87,7 +87,7 @@ public sealed class DoctorServiceTests : IDisposable
         var report = await CreateDoctor(new FakeToolVerifier(true), new FakeRemoteEnvironmentVerifier(), lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
         report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "EncodingLocation")
-            .Which.Message.Should().StartWith("Encoding on a Hetzner server created for this run");
+            .Which.Message.Should().StartWith("Encoding on a new Hetzner worker created for this run");
     }
 
     [Fact]
@@ -180,7 +180,7 @@ public sealed class DoctorServiceTests : IDisposable
             DiagnosticCategory.Dependency,
             DiagnosticStatus.Warning,
             "ManagedWorkerBilling",
-            "Managed Hetzner worker video-optimiser-1 is running and bills until it is deleted. Delete it with 'video-optimiser worker delete'."));
+            "The Hetzner worker video-optimiser-1 is running and bills until it is deleted. Delete it with 'video-optimiser worker delete'."));
         remote.WasCalled.Should().BeFalse();
     }
 
@@ -197,9 +197,9 @@ public sealed class DoctorServiceTests : IDisposable
         var skipped = await CreateDoctor(new FakeToolVerifier(true), lifecycle: new FakeWorkerLifecycle { Exists = false }, hints: hints).RunAsync(new LoadedConfiguration(remote, "my.yaml"));
 
         local.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "ManagedWorkerBilling").Which.Message
-            .Should().Be("Managed Hetzner worker video-optimiser-1 is running and bills until it is deleted. Delete it with 'video-optimiser worker delete --config \"my.yaml\"'.");
+            .Should().Be("The Hetzner worker video-optimiser-1 is running and bills until it is deleted. Delete it with 'video-optimiser worker delete --config \"my.yaml\"'.");
         skipped.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "RemoteHostChecksSkipped").Which.Message
-            .Should().Be("No managed Hetzner worker exists, so remote host checks were skipped. Run 'video-optimiser worker create --config \"my.yaml\"', then doctor, to check one.");
+            .Should().Be("No Hetzner worker exists, so remote host checks were skipped. Run 'video-optimiser worker create --config \"my.yaml\"', then doctor, to check one.");
     }
 
     [Fact]
@@ -212,7 +212,7 @@ public sealed class DoctorServiceTests : IDisposable
         var report = await CreateDoctor(new FakeToolVerifier(true), lifecycle: lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
         report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "ManagedWorkerBilling").Which.Message
-            .Should().Be("The server of managed Hetzner worker video-optimiser-1 is gone, but its IPv4 address still bills. Delete it with 'video-optimiser worker delete'.");
+            .Should().Be("The Hetzner worker video-optimiser-1 is gone, but its IPv4 address still bills. Delete it with 'video-optimiser worker delete'.");
     }
 
     [Fact]

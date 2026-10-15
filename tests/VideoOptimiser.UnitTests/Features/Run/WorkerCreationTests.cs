@@ -67,7 +67,7 @@ public sealed class WorkerCreationTests : IDisposable
 
         _lifecycle.EnsureCalls.Should().Be(0);
         output.Should().Be(Transcript(
-            "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
+            "Encoding on a new Hetzner worker created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
             "1 video is held; runs pass over it until it's released.",
             "Converting 1 video.",
             "",
@@ -77,7 +77,7 @@ public sealed class WorkerCreationTests : IDisposable
             "",
             "Failed jobs:",
             $"{local.Id:N}  ineligible.mp4",
-            "Ineligible: Codec av1 is not in any rule."));
+            "Doesn't fit your rules: Codec av1 is not in any rule."));
         processor.Processed.Should().Equal("ineligible.mp4");
         (await _repository.GetAsync(DatabasePath, released.Id))!.Status.Should().Be(JobStatus.Queued);
     }
@@ -137,7 +137,7 @@ public sealed class WorkerCreationTests : IDisposable
             "",
             "Failed jobs:",
             $"{local.Id:N}  ineligible.mp4",
-            "Ineligible: Codec av1 is not in any rule."));
+            "Doesn't fit your rules: Codec av1 is not in any rule."));
         processor.Processed.Should().Equal("ineligible.mp4");
         (await _repository.GetAsync(DatabasePath, remote.Id))!.Status.Should().Be(JobStatus.Interrupted);
     }

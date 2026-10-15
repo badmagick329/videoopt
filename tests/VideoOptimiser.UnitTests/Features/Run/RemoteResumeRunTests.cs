@@ -30,7 +30,7 @@ public sealed class RemoteResumeRunTests : IDisposable
 
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
 
-    private const string Banner = "Encoding on Hetzner cx43 in hel1, kept from an earlier run and still billing.";
+    private const string Banner = "Encoding on the Hetzner worker video-optimiser-1, a cx43 in hel1, kept from an earlier run and still billing.";
 
     /// <summary>
     /// The AV1 is on this PC and only its check is left, so the run creates no worker for it (VOPT-89). Before, the job reached
@@ -56,7 +56,7 @@ public sealed class RemoteResumeRunTests : IDisposable
 
         (code, error).Should().Be((0, string.Empty));
         text.Should().Be(Transcript(
-            "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
+            "Encoding on a new Hetzner worker created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
             "Converting 1 video.",
             "",
             "[1/1] movie.mp4 (19 B)",

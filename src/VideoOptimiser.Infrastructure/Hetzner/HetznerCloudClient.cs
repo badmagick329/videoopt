@@ -100,7 +100,7 @@ internal sealed class HetznerCloudClient : IDisposable
             if (await GetServerAsync(token, serverId, cancellationToken) is null) return;
             await _delay(TimeSpan.FromSeconds(2), cancellationToken);
         }
-        throw new TimeoutException($"Hetzner server {serverId} still exists after its delete action completed.");
+        throw new TimeoutException($"Hetzner worker {serverId} still exists after its delete action completed.");
     }
 
     public async Task SetPrimaryIpAutoDeleteAsync(string token, long id, string controller, CancellationToken cancellationToken)
@@ -259,7 +259,7 @@ internal sealed class HetznerCloudClient : IDisposable
     }
 
     private static InvalidOperationException PreflightFailure(string reason, Exception? innerException = null) =>
-        new($"Hetzner server type preflight failed: {reason}; no server creation was attempted.", innerException);
+        new($"Hetzner server type preflight failed: {reason}; no worker was created.", innerException);
 
     private static byte[] CreateServerPayload(string name, HetznerSettings hetzner, string serverType, string location, string controller, string bootstrapScript)
     {
@@ -311,7 +311,7 @@ internal sealed class HetznerCloudClient : IDisposable
             server.GetProperty("id").GetInt64(),
             server.GetProperty("name").GetString() ?? string.Empty,
             server.GetProperty("status").GetString() ?? "unknown",
-            ipv4.GetProperty("ip").GetString() ?? throw new InvalidOperationException("Hetzner server has no public IPv4 address."),
+            ipv4.GetProperty("ip").GetString() ?? throw new InvalidOperationException("The Hetzner worker has no public IPv4 address."),
             ipv4.TryGetProperty("id", out var primaryId) && primaryId.ValueKind == JsonValueKind.Number ? primaryId.GetInt64() : 0,
             labels,
             created,
@@ -345,7 +345,7 @@ internal sealed class HetznerCloudClient : IDisposable
     public static void VerifyOwnership(ServerSnapshot server, string controller)
     {
         if (server.Labels.GetValueOrDefault(ManagedLabel) != "true" || server.Labels.GetValueOrDefault(ControllerLabel) != controller)
-            throw new InvalidOperationException($"Hetzner server {server.Id} does not have the expected ownership labels; refusing to reuse or delete it.");
+            throw new InvalidOperationException($"The Hetzner worker {server.Name} does not have the expected ownership labels; refusing to reuse or delete it.");
     }
 
     public void Dispose()

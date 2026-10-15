@@ -135,16 +135,23 @@ public sealed class QueueCommandsTests : QueueTestBase
     }
 
     [Fact]
-    public async Task HistoryListsTheEndedJobsWithTheirFailure()
+    public async Task HistoryListsTheEndedJobsInTheGlossarysWordsWithTheirFailureInPlainPhrases()
     {
-        var failed = Job("clip-a.mp4", JobStatus.Failed, job => { job.FailureCategory = "EncodingFailed"; job.FailureMessage = "ab-av1 exited with 1."; });
+        var failed = Job("clip-a.mp4", JobStatus.Failed, job => { job.FailureCategory = "EncodeFailed"; job.FailureMessage = "ab-av1 exited with 1."; });
         var completed = Job("clip-b.mp4", JobStatus.Completed, job => { job.Crf = 28; job.PercentageSaved = 60.0m; });
+        // What a drop stores: the status already says "Dropped", so the stored category and message are not repeated.
+        var dropped = Job("clip-c.mp4", JobStatus.Cancelled, job => { job.FailureCategory = "Cancelled"; job.FailureMessage = "Dropped by user."; });
+        var notWorth = Job("clip-d.mp4", JobStatus.Skipped, job => { job.FailureCategory = "NotWorthConverting"; job.FailureMessage = "AV1 would keep 95%."; });
+        var missing = Job("clip-e.mp4", JobStatus.Failed, job => { job.FailureCategory = "SourceMissing"; job.FailureMessage = "Original does not exist: clip-e.mp4"; });
 
-        var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new ListingRepository(Repository, [Job("open.mp4", JobStatus.Queued)], [failed, completed])), "history");
+        var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new ListingRepository(Repository, [Job("open.mp4", JobStatus.Queued)], [failed, completed, dropped, notWorth, missing])), "history");
 
         result.Should().Be((0, Transcript(
-            $"{failed.Id:N}  Failed           clip-a.mp4 — EncodingFailed: ab-av1 exited with 1.",
-            $"{completed.Id:N}  Completed        clip-b.mp4 CRF 28 60.0% saved"), ""));
+            $"{failed.Id:N}  Failed               clip-a.mp4, encoding failed: ab-av1 exited with 1.",
+            $"{completed.Id:N}  Finalised            clip-b.mp4 CRF 28 60.0% saved",
+            $"{dropped.Id:N}  Dropped              clip-c.mp4",
+            $"{notWorth.Id:N}  Not worth converting clip-d.mp4, AV1 would keep 95%.",
+            $"{missing.Id:N}  Failed               clip-e.mp4, Original does not exist: clip-e.mp4"), ""));
     }
 
     [Fact]

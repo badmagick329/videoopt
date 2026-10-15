@@ -119,7 +119,7 @@ public sealed class ImmichRunCommandTests : IDisposable
             "",
             "Failed jobs:",
             $"{failed.Id:N}  clip-a.mp4",
-            "SourceMissing: The staged original is missing.",
+            "The staged original is missing.",
             "",
             "Re-upload guard issues:",
             "  an issue",

@@ -27,7 +27,7 @@ public sealed class RunBannerTests
         settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice = null;
 
         RunBanner.Describe(settings).Should().Be(
-            "Encoding on a Hetzner server created for this run, billed hourly, trying cpx42 with no price cap.");
+            "Encoding on a new Hetzner worker created for this run, billed hourly, trying cpx42 with no price cap.");
     }
 
     [Fact]
@@ -36,7 +36,7 @@ public sealed class RunBannerTests
         var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "recorded", new DateTimeOffset(2026, 10, 12, 20, 4, 0, TimeSpan.FromHours(2)), "cx43", "hel1");
 
         RunBanner.Describe(Settings(ProcessingModes.RemoteSsh, RemoteLifecycleModes.Hetzner), worker).Should().Be(
-            "Encoding on Hetzner cx43 in hel1, kept from an earlier run and billing since 2026-10-12 18:04 UTC.");
+            "Encoding on the Hetzner worker video-optimiser-1, a cx43 in hel1, kept from an earlier run and billing since 2026-10-12 18:04 UTC.");
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public sealed class RunBannerTests
         var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "recorded", null, string.Empty, string.Empty);
 
         RunBanner.Describe(Settings(ProcessingModes.RemoteSsh, RemoteLifecycleModes.Hetzner), worker).Should().Be(
-            "Encoding on Hetzner server 42, kept from an earlier run and still billing.");
+            "Encoding on the Hetzner worker video-optimiser-1, kept from an earlier run and still billing.");
     }
 
     [Fact]

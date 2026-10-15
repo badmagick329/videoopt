@@ -60,7 +60,7 @@ internal static class StoppedRunMessage
         return
         [
             settingUp
-                ? $"Stopped while the worker {worker} was being set up. It stays up, billed hourly."
+                ? $"Stopped while the worker {worker} was bootstrapping. It stays up, billed hourly."
                 : downloading
                     ? $"Stopped. The encoded output is waiting on the worker {worker}, which stays up, billed hourly."
                     : $"Stopped. Nothing is running on the worker {worker}, but it stays up, billed hourly, so the job can resume.",

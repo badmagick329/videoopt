@@ -10,7 +10,7 @@ internal static class ConsolePrompts
     /// Reads the answer even when input is redirected, like <c>finalize</c>, so an agent or script approves by piping
     /// <c>'y'</c>; the worker question refuses redirected input (<see cref="IConsoleInput.IsInteractive"/>). No input at all declines.
     /// </summary>
-    public static Task<bool> ConfirmServerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken) =>
+    public static Task<bool> ConfirmWorkerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken) =>
         ConfirmAsync(quote.FormatPrompt(), cancellationToken);
 
     public static Task<bool> ConfirmAsync(string prompt, CancellationToken cancellationToken)

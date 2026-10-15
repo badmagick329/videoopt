@@ -254,15 +254,15 @@ public sealed class DoctorService(
                     DiagnosticStatus.Warning,
                     "ManagedWorkerBilling",
                     worker.Status == RemoteWorkerStatuses.PrimaryIpRetained
-                        ? $"The server of managed Hetzner worker {worker.Name} is gone, but its IPv4 address still bills. Delete it with '{hints.Command("worker delete")}'."
-                        : $"Managed Hetzner worker {worker.Name} is {worker.Status} and bills until it is deleted. Delete it with '{hints.Command("worker delete")}'."));
+                        ? $"The Hetzner worker {worker.Name} is gone, but its IPv4 address still bills. Delete it with '{hints.Command("worker delete")}'."
+                        : $"The Hetzner worker {worker.Name} is {RemoteWorkerStatuses.Describe(worker.Status)} and bills until it is deleted. Delete it with '{hints.Command("worker delete")}'."));
             }
             return false;
         }
 
         if (worker?.Status == "running") return true;
 
-        var state = worker is null ? "No managed Hetzner worker exists" : $"Managed Hetzner worker {worker.ServerId} is {worker.Status}";
+        var state = worker is null ? "No Hetzner worker exists" : $"The Hetzner worker {worker.Name} is {RemoteWorkerStatuses.Describe(worker.Status)}";
         diagnostics.Add(new Diagnostic(
             DiagnosticCategory.Dependency,
             DiagnosticStatus.Warning,

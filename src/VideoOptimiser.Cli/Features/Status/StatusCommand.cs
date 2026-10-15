@@ -60,7 +60,7 @@ internal sealed class StatusCommand(IStatusCard card)
             return info is null ? $"Worker: none recorded on this PC; {why}" : $"Worker: {info.Name}{Placement(info)}, as recorded on this PC; {why}";
         }
         if (info is null) return "Worker: none.";
-        if (info.Status == RemoteWorkerStatuses.PrimaryIpRetained) return $"Worker: {info.Name}'s server is gone, but its IPv4 address still bills.";
+        if (info.Status == RemoteWorkerStatuses.PrimaryIpRetained) return $"Worker: {info.Name} is gone from Hetzner, but its IPv4 address still bills.";
         var up = worker.Uptime is { } uptime ? $", up {HumanReadableValues.FormatDuration(uptime)}" : string.Empty;
         var billing = price is { } hourly ? $"billing {HourlyPrice.Format(hourly)} incl. VAT" : "billing hourly";
         return $"Worker: {info.Name}{Placement(info)}{up}, {billing}.";

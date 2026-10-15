@@ -17,18 +17,18 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 ```text
 Will create cpx42 in hel1 at EUR 0.134/h incl. VAT.
 If that placement fails, a fallback may cost up to EUR 0.266/h (ccx33 in hel1).
-Create the server? [y/N]
+Create the worker? [y/N]
 ```
 
 Gate it with the run's own quote:
 
-1. Run the command without piping anything. It prints these lines, creates nothing, prints `No server was created.` and exits `0`. Its jobs stay queued.
+1. Run the command without piping anything. It prints these lines, creates nothing, prints `No worker was created.` and exits `0`. Its jobs stay queued.
 2. Show the user the price lines.
 3. After the go-ahead, run it again with `'y'` piped. One `y` also covers the fallbacks, up to the second line's price.
 
 A run that reuses a running server never asks; it is already billing.
 
-A new server prints `Setting up the worker: ... takes several minutes.`, then `Worker setup: P%, <stage>...` as it builds its tools, and `Worker ready after <duration>.` SSH is refused for the first few minutes of a boot; only after 3 minutes does `Still waiting for the worker's SSH (...)` appear, at most once a minute. That is still waiting, not failing; the run stops by itself at `hetzner.bootstrapTimeout`.
+A new server prints `Bootstrapping the worker: ... takes several minutes.`, then `Bootstrapping: P%, <stage>...` as it builds its tools, and `Worker ready after <duration>.` SSH is refused for the first few minutes of a boot; only after 3 minutes does `Still waiting for the worker's SSH (...)` appear, at most once a minute. That is still waiting, not failing; the run stops by itself at `hetzner.bootstrapTimeout`.
 
 `--local` and `--remote` on `run` and `immich run` set the mode for that run only. `--remote` on a Hetzner config is gated as above. `--local` encodes on this PC and needs no gate; use it when the user wants a free trial run on a remote config. Never edit `processing.mode` to switch for one run.
 
@@ -51,7 +51,7 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 2. **Convert.** `run`. It converts every queued video, Immich ones included, and passes over held ones, which it counts first (`2 videos are held; ...`). Done when it exits. A video can take an hour or more on a PC; run it in the background if your harness allows, and check progress with `status --json` (its `run.converting`) or `queue list --json`. Exit `0`: no job failed; each is ready or not worth converting. Exit `10`: some failed and some are ready. Exit `6`: some failed and none is ready.
 3. **Report.** From `queue list --json`, list each `ReadyToFinalize` job's `sourcePath`, `outputPath` and `percentageSaved`, and each failed job's `failureCategory` and `failureMessage`. Ask the user to watch the outputs.
 4. **Gate.** Say what `original.action` will do to each original: `delete`, `archive` or `keep`.
-5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` per job to standard output, or `Failed  <file>: <message>` to standard error, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out), then each failed job's ID, file and message. Done at exit `0`; exit `10` means at least one failed: find each `Failed` line in *Recovery*.
+5. **Finalise.** After the go-ahead, `'y' | video-optimiser finalize --ready`. It prints `Done    <file>: <message>` per job to standard output, or `Failed  <file>: <message>` to standard error, then the tally, such as `Finalised: 3. Failed: 1.` (zero counts are left out). Each failure is printed once, in its `Failed` line. Done at exit `0`; exit `10` means at least one failed: find each `Failed` line in *Recovery*.
 
 ## Workflow: Immich
 

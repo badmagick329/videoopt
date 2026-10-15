@@ -41,8 +41,8 @@ internal sealed class WorkerCommands(IRemoteWorkerLifecycle lifecycle, ISettings
         var databasePath = configuration.Settings.Database.Path;
         try
         {
-            var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, databasePath, new InlineProgress<string>(Console.WriteLine), ConsolePrompts.ConfirmServerCreationAsync, cancellationToken);
-            Console.WriteLine($"Worker ready: {worker.Name} ({worker.ServerId}) {worker.Address}{DescribePlacement(worker)}");
+            var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, databasePath, new InlineProgress<string>(Console.WriteLine), ConsolePrompts.ConfirmWorkerCreationAsync, cancellationToken);
+            Console.WriteLine($"Worker ready: {worker.Name} {worker.Address}{DescribePlacement(worker)}");
             return (int)ExitCode.Success;
         }
         catch (OperationCanceledException)
@@ -65,8 +65,8 @@ internal sealed class WorkerCommands(IRemoteWorkerLifecycle lifecycle, ISettings
         var check = await lifecycle.CheckAsync(configuration.Settings, configuration.Settings.Database.Path, cancellationToken);
         var worker = check.Worker;
         var asked = check.NotCheckedReason is null;
-        if (worker is not null) Console.WriteLine($"{worker.Name}  server {worker.ServerId}  {worker.Status}  {worker.Address}{DescribePlacement(worker)}");
-        else Console.WriteLine(asked ? "No managed Hetzner worker exists." : "No managed Hetzner worker is recorded on this PC.");
+        if (worker is not null) Console.WriteLine($"{worker.Name}  {RemoteWorkerStatuses.Describe(worker.Status)}  {worker.Address}{DescribePlacement(worker)}");
+        else Console.WriteLine(asked ? "No Hetzner worker exists." : "No Hetzner worker is recorded on this PC.");
         if (!asked) Console.WriteLine($"Hetzner wasn't checked: {check.NotCheckedReason!.TrimEnd('.')}.");
         return (int)ExitCode.Success;
     }
@@ -80,7 +80,7 @@ internal sealed class WorkerCommands(IRemoteWorkerLifecycle lifecycle, ISettings
     public async Task<int> DeleteAsync(LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
         var deleted = await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
-        if (!deleted) Console.WriteLine("No managed Hetzner worker exists.");
+        if (!deleted) Console.WriteLine("No Hetzner worker exists.");
         return (int)ExitCode.Success;
     }
 }

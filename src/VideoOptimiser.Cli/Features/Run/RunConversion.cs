@@ -113,7 +113,7 @@ internal sealed class RunConversion(IQueueService queue, IQueueDiscovery discove
         }
         else if (!managed && configuration.Settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the server; powering it off still bills.");
+            Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the worker; powering it off still bills.");
         }
         return (result.ReadyToFinalize, result.SkippedJobs.Count, failures, result.UnreachableWorkerJob is not null, result.StoppedAfter is not null, workerHandled);
     }
@@ -174,7 +174,7 @@ internal sealed class RunConversion(IQueueService queue, IQueueDiscovery discove
         foreach (var job in failedJobs)
         {
             Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
-            Console.WriteLine($"{job.FailureCategory}: {job.FailureMessage}");
+            Console.WriteLine(FailureWords.Describe(job.FailureCategory, job.FailureMessage, sentence: true) ?? job.FailureMessage);
         }
     }
 
@@ -237,5 +237,5 @@ internal sealed class RunConversion(IQueueService queue, IQueueDiscovery discove
     }
 
     private Task<RemoteWorkerInfo> EnsureWorkerReadyAsync(LoadedConfiguration configuration, CancellationToken cancellationToken) =>
-        lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConsolePrompts.ConfirmServerCreationAsync, cancellationToken);
+        lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConsolePrompts.ConfirmWorkerCreationAsync, cancellationToken);
 }

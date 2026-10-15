@@ -317,11 +317,11 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         {
             foreach (var job in jobs)
             {
-                var suffix = job.FailureMessage is null ? string.Empty : $" — {job.FailureCategory}: {job.FailureMessage}";
+                var suffix = job.FailureMessage is null || FailureWords.Describe(job.FailureCategory, job.FailureMessage, sentence: false) is not { } detail ? string.Empty : $", {detail}";
                 var savings = job.PercentageSaved is null ? string.Empty : $" {job.PercentageSaved:F1}% saved";
                 // An Immich job's file name is the original's in Immich; the asset IDs find it there.
                 var immich = job.ImmichAssetId is { } asset ? $" Immich {asset}{(job.ImmichNewAssetId is { } av1 ? $" -> {av1}" : string.Empty)}" : string.Empty;
-                Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}");
+                Console.WriteLine($"{job.Id:N}  {StatusName(job.Status),-20} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}");
             }
         }
 

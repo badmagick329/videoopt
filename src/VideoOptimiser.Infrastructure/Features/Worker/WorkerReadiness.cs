@@ -109,14 +109,14 @@ internal sealed class WorkerReadiness
                     var observedAt = _utcNow();
                     if (lastProgress != currentProgress)
                     {
-                        progress?.Report($"Worker setup: {currentProgress.Percent}%, {DescribeStage(currentProgress.Stage)}...");
+                        progress?.Report($"Bootstrapping: {currentProgress.Percent}%, {DescribeStage(currentProgress.Stage)}...");
                         lastProgress = currentProgress;
                         phaseStartedAt = observedAt;
                         lastHeartbeatAt = observedAt;
                     }
                     else if (phaseStartedAt is not null && lastHeartbeatAt is not null && observedAt - lastHeartbeatAt >= _progressHeartbeatInterval)
                     {
-                        progress?.Report($"Worker setup: {currentProgress.Percent}%, {DescribeStage(currentProgress.Stage)} ({HumanReadableValues.FormatDuration(observedAt - phaseStartedAt.Value)} in this step)...");
+                        progress?.Report($"Bootstrapping: {currentProgress.Percent}%, {DescribeStage(currentProgress.Stage)} ({HumanReadableValues.FormatDuration(observedAt - phaseStartedAt.Value)} in this step)...");
                         lastHeartbeatAt = observedAt;
                     }
                 }
@@ -131,7 +131,7 @@ internal sealed class WorkerReadiness
             }
             await _delay(TimeSpan.FromSeconds(15), cancellationToken);
         }
-        throw new TimeoutException($"Hetzner worker {state.ServerId} did not finish bootstrap within {settings.Processing.RemoteSsh.Hetzner.BootstrapTimeout}. It was retained for inspection.");
+        throw new TimeoutException($"The Hetzner worker {state.Name} did not finish bootstrapping within {settings.Processing.RemoteSsh.Hetzner.BootstrapTimeout}. It was retained for inspection.");
     }
 
     // The script's stage names ("Building FFmpeg") start a sentence; here they continue one.

@@ -15,6 +15,14 @@ public static class RemoteWorkerStatuses
 
     /// <summary>The server is gone but its Primary IPv4 still exists, and an address that exists bills.</summary>
     public const string PrimaryIpRetained = "server-missing-primary-ip-retained";
+
+    /// <summary>The status as a user reads it: the two internal values become words, and Hetzner's own (<c>running</c>, <c>off</c>) are already words.</summary>
+    public static string Describe(string status) => status switch
+    {
+        Recorded => "as recorded on this PC",
+        PrimaryIpRetained => "gone from Hetzner, its IPv4 address still bills",
+        _ => status
+    };
 }
 
 /// <summary>Why one configured server type produced no server.</summary>
@@ -47,7 +55,7 @@ public sealed class RemoteWorkerCapacityUnavailableException : InvalidOperationE
         var lines = outcomes.Select(outcome => outcome.LocationsTried.Count == 0
             ? $"  {outcome.ServerType}: {outcome.Reason}"
             : $"  {outcome.ServerType} in {string.Join(", ", outcome.LocationsTried)}: {outcome.Reason}");
-        return "No Hetzner server could be created, so none is running. Tried:" + Environment.NewLine +
+        return "No Hetzner worker could be created, so none is running. Tried:" + Environment.NewLine +
                string.Join(Environment.NewLine, lines) + Environment.NewLine +
                "Try again later, or add server types or locations.";
     }
@@ -80,7 +88,7 @@ public sealed record RemoteWorkerCreationQuote(RemoteWorkerCreationOption First,
                 ? $"If that placement fails, a fallback may cost up to {FormatPrice(highest)} ({MostExpensive.ServerType} in {MostExpensive.Location})."
                 : $"If that placement fails, a fallback may cost more ({MostExpensive.ServerType} in {MostExpensive.Location}, price not listed).");
         }
-        lines.Add("Create the server? [y/N] ");
+        lines.Add("Create the worker? [y/N] ");
         return string.Join(Environment.NewLine, lines);
     }
 
@@ -95,7 +103,7 @@ public static class HourlyPrice
 }
 
 /// <summary>The user declined <see cref="RemoteWorkerCreationQuote"/>, so nothing was created and nothing bills.</summary>
-public sealed class RemoteWorkerCreationDeclinedException() : Exception("No server was created.");
+public sealed class RemoteWorkerCreationDeclinedException() : Exception("No worker was created.");
 
 /// <summary>What <see cref="IRemoteWorkerLifecycle.CheckAsync"/> found.</summary>
 /// <param name="Worker">Null when Hetzner has no managed server for this database (or, when it couldn't be asked, when the state file records none).</param>

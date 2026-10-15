@@ -121,12 +121,11 @@ public sealed partial class ColourOutputTests
         var console = new FinalizationConsole(output, TerminalStyle.Ansi, error, TerminalStyle.Plain);
         console.Outcome(done, new FinalizationResult(done, ExitCode.Success, "Original deleted."));
         console.Outcome(failed, new FinalizationResult(failed, ExitCode.FinalisationFailure, "The AV1 changed since validation."));
-        console.Summary(2, [(failed, "The AV1 changed since validation.")]);
+        console.Summary(2, 1);
 
         output.ToString().Should().Be(
             $"{Esc}32mDone{Reset}    a.mp4: Original deleted.\n" +
-            $"{Esc}32mFinalised: 1.{Reset} {Esc}31mFailed: 1.{Reset}\n" +
-            $"{failed.Id:N}  b.mp4  The AV1 changed since validation.\n");
+            $"{Esc}32mFinalised: 1.{Reset} {Esc}31mFailed: 1.{Reset}\n");
         error.ToString().Should().Be("Failed  b.mp4: The AV1 changed since validation.\n");
 
         var redError = new StringWriter { NewLine = "\n" };

@@ -301,11 +301,11 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
         DeleteCalls++;
         DatabasePaths.Add(databasePath);
         if (!Exists) return Task.FromResult(false);
-        progress?.Report($"Deleting Hetzner server {CliFakes.Worker.ServerId}.");
+        progress?.Report($"Deleting the worker {CliFakes.Worker.Name}.");
         DuringDelete?.Invoke();
         if (DeleteFailure is not null) throw DeleteFailure;
         Exists = false;
-        progress?.Report("Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped.");
+        progress?.Report("Worker deleted; billing for it and its IPv4 address has stopped.");
         return Task.FromResult(true);
     }
 }

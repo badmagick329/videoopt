@@ -78,7 +78,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         stored.Status.Should().Be(JobStatus.Completed);
         stored.ImmichNewAssetId.Should().Be(replacement.Id);
         stored.FailureMessage.Should().BeNull();
-        result.Message.Should().Be($"New asset {replacement.Id}; the original is in Immich's trash.");
+        result.Message.Should().Be("The AV1 is in Immich as PXL_20250501.MP4; the original is in Immich's trash.");
         Directory.Exists(StagingFolder(original)).Should().BeFalse();
         Directory.Exists(_settings.Immich.StagingDirectory).Should().BeTrue();
     }
@@ -202,7 +202,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         var result = await FinalizeAsync(job);
 
         result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
-        result.Message.Should().Contain($"Immich returned the original, asset {original.Id}, as the AV1.");
+        result.Message.Should().Contain("Immich returned the original of PXL.mp4 as its AV1.");
         _immich.Calls.Should().NotContain(call => call.StartsWith("copy") || call.StartsWith("trash"));
         _immich.Get(original.Id).IsTrashed.Should().BeFalse();
         (await JobAsync(job)).Status.Should().Be(JobStatus.Failed);
@@ -249,7 +249,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         var result = await FinalizeAsync(job);
 
         result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
-        result.Message.Should().Contain(trashed.Id).And.Contain("trash");
+        result.Message.Should().Be("The uploaded AV1 (PXL.mp4) is in Immich's trash. Restore it or delete it permanently, then run 'video-optimiser immich finalize' again.");
         _immich.Calls.Should().NotContain(call => call.StartsWith("copy") || call.StartsWith("trash"));
         (await JobAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
     }
@@ -264,7 +264,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         var result = await FinalizeAsync(job);
 
         result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
-        result.Message.Should().StartWith("Original changed in Immich");
+        result.Message.Should().Be("The original of PXL.mp4 changed in Immich, so it no longer holds the file that was converted.");
         _immich.Calls.Should().Equal($"get {original.Id}");
         var failed = await JobAsync(job);
         failed.Status.Should().Be(JobStatus.Failed);
@@ -394,13 +394,13 @@ public sealed class ImmichFinalizationTests : IDisposable
         {
             "nothing uploaded" => $"If it was deleted, the downloaded copy at {job.SourcePath} and its AV1 at {job.OutputPath} may be the only copies left: move them somewhere safe before running {cancel}.",
             "nothing uploaded, download gone" => $"If it was deleted, its AV1 at {job.OutputPath} may be the only copy left: move it somewhere safe before running {cancel}.",
-            "uploaded" => $"If it was deleted, its AV1 is already in Immich as asset {av1}; run {cancel} to finish.",
-            "uploaded, AV1 trashed" => $"If it was deleted, its AV1, asset {av1}, is in Immich's trash: restore it, then run {cancel}.",
+            "uploaded" => $"If it was deleted, its AV1 ({Av1Name(job)}) is already in Immich; run {cancel} to finish.",
+            "uploaded, AV1 trashed" => $"If it was deleted, its AV1 ({Av1Name(job)}) is in Immich's trash: restore it, then run {cancel}.",
             "uploaded, AV1 gone, local AV1 gone" => $"If it was deleted, the downloaded copy at {job.SourcePath} may be the only one left: move it somewhere safe before running {cancel}.",
-            _ => $"If it was deleted, no copy is left on this PC and its AV1, asset {av1}, can't be read in Immich: if it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again; otherwise nothing is left to keep, so run {cancel}."
+            _ => $"If it was deleted, no copy is left on this PC and its AV1 ({Av1Name(job)}) can't be read in Immich: if it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again; otherwise nothing is left to keep, so run {cancel}."
         };
         result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
-        result.Message.Should().Be($"Immich can't find the original, asset {original.Id}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again. {deleted}");
+        result.Message.Should().Be($"Immich can't find the original of {Path.GetFileName(job.SourcePath)}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again. {deleted}");
         (await JobAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 
@@ -416,6 +416,9 @@ public sealed class ImmichFinalizationTests : IDisposable
         result.Message.Should().Be("Immich returned HTTP 502 for GET /api/assets/x. Run 'video-optimiser immich finalize' again to resume.");
         (await JobAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
     }
+
+    /// <summary>The name the AV1 is uploaded under, which is how the user finds it in Immich.</summary>
+    private static string Av1Name(JobRecord job) => Path.ChangeExtension(Path.GetFileName(job.SourcePath), Path.GetExtension(job.OutputPath));
 
     private Task<FinalizationResult> FinalizeAsync(JobRecord job) => _finalizer.FinalizeAsync(_settings.Database.Path, job.Id, _settings);
 

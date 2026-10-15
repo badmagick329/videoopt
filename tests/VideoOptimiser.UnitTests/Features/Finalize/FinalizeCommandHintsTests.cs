@@ -86,9 +86,13 @@ public sealed class FinalizeCommandHintsTests : QueueTestBase
         code.Should().Be(8);
         var again = $"video-optimiser immich finalize{ConfigArgument}";
         var drop = $"video-optimiser queue drop {job.Id:N}{ConfigArgument}";
-        var message = $"Immich can't find the original, asset {job.ImmichAssetId}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run '{again}' again. If it was deleted, the downloaded copy at {job.SourcePath} and its AV1 at {job.OutputPath} may be the only copies left: move them somewhere safe before running '{drop}'.";
-        stdout.Should().Contain(message);
-        stderr.Should().Contain(message);
+        var message = $"Immich can't find the original of IMG_0001.MOV: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run '{again}' again. If it was deleted, the downloaded copy at {job.SourcePath} and its AV1 at {job.OutputPath} may be the only copies left: move them somewhere safe before running '{drop}'.";
+        stderr.ReplaceLineEndings("\n").Should().Be($"Failed  IMG_0001.MOV: {message}\n");
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            $"{job.Id:N}  IMG_0001.MOV  not readable in Immich  sizes unknown\n" +
+            "1 video: 0 B -> 0 B, saving 0 B.\n" +
+            "Each AV1 is uploaded as a new asset with the original's albums, tags, favourite and other relations; then the original goes to Immich's trash.\n" +
+            "Finalise these jobs? [y/N] Failed: 1.\n");
     }
 
     /// <summary>A job at the end of encoding: AV1 and source on disk, and the validation record when asked for.</summary>

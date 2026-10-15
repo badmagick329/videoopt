@@ -215,7 +215,7 @@ public sealed class HumanOutputConsoleTests
             "  b.mp4\n" +
             $"Queued in {second}:\n" +
             "  c.mp4\n" +
-            "Queued: 3. Already queued: 2. Held: 1. Ready to finalise: 2. Cache hits: 5. Real probes: 4.\n");
+            "Queued: 3. Already queued: 2. Held: 1. Ready to finalise: 2.\n");
     }
 
     /// <summary>The notes under the counts suggest commands, which carry the --config the user typed.</summary>

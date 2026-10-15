@@ -81,15 +81,15 @@ public sealed class FinalizeCommandsTests : IDisposable
         stdout.ReplaceLineEndings("\n").Should().Be(
             "clip-a.mp4  1.0 GiB -> 400.0 MiB, 60.0% saved\n" +
             "clip-b.mp4  sizes unknown\n" +
-            "Each original is deleted and its AV1 takes its place.\n" +
+            "Each original is deleted and its AV1 takes its place as an .mp4 file.\n" +
             "Finalise these jobs? [y/N] Finalisation cancelled.\n");
         _finalizer.Calls.Should().BeEmpty();
     }
 
     [Theory]
-    [InlineData("archive", "Archive", "Each original moves to an Archive folder beside it and its AV1 takes its place.")]
+    [InlineData("archive", "Archive", "Each original moves to an Archive folder beside it and its AV1 takes its place as an .mp4 file.")]
     [InlineData("keep", "Archive", "Each original stays; its AV1 is installed beside it as <name>.av1<extension>.")]
-    [InlineData("archive", "<absolute>", "Each original moves to <absolute> and its AV1 takes its place.")]
+    [InlineData("archive", "<absolute>", "Each original moves to <absolute> and its AV1 takes its place as an .mp4 file.")]
     public async Task ReadyDescribesWhatHappensToAFileJobsOriginalPerTheConfiguredAction(string action, string archive, string line)
     {
         _jobs.Add(FileJob("clip-a.mp4", null, null, null));
@@ -100,6 +100,25 @@ public sealed class FinalizeCommandsTests : IDisposable
         var (_, stdout, _) = await RunAsync(null, "finalize", "--ready", extraConfig: $"original:\n  action: {action}\n  archiveDirectory: '{archive}'\n");
 
         stdout.ReplaceLineEndings("\n").Should().Be($"clip-a.mp4  sizes unknown\n{line}\nFinalise these jobs? [y/N] Finalisation cancelled.\n");
+    }
+
+    /// <summary>The AV1 takes the container of its own output, not the original's: a .mov original is replaced by an .mp4 file.</summary>
+    [Fact]
+    public async Task ReadyNamesTheContainerEachAv1TakesItsPlaceIn()
+    {
+        var mov = FileJob("IMG_0001.MOV", null, null, null);
+        mov.OutputPath = Path.Combine(_directory, "IMG_0001.encoding.MP4");
+        var mkv = FileJob("clip.mkv", null, null, null);
+        mkv.OutputPath = Path.Combine(_directory, "clip.encoding.mkv");
+        _jobs.AddRange([mov, mkv]);
+
+        var (_, stdout, _) = await RunAsync(null, "finalize", "--ready");
+
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            "IMG_0001.MOV  sizes unknown\n" +
+            "clip.mkv  sizes unknown\n" +
+            "Each original is deleted and its AV1 takes its place as an .mkv or .mp4 file.\n" +
+            "Finalise these jobs? [y/N] Finalisation cancelled.\n");
     }
 
     [Fact]
@@ -118,10 +137,9 @@ public sealed class FinalizeCommandsTests : IDisposable
         stdout.ReplaceLineEndings("\n").Should().Be(
             "clip-a.mp4  sizes unknown\n" +
             "clip-b.mp4  sizes unknown\n" +
-            "Each original is deleted and its AV1 takes its place.\n" +
+            "Each original is deleted and its AV1 takes its place as an .mp4 file.\n" +
             "Finalise these jobs? [y/N] Done    clip-a.mp4: Original deleted.\n" +
-            "Finalised: 1. Failed: 1.\n" +
-            $"{broken.Id:N}  clip-b.mp4  Original changed after encoding.\n");
+            "Finalised: 1. Failed: 1.\n");
         _finalizer.Calls.Should().Equal(done.Id, broken.Id);
     }
 
@@ -154,13 +172,14 @@ public sealed class FinalizeCommandsTests : IDisposable
         _finalizer.Results[first.Id] = new(first, ExitCode.FinalisationFailure, "Original changed after encoding.");
         _finalizer.Results[second.Id] = new(second, ExitCode.FinalisationFailure, "Original changed after encoding.");
 
-        var (code, stdout, _) = await RunAsync("y\n", "finalize", "--ready");
+        var (code, stdout, stderr) = await RunAsync("y\n", "finalize", "--ready");
 
         // Only immich finalize tells a total failure from a partial one; finalize --ready ends in PartialSuccess either way.
         code.Should().Be((int)ExitCode.PartialSuccess);
-        stdout.ReplaceLineEndings("\n").Should().EndWith("Finalise these jobs? [y/N] Failed: 2.\n" +
-            $"{first.Id:N}  clip-a.mp4  Original changed after encoding.\n" +
-            $"{second.Id:N}  clip-b.mp4  Original changed after encoding.\n");
+        stderr.ReplaceLineEndings("\n").Should().Be(
+            "Failed  clip-a.mp4: Original changed after encoding.\n" +
+            "Failed  clip-b.mp4: Original changed after encoding.\n");
+        stdout.ReplaceLineEndings("\n").Should().EndWith("Finalise these jobs? [y/N] Failed: 2.\n");
     }
 
     [Fact]
@@ -269,9 +288,7 @@ public sealed class FinalizeCommandsTests : IDisposable
             "Failed  clip-a.mp4: Original changed in Immich.\n" +
             "Failed  clip-b.mp4: Original changed in Immich.\n");
         stdout.ReplaceLineEndings("\n").Should().EndWith(
-            "Finalise these jobs? [y/N] Failed: 2.\n" +
-            $"{first.Id:N}  clip-a.mp4  Original changed in Immich.\n" +
-            $"{second.Id:N}  clip-b.mp4  Original changed in Immich.\n");
+            "Finalise these jobs? [y/N] Failed: 2.\n");
         stdout.Should().NotContain("trash for");
     }
 
@@ -344,6 +361,7 @@ public sealed class FinalizeCommandsTests : IDisposable
         Id = Guid.NewGuid(),
         SourcePath = Path.Combine(_directory, name),
         Status = JobStatus.ReadyToFinalize,
+        OutputPath = Path.Combine(_directory, name + ".av1.mp4"),
         SourceSizeBytes = before,
         OutputSizeBytes = after,
         PercentageSaved = saved

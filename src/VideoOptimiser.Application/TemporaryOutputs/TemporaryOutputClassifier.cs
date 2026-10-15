@@ -41,8 +41,8 @@ public static partial class TemporaryOutputClassifier
             JobStatus.Cancelled => "job cancelled",
             JobStatus.Failed => "job failed",
             JobStatus.Skipped => "job skipped",
-            _ when attempt < job.Attempt => $"superseded by attempt {job.Attempt}",
-            _ when RestartsEncode(job) => "interrupted local encode; resume starts a new attempt",
+            _ when attempt < job.Attempt => "replaced by a newer AV1 of the same video",
+            _ when RestartsEncode(job) => "stopped encode; the next run starts it again",
             _ => null
         };
     }

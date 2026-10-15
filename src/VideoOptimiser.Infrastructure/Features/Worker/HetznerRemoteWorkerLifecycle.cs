@@ -21,7 +21,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     private readonly HetznerPlacement _placement;
     private readonly WorkerReadiness _readiness;
     private readonly TimeSpan _checkTimeout;
-    private const string MoreThanOneServerMessage = "More than one managed Hetzner server has this controller label; refusing to choose or delete either one.";
+    private const string MoreThanOneServerMessage = "More than one Hetzner worker has this controller label; refusing to choose or delete either one.";
 
     public HetznerRemoteWorkerLifecycle(IExternalProcessRunner processes)
         : this(processes, new HttpClient { BaseAddress = new Uri(HetznerHttp.ApiBase) }, Task.Delay, ownsHttpClient: true)
@@ -64,16 +64,16 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         if (state is null)
         {
             _ = await _cloud.DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
-            progress?.Report("No managed Hetzner worker is running.");
+            progress?.Report("No Hetzner worker exists yet.");
             // cloud-init runs the script with bash, which fails on CRLF; a Windows checkout with core.autocrlf has CRLF.
             var script = (await File.ReadAllTextAsync(settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, cancellationToken)).ReplaceLineEndings("\n");
             state = await CreateAsync(token, settings, controller, statePath, script, progress, confirmCreation, cancellationToken);
-            progress?.Report($"Created Hetzner server {state.ServerId} at {state.Address}; bootstrap is running.");
-            progress?.Report("Setting up the worker: it builds libvmaf, SVT-AV1 and FFmpeg from source and installs ab-av1, which takes several minutes. Progress follows.");
+            progress?.Report($"Created the Hetzner worker {state.Name}; it is bootstrapping.");
+            progress?.Report("Bootstrapping the worker: it builds libvmaf, SVT-AV1 and FFmpeg from source and installs ab-av1, which takes several minutes. Progress follows.");
         }
         else
         {
-            progress?.Report($"Reusing Hetzner server {state.ServerId} at {state.Address}; checking bootstrap progress.");
+            progress?.Report($"Reusing the Hetzner worker {state.Name}; checking its bootstrap progress.");
         }
 
         ApplyConnection(settings, state);
@@ -171,7 +171,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         if (state is null)
         {
             var deletedOrphans = await _cloud.DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
-            if (deletedOrphans) progress?.Report("Deleted an orphaned managed Primary IPv4.");
+            if (deletedOrphans) progress?.Report("Deleted an IPv4 address an earlier worker left behind.");
             return deletedOrphans;
         }
 
@@ -181,7 +181,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         // be wrong, and the user needs to know the record was a leftover.
         progress?.Report(server is null
             ? $"The worker {state.Name} is already gone from Hetzner; its record on this PC is removed."
-            : $"Deleting Hetzner server {state.ServerId}.");
+            : $"Deleting the worker {state.Name}.");
         if (server is not null)
         {
             var actionId = await _cloud.DeleteServerAsync(token, state.ServerId, cancellationToken);
@@ -191,13 +191,13 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
 
         if (state.PrimaryIpv4Id > 0 && await _cloud.PrimaryIpExistsAsync(token, state.PrimaryIpv4Id, cancellationToken))
         {
-            progress?.Report($"Deleting retained Primary IPv4 {state.PrimaryIpv4Id}.");
+            progress?.Report("Deleting its IPv4 address.");
             await _cloud.DeletePrimaryIpAsync(token, state.PrimaryIpv4Id, cancellationToken);
         }
         _ = await _cloud.DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
 
         WorkerStateStore.DeleteLocalState(statePath, state.KnownHostsFile);
-        progress?.Report("Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped.");
+        progress?.Report("Worker deleted; billing for it and its IPv4 address has stopped.");
         return true;
     }
 
@@ -307,7 +307,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                     if (server.PrimaryIpv4Id > 0) await _cloud.SetPrimaryIpAutoDeleteAsync(token, server.PrimaryIpv4Id, controller, cancellationToken);
                     if (created.ReadActionId() is { } actionId)
                     {
-                        progress?.Report($"Hetzner server {server.Id} allocated as {candidate}; waiting for server provisioning to finish.");
+                        progress?.Report($"Hetzner accepted {candidate} for the worker {server.Name}; waiting for it to start.");
                         await _cloud.WaitForActionAsync(token, actionId, cancellationToken);
                     }
                 }

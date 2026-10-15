@@ -40,18 +40,18 @@ public static class RunBanner
         var cap = hetzner.MaxHourlyPrice is { } price
             ? $"at up to EUR {price.ToString("0.00##", CultureInfo.InvariantCulture)}/h"
             : "with no price cap";
-        return $"a Hetzner server created for this run, billed hourly, trying {string.Join(", ", hetzner.ServerTypes)} {cap}";
+        return $"a new Hetzner worker created for this run, billed hourly, trying {string.Join(", ", hetzner.ServerTypes)} {cap}";
     }
 
     // A worker recovered from Hetzner before its type was recorded can lack the type, location or creation time.
     private static string DescribeRecordedWorker(RemoteWorkerInfo worker)
     {
-        var server = worker.ServerType.Length == 0 ? $"Hetzner server {worker.ServerId}"
-            : worker.Location.Length == 0 ? $"Hetzner {worker.ServerType}"
-            : $"Hetzner {worker.ServerType} in {worker.Location}";
+        var placement = worker.ServerType.Length == 0 ? string.Empty
+            : worker.Location.Length == 0 ? $", a {worker.ServerType}"
+            : $", a {worker.ServerType} in {worker.Location}";
         var billing = worker.CreatedUtc is { } created
             ? $"billing since {created.ToUniversalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC"
             : "still billing";
-        return $"{server}, kept from an earlier run and {billing}";
+        return $"the Hetzner worker {worker.Name}{placement}, kept from an earlier run and {billing}";
     }
 }

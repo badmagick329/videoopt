@@ -34,11 +34,11 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         {
             // F5. Immich answers 400 "Not found or no asset.read access" for a deleted asset and for one in the Locked Folder,
             // so the message offers both. A trashed asset stays readable and never gets here.
-            throw new FinalizationWaitsException(await OriginalNotFoundAsync(client, job, originalId, cancellationToken));
+            throw new FinalizationWaitsException(await OriginalNotFoundAsync(client, job, cancellationToken));
         }
         if (!string.Equals(original.Checksum, checksum, StringComparison.Ordinal))
         {
-            throw new FinalizationRefusedException($"Original changed in Immich: asset {originalId} no longer holds the file that was converted.");
+            throw new FinalizationRefusedException($"The original of {OriginalName(job)} changed in Immich, so it no longer holds the file that was converted.");
         }
 
         string replacement;
@@ -46,8 +46,8 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         {
             // Most likely an earlier run trashed it and stopped before marking the job completed, but the user may have
             // trashed it by hand before the copy finished, so the copy steps run again below.
-            if (job.ImmichNewAssetId is not { } replaced) throw new FinalizationWaitsException($"The original, asset {originalId}, is in Immich's trash. Restore it, then run '{hints.Command("immich finalize")}' again.");
-            replacement = await RequireLiveAsync(client, replaced, originalId, cancellationToken);
+            if (job.ImmichNewAssetId is not { } replaced) throw new FinalizationWaitsException($"The original of {OriginalName(job)} is in Immich's trash. Restore it, then run '{hints.Command("immich finalize")}' again.");
+            replacement = await RequireLiveAsync(client, job, replaced, originalId, cancellationToken);
         }
         else
         {
@@ -65,7 +65,7 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         await client.CopyRelationsAsync(originalId, replacement, cancellationToken);
         await client.TagAssetAsync(replacement, original.TagIds, cancellationToken);
         if (!original.IsTrashed) await client.TrashAsync([originalId], cancellationToken);
-        return $"New asset {replacement}; the original is in Immich's trash.";
+        return $"The AV1 is in Immich as {Av1Name(job)}; the original is in Immich's trash.";
     }
 
     /// <summary>
@@ -106,7 +106,7 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         {
             try
             {
-                return await RequireLiveAsync(client, stored, original.Id, cancellationToken);
+                return await RequireLiveAsync(client, job, stored, original.Id, cancellationToken);
             }
             catch (ImmichApiException exception) when (exception.Code == "ImmichRequestFailed")
             {
@@ -119,14 +119,19 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         job.ImmichNewAssetId = upload.AssetId;
         await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
         // A duplicate answer names whichever asset already holds these bytes, which may be in the trash.
-        return upload.IsDuplicate ? await RequireLiveAsync(client, upload.AssetId, original.Id, cancellationToken) : upload.AssetId;
+        return upload.IsDuplicate ? await RequireLiveAsync(client, job, upload.AssetId, original.Id, cancellationToken) : upload.AssetId;
     }
 
-    private async Task<string> RequireLiveAsync(IImmichClient client, string assetId, string originalId, CancellationToken cancellationToken)
+    /// <summary>The file names the user finds the original and its AV1 under in Immich: the asset IDs are no use to someone looking at the web app.</summary>
+    private static string OriginalName(JobRecord job) => Path.GetFileName(job.SourcePath);
+
+    private static string Av1Name(JobRecord job) => Path.ChangeExtension(OriginalName(job), Path.GetExtension(job.OutputPath));
+
+    private async Task<string> RequireLiveAsync(IImmichClient client, JobRecord job, string assetId, string originalId, CancellationToken cancellationToken)
     {
         var asset = await client.GetAssetAsync(assetId, cancellationToken);
-        if (asset.Id == originalId) throw new FinalizationRefusedException($"Immich returned the original, asset {originalId}, as the AV1.");
-        if (asset.IsTrashed) throw new FinalizationWaitsException($"The uploaded AV1, asset {assetId}, is in Immich's trash. Restore it or delete it permanently, then run '{hints.Command("immich finalize")}' again.");
+        if (asset.Id == originalId) throw new FinalizationRefusedException($"Immich returned the original of {OriginalName(job)} as its AV1.");
+        if (asset.IsTrashed) throw new FinalizationWaitsException($"The uploaded AV1 ({Av1Name(job)}) is in Immich's trash. Restore it or delete it permanently, then run '{hints.Command("immich finalize")}' again.");
         return asset.Id;
     }
 
@@ -135,7 +140,7 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
     /// deleted, the last sentence names the copies that really survive, because cancelling the job lets cleanup delete the
     /// local download and AV1: the uploaded AV1 when Immich still has it live, otherwise every local file that exists.
     /// </summary>
-    private async Task<string> OriginalNotFoundAsync(IImmichClient client, JobRecord job, string originalId, CancellationToken cancellationToken)
+    private async Task<string> OriginalNotFoundAsync(IImmichClient client, JobRecord job, CancellationToken cancellationToken)
     {
         var cancel = $"'{hints.Command($"queue drop {job.Id:N}")}'";
         var finalizeAgain = hints.Command("immich finalize");
@@ -146,8 +151,8 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
             {
                 var av1 = await client.GetAssetAsync(uploaded, cancellationToken);
                 deleted = av1.IsTrashed
-                    ? $"If it was deleted, its AV1, asset {uploaded}, is in Immich's trash: restore it, then run {cancel}."
-                    : $"If it was deleted, its AV1 is already in Immich as asset {uploaded}; run {cancel} to finish.";
+                    ? $"If it was deleted, its AV1 ({Av1Name(job)}) is in Immich's trash: restore it, then run {cancel}."
+                    : $"If it was deleted, its AV1 ({Av1Name(job)}) is already in Immich; run {cancel} to finish.";
             }
             catch (ImmichApiException exception) when (exception.StatusCode is 400 or 404)
             {
@@ -163,8 +168,8 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
             (true, false) => $"If it was deleted, the downloaded copy at {job.SourcePath} may be the only one left: move it somewhere safe before running {cancel}.",
             (false, true) => $"If it was deleted, its AV1 at {job.OutputPath} may be the only copy left: move it somewhere safe before running {cancel}.",
             // Reached only when the AV1 was uploaded (finalise refuses a missing local AV1 otherwise) and the user removed both files.
-            _ => $"If it was deleted, no copy is left on this PC and its AV1, asset {job.ImmichNewAssetId}, can't be read in Immich: if it's in the Locked Folder, move it out and run '{finalizeAgain}' again; otherwise nothing is left to keep, so run {cancel}."
+            _ => $"If it was deleted, no copy is left on this PC and its AV1 ({Av1Name(job)}) can't be read in Immich: if it's in the Locked Folder, move it out and run '{finalizeAgain}' again; otherwise nothing is left to keep, so run {cancel}."
         };
-        return $"Immich can't find the original, asset {originalId}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run '{finalizeAgain}' again. {deleted}";
+        return $"Immich can't find the original of {OriginalName(job)}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run '{finalizeAgain}' again. {deleted}";
     }
 }

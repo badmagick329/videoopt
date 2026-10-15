@@ -6,7 +6,7 @@ namespace VideoOptimiser.Cli.Features.Finalize;
 
 /// <summary>
 /// The lines <c>finalize --ready</c> and <c>immich finalize</c> share: what is about to be finalised, one line per job as it
-/// ends, and the tally. Jobs are named by file, as in a job's own output; the IDs a retry needs come last, only for failures.
+/// ends, and the tally. Jobs are named by file, as in a job's own output, and a failure is printed once.
 /// </summary>
 internal sealed class FinalizationConsole(TextWriter output, TerminalStyle outputStyle, TextWriter error, TerminalStyle errorStyle)
 {
@@ -28,9 +28,6 @@ internal sealed class FinalizationConsole(TextWriter output, TerminalStyle outpu
         return succeeded;
     }
 
-    public void Summary(int total, IReadOnlyList<(JobRecord Job, string Message)> failed)
-    {
-        output.WriteLine(OutcomeSummary.Finalisation(total - failed.Count, failed.Count, outputStyle));
-        foreach (var (job, message) in failed) output.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}  {message}");
-    }
+    /// <summary>Only the tally: each failure was printed once, as it happened, with the commands its message names.</summary>
+    public void Summary(int total, int failed) => output.WriteLine(OutcomeSummary.Finalisation(total - failed, failed, outputStyle));
 }

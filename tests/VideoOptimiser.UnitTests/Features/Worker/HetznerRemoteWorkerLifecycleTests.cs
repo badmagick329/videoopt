@@ -147,8 +147,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     [Theory]
-    [InlineData("{}", "*did not contain a server_types array*no server creation was attempted*")]
-    [InlineData("{\"server_types\":[{\"name\":\"cx43\",\"architecture\":\"x86\",\"cores\":8,\"memory\":16,\"locations\":[{\"name\":\"hel1\"}]}]}", "*did not contain a boolean available field*no server creation was attempted*")]
+    [InlineData("{}", "*did not contain a server_types array*no worker was created*")]
+    [InlineData("{\"server_types\":[{\"name\":\"cx43\",\"architecture\":\"x86\",\"cores\":8,\"memory\":16,\"locations\":[{\"name\":\"hel1\"}]}]}", "*did not contain a boolean available field*no worker was created*")]
     public async Task EnsureDoesNotCreateWhenTheServerTypePreflightResponseIsUnusable(string response, string expectedMessage)
     {
         using var fixture = new Fixture();
@@ -216,7 +216,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, confirmCreation: (_, _) => Task.FromResult(false));
 
-        await action.Should().ThrowAsync<RemoteWorkerCreationDeclinedException>().WithMessage("No server was created.");
+        await action.Should().ThrowAsync<RemoteWorkerCreationDeclinedException>().WithMessage("No worker was created.");
         fixture.Handler.CreateCount.Should().Be(0);
         fixture.Handler.ServerExists.Should().BeFalse();
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
@@ -347,7 +347,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             new RemoteWorkerTypeOutcome("cax31", [], "arm architecture, but the worker needs x86"),
             new RemoteWorkerTypeOutcome("cpx42", ["hel1", "fsn1"], "unavailable in hel1; placement failed in fsn1 (HTTP 412 PreconditionFailed (resource_unavailable): fsn capacity)")
         }, options => options.WithStrictOrdering());
-        exception.Which.Message.Should().StartWith("No Hetzner server could be created")
+        exception.Which.Message.Should().StartWith("No Hetzner worker could be created")
             .And.Contain("cx43 in hel1, fsn1: unavailable in hel1 and fsn1")
             .And.Contain("cax31: arm architecture")
             .And.Contain("cpx42 in hel1, fsn1:");
@@ -389,7 +389,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
 
-        messages.Should().Contain("Worker setup: 60%, building FFmpeg (1m 00s in this step)...");
+        messages.Should().Contain("Bootstrapping: 60%, building FFmpeg (1m 00s in this step)...");
     }
 
     [Fact]
@@ -432,7 +432,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
 
-        messages.Should().NotContain(message => message.StartsWith("Worker setup: 100%", StringComparison.Ordinal));
+        messages.Should().NotContain(message => message.StartsWith("Bootstrapping: 100%", StringComparison.Ordinal));
         messages.Where(message => message.StartsWith("Worker ready", StringComparison.Ordinal)).Should().ContainSingle();
         fixture.Processes.Requests.Should().HaveCount(4);
     }
@@ -447,14 +447,21 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
 
-        var announcement = messages.FindIndex(message => message.StartsWith("Setting up the worker: it builds libvmaf, SVT-AV1 and FFmpeg from source and installs ab-av1, which takes several minutes.", StringComparison.Ordinal));
+        var announcement = messages.FindIndex(message => message.StartsWith("Bootstrapping the worker: it builds libvmaf, SVT-AV1 and FFmpeg from source and installs ab-av1, which takes several minutes.", StringComparison.Ordinal));
         announcement.Should().BeGreaterThan(-1);
-        messages.IndexOf("Worker setup: 35%, building SVT-AV1...").Should().BeGreaterThan(announcement);
+        messages.IndexOf("Bootstrapping: 35%, building SVT-AV1...").Should().BeGreaterThan(announcement);
+        // The worker is named, never numbered, and "server" stays out: it is a worker from the first line to the last.
+        var name = fixture.Settings.Processing.RemoteSsh.Hetzner.ServerNamePrefix;
+        messages[0].Should().Be("No Hetzner worker exists yet.");
+        messages.Should().ContainSingle(message => message.StartsWith($"Hetzner accepted cx43 in hel1 for the worker {name}-", StringComparison.Ordinal) && message.EndsWith("; waiting for it to start.", StringComparison.Ordinal));
+        messages.Should().ContainSingle(message => message.StartsWith($"Created the Hetzner worker {name}-", StringComparison.Ordinal) && message.EndsWith("; it is bootstrapping.", StringComparison.Ordinal));
 
         using var again = fixture.CreateLifecycle();
         var reuse = new List<string>();
         await again.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(reuse.Add));
-        reuse.Should().NotContain(message => message.StartsWith("Setting up the worker", StringComparison.Ordinal));
+        reuse.Should().ContainSingle(message => message.StartsWith($"Reusing the Hetzner worker {name}-", StringComparison.Ordinal) && message.EndsWith("; checking its bootstrap progress.", StringComparison.Ordinal));
+        reuse.Should().NotContain(message => message.StartsWith("Bootstrapping the worker", StringComparison.Ordinal));
+        messages.Concat(reuse).Should().NotContain(message => message.Contains("server ", StringComparison.OrdinalIgnoreCase) && !message.Contains("server type", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -645,8 +652,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         deleted.Should().BeTrue();
         messages.Should().Equal(
             $"The worker {created.Name} is already gone from Hetzner; its record on this PC is removed.",
-            "Deleting retained Primary IPv4 99.",
-            "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped.");
+            "Deleting its IPv4 address.",
+            "Worker deleted; billing for it and its IPv4 address has stopped.");
         fixture.Handler.PrimaryIpDeleted.Should().BeTrue();
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
     }
@@ -810,7 +817,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath);
 
         check.Worker.Should().BeNull();
-        check.NotCheckedReason.Should().StartWith("More than one managed Hetzner server has this controller label");
+        check.NotCheckedReason.Should().StartWith("More than one Hetzner worker has this controller label");
     }
 
     [Fact]

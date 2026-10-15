@@ -51,9 +51,9 @@ public sealed class WorkerCommandsTests : IDisposable
         stdout.ReplaceLineEndings("\n").Should().Be(
             "Will create cx43 in hel1 at EUR 0.031/h incl. VAT.\n" +
             "If that placement fails, a fallback may cost up to EUR 0.266/h (ccx33 in hel1).\n" +
-            "Create the server? [y/N] " +
+            "Create the worker? [y/N] " +
             "Creating Hetzner cx43 in hel1.\n" +
-            "Worker ready: video-optimiser-1 (42) 203.0.113.10  cx43 in hel1\n");
+            "Worker ready: video-optimiser-1 203.0.113.10  cx43 in hel1\n");
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public sealed class WorkerCommandsTests : IDisposable
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
         lifecycle.Approved.Should().BeFalse();
-        stdout.ReplaceLineEndings("\n").Should().Be("Will create cpx42 in fsn1 at EUR 0.134/h incl. VAT.\nCreate the server? [y/N] \nNo server was created.\n");
+        stdout.ReplaceLineEndings("\n").Should().Be("Will create cpx42 in fsn1 at EUR 0.134/h incl. VAT.\nCreate the worker? [y/N] \nNo worker was created.\n");
     }
 
     /// <summary>
@@ -104,8 +104,8 @@ public sealed class WorkerCommandsTests : IDisposable
     }
 
     [Theory]
-    [InlineData(true, "video-optimiser-1  server 42  running  203.0.113.10  cx43 in hel1\n")]
-    [InlineData(false, "No managed Hetzner worker exists.\n")]
+    [InlineData(true, "video-optimiser-1  running  203.0.113.10  cx43 in hel1\n")]
+    [InlineData(false, "No Hetzner worker exists.\n")]
     public async Task StatusPrintsTheWorkerLineOrSaysThereIsNone(bool exists, string expected)
     {
         var lifecycle = new FakeWorkerLifecycle { Exists = exists };
@@ -130,7 +130,7 @@ public sealed class WorkerCommandsTests : IDisposable
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
         stdout.ReplaceLineEndings("\n").Should().Be(
-            "video-optimiser-1  server 42  recorded  203.0.113.10  cx43 in hel1\n" +
+            "video-optimiser-1  as recorded on this PC  203.0.113.10  cx43 in hel1\n" +
             "Hetzner wasn't checked: no API token is set.\n");
     }
 
@@ -144,13 +144,13 @@ public sealed class WorkerCommandsTests : IDisposable
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
         stdout.ReplaceLineEndings("\n").Should().Be(
-            "No managed Hetzner worker is recorded on this PC.\n" +
+            "No Hetzner worker is recorded on this PC.\n" +
             "Hetzner wasn't checked: Hetzner didn't answer within 15 seconds.\n");
     }
 
     [Theory]
-    [InlineData(true, "Deleting Hetzner server 42.\nManaged Hetzner worker deleted; billing for its server and Primary IPv4 has stopped.\n")]
-    [InlineData(false, "No managed Hetzner worker exists.\n")]
+    [InlineData(true, "Deleting the worker video-optimiser-1.\nWorker deleted; billing for it and its IPv4 address has stopped.\n")]
+    [InlineData(false, "No Hetzner worker exists.\n")]
     public async Task DeletePrintsTheLifecyclesLinesOrSaysThereIsNothingToDelete(bool exists, string expected)
     {
         var lifecycle = new FakeWorkerLifecycle { Exists = exists };

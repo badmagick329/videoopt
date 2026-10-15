@@ -33,30 +33,37 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
             .ToArray();
         if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
         foreach (var job in ready) Console.WriteLine(FinalizationConsole.DescribeReady(job));
-        if (ready.Any(job => job.SourceKind == JobSourceKind.File)) Console.WriteLine(DescribeOriginalAction(configuration.Settings.Original));
+        if (ready.Where(job => job.SourceKind == JobSourceKind.File).ToArray() is { Length: > 0 } fileJobs) Console.WriteLine(DescribeOriginalAction(configuration.Settings.Original, fileJobs));
         if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) Console.WriteLine("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
         Console.Write("Finalise these jobs? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
         var report = new FinalizationConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
-        var failed = new List<(JobRecord Job, string Message)>();
+        var failed = 0;
         foreach (var job in ready)
         {
             var result = await finalizer.FinalizeAsync(configuration.Settings.Database.Path, job.Id, configuration.Settings, cancellationToken);
-            if (!report.Outcome(job, result)) failed.Add((job, result.Message));
+            if (!report.Outcome(job, result)) failed++;
         }
 
         report.Summary(ready.Length, failed);
-        return failed.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
+        return failed == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
-    private static string DescribeOriginalAction(OriginalSettings original) => original.Action.ToLowerInvariant() switch
+    private static string DescribeOriginalAction(OriginalSettings original, IReadOnlyList<JobRecord> fileJobs)
     {
-        OriginalActions.Archive => Path.IsPathFullyQualified(original.ArchiveDirectory)
-            ? $"Each original moves to {original.ArchiveDirectory} and its AV1 takes its place."
-            : $"Each original moves to an {original.ArchiveDirectory} folder beside it and its AV1 takes its place.",
-        OriginalActions.Keep => "Each original stays; its AV1 is installed beside it as <name>.av1<extension>.",
-        _ => "Each original is deleted and its AV1 takes its place."
-    };
+        // The AV1 takes the output container's extension, not the original's: a .mov original is replaced by an .mp4 file. The
+        // containers come from the AV1s about to be installed, so the line is true for every original in the list.
+        var containers = fileJobs.Select(job => Path.GetExtension(job.OutputPath ?? string.Empty).ToLowerInvariant()).Where(extension => extension.Length > 0).Distinct().Order().ToArray();
+        var place = containers.Length == 0 ? "its AV1 takes its place." : $"its AV1 takes its place as an {string.Join(" or ", containers)} file.";
+        return original.Action.ToLowerInvariant() switch
+        {
+            OriginalActions.Archive => Path.IsPathFullyQualified(original.ArchiveDirectory)
+                ? $"Each original moves to {original.ArchiveDirectory} and {place}"
+                : $"Each original moves to an {original.ArchiveDirectory} folder beside it and {place}",
+            OriginalActions.Keep => "Each original stays; its AV1 is installed beside it as <name>.av1<extension>.",
+            _ => $"Each original is deleted and {place}"
+        };
+    }
 
     public async Task<int> ImmichFinalizeAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
@@ -100,17 +107,17 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
 
         var report = new FinalizationConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
-        var failed = new List<(JobRecord Job, string Message)>();
+        var failed = 0;
         foreach (var job in ready)
         {
             var result = await finalizer.FinalizeAsync(settings.Database.Path, job.Id, settings, cancellationToken);
-            if (!report.Outcome(job, result)) failed.Add((job, result.Message));
+            if (!report.Outcome(job, result)) failed++;
         }
 
         report.Summary(ready.Length, failed);
-        if (failed.Count == 0) await PrintTrashRetentionAsync(client, cancellationToken);
-        return failed.Count == 0 ? (int)ExitCode.Success
-            : failed.Count < ready.Length ? (int)ExitCode.PartialSuccess
+        if (failed == 0) await PrintTrashRetentionAsync(client, cancellationToken);
+        return failed == 0 ? (int)ExitCode.Success
+            : failed < ready.Length ? (int)ExitCode.PartialSuccess
             : (int)ExitCode.FinalisationFailure;
     }
 

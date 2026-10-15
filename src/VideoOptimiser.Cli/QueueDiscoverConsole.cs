@@ -85,8 +85,6 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
         Add(result.AlreadyConverted, "Already converted");
         Add(result.PreviouslyFailed, "Previously failed or cancelled");
         Add(result.PreviouslySkipped, "Previously skipped");
-        Add(result.CacheHits, "Cache hits");
-        Add(result.RealProbes, "Real probes");
         Add(result.Issues, "Issues");
         output.WriteLine(string.Join(' ', counts));
         if (result.PreviouslyFailed > 0) output.WriteLine($"Failed or cancelled originals stay out of the queue until they change. '{command.Hint("history")}' lists their jobs; '{command.Hint("queue retry <job-id>")}' queues one again.");
