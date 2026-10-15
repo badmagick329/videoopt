@@ -3,7 +3,6 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Cli.Features.Calibrate;
@@ -14,14 +13,13 @@ using VideoOptimiser.Cli.Features.Finalize;
 using VideoOptimiser.Cli.Features.ImmichRun;
 using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.RemoteSetup;
+using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Cli.Features.Validate;
 using VideoOptimiser.Cli.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Eligibility;
 using VideoOptimiser.Infrastructure.Immich;
-using VideoOptimiser.Infrastructure.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
-using VideoOptimiser.Infrastructure.Processing;
 using VideoOptimiser.Infrastructure.TemporaryOutputs;
 using VideoOptimiser.Infrastructure.Tools;
 
@@ -73,12 +71,4 @@ internal static class ServiceRegistration
         services.AddSingleton<IConsoleInput, ConsoleInput>();
         return services;
     }
-
-    // IQueueService is the run half of the old queue service until VOPT-101 moves the run.
-    public static IServiceCollection AddRun(this IServiceCollection services) => services
-        .AddSingleton<IQueueService, QueueService>()
-        .AddSingleton<IProcessingSessionFactory, ProcessingSessionFactory>()
-        .AddSingleton<IJobProcessor, JobProcessor>()
-        .AddSingleton<RunStop>()
-        .AddSingleton<RunWorkerState>();
 }

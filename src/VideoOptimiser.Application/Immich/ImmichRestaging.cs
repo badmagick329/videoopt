@@ -23,7 +23,7 @@ public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository
         var failed = new List<JobRecord>();
         try
         {
-            return new ImmichRestageResult(await RestageAsync(clients.Create(settings.Immich), databasePath, settings, jobs, failed, progress, cancellationToken), failed);
+            return new ImmichRestageResult(await RestageIntoAsync(clients.Create(settings.Immich), databasePath, settings, jobs, failed, progress, cancellationToken), failed);
         }
         catch (ImmichApiException exception)
         {
@@ -31,7 +31,15 @@ public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository
         }
     }
 
-    public async Task<int> RestageAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, List<JobRecord> failed, IProgress<ImmichProgress>? progress, CancellationToken cancellationToken)
+    public async Task<ImmichRestageResult> RestageAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, IProgress<ImmichProgress>? progress, CancellationToken cancellationToken)
+    {
+        var failed = new List<JobRecord>();
+        return new ImmichRestageResult(await RestageIntoAsync(client, databasePath, settings, candidates, failed, progress, cancellationToken), failed);
+    }
+
+    /// <param name="failed">Receives each job marked failed as it fails, so a caller that catches an error that ended the
+    /// restaging still has the ones before it.</param>
+    private async Task<int> RestageIntoAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, List<JobRecord> failed, IProgress<ImmichProgress>? progress, CancellationToken cancellationToken)
     {
         var restaged = 0;
         foreach (var job in candidates)

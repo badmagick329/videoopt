@@ -6,6 +6,7 @@ using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Cli.Features.Finalize;
+using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 

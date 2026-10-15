@@ -41,9 +41,8 @@ public sealed class ImmichDiscoveryService(
         var restageCandidates = JobRunOrder.Sort((await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
                 .Where(job => job.SourceKind == JobSourceKind.Immich && job.Status is not (JobStatus.ReadyToFinalize or JobStatus.Finalizing) && job.ResumeStatus != JobStatus.Finalizing && !job.Held))
             .Take(limit ?? int.MaxValue);
-        var restageFailed = new List<JobRecord>();
-        var restaged = await restaging.RestageAsync(client, databasePath, settings, restageCandidates, restageFailed, progress, cancellationToken);
-        var issues = restageFailed.Count;
+        var restage = await restaging.RestageAsync(client, databasePath, settings, restageCandidates, progress, cancellationToken);
+        var issues = restage.Failed.Count;
         var history = await ImmichHistory.LoadAsync(jobs, databasePath, cancellationToken);
         var skips = await jobs.ListImmichSkipsAsync(databasePath, cancellationToken);
         // Said up front because each of these is downloaded again: the user would otherwise see a long run of downloads
@@ -169,7 +168,7 @@ public sealed class ImmichDiscoveryService(
             }
         }
 
-        return new ImmichDiscoveryResult(queued, restaged, alreadyQueued, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues,
+        return new ImmichDiscoveryResult(queued, restage.Restaged, alreadyQueued, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues,
             [.. skipReasons.OrderByDescending(pair => pair.Value).ThenBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => new SkipReasonCount(pair.Key, pair.Value))]);
     }
 

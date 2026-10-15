@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using VideoOptimiser.Cli;
 
 namespace VideoOptimiser.UnitTests;
 

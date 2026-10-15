@@ -6,6 +6,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Features.Finalize;
 using VideoOptimiser.Application.Features.ImmichRun;
+using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Validate;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
@@ -14,9 +15,8 @@ using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Features.Finalize;
-using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Infrastructure.Features.Run;
 using VideoOptimiser.Infrastructure.Persistence;
-using VideoOptimiser.Infrastructure.Processing;
 using VideoOptimiser.Infrastructure.TemporaryOutputs;
 using VideoOptimiser.Infrastructure.Tools;
 

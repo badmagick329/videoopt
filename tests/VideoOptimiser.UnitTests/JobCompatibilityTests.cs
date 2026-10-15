@@ -1,10 +1,10 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Queue;
+using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.UnitTests;

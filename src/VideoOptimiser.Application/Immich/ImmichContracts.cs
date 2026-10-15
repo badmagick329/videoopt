@@ -20,8 +20,7 @@ public interface IImmichRestaging
     /// <summary>
     /// The restaging itself, with the caller's <paramref name="client"/>: Immich discovery has made one for its search and
     /// restages through it, in the same pass. Unlike <see cref="RestageMissingAsync"/> it lets an Immich error that is not
-    /// about one asset end the caller's run. Returns how many copies came back; each job it failed lands in <paramref name="failed"/>.
+    /// about one asset end the caller's run, so <see cref="ImmichRestageResult.Unusable"/> stays null.
     /// </summary>
-    /// <param name="failed">Receives each job marked failed, as it is.</param>
-    Task<int> RestageAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, List<JobRecord> failed, IProgress<ImmichProgress>? progress, CancellationToken cancellationToken);
+    Task<ImmichRestageResult> RestageAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, IProgress<ImmichProgress>? progress, CancellationToken cancellationToken);
 }

@@ -1,9 +1,10 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Features.ImmichRun;
+using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Domain;
-using static CliLocks;
 using static CliOutput;
 
 namespace VideoOptimiser.Cli.Features.ImmichRun;
@@ -12,19 +13,20 @@ namespace VideoOptimiser.Cli.Features.ImmichRun;
 /// <c>immich run</c>. Each round runs by hand: <c>immich run</c> converts, the user reviews, <c>immich finalize</c>
 /// replaces the originals in Immich.
 /// </summary>
-internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IImmichRunService run)
+internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IImmichRunService run, RunConversion conversion, RunWorkerEnd workerEnd)
 {
-    /// <param name="services">For the run code <c>run</c> shares until it moves to its own slice (VOPT-101): the run lock
-    /// in <c>CliLocks</c>, and the banner and the conversion in <c>CliApplication</c>.</param>
-    public async Task<int> RunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
+    public Task<int> RunAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken) =>
+        workerEnd.GuardAsync(configuration, command, () => ExecuteAsync(configuration, command, cancellationToken));
+
+    private async Task<int> ExecuteAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         if (!RequireImmich(configuration) || ReportInvalidSettings(settingsValidator, configuration)) return (int)ExitCode.InvalidConfiguration;
         // Before discovery, which marks active jobs interrupted and queues new ones.
-        using var runLock = TakeRunLock(services, configuration, LockHolders.ImmichRun);
+        using var runLock = workerEnd.TakeRunLock(configuration, LockHolders.ImmichRun);
         if (runLock is null) return (int)ExitCode.GeneralFailure;
         var (limit, modeOverride) = (command.Limit, command.ModeOverride);
         // Discovery downloads originals, so the banner comes first.
-        await CliApplication.PrintRunBannerAsync(services, configuration, modeOverride, cancellationToken);
+        await conversion.PrintBannerAsync(configuration, modeOverride, cancellationToken);
         var settings = configuration.Settings;
         // Guard reports are printed as they arrive and kept: when a later error ends the run, the next run sees the trashed
         // re-uploads as trashed and stays silent, so this run is the only one that can tell the user to delete them.
@@ -65,10 +67,10 @@ internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IIm
         bool workerHandled;
         try
         {
-            (ready, _, failures, workerUnreachable, stopped, workerHandled) = await CliApplication.ProcessPreparedJobsAsync(services, configuration, command, preparation.Queue, (ready, skipped, failures) =>
+            (ready, _, failures, workerUnreachable, stopped, workerHandled) = await conversion.ProcessPreparedJobsAsync(configuration, command, preparation.Queue, (ready, skipped, failures) =>
             {
                 Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
-                CliApplication.PrintFailedJobs(failures);
+                RunConversion.PrintFailedJobs(failures);
                 PrintGuardSummary(guard);
                 if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser immich finalize'.");
             }, cancellationToken);
