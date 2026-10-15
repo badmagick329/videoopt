@@ -55,6 +55,8 @@ internal static class ServiceRegistration
         services.AddSingleton<IDatabaseLocks, DatabaseLocks>();
         services.AddSingleton<IJobRepository, SqliteJobRepository>();
         services.AddSingleton<IImmichClientFactory, ImmichClientFactory>();
+        // Shared: `queue drop` and `cleanup` both refuse to delete what may be the only copy of a video.
+        services.AddSingleton<IOnlyCopyGuard, OnlyCopyGuard>();
         // Shared: `run` and `immich run` both restage a job's lost original before converting it. A lambda, so the
         // optional clock keeps its default.
         services.AddSingleton<IImmichRestaging>(provider => new ImmichRestaging(provider.GetRequiredService<IImmichClientFactory>(), provider.GetRequiredService<IJobRepository>()));

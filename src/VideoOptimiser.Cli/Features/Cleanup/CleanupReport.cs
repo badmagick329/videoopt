@@ -1,4 +1,5 @@
 using VideoOptimiser.Application.Features.Cleanup;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Cli.Features.Cleanup;
@@ -15,6 +16,15 @@ internal static class CleanupReport
         parts.Add($"Total: {HumanReadableValues.FormatSize(plan.TotalBytes)}.");
         return string.Join(' ', parts);
     }
+
+    /// <summary>Why a file stays, naming what would let cleanup delete it: the original coming back, or Immich answering.</summary>
+    public static string KeptReason(KeptOnlyCopy file) => file.Risk.Reason switch
+    {
+        OnlyCopyReason.OriginalMissing => "the original is missing, so this AV1 may be the only copy",
+        OnlyCopyReason.ImmichNotConfigured => "Immich can't be checked: immich.baseUrl isn't set; this may be the only copy",
+        OnlyCopyReason.ImmichUnavailable => $"Immich can't be checked: {file.Risk.Detail!.TrimEnd('.')}; this may be the only copy",
+        _ => "the original is gone from Immich, so this may be the only copy"
+    };
 
     public static void WriteFiles(TextWriter output, TemporaryOutputCleanupPlan plan)
     {

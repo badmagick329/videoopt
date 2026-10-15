@@ -326,6 +326,8 @@ public sealed class QueueVerbTests : QueueTestBase
         if (status == JobStatus.Completed) await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing);
         await MoveAsync(job, status);
         if (leftFiles == "AV1") await WriteAv1Async(job);
+        // Cleanup keeps a downloaded copy while Immich cannot show the original is still there.
+        _immich.Asset = Asset(job);
 
         var result = await RunAsync("queue", "drop", job.Id.ToString("N"));
 
@@ -511,7 +513,7 @@ public sealed class QueueVerbTests : QueueTestBase
 
     private sealed class UnreadablePlan : ITemporaryOutputCleanupService
     {
-        public Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, string immichStagingDirectory, CancellationToken cancellationToken = default) =>
+        public Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, ImmichSettings immich, CancellationToken cancellationToken = default) =>
             throw new IOException("plan unreadable");
 
         public TemporaryOutputCleanupResult Delete(TemporaryOutputCleanupPlan plan) => throw new NotSupportedException();

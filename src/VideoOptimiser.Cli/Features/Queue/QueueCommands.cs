@@ -2,6 +2,7 @@ using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using static CliOutput;

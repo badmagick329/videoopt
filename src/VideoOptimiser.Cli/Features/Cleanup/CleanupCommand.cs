@@ -15,9 +15,10 @@ internal sealed class CleanupCommand(ITemporaryOutputCleanupService cleanup)
         var settings = configuration.Settings;
         // The staging folder is searched whether or not Immich is turned on: a user who emptied immich.baseUrl still has the
         // downloaded copies, and "none found" would be false.
-        var plan = await cleanup.FindAsync(settings.Database.Path, settings.Immich.StagingDirectory, cancellationToken);
+        var plan = await cleanup.FindAsync(settings.Database.Path, settings.Immich, cancellationToken);
         // "Kept", not "Skipped": Skipped is the name of a job status.
         foreach (var path in plan.UnknownJobFiles) Console.WriteLine($"Kept  {path} (its job is not in this database)");
+        foreach (var file in plan.Kept) Console.WriteLine($"Kept  {file.Path} ({CleanupReport.KeptReason(file)})");
         if (plan.Count == 0)
         {
             Console.WriteLine("No abandoned temporary outputs or staged Immich originals found.");

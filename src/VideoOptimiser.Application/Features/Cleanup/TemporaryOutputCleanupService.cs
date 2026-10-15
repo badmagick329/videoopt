@@ -1,3 +1,4 @@
+using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.TemporaryOutputs;
@@ -11,9 +12,9 @@ namespace VideoOptimiser.Application.Features.Cleanup;
 /// Also finds staged Immich originals that no job will read again: finalisation deletes a completed job's staging, but a
 /// failed or cancelled job's copy, often gigabytes, would otherwise stay forever.
 /// </summary>
-public sealed class TemporaryOutputCleanupService(IJobRepository jobs) : ITemporaryOutputCleanupService
+public sealed class TemporaryOutputCleanupService(IJobRepository jobs, IOnlyCopyGuard onlyCopy) : ITemporaryOutputCleanupService
 {
-    public async Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, string immichStagingDirectory, CancellationToken cancellationToken = default)
+    public async Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, ImmichSettings immich, CancellationToken cancellationToken = default)
     {
         var openJobs = await jobs.ListAsync(databasePath, terminal: false, cancellationToken);
         var allJobs = openJobs
@@ -42,11 +43,45 @@ public sealed class TemporaryOutputCleanupService(IJobRepository jobs) : ITempor
             }
         }
 
+        var staged = FindStagedOriginals(allJobs.Values, openJobs, immich.StagingDirectory);
+        var kept = new List<KeptOnlyCopy>();
+        var risks = new Dictionary<Guid, OnlyCopyRisk?>();
+        var deletableAbandoned = new List<AbandonedTemporaryOutput>();
+        foreach (var file in abandoned)
+        {
+            // Only a job's finished AV1 can be the only copy; its manifest and the partial files of other attempts are not.
+            var job = allJobs[file.JobId];
+            var risk = IsOutputOf(job, file.Path) ? await RiskOfAsync(job) : null;
+            if (risk is null) deletableAbandoned.Add(file);
+            else kept.Add(new KeptOnlyCopy(file.Path, file.JobId, IsAv1: true, risk));
+        }
+
+        var deletableStaged = new List<StagedImmichOriginal>();
+        foreach (var file in staged)
+        {
+            var risk = await RiskOfAsync(allJobs[file.JobId]);
+            if (risk is null) deletableStaged.Add(file);
+            else kept.Add(new KeptOnlyCopy(file.Path, file.JobId, IsAv1: false, risk));
+        }
+
         return new TemporaryOutputCleanupPlan(
-            abandoned.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase).ToArray(),
-            FindStagedOriginals(allJobs.Values, openJobs, immichStagingDirectory),
-            unknown.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray());
+            deletableAbandoned.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase).ToArray(),
+            deletableStaged,
+            unknown.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray(),
+            kept.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase).ToArray());
+
+        // A completed job's leftovers are temporary files: finalise installed its AV1. For any other job the guard decides,
+        // and it is asked once per job whatever number of its files are in the plan, since each ask may be a call to Immich.
+        async Task<OnlyCopyRisk?> RiskOfAsync(JobRecord job)
+        {
+            if (job.Status == JobStatus.Completed) return null;
+            if (!risks.TryGetValue(job.Id, out var risk)) risks[job.Id] = risk = await onlyCopy.CheckAsync(immich, job, cancellationToken);
+            return risk;
+        }
     }
+
+    private static bool IsOutputOf(JobRecord job, string path) =>
+        job.OutputPath is { } output && string.Equals(Path.GetFullPath(output), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// A staged original is deleted only when the latest job for its path has ended and no open job reads that path or

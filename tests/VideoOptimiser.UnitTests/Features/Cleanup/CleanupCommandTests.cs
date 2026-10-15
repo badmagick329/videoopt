@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Cleanup;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
@@ -17,7 +18,7 @@ public sealed class CleanupCommandTests : IDisposable
     [Fact]
     public async Task NothingFoundNamesTheUnknownJobFilesThenSaysSo()
     {
-        var cleanup = new FakeCleanup(new([], [], [Path.Combine(_directory, "unknown.tmp")]));
+        var cleanup = new FakeCleanup(new([], [], [Path.Combine(_directory, "unknown.tmp")], []));
 
         var (code, stdout, stderr) = await RunAsync(cleanup, null, "cleanup");
 
@@ -34,7 +35,7 @@ public sealed class CleanupCommandTests : IDisposable
     [Fact]
     public async Task ADryRunThatFindsNothingStillSaysNothingWasDeleted()
     {
-        var (code, stdout, stderr) = await RunAsync(new FakeCleanup(new([], [], [])), null, "cleanup", "--dry-run");
+        var (code, stdout, stderr) = await RunAsync(new FakeCleanup(new([], [], [], [])), null, "cleanup", "--dry-run");
 
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
@@ -127,6 +128,7 @@ public sealed class CleanupCommandTests : IDisposable
                new AbandonedTemporaryOutput(Path.Combine(_directory, "out", "clip-c.mp4.tmp"), Guid.NewGuid(), 1, 3 * 1024 * 1024, "job cancelled")]
             : [],
         staged ? [new StagedImmichOriginal(Path.Combine(_directory, "staging", "clip-b.mp4"), Guid.NewGuid(), 2 * 1024 * 1024, "job finished")] : [],
+        [],
         []);
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(FakeCleanup cleanup, string? input, params string[] args)
@@ -144,9 +146,9 @@ public sealed class CleanupCommandTests : IDisposable
         public int DeleteCalls { get; private set; }
         public (string DatabasePath, string StagingDirectory)? Searched { get; private set; }
 
-        public Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, string immichStagingDirectory, CancellationToken cancellationToken = default)
+        public Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, ImmichSettings immich, CancellationToken cancellationToken = default)
         {
-            Searched = (databasePath, immichStagingDirectory);
+            Searched = (databasePath, immich.StagingDirectory);
             return Task.FromResult(plan);
         }
 

@@ -2,6 +2,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Cleanup;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Features.Queue;
@@ -26,7 +27,7 @@ public interface IQueueVerbs
 /// stopped first. Drop never leaves <c>cleanup</c> the only copy of a video. These are the rules; the CLI words what they
 /// decided.
 /// </summary>
-public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, ITemporaryOutputCleanupService cleanup, IImmichClientFactory immichClients) : IQueueVerbs
+public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, ITemporaryOutputCleanupService cleanup, IOnlyCopyGuard onlyCopy) : IQueueVerbs
 {
     /// <returns><see cref="JobHeld"/>, <see cref="JobAlreadyHeld"/> or a <see cref="VerbRefused"/>.</returns>
     public async Task<QueueVerbOutcome> HoldAsync(string databasePath, JobRecord job, CancellationToken cancellationToken)
@@ -88,7 +89,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
         if (finished)
         {
             if (finalizeLock is null) return new FinaliseRunning(job);
-            if (await OnlyCopyRefusalAsync(settings, job, cancellationToken) is { } onlyCopy) return onlyCopy;
+            if (await onlyCopy.CheckAsync(settings.Immich, job, cancellationToken) is { } risk) return new OnlyCopyAtRisk(job, risk.Reason, risk.Detail);
         }
         if (!await repository.DropAsync(databasePath, job, cancellationToken)) throw new JobChangedException(job.Id);
         return new JobDropped(job, RemoteStageOf(job), finished, job.ImmichNewAssetId);
@@ -179,7 +180,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
     }
 
     private Task<TemporaryOutputCleanupPlan> CleanupPlanAsync(AppSettings settings, CancellationToken cancellationToken) =>
-        cleanup.FindAsync(settings.Database.Path, settings.Immich.StagingDirectory, cancellationToken);
+        cleanup.FindAsync(settings.Database.Path, settings.Immich, cancellationToken);
 
     private static bool CleanupDeletesSomeOf(JobRecord job, TemporaryOutputCleanupPlan plan) =>
         plan.Abandoned.Any(file => file.JobId == job.Id) || plan.StagedOriginals.Any(file => file.JobId == job.Id);
@@ -193,39 +194,5 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
         var av1 = av1Files.Length == 0 ? LeftAv1.None : finishedAv1 ? LeftAv1.Finished : LeftAv1.Unfinished;
         var copy = plan.StagedOriginals.Any(file => file.JobId == job.Id);
         return av1 == LeftAv1.None && !copy ? null : new LeftFiles(av1, copy);
-    }
-
-    /// <summary>
-    /// R5 (W1, W2): cleanup deletes a dropped job's AV1 and downloaded copy, so a drop is refused while they may be the only
-    /// copies. A folder video's original is missing; an Immich video has no AV1 uploaded yet and its original is gone from
-    /// Immich: deleted (Immich answers 400 or 404), in the trash, which empties, or holding other bytes. Immich is asked now,
-    /// and a drop it cannot answer for is refused.
-    /// </summary>
-    private async Task<OnlyCopyAtRisk?> OnlyCopyRefusalAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken)
-    {
-        var av1 = job.OutputPath is { } output && File.Exists(output) ? output : null;
-        if (job.SourceKind == JobSourceKind.File)
-        {
-            return av1 is not null && !File.Exists(job.SourcePath) ? new OnlyCopyAtRisk(job, OnlyCopyReason.OriginalMissing) : null;
-        }
-        if (job.ImmichNewAssetId is not null || (av1 is null && !File.Exists(job.SourcePath))) return null;
-
-        var immich = settings.Immich;
-        if (!immich.IsConfigured) return new OnlyCopyAtRisk(job, OnlyCopyReason.ImmichNotConfigured);
-        var gone = false;
-        try
-        {
-            var asset = await immichClients.Create(immich).GetAssetAsync(job.ImmichAssetId!, cancellationToken);
-            gone = asset.IsTrashed || !string.Equals(asset.Checksum, job.ImmichChecksum, StringComparison.Ordinal);
-        }
-        catch (ImmichApiException exception) when (exception.StatusCode is 400 or 404)
-        {
-            gone = true;
-        }
-        catch (ImmichApiException exception)
-        {
-            return new OnlyCopyAtRisk(job, OnlyCopyReason.ImmichUnavailable, exception.Message);
-        }
-        return gone ? new OnlyCopyAtRisk(job, OnlyCopyReason.ImmichOriginalGone) : null;
     }
 }

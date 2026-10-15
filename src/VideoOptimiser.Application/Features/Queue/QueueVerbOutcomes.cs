@@ -1,3 +1,4 @@
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Features.Queue;
@@ -42,17 +43,6 @@ public sealed record JobAlreadyEnded(JobRecord Job) : QueueVerbOutcome(Job);
 
 /// <summary>A finalise holds the finalise lock, and a finished AV1 is not dropped under it.</summary>
 public sealed record FinaliseRunning(JobRecord Job) : QueueVerbOutcome(Job);
-
-public enum OnlyCopyReason
-{
-    /// <summary>A folder video's original is missing while its AV1 exists.</summary>
-    OriginalMissing,
-    ImmichNotConfigured,
-    /// <summary>Immich failed to answer; <see cref="OnlyCopyAtRisk.Detail"/> is what it said.</summary>
-    ImmichUnavailable,
-    /// <summary>The original is deleted from Immich, in its trash, or replaced by other bytes.</summary>
-    ImmichOriginalGone
-}
 
 /// <summary>Cleanup deletes a dropped job's AV1 and downloaded copy, and they may be the only copies, so the drop is refused.</summary>
 public sealed record OnlyCopyAtRisk(JobRecord Job, OnlyCopyReason Reason, string? Detail = null) : QueueVerbOutcome(Job);

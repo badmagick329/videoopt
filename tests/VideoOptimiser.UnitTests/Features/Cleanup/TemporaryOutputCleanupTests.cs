@@ -1,5 +1,7 @@
 using FluentAssertions;
+using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Cleanup;
+using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
@@ -72,9 +74,9 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var unrelated = Path.Combine(_outputFolder, "notes.txt");
         File.WriteAllText(unknown, "data");
         File.WriteAllText(unrelated, "data");
-        var service = new TemporaryOutputCleanupService(_repository);
+        var service = new TemporaryOutputCleanupService(_repository, new OnlyCopyGuard(new PresentImmich()));
 
-        var plan = await service.FindAsync(_databasePath, string.Empty);
+        var plan = await service.FindAsync(_databasePath, Immich(string.Empty));
         var result = service.Delete(plan);
 
         plan.Abandoned.Select(file => file.Path).Should().BeEquivalentTo([superseded, completedManifest, partialEncode]);
@@ -91,8 +93,8 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var failed = await CreateJobAsync(JobStatus.Failed, attempt: 1);
         var locked = Write(failed, 1, ".mp4");
         var manifest = Write(failed, 1, ".mp4.manifest.json");
-        var service = new TemporaryOutputCleanupService(_repository);
-        var plan = await service.FindAsync(_databasePath, string.Empty);
+        var service = new TemporaryOutputCleanupService(_repository, new OnlyCopyGuard(new PresentImmich()));
+        var plan = await service.FindAsync(_databasePath, Immich(string.Empty));
 
         TemporaryOutputCleanupResult result;
         using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -121,9 +123,9 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var failedOutput = Path.Combine(Path.GetDirectoryName(failed.SourcePath)!, ".video-optimiser", $"clip.{failed.Id:N}.1.encoding.mp4");
         Directory.CreateDirectory(Path.GetDirectoryName(failedOutput)!);
         File.WriteAllText(failedOutput, "data");
-        var service = new TemporaryOutputCleanupService(_repository);
+        var service = new TemporaryOutputCleanupService(_repository, new OnlyCopyGuard(new PresentImmich()));
 
-        var plan = await service.FindAsync(_databasePath, staging);
+        var plan = await service.FindAsync(_databasePath, Immich(staging));
         var result = service.Delete(plan);
 
         plan.StagedOriginals.Select(file => file.Path).Should().BeEquivalentTo([failed.SourcePath, cancelled.SourcePath, completed.SourcePath, skipped.SourcePath]);
@@ -141,10 +143,10 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var outside = await CreateJobAtAsync(Path.Combine(_directory, "elsewhere", "clip.mp4"), JobStatus.Failed, Guid.NewGuid().ToString());
         var otherAsset = await CreateJobAtAsync(Path.Combine(staging, Guid.NewGuid().ToString(), "clip.mp4"), JobStatus.Failed, Guid.NewGuid().ToString());
         var staged = await CreateStagedJobAsync(staging, JobStatus.Failed, "EncodeFailed");
-        var service = new TemporaryOutputCleanupService(_repository);
+        var service = new TemporaryOutputCleanupService(_repository, new OnlyCopyGuard(new PresentImmich()));
 
-        var unconfigured = await service.FindAsync(_databasePath, string.Empty);
-        var configured = await service.FindAsync(_databasePath, staging);
+        var unconfigured = await service.FindAsync(_databasePath, Immich(string.Empty));
+        var configured = await service.FindAsync(_databasePath, Immich(staging));
 
         unconfigured.StagedOriginals.Should().BeEmpty();
         configured.StagedOriginals.Select(file => file.Path).Should().Equal(staged.SourcePath);
@@ -153,6 +155,17 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    /// <summary>Immich as configured, so a failed Immich job's files are checked against <see cref="PresentImmich"/>.</summary>
+    private static ImmichSettings Immich(string staging) => new() { BaseUrl = "http://immich.test", StagingDirectory = staging };
+
+    /// <summary>An Immich that still holds every original, as <c>CreateJobAtAsync</c> recorded it.</summary>
+    private sealed class PresentImmich : ImmichClientStub
+    {
+        public override Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImmichAsset(assetId, "checksum", "clip.mp4", ImmichValues.Video, ImmichValues.Timeline, false, false, null, null,
+                DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, null, new ImmichExif(null, null, null, null, null, null, null, null), []));
+    }
 
     private async Task<JobRecord> CreateStagedJobAsync(string staging, JobStatus status, string? failureCategory)
     {
