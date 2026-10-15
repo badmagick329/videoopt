@@ -2,7 +2,8 @@ using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Application.Configuration;
 
-public sealed record LoadedConfiguration(AppSettings Settings, string Path, string? RawYaml = null);
+/// <param name="ConfiguredMode"><c>processing.mode</c> as the file says it, set only when <c>--local</c> or <c>--remote</c> replaced it in <see cref="Settings"/>.</param>
+public sealed record LoadedConfiguration(AppSettings Settings, string Path, string? RawYaml = null, string? ConfiguredMode = null);
 
 public interface IConfigurationLoader
 {

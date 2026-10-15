@@ -29,10 +29,48 @@ public sealed class JobCompatibilityTests
         JobCompatibility.Evaluate(ManagedWorker.Started("", RemoteExecutionIdentity.ManagedHetzner), settings).Status.Should().Be(JobCompatibilityStatus.Incompatible);
     }
 
+    /// <summary>
+    /// The advice follows the config as the file says it (VOPT-74 B11). A started job on the managed worker, under a config whose
+    /// mode and worker match it, resumes by a plain run; under a config in the other mode, by the flag of its own mode; under a
+    /// config that points at another worker, by neither.
+    /// </summary>
     [Theory]
-    [InlineData(ProcessingModes.Local, null, "this PC")]
-    [InlineData(ProcessingModes.RemoteSsh, "encoder", "encoder over SSH")]
-    public void SkippedMessageNamesWhereTheJobStarted(string mode, string? host, string binding) =>
-        JobCompatibility.SkippedMessage(new JobRecord { SourcePath = Path.Combine(Path.GetTempPath(), "clip.mov"), ExecutionMode = mode, RemoteHost = host })
-            .Should().Be($"Skipped clip.mov: started on {binding}; run without --local/--remote to resume it.");
+    [InlineData(ProcessingModes.RemoteSsh, "managed", SkippedJobResume.RunWithoutFlag, "the Hetzner worker")]
+    [InlineData(ProcessingModes.Local, "managed", SkippedJobResume.RunWithFlag, "the Hetzner worker")]
+    [InlineData(ProcessingModes.RemoteSsh, "other-box", SkippedJobResume.ChangeConfig, "other-box")]
+    [InlineData(ProcessingModes.Local, "other-box", SkippedJobResume.ChangeConfig, "other-box")]
+    public void SkippedAdviceNamesTheCommandThatResumesTheJobUnderTheConfigAsTheFileSaysIt(string configuredMode, string configuredWorker, SkippedJobResume expected, string configWorkerOrMode)
+    {
+        var job = ManagedWorker.Started("", RemoteExecutionIdentity.ManagedHetzner);
+        var settings = ManagedWorker.Settings();
+        if (configuredWorker != "managed") (settings.Processing.RemoteSsh.Lifecycle, settings.Processing.RemoteSsh.Host) = (RemoteLifecycleModes.Manual, configuredWorker);
+        ProcessingModeOverride.Local.Apply(settings);
+
+        var advice = JobCompatibility.AdviseSkipped(job, settings, configuredMode);
+
+        advice.Resume.Should().Be(expected);
+        advice.JobWhere.Should().Be("the Hetzner worker");
+        if (expected == SkippedJobResume.ChangeConfig) advice.ConfigWhere.Should().Be(configWorkerOrMode);
+        else advice.ConfigWhere.Should().Be(configuredMode == ProcessingModes.Local ? "this PC" : "the Hetzner worker");
+    }
+
+    /// <summary>The same worker under another working directory has the same name, so only the setting can be named.</summary>
+    [Fact]
+    public void AWorkerKeptUnderAnotherWorkingDirectoryAsksForThatSettingBack()
+    {
+        var job = ManagedWorker.Started("", RemoteExecutionIdentity.ManagedHetzner);
+        var settings = ManagedWorker.Settings();
+        settings.Processing.RemoteSsh.WorkingDirectory = "/srv/other";
+
+        JobCompatibility.AdviseSkipped(job, settings, ProcessingModes.RemoteSsh).Resume.Should().Be(SkippedJobResume.ChangeWorkingDirectory);
+    }
+
+    [Fact]
+    public void AJobThatStartedOnThisPcResumesByTheLocalFlagWhateverTheRemoteBlockSays()
+    {
+        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = "clip.mov", ExecutionMode = ProcessingModes.Local, Status = JobStatus.Interrupted, ResumeStatus = JobStatus.Encoding, Crf = 30, Attempt = 1 };
+        var settings = ManagedWorker.Settings();
+
+        JobCompatibility.AdviseSkipped(job, settings, ProcessingModes.RemoteSsh).Should().Be(new SkippedJobAdvice(SkippedJobResume.RunWithFlag, "this PC", "the Hetzner worker", ProcessingModes.Local));
+    }
 }

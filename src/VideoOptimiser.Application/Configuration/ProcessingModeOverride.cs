@@ -10,5 +10,11 @@ public sealed record ProcessingModeOverride(string Flag, string Mode)
     public static readonly ProcessingModeOverride Remote = new("--remote", ProcessingModes.RemoteSsh);
 
     /// <summary>Settings validation runs afterwards, so <c>--remote</c> without a usable <c>remoteSsh</c> block fails as invalid configuration.</summary>
-    public void Apply(AppSettings settings) => settings.Processing.Mode = Mode;
+    /// <returns>The mode the file said, for what a command can tell the user about the config it would otherwise have run under.</returns>
+    public string Apply(AppSettings settings)
+    {
+        var configured = settings.Processing.Mode;
+        settings.Processing.Mode = Mode;
+        return configured;
+    }
 }

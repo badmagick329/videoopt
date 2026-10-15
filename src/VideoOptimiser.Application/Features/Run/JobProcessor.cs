@@ -27,7 +27,6 @@ public sealed class JobProcessor(
         // again once it is back.
         if (!File.Exists(path)) return await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
 
-        var fingerprint = await fingerprints.CreateAsync(path, cancellationToken);
         var resumeStatus = job.ResumeStatus;
         var force = job.Forced;
         var compatibility = JobCompatibility.Evaluate(job, settings);
@@ -60,11 +59,22 @@ public sealed class JobProcessor(
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
         }
 
-        job.SourceFingerprint = fingerprint;
         var stage = "ProcessingFailed";
         await using var session = sessions.Create(job, settings);
         try
         {
+            // Read inside the try, with the other reads of the original: a file that vanishes after the exists check above, or
+            // cannot be read, fails this job like any other, rather than ending the run as a configuration error.
+            string fingerprint;
+            try
+            {
+                fingerprint = await fingerprints.CreateAsync(path, cancellationToken);
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                return await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
+            }
+            job.SourceFingerprint = fingerprint;
             var verdict = await CheckSourceAsync(path, job.SourceKind, settings, force, cancellationToken);
             // Saved with the job's next update. This covers a job queued before migration 8; for the rest it describes the
             // file as this run found it.

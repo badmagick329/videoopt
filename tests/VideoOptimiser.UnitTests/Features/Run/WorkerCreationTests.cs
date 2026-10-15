@@ -132,7 +132,7 @@ public sealed class WorkerCreationTests : IDisposable
             "Converting 1 video.",
             "",
             "[1/1] ineligible.mp4",
-            "Skipped eligible.mp4: started on a managed Hetzner server; run without --local/--remote to resume it.",
+            $"eligible.mp4 is left for a later run: it started on the Hetzner worker. To resume it: video-optimiser run --config \"{config}\"",
             "Failed: 1.",
             "",
             "Failed jobs:",

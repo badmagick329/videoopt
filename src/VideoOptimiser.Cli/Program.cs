@@ -102,7 +102,7 @@ internal static class CliApplication
             WriteError("To create one, run 'video-optimiser config init'; 'video-optimiser --help' lists every command.");
             return exitCode;
         }
-        command.ModeOverride?.Apply(configuration.Settings);
+        if (command.ModeOverride is not null) configuration = configuration with { ConfiguredMode = command.ModeOverride.Apply(configuration.Settings) };
         if (command.Kind is CliCommandKind.WorkerCreate or CliCommandKind.WorkerStatus or CliCommandKind.WorkerDelete
             && WorkerCommands.RequireManagedLifecycle(command.Kind, configuration) is { } refused)
         {

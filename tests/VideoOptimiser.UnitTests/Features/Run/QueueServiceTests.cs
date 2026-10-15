@@ -214,8 +214,7 @@ public sealed class QueueServiceTests : IDisposable
 
         skipped.RunnableJobs.Should().BeEmpty();
         skipped.FailedJobs.Should().BeEmpty();
-        JobCompatibility.SkippedMessage(skipped.SkippedJobs.Should().ContainSingle().Subject)
-            .Should().Be("Skipped movie.mp4: started on a managed Hetzner server; run without --local/--remote to resume it.");
+        skipped.SkippedJobs.Should().ContainSingle().Which.Id.Should().Be(job.Id);
         (await _repository.GetAsync(DatabasePath, job.Id)).Should().Match<JobRecord>(stored =>
             stored.Status == JobStatus.Interrupted && stored.ExecutionMode == ProcessingModes.RemoteSsh && stored.FailureCategory == null);
 

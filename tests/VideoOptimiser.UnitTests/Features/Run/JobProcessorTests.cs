@@ -105,6 +105,27 @@ public sealed class JobProcessorTests : IDisposable
         stored.FailureCategory.Should().Be("SourceMissing");
     }
 
+    /// <summary>
+    /// The original is read for its fingerprint after the exists check, so it can vanish, or fail to read, in between (VOPT-74 B21).
+    /// That fails this job: a vanished file as missing, and anything else under the failure's own category. It used to escape
+    /// the processor, end the run as a configuration error, and leave the videos after it unconverted.
+    /// </summary>
+    [Theory]
+    [InlineData(true, FailureCategories.SourceMissing)]
+    [InlineData(false, "ProcessingFailed")]
+    public async Task AnOriginalThatCannotBeFingerprintedFailsItsJob(bool vanished, string category)
+    {
+        var source = await SourceAsync();
+        var fingerprints = new ThrowingFingerprints(vanished ? new FileNotFoundException("Original does not exist.", source) : new IOException("disk read failed"));
+
+        var result = await Processor(fingerprints: fingerprints).ProcessAsync(DatabasePath, source, Settings(), force: false);
+
+        result.ExitCode.Should().Be(ExitCode.ProcessingFailure);
+        var stored = (await _repository.ListAsync(DatabasePath, terminal: false)).Concat(await _repository.ListAsync(DatabasePath, terminal: true)).Single();
+        (stored.Status, stored.FailureCategory).Should().Be((JobStatus.Failed, category));
+        stored.FailureMessage.Should().Be(vanished ? $"Original does not exist: {source}" : "disk read failed");
+    }
+
     [Fact]
     public async Task ProcessAsyncMarksTheJobInterruptedWhenCancelled()
     {
@@ -564,12 +585,12 @@ public sealed class JobProcessorTests : IDisposable
     /// <summary>The real processor over fakes; <paramref name="session"/>, when given, replaces the local search and encoder.</summary>
     private JobProcessor Processor(
         ICrfSearchClient? search = null, IVideoEncoder? encoder = null, IProcessingSession? session = null, IOutputValidationService? validator = null,
-        IMediaProbe? probe = null, IFileReadinessService? files = null, OutputManifestStore? manifests = null) => new(
+        IMediaProbe? probe = null, IFileReadinessService? files = null, OutputManifestStore? manifests = null, IFileFingerprintService? fingerprints = null) => new(
         _repository,
         files ?? new ReadableFiles(),
         _ => probe ?? new H264Probe(),
         session is null ? new ProcessingSessionFactory(_ => search ?? new FixedCrfSearch(), _ => encoder ?? new FakeEncoder(), new UnexpectedExternalProcessRunner()) : new FixedSessionFactory(session),
-        new FileFingerprintService(),
+        fingerprints ?? new FileFingerprintService(),
         manifests ?? new OutputManifestStore(),
         validator ?? new PassingValidator(),
         new AbAv1ProgressTranslator());
@@ -577,6 +598,11 @@ public sealed class JobProcessorTests : IDisposable
     private static string[] Steps(IEnumerable<JobProgress> reported) => [.. reported.Where(line => line.Kind == JobProgressKind.Step).Select(line => line.Text)];
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    private sealed class ThrowingFingerprints(Exception failure) : IFileFingerprintService
+    {
+        public Task<string> CreateAsync(string path, CancellationToken cancellationToken = default) => throw failure;
+    }
 
     private sealed class FailingLoggingCrfSearch : ICrfSearchClient
     {

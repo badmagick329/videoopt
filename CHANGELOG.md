@@ -70,6 +70,8 @@
 - A rerun whose encode already finished on the worker goes straight to the download, without staging or hashing the original again. A video stopped while its AV1 was being checked on this PC is checked again without a worker, so `run` no longer creates one for it (VOPT-89).
 - A slow checksum prints a step line, such as `Checking the original's checksum before upload.`, before its percentage line.
 - A stop while a rerun fetches an encode that already finished says the finished encode is waiting on the worker, not that it is still running (VOPT-86).
+- When `--local` or `--remote` makes `run` leave a started video for a later run, the line names the command that resumes it, according to your config: `clip.mp4 is left for a later run: it started on the Hetzner worker. To resume it: video-optimiser run`. Before, it always said to run without `--local`/`--remote`, which failed when the config's mode or worker had changed too.
+- A video whose original vanishes or can't be read just before it starts now fails alone (`SourceMissing` for a vanished file), and the run goes on. Before, it ended the run with exit `3`.
 
 ## [0.7.1] - 2026-10-13
 ### Changed

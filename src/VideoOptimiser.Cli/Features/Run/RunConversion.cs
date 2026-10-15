@@ -56,7 +56,7 @@ internal sealed class RunConversion(IQueueService queue, IQueueDiscovery discove
 
     private async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Func<int, int, FailedQueueJob[], Task> report, CancellationToken cancellationToken)
     {
-        foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
+        foreach (var job in preparation.SkippedJobs) Console.WriteLine(SkippedJobMessage.Line(job, configuration, command));
         // F8 (VOPT-70): finalize checks whether anything moved and resumes, so the run leaves these jobs alone.
         foreach (var job in preparation.InterruptedFinalizations) Console.WriteLine($"{Path.GetFileName(job.SourcePath)} was interrupted while being finalised. Run 'video-optimiser finalize --ready' to finish it.");
         if (preparation.Held > 0)
@@ -205,7 +205,7 @@ internal sealed class RunConversion(IQueueService queue, IQueueDiscovery discove
             if (prepared.Contains(job.Id)) return false;
             if (command.ModeOverride is not null && JobCompatibility.IsBoundToOtherMode(job, JobCompatibility.Evaluate(job, configuration.Settings)))
             {
-                progress.WriteNote(JobCompatibility.SkippedMessage(job));
+                progress.WriteNote(SkippedJobMessage.Line(job, configuration, command));
                 return true;
             }
             if (job.SourceKind == JobSourceKind.Immich)
