@@ -29,6 +29,15 @@ public interface IProcessingSession : IAsyncDisposable
     Task RetrieveOutputAsync(string outputPath, int attempt, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)
         => RetrieveOutputAsync(outputPath, attempt, cancellationToken);
     Task CleanupAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stops the stage processes and removes the workspaces on the worker of the jobs in <paramref name="finishedJobIds"/>, the
+    /// ones this database knows ended. A dropped video's CRF search or encode keeps running there, detached, and nothing else
+    /// would ever end it or free its disk (VOPT-90). Any other workspace is left alone: that of an open job, a stopped one
+    /// included, because a later run picks it up, and that of a job this database does not know, because a manual worker can be
+    /// shared by two databases. Nothing on this PC.
+    /// </summary>
+    Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default);
 }
 
 public interface IProcessingSessionFactory

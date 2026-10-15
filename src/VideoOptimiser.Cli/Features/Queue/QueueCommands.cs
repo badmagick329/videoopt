@@ -176,14 +176,12 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
     private static string ImmichUnusable(string why, string name) =>
         $"Immich can't be used ({why}), so video-optimiser can't check that the original of {name} is still there. Try again once it answers.";
 
-    /// <summary>W3: a remote CRF search or encode runs detached, so a stop leaves it going. A managed worker's deletion ends it; a manual worker's runs until it finishes.</summary>
-    private static string RemoteStageLine(RemoteStageNote note)
-    {
-        var stage = note.Stage == RemoteStage.Encode ? "encode" : "CRF search";
-        return note.ManagedWorker
-            ? $"Its {stage} may still be running on the worker; deleting the worker stops it."
-            : $"Its {stage} may still be running on the worker until it finishes.";
-    }
+    /// <summary>
+    /// W3: a remote CRF search or encode runs detached, so a stop leaves it going. The next run that reaches the worker, managed
+    /// or manual, stops it and removes its workspace (VOPT-90), so one line serves both.
+    /// </summary>
+    private static string RemoteStageLine(RemoteStageNote note) =>
+        $"Its {(note.Stage == RemoteStage.Encode ? "encode" : "CRF search")} may still be running on the worker; the next run on that worker stops it.";
 
     private static string LeftFilesLine(LeftFiles files, CliCommand command)
     {

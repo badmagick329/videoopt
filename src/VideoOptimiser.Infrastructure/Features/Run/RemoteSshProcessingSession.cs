@@ -250,6 +250,45 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         EnsureSuccess(result, "Remote cleanup");
     }
 
+    public async Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default)
+    {
+        // Decided here, from the worker's own listing: the shell below only acts on the names it is handed. A missing working
+        // directory lists nothing.
+        var listing = await SshAsync($"ls -1 -- {Quote(_root)} 2>/dev/null; true", cancellationToken: cancellationToken);
+        var finished = listing.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(name => Guid.TryParseExact(name, "N", out var id) && id.ToString("N") == name && finishedJobIds.Contains(id))
+            .ToArray();
+        if (finished.Length == 0) return;
+        // The stage script is a process-group leader whose pid its stage directory keeps (see RunStageAsync), so the group takes
+        // ab-av1 and ffmpeg with it. The command line is checked first: a pid file that outlived its stage may name a pid that
+        // something else now holds.
+        // Joined with explicit line feeds, as the stage script is: a literal spanning lines would carry the source file's line
+        // endings, and a carriage return breaks bash.
+        var stopAndRemove = string.Join("\n",
+        [
+            $"root={Quote(_root)}",
+            "while read -r id; do",
+            "case \"$id\" in ''|*[!0-9a-f]*) continue;; esac",
+            "test \"${#id}\" -eq 32 || continue",
+            "workspace=\"$root/$id\"",
+            "test -d \"$workspace\" || continue",
+            "for file in \"$workspace\"/*/pid; do",
+            "test -s \"$file\" || continue",
+            "pid=$(cat \"$file\")",
+            "case \"$pid\" in ''|*[!0-9]*) continue;; esac",
+            "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -qF -- \"$workspace/\"; then",
+            "kill -s TERM -- \"-$pid\" 2>/dev/null",
+            "sleep 1",
+            "kill -s KILL -- \"-$pid\" 2>/dev/null",
+            "fi",
+            "done",
+            "rm -rf -- \"$workspace\"",
+            "done"
+        ]);
+        var removal = await SshAsync(stopAndRemove, string.Join("\n", finished) + "\n", cancellationToken);
+        EnsureSuccess(removal, "Remote workspace removal");
+    }
+
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     /// <param name="Log">The stage's whole log, read once it ended.</param>

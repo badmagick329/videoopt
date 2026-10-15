@@ -93,7 +93,7 @@ public sealed class RemoteResumeRunTests : IDisposable
             "Stopped. The encoded output is waiting on the worker video-optimiser-1, which stays up, billed hourly.",
             $"To resume: video-optimiser run --config \"{config}\"",
             $"To delete it instead: video-optimiser worker delete --config \"{config}\" (the finished encode is lost)"));
-        session.Calls.Should().Equal("HasFinishedEncode 1", "Retrieve 1");
+        session.Calls.Should().Equal("Sweep", "HasFinishedEncode 1", "Retrieve 1");
         (await _repository.ListAsync(DatabasePath, terminal: false)).Single().ResumeStatus.Should().Be(JobStatus.Downloading);
     }
 

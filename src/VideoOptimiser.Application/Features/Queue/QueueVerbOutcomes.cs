@@ -53,9 +53,8 @@ public enum RemoteStage
     Encode
 }
 
-/// <summary>A remote CRF search or encode runs detached, so a stop leaves it going and dropping the job does not stop it.</summary>
-/// <param name="ManagedWorker">The worker is a managed server, whose deletion ends the stage; a manual worker's runs until it finishes.</param>
-public sealed record RemoteStageNote(RemoteStage Stage, bool ManagedWorker);
+/// <summary>A remote CRF search or encode runs detached, so a stop leaves it going and dropping the job does not stop it; the next run on the worker does.</summary>
+public sealed record RemoteStageNote(RemoteStage Stage);
 
 public enum LeftAv1
 {

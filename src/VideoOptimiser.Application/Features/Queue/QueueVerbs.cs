@@ -176,7 +176,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
     private static RemoteStageNote? RemoteStageOf(JobRecord job)
     {
         if (!string.Equals(job.ExecutionMode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase) || job.ResumeStatus is not (JobStatus.CrfSearching or JobStatus.Encoding)) return null;
-        return new RemoteStageNote(job.ResumeStatus == JobStatus.Encoding ? RemoteStage.Encode : RemoteStage.CrfSearch, RemoteExecutionIdentity.IsManagedHetzner(job.RemoteHost));
+        return new RemoteStageNote(job.ResumeStatus == JobStatus.Encoding ? RemoteStage.Encode : RemoteStage.CrfSearch);
     }
 
     private Task<TemporaryOutputCleanupPlan> CleanupPlanAsync(AppSettings settings, CancellationToken cancellationToken) =>

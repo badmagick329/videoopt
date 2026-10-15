@@ -456,7 +456,7 @@ public sealed class JobProcessorTests : IDisposable
         var result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false, new ListProgress(reported));
 
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
-        session.Calls.Should().Equal("HasFinishedEncode 1", "Retrieve 1", "Cleanup");
+        session.Calls.Should().Equal("Sweep", "HasFinishedEncode 1", "Retrieve 1", "Cleanup");
         result.Job.Attempt.Should().Be(1, "the finished encode is the one fetched, not a new attempt");
         Steps(reported).Should().Equal(saysItFinished
             ? ["The encode on the worker had already finished.", "Checking the output: streams, duration, savings and decode test...", "Ready to finalise: 100 B -> 50 B, 50.0% saved."]
@@ -478,7 +478,7 @@ public sealed class JobProcessorTests : IDisposable
         var result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false);
 
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
-        session.Calls.Should().Equal("HasFinishedEncode 1", "Stage", "Encode 1", "Retrieve 1", "Cleanup");
+        session.Calls.Should().Equal("Sweep", "HasFinishedEncode 1", "Stage", "Encode 1", "Retrieve 1", "Cleanup");
         result.Job.Attempt.Should().Be(1);
     }
 
@@ -535,6 +535,44 @@ public sealed class JobProcessorTests : IDisposable
 
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
         session.Calls.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// The first session a run opens on a worker ends what dropped videos left running there (VOPT-90): once, not per video,
+    /// and told only of the jobs the database holds as ended, here a dropped and a failed one. A stopped job, one still running
+    /// and any job the database does not know are not in the list, so their workspaces stay.
+    /// </summary>
+    [Fact]
+    public async Task TheFirstSessionOnAWorkerSweepsOnceAndNamesOnlyTheJobsThatEnded()
+    {
+        var settings = Settings(remote: true);
+        await StopRemoteJobAsync(await SourceAsync("stopped.mp4"), settings, JobStatus.Encoding);
+        var dropped = await StopRemoteJobAsync(await SourceAsync("dropped.mp4"), settings, JobStatus.Encoding);
+        dropped.Status = JobStatus.Cancelled;
+        await _repository.UpdateAsync(DatabasePath, dropped);
+        var failed = await StopRemoteJobAsync(await SourceAsync("failed.mp4"), settings, JobStatus.Encoding);
+        failed.Status = JobStatus.Failed;
+        await _repository.UpdateAsync(DatabasePath, failed);
+        var session = new ResumedWorkerSession();
+        var processor = Processor(session: session);
+
+        await processor.ProcessAsync(DatabasePath, await SourceAsync("a.mp4"), settings, force: false);
+        await processor.ProcessAsync(DatabasePath, await SourceAsync("b.mp4"), settings, force: false);
+
+        session.Sweeps.Should().ContainSingle().Which.Should().BeEquivalentTo(new[] { dropped.Id, failed.Id });
+        session.Calls.Take(2).Should().Equal("Sweep", "Stage");
+    }
+
+    /// <summary>The sweep is housekeeping: a worker that cannot answer it fails the video's own stage, not the video before that.</summary>
+    [Fact]
+    public async Task AFailedSweepDoesNotFailTheVideo()
+    {
+        var source = await SourceAsync();
+        var session = new ResumedWorkerSession { SweepFailure = new RemoteConnectionException("SSH connection failed: timed out.") };
+
+        var result = await Processor(session: session).ProcessAsync(DatabasePath, source, Settings(remote: true), force: false);
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
     }
 
     /// <summary>A search this command joined midway has no start to time it from, so its line gives no duration.</summary>
@@ -671,6 +709,7 @@ public sealed class JobProcessorTests : IDisposable
         public Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
@@ -708,6 +747,7 @@ public sealed class JobProcessorTests : IDisposable
         }
 
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
@@ -762,6 +802,7 @@ public sealed class JobProcessorTests : IDisposable
         }
 
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

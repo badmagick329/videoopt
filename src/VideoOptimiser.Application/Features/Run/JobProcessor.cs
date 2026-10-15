@@ -88,6 +88,7 @@ public sealed class JobProcessor(
             // Both questions are settled before anything is staged: staging hashes the original and needs a worker, and a
             // resume that only has to download or check what is already finished needs neither (VOPT-72, VOPT-89).
             var canReuseOutput = CanReuseOutput(job, resumeStatus);
+            if (session.IsRemote && !canReuseOutput) await SweepFinishedWorkspacesOnceAsync(session, databasePath, cancellationToken);
             var reattachAttempt = session.IsRemote && resumeStatus is JobStatus.Encoding or JobStatus.Downloading && job.Attempt > 0;
             // The finished encode is looked for on the worker, not assumed from the status, so the job is recorded as
             // Downloading only once that is known: a stop in between would otherwise say an encode is still running that is not
@@ -187,7 +188,8 @@ public sealed class JobProcessor(
             job.OutputSizeBytes = manifest.Validation.OutputSizeBytes;
             job.PercentageSaved = manifest.Validation.PercentageSaved;
             // A validation resumed on this PC needs no worker, and this run may have none to reach. The workspace it leaves is
-            // removed by the sweep of workspaces whose job is no longer open, which a later run makes on the worker (VOPT-90).
+            // removed by the sweep of the workspaces of finished jobs, which a run makes on the worker once this job has ended
+            // (VOPT-90).
             if (session.IsRemote && !canReuseOutput) await session.CleanupAsync(cancellationToken);
             if (!manifest.Validation.Passed)
             {
@@ -260,6 +262,31 @@ public sealed class JobProcessor(
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             return true;
+        }
+    }
+
+    private readonly HashSet<string> _sweptWorkers = [];
+
+    /// <summary>
+    /// The first time a run reaches a worker, ends what dropped videos left running there and frees their disk (VOPT-90).
+    /// Only the workspaces of jobs this database holds as ended are touched: a stopped job is resumed by a later run, and a job
+    /// this database has never heard of may belong to another database sharing a manual worker. It is housekeeping, so a worker
+    /// that cannot answer does not fail the video; the video's own stage meets the same error and reports it properly. A worker
+    /// that failed is not asked again in this run.
+    /// </summary>
+    private async Task SweepFinishedWorkspacesOnceAsync(IProcessingSession session, string databasePath, CancellationToken cancellationToken)
+    {
+        lock (_sweptWorkers)
+        {
+            if (!_sweptWorkers.Add(session.RemoteHost ?? string.Empty)) return;
+        }
+        try
+        {
+            var finished = (await jobs.ListAsync(databasePath, terminal: true, cancellationToken)).Select(job => job.Id).ToHashSet();
+            await session.RemoveFinishedWorkspacesAsync(finished, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
         }
     }
 

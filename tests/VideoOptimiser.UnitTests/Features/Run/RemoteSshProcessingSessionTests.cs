@@ -640,6 +640,45 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Requests.Should().ContainSingle();
     }
 
+
+    /// <summary>
+    /// A dropped video's stage keeps running on the worker with its workspace (VOPT-90). Only the workspaces of jobs this database
+    /// knows ended are stopped and removed. A stopped job's is still wanted by the run that picks it up, an unknown job's may be
+    /// another database's stage on a shared manual worker, and a name that is not a workspace of this tool's making is none of
+    /// its business.
+    /// </summary>
+    [Fact]
+    public async Task OnlyTheWorkspacesOfJobsTheDatabaseKnowsEndedAreStoppedAndRemoved()
+    {
+        var dropped = Guid.NewGuid();
+        var stopped = Guid.NewGuid();
+        var unknown = Guid.NewGuid();
+        var upper = new string('A', 32);
+        var runner = new QueueRunner([Ok($"{dropped:N}\n{stopped:N}\n{unknown:N}\nlost+found\nnotes.txt\n{upper}\n{Guid.NewGuid():N}.tmp\n"), Ok()]);
+
+        await CreateSession(Guid.NewGuid(), runner).RemoveFinishedWorkspacesAsync(new HashSet<Guid> { dropped });
+
+        runner.Requests.Should().HaveCount(2);
+        runner.Requests[0].Arguments[^1].Should().Contain("ls -1 --").And.Contain("/var/tmp/video-optimiser");
+        runner.Requests[1].StandardInput.Should().Be($"{dropped:N}\n");
+        var removal = runner.Requests[1].Arguments[^1];
+        // The group of the stage script is ended, then the workspace goes; the root is quoted, never built from the names.
+        removal.Should().Contain("kill -s TERM -- ").And.Contain("kill -s KILL -- ").And.Contain("rm -rf -- ").And.Contain("root=");
+        runner.Requests.SelectMany(request => request.Arguments.Append(request.StandardInput ?? string.Empty)).Should()
+            .NotContain(text => text.Contains(stopped.ToString("N"), StringComparison.Ordinal) || text.Contains(unknown.ToString("N"), StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NothingEndedCostsOnlyTheListing()
+    {
+        var unknown = Guid.NewGuid();
+        var runner = new QueueRunner([Ok($"{unknown:N}\n")]);
+
+        await CreateSession(Guid.NewGuid(), runner).RemoveFinishedWorkspacesAsync(new HashSet<Guid> { Guid.NewGuid() });
+
+        runner.Requests.Should().ContainSingle();
+    }
+
     /// <summary>
     /// A rerun says what it found: a stage still running, which it follows until it completes, or one that ended while no command
     /// watched it. A stage whose log is already kept ended under the command that kept it, such as a rerun after a stopped

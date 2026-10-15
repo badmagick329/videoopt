@@ -226,7 +226,7 @@ public sealed class QueueVerbTests : QueueTestBase
         var job = await QueuedAsync("clip.mp4", RemoteOn(RemoteExecutionIdentity.ManagedHetzner));
         await StopAsync(job, JobStatus.Encoding);
 
-        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Transcript("Dropped clip.mp4.", "Its encode may still be running on the worker; deleting the worker stops it."), ""));
+        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Transcript("Dropped clip.mp4.", "Its encode may still be running on the worker; the next run on that worker stops it."), ""));
     }
 
     [Fact]
@@ -267,7 +267,7 @@ public sealed class QueueVerbTests : QueueTestBase
             "Dropped b.mp4.",
             "Dropped f.mp4.",
             "Dropped g.mp4.",
-            "Its CRF search may still be running on the worker until it finishes.",
+            "Its CRF search may still be running on the worker; the next run on that worker stops it.",
             $"Left 1 video stopped while being finalised; 'video-optimiser finalize {finalising.Id:N}{ConfigArgument}' checks and resumes it.",
             $"Left 1 video stopped while its AV1 was checked; to drop it: video-optimiser queue drop {checking.Id:N}{ConfigArgument}"), ""));
         (await StoredAsync(waiting)).Status.Should().Be(JobStatus.Cancelled);

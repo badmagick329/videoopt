@@ -75,6 +75,7 @@
 - An sftp transfer that exits `1` because its connection dropped now resumes on the next run like any lost connection, instead of failing the video. Any other sftp failure fails the video with sftp's own message: `SFTP transfer failed: <message>`.
 - `finalize <id>` takes back a folder video that an older version failed for manual review after `Ctrl+C` cut off its finalisation. If the original and the AV1 are where they started and the original is unchanged, it finalises the video, so it needs no `queue retry` and no new encode. A video whose files did move stays failed.
 - `validate` on a job whose validation record is missing, unreadable or corrupt prints `The AV1's validation record is missing or unreadable: <path>, so the AV1 can't be checked.` and how to convert the video again, leaves the job as it was, and exits `6`. Before, it printed a .NET error and exited `3`.
+- The first time a run reaches a worker, it stops the CRF search or encode of videos this database has dropped or finished and removes their workspaces there. Workspaces of open videos, and of videos this database doesn't know, are left alone. `queue drop` on a stopped remote video now says `Its encode may still be running on the worker; the next run on that worker stops it.`
 
 ## [0.7.1] - 2026-10-13
 ### Changed
