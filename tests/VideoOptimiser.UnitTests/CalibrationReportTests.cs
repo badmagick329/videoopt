@@ -1,7 +1,7 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.UnitTests;
 

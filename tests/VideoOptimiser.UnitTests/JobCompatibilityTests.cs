@@ -1,12 +1,12 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Jobs;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.Persistence;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -99,7 +99,7 @@ public sealed class JobCompatibilityTests : IDisposable
             RemoteWorkspace = "/var/tmp/video-optimiser/old"
         };
         await repository.CreateAsync(settings.Database.Path, job);
-        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor(), new DatabaseLocks());
 
         var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
 
@@ -123,7 +123,7 @@ public sealed class JobCompatibilityTests : IDisposable
             Status = JobStatus.Queued
         };
         await repository.CreateAsync(settings.Database.Path, job);
-        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor(), new DatabaseLocks());
 
         var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
 
@@ -153,7 +153,7 @@ public sealed class JobCompatibilityTests : IDisposable
             RemoteWorkspace = $"/var/tmp/video-optimiser/{id:N}"
         };
         await repository.CreateAsync(settings.Database.Path, job);
-        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor(), new DatabaseLocks());
         var localRun = ManagedSettings();
         localRun.Database.Path = settings.Database.Path;
         ProcessingModeOverride.Local.Apply(localRun);
@@ -194,7 +194,7 @@ public sealed class JobCompatibilityTests : IDisposable
             RemoteWorkspace = "/var/tmp/video-optimiser/old"
         };
         await repository.CreateAsync(settings.Database.Path, job);
-        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor(), new DatabaseLocks());
 
         var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File, modeOverridden: true);
 
@@ -222,7 +222,7 @@ public sealed class JobCompatibilityTests : IDisposable
             RemoteHost = boundMode == ProcessingModes.RemoteSsh ? RemoteExecutionIdentity.ManagedHetzner : null
         };
         await repository.CreateAsync(settings.Database.Path, job);
-        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor(), new DatabaseLocks());
 
         var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File, modeOverridden: true);
 
@@ -259,7 +259,7 @@ public sealed class JobCompatibilityTests : IDisposable
             RemoteWorkspace = bindingMatches ? expected.RemoteWorkspace : "/var/tmp/video-optimiser/old"
         };
         await repository.CreateAsync(settings.Database.Path, job);
-        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor());
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new UnexpectedProcessor(), new DatabaseLocks());
 
         var result = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
 
@@ -476,7 +476,7 @@ public sealed class JobCompatibilityTests : IDisposable
         };
         await repository.CreateAsync(settings.Database.Path, incompatible);
         await repository.CreateAsync(settings.Database.Path, runnable);
-        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new ReadyProcessor());
+        var queue = new QueueService(new EmptyScanner(), repository, new FileFingerprintService(), new ReadyProcessor(), new DatabaseLocks());
 
         var preparation = await queue.PrepareAsync(settings.Database.Path, settings, JobSourceKind.File);
         var run = await queue.RunAsync(settings.Database.Path, settings, preparation);

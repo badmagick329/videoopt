@@ -3,8 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Infrastructure.Diagnostics;
-using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.UnitTests;
 

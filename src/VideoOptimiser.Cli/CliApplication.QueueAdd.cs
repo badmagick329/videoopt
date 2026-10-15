@@ -3,12 +3,14 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Domain.Jobs;
+using static CliLocks;
+using static CliOutput;
 
 /// <summary>
 /// <c>queue add</c> (was <c>queue discover</c>), <c>queue add &lt;file&gt;</c> and <c>queue retry</c>: the commands that put
-/// videos in the queue, each ending with what to run next. The wording was approved by the user word for word; ask before
-/// changing it.
+/// videos in the queue, each ending with what to run next. Changed wording goes through the humanizer gate
+/// (docs index).
 /// </summary>
 internal static partial class CliApplication
 {

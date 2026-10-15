@@ -1,5 +1,5 @@
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Scanning;
 
 namespace VideoOptimiser.Cli;
 

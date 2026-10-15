@@ -1,7 +1,7 @@
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Scanning;
-using VideoOptimiser.Domain;
+using VideoOptimiser.Application.Eligibility;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Calibration;
 

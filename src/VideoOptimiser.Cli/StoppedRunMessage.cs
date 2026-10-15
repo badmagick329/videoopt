@@ -1,5 +1,5 @@
-using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Cli;
 

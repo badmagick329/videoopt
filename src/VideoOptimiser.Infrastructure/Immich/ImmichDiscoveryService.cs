@@ -1,10 +1,11 @@
 using System.Security.Cryptography;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
-using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Infrastructure.Immich;
 
@@ -62,7 +63,7 @@ public sealed class ImmichDiscoveryService(
             if (queued.Count + alreadyQueued >= limit) break;
             if (!seen.Add(asset.Id)) continue;
 
-            if (Exclusion(asset, cutoff, settings.Immich.SkipFavorites) is { } exclusion)
+            if (ImmichExclusion.Reason(asset, cutoff, settings.Immich.SkipFavorites) is { } exclusion)
             {
                 excluded++;
                 progress?.Report(new ImmichDiscoveryProgress.AssetExcluded(asset.OriginalFileName, asset.Id, exclusion));
@@ -118,7 +119,7 @@ public sealed class ImmichDiscoveryService(
                 // The size of the bytes just probed, which is what the rules were judged on.
                 var downloadedBytes = new FileInfo(stagedPath).Length;
                 var facts = new CandidateFacts(media.PrimaryVideoCodec, media.PrimaryVideoWidth, media.PrimaryVideoHeight, media.PrimaryVideoBitrate, downloadedBytes);
-                var videoFacts = VideoFacts.From(media, downloadedBytes);
+                var videoFacts = media.ToVideoFacts(downloadedBytes);
                 if (EligibilityEvaluator.MatchingRule(downloadedBytes, media, settings.Eligibility) is not { } rule)
                 {
                     var reason = EligibilityEvaluator.DescribeMismatch(downloadedBytes, media, settings.Eligibility);
@@ -249,7 +250,7 @@ public sealed class ImmichDiscoveryService(
     {
         job.Status = JobStatus.Failed;
         job.ResumeStatus = null;
-        job.FailureCategory = QueueService.SourceMissingCategory;
+        job.FailureCategory = FailureCategories.SourceMissing;
         job.FailureMessage = message;
         job.CompletedUtc = _utcNow();
         try
@@ -261,22 +262,6 @@ public sealed class ImmichDiscoveryService(
         {
             // Held or dropped from another terminal since it was read; that change stands, and the run passes over it.
         }
-    }
-
-    /// <summary>
-    /// Why an asset the search returned must not be converted, or null for a candidate. This repeats the search filter on
-    /// purpose: a wrong match ends with an original in Immich's trash, so the server's filter is not trusted alone.
-    /// </summary>
-    // Internal for calibrate, whose Immich population must be the assets this discovery would judge.
-    internal static string? Exclusion(ImmichAsset asset, DateTimeOffset cutoff, bool skipFavorites)
-    {
-        if (!string.Equals(asset.Type, ImmichValues.Video, StringComparison.Ordinal)) return $"is a {asset.Type}, not a video";
-        if (asset.FileCreatedAt >= cutoff) return "is newer than the age gate";
-        if (skipFavorites && asset.IsFavorite) return "is a favourite";
-        if (asset.IsTrashed) return "is in the trash";
-        if (asset.Visibility is not (ImmichValues.Timeline or ImmichValues.Archive)) return $"has visibility {asset.Visibility}";
-        if (asset.LibraryId is not null) return "belongs to an external library";
-        return null;
     }
 
     // Rules with an unreadable size are rejected by validation; treating them as zero only means downloading more.
@@ -334,69 +319,5 @@ public sealed class ImmichDiscoveryService(
         {
             // The folder still holds other files, or was never created.
         }
-    }
-
-    /// <summary>Earlier Immich jobs, read once per run because every repository call re-runs the database initialiser.</summary>
-    internal sealed class ImmichHistory
-    {
-        public HashSet<string> OpenAssets { get; } = new(StringComparer.Ordinal);
-        public HashSet<string> HeldAssets { get; } = new(StringComparer.Ordinal);
-        private readonly HashSet<string> _convertedAssets = new(StringComparer.Ordinal);
-        private readonly HashSet<string> _convertedChecksums = new(StringComparer.Ordinal);
-        private readonly HashSet<string> _replacements = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, JobRecord> _latestTerminal = new(StringComparer.Ordinal);
-
-        public static async Task<ImmichHistory> LoadAsync(IJobRepository jobs, string databasePath, CancellationToken cancellationToken)
-        {
-            var history = new ImmichHistory();
-            foreach (var job in await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
-            {
-                if (job.ImmichAssetId is { } assetId) (job.Held ? history.HeldAssets : history.OpenAssets).Add(assetId);
-                if (job.ImmichNewAssetId is { } replacement) history._replacements.Add(replacement);
-            }
-
-            foreach (var job in await jobs.ListAsync(databasePath, terminal: true, cancellationToken))
-            {
-                if (job.ImmichNewAssetId is { } replacement) history._replacements.Add(replacement);
-                if (job.ImmichAssetId is not { } assetId) continue;
-                if (job.Status == JobStatus.Completed)
-                {
-                    history._convertedAssets.Add(assetId);
-                    if (job.ImmichChecksum is { } checksum) history._convertedChecksums.Add(checksum);
-                }
-
-                if (!history._latestTerminal.TryGetValue(assetId, out var latest) || job.CreatedUtc > latest.CreatedUtc) history._latestTerminal[assetId] = job;
-            }
-
-            return history;
-        }
-
-        /// <summary>
-        /// A completed job converted this asset, or one with the same checksum: an original the phone uploaded again after
-        /// conversion, which the re-upload guard trashes. Or it is an AV1 asset that finalisation uploaded, which is just as
-        /// old and on the timeline. Discovery must never download or convert any of these.
-        /// </summary>
-        public bool IsConverted(ImmichAsset asset) =>
-            _convertedAssets.Contains(asset.Id) || _convertedChecksums.Contains(asset.Checksum) || _replacements.Contains(asset.Id);
-
-        /// <summary>
-        /// The asset's latest job was skipped as not worth converting, under the quality settings in force now. Changing them
-        /// makes the asset a candidate again; only then could AV1 pass.
-        /// </summary>
-        public bool IsSettledSkip(ImmichAsset asset, string qualityFingerprint) =>
-            _latestTerminal.TryGetValue(asset.Id, out var job) &&
-            job.Status == JobStatus.Skipped &&
-            string.Equals(job.ImmichChecksum, asset.Checksum, StringComparison.Ordinal) &&
-            string.Equals(job.QualityFingerprint, qualityFingerprint, StringComparison.Ordinal);
-
-        /// <summary>
-        /// The asset's latest job failed or was cancelled while the asset was unchanged, so converting it again would repeat
-        /// that outcome; only <c>queue retry</c> requeues it, as for a settled original.
-        /// </summary>
-        public bool IsSettledFailure(ImmichAsset asset) =>
-            _latestTerminal.TryGetValue(asset.Id, out var job) &&
-            job.Status is JobStatus.Failed or JobStatus.Cancelled &&
-            string.Equals(job.ImmichChecksum, asset.Checksum, StringComparison.Ordinal) &&
-            !QueueService.RequeuedFailureCategories.Contains(job.FailureCategory ?? string.Empty);
     }
 }

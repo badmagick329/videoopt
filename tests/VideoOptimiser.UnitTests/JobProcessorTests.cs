@@ -1,12 +1,17 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
+using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -30,7 +35,8 @@ public sealed class JobProcessorTests : IDisposable
             new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => encoder, new UnexpectedExternalProcessRunner()),
             new FileFingerprintService(),
             new OutputManifestStore(),
-            new PassingValidator());
+            new PassingValidator(),
+            new AbAv1ProgressTranslator());
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
@@ -66,7 +72,8 @@ public sealed class JobProcessorTests : IDisposable
             new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => encoder, new UnexpectedExternalProcessRunner()),
             new FileFingerprintService(),
             new OutputManifestStore(),
-            new PassingValidator());
+            new PassingValidator(),
+            new AbAv1ProgressTranslator());
         var settings = Settings("jobs.db");
 
         var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false);
@@ -93,7 +100,8 @@ public sealed class JobProcessorTests : IDisposable
             new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
             new FileFingerprintService(),
             new OutputManifestStore(),
-            new PassingValidator());
+            new PassingValidator(),
+            new AbAv1ProgressTranslator());
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
@@ -128,7 +136,8 @@ public sealed class JobProcessorTests : IDisposable
             new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
             new FileFingerprintService(),
             new OutputManifestStore(),
-            new PassingValidator());
+            new PassingValidator(),
+            new AbAv1ProgressTranslator());
         var databasePath = Path.Combine(_directory, "jobs.db");
         var job = await repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = missing, SourceFingerprint = "fingerprint", Status = status });
 
@@ -153,7 +162,8 @@ public sealed class JobProcessorTests : IDisposable
             new ProcessingSessionFactory(_ => new CancellingCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
             new FileFingerprintService(),
             new OutputManifestStore(),
-            new PassingValidator());
+            new PassingValidator(),
+            new AbAv1ProgressTranslator());
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
@@ -198,7 +208,8 @@ public sealed class JobProcessorTests : IDisposable
             new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
             new FileFingerprintService(),
             new OutputManifestStore(),
-            new PassingValidator());
+            new PassingValidator(),
+            new AbAv1ProgressTranslator());
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
@@ -256,7 +267,8 @@ public sealed class JobProcessorTests : IDisposable
             new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => encoder, new UnexpectedExternalProcessRunner()),
             new FileFingerprintService(),
             manifests,
-            new PassingValidator());
+            new PassingValidator(),
+            new AbAv1ProgressTranslator());
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
@@ -286,7 +298,8 @@ public sealed class JobProcessorTests : IDisposable
             new FixedSessionFactory(new UnavailableRemoteSession()),
             new FileFingerprintService(),
             new OutputManifestStore(),
-            new PassingValidator());
+            new PassingValidator(),
+            new AbAv1ProgressTranslator());
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
@@ -326,7 +339,8 @@ public sealed class JobProcessorTests : IDisposable
             new FixedSessionFactory(session),
             new FileFingerprintService(),
             new OutputManifestStore(),
-            cancellationStage == CancellationStage.Validating ? new CancellingValidator() : new PassingValidator());
+            cancellationStage == CancellationStage.Validating ? new CancellingValidator() : new PassingValidator(),
+            new AbAv1ProgressTranslator());
         var settings = new AppSettings
         {
             Database = new DatabaseSettings { Path = databasePath },
@@ -361,7 +375,7 @@ public sealed class JobProcessorTests : IDisposable
             Eligibility = Rules(),
             Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } }
         };
-        JobProcessor Processor(IProcessingSession session) => new(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(session), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        JobProcessor Processor(IProcessingSession session) => new(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(session), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator(), new AbAv1ProgressTranslator());
 
         var stopped = async () => await Processor(new CancellingRemoteSession(CancellationStage.Encoding)).ProcessAsync(databasePath, source, settings, force: false);
         await stopped.Should().ThrowAsync<JobInterruptedException>();
@@ -396,7 +410,7 @@ public sealed class JobProcessorTests : IDisposable
             // The address is what the Hetzner lifecycle writes into the settings for the server it ensured.
             Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Lifecycle = RemoteLifecycleModes.Hetzner, Host = server.Address, WorkingDirectory = "/var/tmp/video-optimiser" } }
         };
-        JobProcessor Processor(WorkerServer server, CancellationStage stopIn) => new(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new ServerSession(server, stopIn)), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        JobProcessor Processor(WorkerServer server, CancellationStage stopIn) => new(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new ServerSession(server, stopIn)), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator(), new AbAv1ProgressTranslator());
         var deleted = new WorkerServer("203.0.113.10");
         var created = new WorkerServer("203.0.113.20");
 
@@ -448,7 +462,7 @@ public sealed class JobProcessorTests : IDisposable
             Processing = new ProcessingSettings { Mode = situation == "local mode" ? "local" : "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker" } }
         };
         IMediaProbe probe = situation == "unreadable by ffprobe" ? new FailingProbe() : new H264Probe(bitrate: situation.StartsWith("below", StringComparison.Ordinal) ? 500_000 : 10_000_000);
-        var processor = new JobProcessor(repository, situation == "not ready yet" ? new UnreadyFiles() : new ReadableFiles(), _ => probe, new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        var processor = new JobProcessor(repository, situation == "not ready yet" ? new UnreadyFiles() : new ReadableFiles(), _ => probe, new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator(), new AbAv1ProgressTranslator());
 
         var needed = await processor.NeedsWorkerAsync(settings.Database.Path, source, settings, force: situation.EndsWith("--force", StringComparison.Ordinal));
 
@@ -487,7 +501,7 @@ public sealed class JobProcessorTests : IDisposable
             job.ResumeStatus = resumeStatus;
             await repository.UpdateAsync(settings.Database.Path, job);
         }
-        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator(), new AbAv1ProgressTranslator());
 
         (await processor.NeedsWorkerAsync(settings.Database.Path, source, settings, force: false)).Should().Be(expected);
     }
@@ -512,7 +526,7 @@ public sealed class JobProcessorTests : IDisposable
             Eligibility = Rules(),
             Processing = new ProcessingSettings { Mode = "remoteSsh", RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/var/tmp/video-optimiser" } }
         };
-        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(bitrate: unknownBitrate ? null : 10_000_000), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(bitrate: unknownBitrate ? null : 10_000_000), new FixedSessionFactory(new UnavailableRemoteSession()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator(), new AbAv1ProgressTranslator());
         var reported = new List<JobProgress>();
 
         var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: unknownBitrate, new SynchronousProgress(reported.Add));
@@ -542,7 +556,7 @@ public sealed class JobProcessorTests : IDisposable
         };
         var search = new NothingWorthwhileCrfSearch();
         var reported = new List<JobProgress>();
-        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator(), new AbAv1ProgressTranslator());
 
         var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
 
@@ -570,7 +584,7 @@ public sealed class JobProcessorTests : IDisposable
         };
         var search = new ThrowingCrfSearch(new NoWorthwhileCrfException([new CrfAttempt(31, 97.31, 95)], settings.Quality));
         var reported = new List<JobProgress>();
-        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator());
+        var processor = new JobProcessor(repository, new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => search, _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new PassingValidator(), new AbAv1ProgressTranslator());
 
         var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
 
@@ -716,7 +730,7 @@ public sealed class JobProcessorTests : IDisposable
         var source = Path.Combine(_directory, "movie.mp4");
         await File.WriteAllTextAsync(source, "original video data");
         var settings = Settings("invalid.db");
-        var processor = new JobProcessor(new SqliteJobRepository(new SqliteDatabaseInitializer()), new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new FailingValidator());
+        var processor = new JobProcessor(new SqliteJobRepository(new SqliteDatabaseInitializer()), new ReadableFiles(), _ => new H264Probe(), new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()), new FileFingerprintService(), new OutputManifestStore(), new FailingValidator(), new AbAv1ProgressTranslator());
         var reported = new List<JobProgress>();
 
         var result = await processor.ProcessAsync(settings.Database.Path, source, settings, force: false, new SynchronousProgress(reported.Add));
@@ -742,7 +756,8 @@ public sealed class JobProcessorTests : IDisposable
         new ProcessingSessionFactory(_ => search, _ => encoder, new UnexpectedExternalProcessRunner()),
         new FileFingerprintService(),
         new OutputManifestStore(),
-        new PassingValidator());
+        new PassingValidator(),
+        new AbAv1ProgressTranslator());
 
     private static string[] Steps(IEnumerable<JobProgress> reported) => [.. reported.Where(line => line.Kind == JobProgressKind.Step).Select(line => line.Text)];
 

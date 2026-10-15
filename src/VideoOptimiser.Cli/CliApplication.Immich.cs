@@ -1,11 +1,13 @@
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Cli;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Domain.Jobs;
+using static CliLocks;
+using static CliOutput;
 
 /// <summary>
 /// The <c>immich</c> commands. Each round runs by hand: <c>immich run</c> converts, the user reviews, <c>immich finalize</c>
@@ -92,7 +94,7 @@ internal static partial class CliApplication
         if (finalizeLock is null) return (int)ExitCode.GeneralFailure;
         var settings = configuration.Settings;
         var ready =(await services.GetRequiredService<IJobRepository>().ListAsync(settings.Database.Path, terminal: false, cancellationToken))
-            .Where(job => job.SourceKind == JobSourceKind.Immich && (job.Status == JobStatus.ReadyToFinalize || FinalizationService.IsInterruptedImmichFinalization(job)))
+            .Where(job => job.SourceKind == JobSourceKind.Immich && (job.Status == JobStatus.ReadyToFinalize || FinalizationRules.IsInterruptedImmich(job)))
             .ToArray();
         if (ready.Length == 0) { Console.WriteLine("No Immich jobs are ready to finalise."); return (int)ExitCode.Success; }
 
@@ -116,7 +118,7 @@ internal static partial class CliApplication
             var sizes = job is { SourceSizeBytes: { } before, OutputSizeBytes: { } after } ? $"{HumanReadableValues.FormatSize(before)} -> {HumanReadableValues.FormatSize(after)}" : "sizes unknown";
             var saved = job.PercentageSaved is { } percentage ? $", {percentage:F1}% saved" : string.Empty;
             Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}  {taken}  {sizes}{saved}");
-            if (job.FailureCategory == FinalizationService.IncompleteCategory) Console.WriteLine($"    Resumes after: {job.FailureMessage}");
+            if (job.FailureCategory == FailureCategories.FinalizationIncomplete) Console.WriteLine($"    Resumes after: {job.FailureMessage}");
         }
 
         var totalBefore = ready.Sum(job => job.SourceSizeBytes ?? 0);

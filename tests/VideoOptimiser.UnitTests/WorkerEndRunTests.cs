@@ -5,8 +5,9 @@ using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -595,7 +596,7 @@ public sealed class WorkerEndRunTests : IDisposable
             {
                 job.Status = JobStatus.Interrupted;
                 job.ResumeStatus = JobStatus.Encoding;
-                job.FailureCategory = JobProcessor.RemoteUnavailableCategory;
+                job.FailureCategory = FailureCategories.RemoteUnavailable;
                 job.FailureMessage = "SSH connection failed: timed out.";
                 await repository.UpdateAsync(databasePath, job, CancellationToken.None);
                 progress?.Report(JobProgress.Outcome(JobTone.Failure, "Worker unreachable: SSH connection failed: timed out."));

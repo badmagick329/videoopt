@@ -2,12 +2,14 @@ using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Immich;
 using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -124,7 +126,7 @@ public sealed class ImmichFinalizationTests : IDisposable
         _immich.Get(original.Id).IsTrashed.Should().Be(step == "trash" && responseLost);
         var waiting = await JobAsync(job);
         waiting.Status.Should().Be(JobStatus.ReadyToFinalize);
-        waiting.FailureCategory.Should().Be(FinalizationService.IncompleteCategory);
+        waiting.FailureCategory.Should().Be(FailureCategories.FinalizationIncomplete);
         Directory.Exists(StagingFolder(original)).Should().BeTrue();
 
         var resumed = await FinalizeAsync(job);

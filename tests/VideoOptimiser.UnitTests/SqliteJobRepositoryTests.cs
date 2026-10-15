@@ -1,8 +1,8 @@
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Infrastructure.Diagnostics;
-using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.UnitTests;
 

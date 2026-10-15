@@ -2,16 +2,18 @@ using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
+using static CliLocks;
+using static CliOutput;
 
 /// <summary>
 /// The queue verbs (VOPT-54 step 5): <c>queue hold</c>, <c>release</c>, <c>next</c> and <c>drop</c>. Each writes only while the
 /// job is as it read it (the repository's compare-and-swap), so a run that started the video first wins and a verb never
 /// half-applies. A job in a converting status is converting only while a run holds the run lock; otherwise a crash or a
 /// closed window left it, and <see cref="RunHoldsJobsAsync"/> marks it stopped first. Drop never leaves <c>cleanup</c> the
-/// only copy of a video. The wording was approved by the user word for word; ask before changing it.
+/// only copy of a video. Changed wording goes through the humanizer gate (docs index).
 /// </summary>
 internal static partial class CliApplication
 {

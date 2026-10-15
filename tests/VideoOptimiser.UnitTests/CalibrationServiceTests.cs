@@ -4,15 +4,13 @@ using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Calibration;
-using VideoOptimiser.Infrastructure.Diagnostics;
-using VideoOptimiser.Infrastructure.Jobs;
-using VideoOptimiser.Infrastructure.Scanning;
+using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.UnitTests;
 

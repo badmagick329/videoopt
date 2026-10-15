@@ -2,6 +2,10 @@ using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.Infrastructure.Processing;
 

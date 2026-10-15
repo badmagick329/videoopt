@@ -1,10 +1,11 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Scanning;
-using VideoOptimiser.Infrastructure.Diagnostics;
-using VideoOptimiser.Infrastructure.Jobs;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -224,7 +225,7 @@ public sealed class QueueAddTests : IDisposable
         var job = await QueuedAsync("clip.mp4");
         job.SourceFingerprint = await new FileFingerprintService().CreateAsync(job.SourcePath);
         // The quality settings that skipped it are the ones in force, so the skip still holds.
-        job.QualityFingerprint = Application.Processing.QualityFingerprint.Compute(await SettingsAsync());
+        job.QualityFingerprint = Application.Jobs.QualityFingerprint.Compute(await SettingsAsync());
         await _repository.UpdateAsync(DatabasePath, job);
         await MoveAsync(job, settled == JobStatus.Completed ? [JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing, settled] : [settled]);
 

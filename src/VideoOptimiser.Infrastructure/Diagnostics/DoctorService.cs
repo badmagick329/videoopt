@@ -1,7 +1,9 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
 using VideoOptimiser.Application.Immich;
+using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Infrastructure.Diagnostics;
@@ -318,7 +320,7 @@ public sealed class DoctorService(
             await databaseInitializer.InitializeAsync(path, cancellationToken);
             diagnostics.Add(new Diagnostic(DiagnosticCategory.Database, DiagnosticStatus.Pass, "DatabaseAvailable", $"SQLite database is ready: {path}"));
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Data.Common.DbException)
         {
             diagnostics.Add(new Diagnostic(DiagnosticCategory.Database, DiagnosticStatus.Fail, "DatabaseUnavailable", $"SQLite database cannot be initialised: {exception.Message}"));
         }

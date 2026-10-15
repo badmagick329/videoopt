@@ -1,5 +1,7 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Processing;
 

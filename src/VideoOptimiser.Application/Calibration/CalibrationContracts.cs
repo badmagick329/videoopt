@@ -1,5 +1,5 @@
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Application.Eligibility;
 
 namespace VideoOptimiser.Application.Calibration;
 
@@ -28,7 +28,7 @@ public interface ICalibrationService
 {
     /// <summary>
     /// <paramref name="immichProgress"/> receives the running count of Immich videos searched. Throws
-    /// <see cref="Diagnostics.DatabaseOutdatedException"/> when the database needs a migration, since running one would write.
+    /// <see cref="Jobs.DatabaseOutdatedException"/> when the database needs a migration, since running one would write.
     /// </summary>
     Task<CalibrationRun> RunAsync(AppSettings settings, IProgress<ScanProgress>? scanProgress, IProgress<int>? immichProgress, CancellationToken cancellationToken = default);
 }

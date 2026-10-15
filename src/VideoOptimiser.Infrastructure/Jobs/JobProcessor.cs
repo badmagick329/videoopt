@@ -1,10 +1,12 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Infrastructure.Jobs;
 
@@ -15,19 +17,15 @@ public sealed class JobProcessor(
     IProcessingSessionFactory sessions,
     IFileFingerprintService fingerprints,
     IOutputManifestStore manifests,
-    IOutputValidationService validator) : IJobProcessor
+    IOutputValidationService validator,
+    IAbAv1ProgressTranslator translator) : IJobProcessor
 {
-    /// <summary>An <see cref="JobStatus.Interrupted"/> job whose worker stopped answering; it resumes from its stage.</summary>
-    public const string RemoteUnavailableCategory = "RemoteUnavailable";
-
-    private const string SourceNotReadyCategory = "SourceNotReady";
-
     public async Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var path = Path.GetFullPath(job.SourcePath);
         // Left queued, the job would fail the same way on every run, and keep discovery from queueing the file or asset
         // again once it is back.
-        if (!File.Exists(path)) return await FailAsync(job, databasePath, QueueService.SourceMissingCategory, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
+        if (!File.Exists(path)) return await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
 
         var fingerprint = await fingerprints.CreateAsync(path, cancellationToken);
         var resumeStatus = job.ResumeStatus;
@@ -70,7 +68,7 @@ public sealed class JobProcessor(
             var verdict = await CheckSourceAsync(path, job.SourceKind, settings, force, cancellationToken);
             // Saved with the job's next update. This covers a job queued before migration 8; for the rest it describes the
             // file as this run found it.
-            if (verdict.Media is not null) job.VideoFacts = VideoFacts.From(verdict.Media, verdict.Info.Length);
+            if (verdict.Media is not null) job.VideoFacts = verdict.Media.ToVideoFacts(verdict.Info.Length);
             if (verdict.Skip) return await SkipAsync(job, databasePath, settings, verdict.Message!, progress, cancellationToken);
             if (!verdict.Proceeds) return await FailAsync(job, databasePath, verdict.FailureCategory!, verdict.Message!, verdict.ExitCode, progress, cancellationToken);
             var (info, media, cap) = (verdict.Info, verdict.Media!, verdict.Cap!);
@@ -189,7 +187,7 @@ public sealed class JobProcessor(
         {
             job.ResumeStatus = ResumePoint(job.Status, resumeStatus);
             job.Status = JobStatus.Interrupted;
-            job.FailureCategory = RemoteUnavailableCategory;
+            job.FailureCategory = FailureCategories.RemoteUnavailable;
             job.FailureMessage = exception.Message;
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
             // How to resume comes once, from the command, after the run stops: it depends on the worker kind and the command.
@@ -222,7 +220,7 @@ public sealed class JobProcessor(
         try
         {
             var verdict = await CheckSourceAsync(path, job.SourceKind, settings, job.Forced, cancellationToken);
-            return verdict.Proceeds || verdict.FailureCategory == SourceNotReadyCategory;
+            return verdict.Proceeds || verdict.FailureCategory == FailureCategories.SourceNotReady;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -241,7 +239,7 @@ public sealed class JobProcessor(
         if (!force && kind == JobSourceKind.Immich && !(settings.Immich.StagingDirectory.Length > 0 && IsWithinRoot(path, settings.Immich.StagingDirectory))) return SourceVerdict.Fail(info, "SourceOutsideWatchRoot", "Staged Immich original is outside immich.stagingDirectory. Use --force to bypass this check.", ExitCode.ProcessingFailure);
         if (!force && kind == JobSourceKind.File && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return SourceVerdict.Fail(info, "SourceOutsideWatchRoot", "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure);
         var readinessResult = await readiness.CheckAsync(path, cancellationToken);
-        if (!readinessResult.IsReady) return SourceVerdict.Fail(info, SourceNotReadyCategory, $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure);
+        if (!readinessResult.IsReady) return SourceVerdict.Fail(info, FailureCategories.SourceNotReady, $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure);
 
         var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
         if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return SourceVerdict.Fail(info, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles) with { Media = media };
@@ -284,9 +282,8 @@ public sealed class JobProcessor(
     private static int[] PcmAudioStreams(MediaInfo media) =>
         [.. (media.AudioCodecs ?? []).Select((codec, index) => (codec, index)).Where(stream => stream.codec.StartsWith("pcm_", StringComparison.OrdinalIgnoreCase)).Select(stream => stream.index)];
 
-    /// <summary>Each ab-av1 stage gets a fresh translator: its per-stage state (predictions, progress throttle, timing) must not carry over.</summary>
-    private static IProgress<JobProgress>? Translating(IProgress<JobProgress>? progress, AbAv1Stage stage, QualitySettings quality) =>
-        progress is null ? null : new AbAv1OutputTranslator(stage, quality.MinimumVmaf, quality.MaxEncodedPercent).Wrap(progress);
+    private IProgress<JobProgress>? Translating(IProgress<JobProgress>? progress, AbAv1Stage stage, QualitySettings quality) =>
+        progress is null ? null : translator.Wrap(progress, stage, quality);
 
     /// <summary>
     /// Matches by job ID and attempt rather than by <see cref="JobRecord.OutputPath"/>, because ab-av1 writes the encode
@@ -344,7 +341,7 @@ public sealed class JobProcessor(
     private async Task<JobProcessingResult> SkipAsync(JobRecord job, string databasePath, AppSettings settings, string reason, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         job.Status = JobStatus.Skipped;
-        job.FailureCategory = NotWorthConvertingCategory;
+        job.FailureCategory = FailureCategories.NotWorthConverting;
         job.FailureMessage = reason;
         job.QualityFingerprint = QualityFingerprint.Compute(settings);
         job.CompletedUtc = DateTimeOffset.UtcNow;
@@ -352,8 +349,6 @@ public sealed class JobProcessor(
         progress?.Report(JobProgress.Outcome(JobTone.Warning, $"Not worth converting: {reason}"));
         return new JobProcessingResult(job, ExitCode.Success, reason);
     }
-
-    internal const string NotWorthConvertingCategory = "NotWorthConverting";
 
     private static bool IsWithinRoot(string sourcePath, string rootPath)
     {

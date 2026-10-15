@@ -1,5 +1,6 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Infrastructure.Jobs;
 

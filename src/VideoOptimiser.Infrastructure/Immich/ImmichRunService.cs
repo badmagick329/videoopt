@@ -1,7 +1,8 @@
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Infrastructure.Immich;
 

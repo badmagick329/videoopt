@@ -1,4 +1,5 @@
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.UnitTests;
 

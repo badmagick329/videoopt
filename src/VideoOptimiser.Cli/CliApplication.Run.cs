@@ -4,10 +4,13 @@ using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
+using VideoOptimiser.Domain.Jobs;
+using static CliLocks;
+using static CliOutput;
 
 /// <summary>
 /// <c>run</c> (VOPT-54 step 5): converts every queued video, folder and Immich alike, taking each next one from the queue as
-/// it is then. The wording was approved by the user word for word; ask before changing it.
+/// it is then. Changed wording goes through the humanizer gate (docs index).
 /// </summary>
 internal static partial class CliApplication
 {

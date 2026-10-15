@@ -4,8 +4,9 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.UnitTests;
 

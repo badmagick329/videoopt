@@ -1,5 +1,5 @@
 using System.Runtime.InteropServices;
-using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Jobs;
 
 namespace VideoOptimiser.Cli;
 

@@ -8,6 +8,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
+using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.Infrastructure.Processing;
 

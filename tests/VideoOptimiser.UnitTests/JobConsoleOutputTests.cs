@@ -1,13 +1,17 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Cli;
-using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
+using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -113,7 +117,8 @@ public sealed class JobConsoleOutputTests : IDisposable
         sessions,
         new FileFingerprintService(),
         new OutputManifestStore(),
-        new SizedValidator());
+        new SizedValidator(),
+        new AbAv1ProgressTranslator());
 
     private static string[] Lines(string fixture) => AbAv1OutputTests.Fixture(fixture).Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries);
 

@@ -1,6 +1,6 @@
 using FluentAssertions;
-using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.UnitTests;
 

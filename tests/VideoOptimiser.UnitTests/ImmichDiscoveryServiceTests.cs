@@ -3,14 +3,14 @@ using System.Security.Cryptography;
 using System.Text;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Immich;
-using VideoOptimiser.Infrastructure.Jobs;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.Persistence;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests;
 

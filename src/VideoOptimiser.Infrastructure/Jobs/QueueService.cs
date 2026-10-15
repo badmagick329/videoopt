@@ -1,13 +1,13 @@
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Scanning;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Infrastructure.Jobs;
 
-public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFileFingerprintService fingerprints, IJobProcessor processor) : IQueueService
+public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFileFingerprintService fingerprints, IJobProcessor processor, IDatabaseLocks locks) : IQueueService
 {
     public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
     {
@@ -67,7 +67,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
                     SourceFingerprint = await fingerprints.CreateAsync(item.Path, cancellationToken),
                     Status = JobStatus.Queued,
                     // An eligible item always carries the probe it was judged on, cached or fresh.
-                    VideoFacts = VideoFacts.From(item.MediaInfo!, item.SizeBytes!.Value),
+                    VideoFacts = item.MediaInfo!.ToVideoFacts(item.SizeBytes!.Value),
                     ExecutionMode = remote ? "remoteSsh" : "local",
                     RemoteHost = remote ? RemoteExecutionIdentity.Host(settings.Processing.RemoteSsh) : null,
                     RemoteWorkspace = remote ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{id:N}" : null
@@ -128,7 +128,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             SourceFingerprint = await fingerprints.CreateAsync(path, cancellationToken),
             Status = JobStatus.Queued,
             // An eligible item always carries the probe it was judged on, cached or fresh.
-            VideoFacts = VideoFacts.From(item.MediaInfo!, item.SizeBytes!.Value),
+            VideoFacts = item.MediaInfo!.ToVideoFacts(item.SizeBytes!.Value),
             Forced = force
         };
         JobCompatibility.Apply(job, JobCompatibility.ExpectedBinding(job.Id, settings));
@@ -156,15 +156,6 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
         path.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Failures that judged the file's state or the settings at run time rather than an attempt to convert it. Discovery has
-    /// just found the file eligible inside a watch root, so the earlier verdict no longer holds and the file is queued again.
-    /// </summary>
-    internal static readonly HashSet<string> RequeuedFailureCategories = new(StringComparer.Ordinal) { "SourceNotReady", "Ineligible", "SourceOutsideWatchRoot", SourceMissingCategory };
-
-    /// <summary>An open job's original was gone when it was about to run. Its asset or file is queued again once it is back.</summary>
-    internal const string SourceMissingCategory = "SourceMissing";
-
-    /// <summary>
     /// Originals discovery leaves alone because their latest job settled them, mapped to that job's status. A completed job
     /// means <c>original.action: keep</c> left the original in place; a failed or cancelled one means converting it again
     /// would repeat the same encode and fail the same way, or undo the user's cancel, so only <c>queue retry</c> requeues it.
@@ -182,7 +173,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             .Where(job => onlyPath is null || string.Equals(Path.GetFullPath(job.SourcePath), onlyPath, StringComparison.OrdinalIgnoreCase))
             .GroupBy(job => Path.GetFullPath(job.SourcePath), StringComparer.OrdinalIgnoreCase)
             .Select(group => group.MaxBy(job => job.CreatedUtc)!)
-            .Where(job => !open.Contains(Path.GetFullPath(job.SourcePath)) && !RequeuedFailureCategories.Contains(job.FailureCategory ?? string.Empty))
+            .Where(job => !open.Contains(Path.GetFullPath(job.SourcePath)) && !FailureCategories.Requeued.Contains(job.FailureCategory ?? string.Empty))
             .Where(job => job.Status != JobStatus.Skipped || job.QualityFingerprint == qualityFingerprint);
         foreach (var job in latestJobs)
         {
@@ -205,7 +196,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
     {
         // Held for the whole preparation, so a finalisation cannot start between reading a job and writing it back; finalize
         // waits for it. Held by a finalisation instead, its jobs are live and this run leaves every finalisation alone.
-        using var finalizeLock = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(databasePath), DatabaseLock.RunPreparing, out _);
+        using var finalizeLock = locks.TryHoldFinalizeWhilePreparing(databasePath);
         var finalizing = finalizeLock is null;
         await jobs.MarkActiveJobsInterruptedAsync(databasePath, includeFinalizing: !finalizing, cancellationToken);
         var open = await jobs.ListAsync(databasePath, terminal: false, cancellationToken);
@@ -222,15 +213,15 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             try
             {
                 if (finalizing && job.ResumeStatus == JobStatus.Finalizing) continue;
-                if (FinalizationService.IsInterruptedImmichFinalization(job))
+                if (FinalizationRules.IsInterruptedImmich(job))
                 {
-                    FinalizationService.ReturnToReady(job, FinalizationService.InterruptedMessage);
+                    FinalizationRules.ReturnToReady(job, FinalizationRules.InterruptedMessage);
                     await jobs.UpdateAsync(databasePath, job, cancellationToken);
                     continue;
                 }
 
                 if (sourceKind is not null && job.SourceKind != sourceKind) continue;
-                if (FinalizationService.IsInterruptedFileFinalization(job))
+                if (FinalizationRules.IsInterruptedFile(job))
                 {
                     interruptedFinalizations.Add(job);
                     continue;
@@ -318,7 +309,7 @@ public sealed class QueueService(IFileScanner scanner, IJobRepository jobs, IFil
             done++;
             if (result.Job.Status == JobStatus.ReadyToFinalize) ready++;
             else if (result.Job.Status == JobStatus.Skipped) skipped.Add(new SkippedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureMessage ?? result.Message));
-            else if (result.Job is { Status: JobStatus.Interrupted, FailureCategory: JobProcessor.RemoteUnavailableCategory })
+            else if (result.Job is { Status: JobStatus.Interrupted, FailureCategory: FailureCategories.RemoteUnavailable })
             {
                 // Each later job would retry the dead worker three times and end the same way, so the run stops here.
                 return new QueueRunResult(ready, failed, skipped, result.Job, waiting.Length - 1, QueueExitCode.Calculate(ready, failed.Count, workerUnreachable: true));

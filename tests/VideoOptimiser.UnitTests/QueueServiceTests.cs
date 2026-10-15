@@ -1,12 +1,13 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Jobs;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.Persistence;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -22,7 +23,7 @@ public sealed class QueueServiceTests : IDisposable
         var source = Path.Combine(_directory, "movie.mp4");
         await File.WriteAllTextAsync(source, "source");
         var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
-        var queue = new QueueService(new FixedScanner(source), repository, new FileFingerprintService(), new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(source), repository, new FileFingerprintService(), new NoopProcessor(), new DatabaseLocks());
         var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
 
         var first = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
@@ -47,7 +48,7 @@ public sealed class QueueServiceTests : IDisposable
         var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
         await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = alreadyOpen, SourceFingerprint = "open", Status = JobStatus.Queued });
         var scanner = new FirstAwareScanner(alreadyOpen, next, later);
-        var queue = new QueueService(scanner, repository, new FileFingerprintService(), new NoopProcessor());
+        var queue = new QueueService(scanner, repository, new FileFingerprintService(), new NoopProcessor(), new DatabaseLocks());
 
         var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: true);
 
@@ -66,7 +67,7 @@ public sealed class QueueServiceTests : IDisposable
         await File.WriteAllTextAsync(two, "source");
         var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
         var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
-        var queue = new QueueService(new FixedScanner(one, two), repository, new FileFingerprintService(), new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(one, two), repository, new FileFingerprintService(), new NoopProcessor(), new DatabaseLocks());
 
         var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
 
@@ -86,7 +87,7 @@ public sealed class QueueServiceTests : IDisposable
         await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = kept, SourceFingerprint = await fingerprints.CreateAsync(kept), SourceSizeBytes = 6, Status = JobStatus.Completed });
         await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = replaced, SourceFingerprint = await fingerprints.CreateAsync(replaced), SourceSizeBytes = 6, Status = JobStatus.Completed });
         await File.WriteAllTextAsync(replaced, "av1");
-        var queue = new QueueService(new FixedScanner(kept, replaced), repository, fingerprints, new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(kept, replaced), repository, fingerprints, new NoopProcessor(), new DatabaseLocks());
 
         var unchanged = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
         await File.WriteAllTextAsync(kept, "edited");
@@ -110,7 +111,7 @@ public sealed class QueueServiceTests : IDisposable
         var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
         await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = kept, SourceFingerprint = await fingerprints.CreateAsync(kept), Status = JobStatus.Completed });
         var scanner = new FirstAwareScanner(kept, next, later);
-        var queue = new QueueService(scanner, repository, fingerprints, new NoopProcessor());
+        var queue = new QueueService(scanner, repository, fingerprints, new NoopProcessor(), new DatabaseLocks());
 
         var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: true);
 
@@ -131,7 +132,7 @@ public sealed class QueueServiceTests : IDisposable
         var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
         var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
         await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = await fingerprints.CreateAsync(source), Status = status, FailureCategory = category });
-        var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor(), new DatabaseLocks());
 
         var unchanged = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
         await File.WriteAllTextAsync(source, "edited");
@@ -155,7 +156,7 @@ public sealed class QueueServiceTests : IDisposable
         var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
         var settings = new AppSettings { Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") } };
         await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = await fingerprints.CreateAsync(source), Status = JobStatus.Failed, FailureCategory = category });
-        var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor(), new DatabaseLocks());
 
         var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
 
@@ -178,7 +179,7 @@ public sealed class QueueServiceTests : IDisposable
             await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = path, SourceFingerprint = await fingerprints.CreateAsync(path), Status = JobStatus.Failed, FailureCategory = category });
             await Task.Delay(5);
         }
-        var queue = new QueueService(new FixedScanner(failedLast, notReadyLast), repository, fingerprints, new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(failedLast, notReadyLast), repository, fingerprints, new NoopProcessor(), new DatabaseLocks());
 
         var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
 
@@ -199,7 +200,7 @@ public sealed class QueueServiceTests : IDisposable
         var fingerprint = await fingerprints.CreateAsync(retried);
         await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = retried, SourceFingerprint = fingerprint, Status = JobStatus.Failed, FailureCategory = "ValidationFailed" });
         await repository.CreateAsync(settings.Database.Path, new JobRecord { Id = Guid.NewGuid(), SourcePath = retried, SourceFingerprint = fingerprint, Status = JobStatus.Queued });
-        var queue = new QueueService(new FirstAwareScanner(retried, next, later), repository, fingerprints, new NoopProcessor());
+        var queue = new QueueService(new FirstAwareScanner(retried, next, later), repository, fingerprints, new NoopProcessor(), new DatabaseLocks());
 
         var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: true);
 
@@ -235,7 +236,7 @@ public sealed class QueueServiceTests : IDisposable
             case "minimumBytesSaved": settings.Savings.MinimumBytesSaved = "50MiB"; break;
             case "minimumBytesSavedRespelled": settings.Savings.MinimumBytesSaved = "100 MiB"; break;
         }
-        var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(source), repository, fingerprints, new NoopProcessor(), new DatabaseLocks());
 
         var result = await queue.DiscoverAsync(settings.Database.Path, settings, first: false);
 
@@ -249,7 +250,7 @@ public sealed class QueueServiceTests : IDisposable
     {
         var (databasePath, jobs) = await QueuedAsync("a.mp4");
         var skipped = new JobRecord { Id = jobs[0].Id, SourcePath = jobs[0].SourcePath, Status = JobStatus.Skipped, FailureCategory = "NotWorthConverting", FailureMessage = "AV1 would keep 95%." };
-        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), new ResultProcessor(new JobProcessingResult(skipped, ExitCode.Success, "AV1 would keep 95%.")));
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), new ResultProcessor(new JobProcessingResult(skipped, ExitCode.Success, "AV1 would keep 95%.")), new DatabaseLocks());
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
 
@@ -265,7 +266,7 @@ public sealed class QueueServiceTests : IDisposable
         await File.WriteAllBytesAsync(Path.Combine(_directory, "first.mp4"), new byte[2048]);
         var (databasePath, jobs) = await QueuedAsync("first.mp4", "gone.mp4");
         var reported = new List<JobProgress>();
-        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), new ScriptedProcessor());
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), new ScriptedProcessor(), new DatabaseLocks());
 
         _ = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs), progress: new ListProgress(reported));
 
@@ -288,7 +289,7 @@ public sealed class QueueServiceTests : IDisposable
     {
         var (databasePath, jobs) = await QueuedAsync("1.mp4", "2.mp4", "3.mp4");
         var processor = new UnreachableAfterProcessor(readyBefore);
-        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor);
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor, new DatabaseLocks());
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
 
@@ -317,7 +318,7 @@ public sealed class QueueServiceTests : IDisposable
             (await _repository.RunNextAsync(databasePath, (await _repository.GetAsync(databasePath, jobs[3].Id))!)).Should().BeTrue();
             await _repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "added.mp4"), SourceFingerprint = "added", Status = JobStatus.Queued });
         };
-        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor);
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor, new DatabaseLocks());
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs) with { SourceKind = JobSourceKind.File });
 
@@ -334,7 +335,7 @@ public sealed class QueueServiceTests : IDisposable
         await Task.Delay(5);
         var (_, later) = await QueuedAsync("later.mp4");
         var processor = new ScriptedProcessor();
-        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor);
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor, new DatabaseLocks());
 
         _ = await queue.RunAsync(databasePath, new AppSettings(), Prepared([.. jobs, immich, .. later]));
 
@@ -347,7 +348,7 @@ public sealed class QueueServiceTests : IDisposable
     {
         var (databasePath, jobs) = await QueuedAsync("first.mp4", "second.mp4", "outside.mp4");
         var processor = new ScriptedProcessor();
-        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor);
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor, new DatabaseLocks());
 
         _ = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs[..2]) with { FollowQueue = false });
 
@@ -369,7 +370,7 @@ public sealed class QueueServiceTests : IDisposable
             stop.Cancel();
             throw new JobChangedException(jobs[0].Id);
         };
-        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor);
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor, new DatabaseLocks());
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs), stopAfterThisVideo: stop.Token);
 
@@ -388,7 +389,7 @@ public sealed class QueueServiceTests : IDisposable
         var processor = new ScriptedProcessor();
         var reported = new List<JobProgress>();
         var asked = new List<string>();
-        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor);
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), processor, new DatabaseLocks());
 
         _ = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs), (job, _) =>
         {
@@ -425,7 +426,7 @@ public sealed class QueueServiceTests : IDisposable
         (await _repository.RunNextAsync(databasePath, jobs[3])).Should().BeTrue();
         // Written last, so the database's own order (latest update first) puts it ahead; the run order must not.
         await _repository.UpdateAsync(databasePath, jobs[0]);
-        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(), _repository, new FileFingerprintService(), new NoopProcessor(), new DatabaseLocks());
 
         var preparation = await queue.PrepareAsync(databasePath, new AppSettings { Database = new DatabaseSettings { Path = databasePath } }, JobSourceKind.File);
 
@@ -447,7 +448,7 @@ public sealed class QueueServiceTests : IDisposable
             Database = new DatabaseSettings { Path = databasePath },
             Processing = new ProcessingSettings { Mode = ProcessingModes.RemoteSsh, RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/w" } }
         };
-        var queue = new QueueService(new FixedScanner(), new ChangingOnUpdate(_repository, jobs[0].Id), new FileFingerprintService(), new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(), new ChangingOnUpdate(_repository, jobs[0].Id), new FileFingerprintService(), new NoopProcessor(), new DatabaseLocks());
 
         var preparation = await queue.PrepareAsync(databasePath, settings, JobSourceKind.File);
 
@@ -461,7 +462,7 @@ public sealed class QueueServiceTests : IDisposable
     {
         var (databasePath, jobs) = await QueuedAsync("movie.mp4");
         await File.WriteAllTextAsync(jobs[0].SourcePath, "source");
-        var queue = new QueueService(new FixedScanner(jobs[0].SourcePath), new BlindToOpenJobs(_repository), new FileFingerprintService(), new NoopProcessor());
+        var queue = new QueueService(new FixedScanner(jobs[0].SourcePath), new BlindToOpenJobs(_repository), new FileFingerprintService(), new NoopProcessor(), new DatabaseLocks());
 
         var result = await queue.DiscoverAsync(databasePath, new AppSettings { Database = new DatabaseSettings { Path = databasePath } }, first: false);
 
@@ -524,7 +525,7 @@ public sealed class QueueServiceTests : IDisposable
             }
             outcome.Status = JobStatus.Interrupted;
             outcome.ResumeStatus = JobStatus.Staging;
-            outcome.FailureCategory = JobProcessor.RemoteUnavailableCategory;
+            outcome.FailureCategory = FailureCategories.RemoteUnavailable;
             return Task.FromResult(new JobProcessingResult(outcome, ExitCode.ProcessingFailure, "SSH connection failed"));
         }
     }

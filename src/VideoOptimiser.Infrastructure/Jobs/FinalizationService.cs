@@ -1,53 +1,25 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Immich;
 
 namespace VideoOptimiser.Infrastructure.Jobs;
 
 public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStore manifests, IFileFingerprintService fingerprints, ISafeFileInstaller installer, ImmichFinalizer immich) : IFinalizationService
 {
-    /// <summary>A ready Immich job whose last finalisation stopped early carries this category until it completes.</summary>
-    public const string IncompleteCategory = "FinalizationIncomplete";
-    public const string InterruptedMessage = "Finalisation was interrupted. Run 'video-optimiser immich finalize' again to resume.";
-
-    /// <summary>
-    /// An Immich job that a crash left mid-finalisation: still <see cref="JobStatus.Finalizing"/>, or marked interrupted on
-    /// its way out of it. Unlike a local file, nothing is half-moved, so it is ready again rather than needing review.
-    /// </summary>
-    public static bool IsInterruptedImmichFinalization(JobRecord job) => job.SourceKind == JobSourceKind.Immich && IsInterruptedFinalization(job);
-
-    /// <summary>
-    /// A file job that Ctrl+C or a crash left mid-finalisation. <see cref="FinalizeAsync"/> resumes it only after checking that
-    /// nothing moved; otherwise it needs review (VOPT-70).
-    /// </summary>
-    public static bool IsInterruptedFileFinalization(JobRecord job) => job.SourceKind == JobSourceKind.File && IsInterruptedFinalization(job);
-
-    private static bool IsInterruptedFinalization(JobRecord job) =>
-        job.Status == JobStatus.Finalizing || job.Status == JobStatus.Interrupted && job.ResumeStatus == JobStatus.Finalizing;
-
-    public const string ManualReviewCategory = "ManualInterventionRequired";
-    public const string ManualReviewMessage = "Finalisation was interrupted and requires manual review.";
-
-    public static void ReturnToReady(JobRecord job, string message)
-    {
-        job.Status = JobStatus.ReadyToFinalize;
-        job.ResumeStatus = null;
-        job.FailureCategory = IncompleteCategory;
-        job.FailureMessage = message;
-    }
-
     public async Task<FinalizationResult> FinalizeAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default)
     {
         var job = await jobs.GetAsync(databasePath, jobId, cancellationToken);
         if (job is null) return new FinalizationResult(null, ExitCode.ProcessingFailure, "Job was not found.");
-        if (IsInterruptedImmichFinalization(job))
+        if (FinalizationRules.IsInterruptedImmich(job))
         {
-            ReturnToReady(job, InterruptedMessage);
+            FinalizationRules.ReturnToReady(job, FinalizationRules.InterruptedMessage);
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
         }
-        var resumingFile = IsInterruptedFileFinalization(job);
+        var resumingFile = FinalizationRules.IsInterruptedFile(job);
         if (job.Status != JobStatus.ReadyToFinalize && !resumingFile || job.OutputPath is null) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job is not ready to finalise.");
         var fromImmich = job.SourceKind == JobSourceKind.Immich;
         // VOPT-60: a missing file stops only this job, which stays as it is, so a batch finalises the rest and prints its
@@ -104,7 +76,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         }
         catch (OperationCanceledException) when (fromImmich)
         {
-            if (finalizing) await ReturnToReadyAsync(databasePath, job, InterruptedMessage);
+            if (finalizing) await ReturnToReadyAsync(databasePath, job, FinalizationRules.InterruptedMessage);
             throw;
         }
         catch (OperationCanceledException)
@@ -142,7 +114,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         }
     }
 
-    /// <summary>Plain ready, with no failure category: unlike <see cref="ReturnToReady"/>, which marks an Immich finalisation that stopped partway.</summary>
+    /// <summary>Plain ready, with no failure category: unlike <see cref="FinalizationRules.ReturnToReady"/>, which marks an Immich finalisation that stopped partway.</summary>
     private static void ClearToReady(JobRecord job)
     {
         job.Status = JobStatus.ReadyToFinalize;
@@ -159,11 +131,11 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
     {
         job.Status = JobStatus.Failed;
         job.ResumeStatus = JobStatus.Finalizing;
-        job.FailureCategory = ManualReviewCategory;
-        job.FailureMessage = ManualReviewMessage;
+        job.FailureCategory = FailureCategories.ManualInterventionRequired;
+        job.FailureMessage = FinalizationRules.ManualReviewMessage;
         job.CompletedUtc = DateTimeOffset.UtcNow;
         await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
-        return new FinalizationResult(job, ExitCode.FinalisationFailure, ManualReviewMessage);
+        return new FinalizationResult(job, ExitCode.FinalisationFailure, FinalizationRules.ManualReviewMessage);
     }
 
     /// <summary>
@@ -175,20 +147,14 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         if (!fromImmich && !File.Exists(job.SourcePath))
         {
             // If the user deleted the original, the AV1 is the only copy, and cancelling the job lets cleanup delete it.
-            return $"{OriginalMissing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. If you deleted it on purpose, the AV1 at {job.OutputPath} is now the only copy: move it somewhere safe before running 'video-optimiser queue drop {job.Id:N}'.";
+            return $"{FinalizationRules.OriginalMissing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. If you deleted it on purpose, the AV1 at {job.OutputPath} is now the only copy: move it somewhere safe before running 'video-optimiser queue drop {job.Id:N}'.";
         }
         if (!File.Exists(job.OutputPath) && !(fromImmich && job.ImmichNewAssetId is not null))
         {
-            return $"{Av1Missing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue drop {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.";
+            return $"{FinalizationRules.Av1Missing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue drop {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.";
         }
         return null;
     }
-
-    /// <summary>The first sentence of F4; <c>validate</c> prints it alone.</summary>
-    public static string OriginalMissing(JobRecord job) => $"Original does not exist: {job.SourcePath}.";
-
-    /// <summary>The first sentence of F1; <c>validate</c> prints it alone.</summary>
-    public static string Av1Missing(JobRecord job) => $"The AV1 is missing: {job.OutputPath}.";
 
     private async Task<OutputManifest?> TryLoadManifestAsync(string outputPath, CancellationToken cancellationToken)
     {
@@ -204,7 +170,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
 
     private async Task ReturnToReadyAsync(string databasePath, JobRecord job, string message)
     {
-        ReturnToReady(job, message);
+        FinalizationRules.ReturnToReady(job, message);
         await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
     }
 

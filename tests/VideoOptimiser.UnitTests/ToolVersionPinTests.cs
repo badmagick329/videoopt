@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 using FluentAssertions;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Application.Tools;
 
 namespace VideoOptimiser.UnitTests;
 

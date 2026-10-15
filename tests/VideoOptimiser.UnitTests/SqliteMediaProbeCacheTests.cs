@@ -1,8 +1,8 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Scanning;
-using VideoOptimiser.Infrastructure.Diagnostics;
-using VideoOptimiser.Infrastructure.Scanning;
+using VideoOptimiser.Application.Eligibility;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.UnitTests;
 

@@ -1,12 +1,15 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.RegularExpressions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
+using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.Infrastructure.Processing;
 

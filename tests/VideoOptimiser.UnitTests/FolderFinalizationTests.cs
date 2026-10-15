@@ -1,12 +1,14 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Immich;
 using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests;
 

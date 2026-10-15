@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
@@ -6,33 +5,21 @@ using Microsoft.Extensions.Hosting;
 using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
-using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
-using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Calibration;
-using VideoOptimiser.Infrastructure.Configuration;
-using VideoOptimiser.Infrastructure.Diagnostics;
-using VideoOptimiser.Infrastructure.Immich;
-using VideoOptimiser.Infrastructure.Jobs;
-using VideoOptimiser.Infrastructure.Processing;
-using VideoOptimiser.Infrastructure.Scanning;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Cli;
+using VideoOptimiser.Domain;
+using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Configuration;
+using static CliLocks;
+using static CliOutput;
 
 NativeSqliteBootstrapper.Initialize();
 return await CliApplication.RunAsync(args);
 
 internal static partial class CliApplication
 {
-    // Chosen once from the real console before the command runs, because it depends on how this process was started
-    // (terminal or redirected, per stream) and on --json. The writers take them as arguments so tests can pick their own.
-    private static TerminalStyle OutputStyle { get; set; } = TerminalStyle.Plain;
-    private static TerminalStyle ErrorStyle { get; set; } = TerminalStyle.Plain;
-
-    /// <summary>An error or a refusal, in red on a terminal. Usage text and other help are written as they are.</summary>
-    private static void WriteError(string? text) => Console.Error.WriteLine(ErrorStyle.Red(text ?? string.Empty));
-
     /// <param name="configureServices">Replaces services after the real ones are registered; tests use it to put fakes behind the real CLI.</param>
     public static async Task<int> RunAsync(string[] args, Action<IServiceCollection>? configureServices = null)
     {
@@ -43,7 +30,7 @@ internal static partial class CliApplication
             ErrorStyle = TerminalStyle.ForError(command.Json);
             if (command.ShowHelp)
             {
-                Console.WriteLine(Usage);
+                Console.WriteLine(CliCommand.Usage);
                 return (int)ExitCode.Success;
             }
 
@@ -56,7 +43,7 @@ internal static partial class CliApplication
             if (!command.IsValid)
             {
                 WriteError(command.Error);
-                Console.Error.WriteLine(Usage);
+                Console.Error.WriteLine(CliCommand.Usage);
                 return (int)ExitCode.InvalidArguments;
             }
 
@@ -87,86 +74,10 @@ internal static partial class CliApplication
         }
     }
 
-    /// <summary>Says what an error that ended a command means, and returns the exit code for it.</summary>
-    private static int ReportFailure(Exception exception)
-    {
-        switch (exception)
-        {
-            case FileNotFoundException:
-                WriteError(exception.Message);
-                return (int)ExitCode.InvalidConfiguration;
-            case InvalidDataException:
-                WriteError($"Configuration could not be read: {exception.Message}");
-                return (int)ExitCode.InvalidConfiguration;
-            case MediaProbeException:
-                WriteError(exception.Message);
-                return (int)ExitCode.ProcessingFailure;
-            case ImmichApiException immich:
-                WriteError(immich.Message);
-                return immich.Code is "ImmichApiKeyMissing" or "ImmichApiKeyRejected" or "ImmichPermissionMissing" or ImmichTrash.DisabledCode
-                    ? (int)ExitCode.InvalidConfiguration
-                    : (int)ExitCode.ProcessingFailure;
-            case JobChangedException:
-                // A queue verb or a run from another terminal changed the job first; its change stands.
-                WriteError(exception.Message);
-                return (int)ExitCode.GeneralFailure;
-            case RemoteWorkerCreationDeclinedException:
-                // A declined price is the user's choice, as with a declined finalize, not a failure. Jobs stay as they were.
-                Console.WriteLine(exception.Message);
-                return (int)ExitCode.Success;
-            case RemoteWorkerCapacityUnavailableException:
-                WriteError(exception.Message);
-                WriteError("Check server type and location availability in Hetzner Console: https://console.hetzner.com/");
-                return (int)ExitCode.ProcessingFailure;
-            default:
-                WriteError($"Unexpected failure: {exception.GetBaseException().Message}");
-                return (int)ExitCode.GeneralFailure;
-        }
-    }
-
     private static IHost BuildHost(Action<IServiceCollection>? configureServices)
     {
         var builder = Host.CreateApplicationBuilder();
-        builder.Services.AddSingleton<IConfigurationLoader, YamlConfigurationLoader>();
-        builder.Services.AddSingleton<IConfigurationTemplateWriter, YamlConfigurationTemplateWriter>();
-        builder.Services.AddSingleton<ISettingsValidator, SettingsValidator>();
-        builder.Services.AddSingleton<IDatabaseInitializer, SqliteDatabaseInitializer>();
-        builder.Services.AddSingleton<IToolVerifier, ProcessToolVerifier>();
-        builder.Services.AddSingleton<IRemoteEnvironmentVerifier, ProcessRemoteEnvironmentVerifier>();
-        builder.Services.AddSingleton<IDoctorService, DoctorService>();
-        builder.Services.AddSingleton<IImmichClientFactory, ImmichClientFactory>();
-        builder.Services.AddSingleton<IFileReadinessService, FileReadinessService>();
-        builder.Services.AddSingleton<Func<string, IMediaProbe>>(_ => ffprobePath => new FfprobeMediaProbe(ffprobePath));
-        builder.Services.AddSingleton<Func<string, IMediaTimelineProbe>>(_ => ffprobePath => new FfprobeMediaTimelineProbe(ffprobePath));
-        builder.Services.AddSingleton<IMediaProbeCache, SqliteMediaProbeCache>();
-        builder.Services.AddSingleton<IFileScanner, FileScanner>();
-        builder.Services.AddSingleton<Func<string, ICrfSearchClient>>(_ => abAv1Path => new AbAv1CrfSearchClient(abAv1Path));
-        builder.Services.AddSingleton<Func<string, IVideoEncoder>>(_ => abAv1Path => new AbAv1VideoEncoder(abAv1Path));
-        builder.Services.AddSingleton<IExternalProcessRunner, ExternalProcessRunner>();
-        builder.Services.AddSingleton<IRemoteWorkerLifecycle, HetznerRemoteWorkerLifecycle>();
-        builder.Services.AddSingleton<IRemoteSetupService, RemoteSetupService>();
-        builder.Services.AddSingleton<IProcessingSessionFactory, ProcessingSessionFactory>();
-        builder.Services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
-        builder.Services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
-        builder.Services.AddSingleton<IJobRepository, SqliteJobRepository>();
-        // calibrate promises to write nothing, so it gets its own read-only store and a probe cache that never saves.
-        builder.Services.AddSingleton<ICalibrationService>(services => CalibrationService.ReadOnly(
-            services.GetRequiredService<IFileReadinessService>(), services.GetRequiredService<Func<string, IMediaProbe>>(), services.GetRequiredService<IImmichClientFactory>()));
-        builder.Services.AddSingleton<Func<string, IMediaDecodeTester>>(services => ffmpegPath => new FfmpegDecodeTester(ffmpegPath, services.GetRequiredService<IExternalProcessRunner>()));
-        builder.Services.AddSingleton<IOutputValidationService, OutputValidationService>();
-        builder.Services.AddSingleton<IJobProcessor, JobProcessor>();
-        builder.Services.AddSingleton<IQueueService, QueueService>();
-        builder.Services.AddSingleton<IImmichDiscoveryService>(services => new ImmichDiscoveryService(services.GetRequiredService<IImmichClientFactory>(), services.GetRequiredService<IJobRepository>(), services.GetRequiredService<Func<string, IMediaProbe>>(), services.GetRequiredService<IFileFingerprintService>()));
-        builder.Services.AddSingleton<IImmichReuploadGuard>(services => new ImmichReuploadGuard(services.GetRequiredService<IImmichClientFactory>(), services.GetRequiredService<IJobRepository>()));
-        builder.Services.AddSingleton<IImmichRunService, ImmichRunService>();
-        builder.Services.AddSingleton<IJobRetryService, JobRetryService>();
-        builder.Services.AddSingleton<ITemporaryOutputCleanupService, TemporaryOutputCleanupService>();
-        builder.Services.AddSingleton<ImmichFinalizer>();
-        builder.Services.AddSingleton<IFinalizationService, FinalizationService>();
-        builder.Services.AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
-        builder.Services.AddSingleton<IConsoleInput, ConsoleInput>();
-        builder.Services.AddSingleton<RunStop>();
-        builder.Services.AddSingleton<RunWorkerState>();
+        builder.Services.AddVideoOptimiser();
         configureServices?.Invoke(builder.Services);
         return builder.Build();
     }
@@ -294,7 +205,7 @@ internal static partial class CliApplication
 
     /// <summary>
     /// Reads the answer even when input is redirected, like <c>finalize</c>, so an agent or script approves by piping
-    /// <c>'y'</c>; <see cref="ConsoleInteractiveConfirmation"/> refuses redirected input. No input at all declines.
+    /// <c>'y'</c>; the worker question refuses redirected input (<see cref="IConsoleInput.IsInteractive"/>). No input at all declines.
     /// </summary>
     private static Task<bool> ConfirmServerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken) =>
         ConfirmAsync(quote.FormatPrompt(), cancellationToken);
@@ -622,7 +533,7 @@ internal static partial class CliApplication
         if (job.OutputPath is null) { WriteError("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
         // Validation would fail the job, and cleanup then deletes an AV1 that may be the only copy, so a missing file is
         // reported and the job left as it is.
-        var missing = !File.Exists(job.SourcePath) ? FinalizationService.OriginalMissing(job) : !File.Exists(job.OutputPath) ? FinalizationService.Av1Missing(job) : null;
+        var missing = !File.Exists(job.SourcePath) ? FinalizationRules.OriginalMissing(job) : !File.Exists(job.OutputPath) ? FinalizationRules.Av1Missing(job) : null;
         if (missing is not null) { WriteError(missing); return (int)ExitCode.ProcessingFailure; }
         var store = services.GetRequiredService<IOutputManifestStore>();
         var manifest = await store.LoadAsync(job.OutputPath, cancellationToken);
@@ -658,7 +569,7 @@ internal static partial class CliApplication
         }
 
         var ready = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken))
-            .Where(job => job.Status == JobStatus.ReadyToFinalize || FinalizationService.IsInterruptedImmichFinalization(job) || FinalizationService.IsInterruptedFileFinalization(job))
+            .Where(job => job.Status == JobStatus.ReadyToFinalize || FinalizationRules.IsInterruptedImmich(job) || FinalizationRules.IsInterruptedFile(job))
             .ToArray();
         if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
         foreach (var job in ready) Console.WriteLine(FinalizationConsole.DescribeReady(job));
@@ -740,233 +651,5 @@ internal static partial class CliApplication
         return run.ScanIssues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
-    internal const string Usage = """
-Usage:
-  video-optimiser config init [--config <path>] [--quality archive|standard|compact]
-  video-optimiser version
-  video-optimiser config show [--config <path>]
-  video-optimiser config validate [--config <path>]
-  video-optimiser doctor [--config <path>] [--json]
-  video-optimiser worker create [--config <path>]
-  video-optimiser worker status [--config <path>]
-  video-optimiser worker delete [--config <path>]
-  video-optimiser remote setup [--config <path>]
-  video-optimiser queue add [--first] [--config <path>]
-  video-optimiser queue add <file> [--force] [--config <path>]
-  video-optimiser run [--config <path>] [--local | --remote]
-  video-optimiser queue list [--config <path>] [--json]
-  video-optimiser queue hold <job-id> [--config <path>]
-  video-optimiser queue release <job-id> [--config <path>]
-  video-optimiser queue next <job-id> [--config <path>]
-  video-optimiser queue drop <job-id> [--config <path>]
-  video-optimiser queue drop --all [--config <path>]
-  video-optimiser queue retry <job-id> [--config <path>]
-  video-optimiser status [--config <path>] [--json]
-  video-optimiser history [--config <path>] [--json]
-  video-optimiser calibrate [--config <path>] [--json]
-  video-optimiser validate <job-id> [--config <path>]
-  video-optimiser finalize <job-id> [--config <path>]
-  video-optimiser finalize --ready [--config <path>]
-  video-optimiser cleanup [--dry-run] [--config <path>]
-  video-optimiser immich run [--first | --limit <n>] [--config <path>] [--local | --remote]
-  video-optimiser immich finalize [--config <path>]
-""";
-
     private static string GetVersion() => typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0-dev";
-}
-
-internal enum CliCommandKind
-{
-    Invalid,
-    Help,
-    Version,
-    ConfigInit,
-    ConfigShow,
-    ConfigValidate,
-    Doctor,
-    WorkerCreate,
-    WorkerStatus,
-    WorkerDelete,
-    RemoteSetup,
-    QueueAdd,
-    QueueAddFile,
-    Run,
-    QueueList,
-    QueueHold,
-    QueueRelease,
-    QueueNext,
-    QueueDrop,
-    QueueRetry,
-    Status,
-    History,
-    Validate,
-    Finalize,
-    Cleanup,
-    ImmichRun,
-    ImmichFinalize,
-    Calibrate
-}
-
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null)
-{
-    public bool IsValid => Kind != CliCommandKind.Invalid;
-    public bool ShowHelp => Kind == CliCommandKind.Help;
-
-    /// <summary>A command to suggest, such as <c>queue release &lt;id&gt;</c>, with <c>--config</c> only when this one was given it.</summary>
-    public string Hint(string verb) => $"video-optimiser {verb}{(ConfigurationPath is null ? string.Empty : $" --config \"{ConfigurationPath}\"")}";
-
-    public static CliCommand Parse(string[] args)
-    {
-        var remaining = new List<string>();
-        string? configurationPath = null;
-        var force = false;
-        var dryRun = false;
-        var first = false;
-        int? limit = null;
-        QualityLevel? quality = null;
-        var all = false;
-        var json = false;
-        var finalizeReady = false;
-        var modeOverrides = new List<ProcessingModeOverride>();
-
-        for (var index = 0; index < args.Length; index++)
-        {
-            switch (args[index])
-            {
-                case "--config" when index + 1 < args.Length:
-                    configurationPath = args[++index];
-                    break;
-                case "--config":
-                    return Invalid("--config requires a path.");
-                case "--json":
-                    json = true;
-                    break;
-                case "--all":
-                    all = true;
-                    break;
-                case "--first":
-                    first = true;
-                    break;
-                case "--limit" when index + 1 < args.Length && int.TryParse(args[index + 1], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) && parsed > 0:
-                    limit = parsed;
-                    index++;
-                    break;
-                case "--limit":
-                    return Invalid("--limit requires a whole number of 1 or more.");
-                case "--quality" when index + 1 < args.Length && QualityLevels.TryParse(args[index + 1], out var level):
-                    quality = level;
-                    index++;
-                    break;
-                case "--quality":
-                    return Invalid("--quality requires archive, standard or compact.");
-                case "--dry-run":
-                    dryRun = true;
-                    break;
-                case "--force":
-                    force = true;
-                    break;
-                case "--ready":
-                    finalizeReady = true;
-                    break;
-                case "--local":
-                    modeOverrides.Add(ProcessingModeOverride.Local);
-                    break;
-                case "--remote":
-                    modeOverrides.Add(ProcessingModeOverride.Remote);
-                    break;
-                case "--crf":
-                    return Invalid("--crf is no longer supported. run selects CRF automatically.");
-                case "--help" or "-h" or "help":
-                    return new CliCommand(CliCommandKind.Help, null, null, false, false, false, false, null);
-                case "--version":
-                    return new CliCommand(CliCommandKind.Version, null, null, false, false, false, false, null);
-                default:
-                    remaining.Add(args[index]);
-                    break;
-            }
-        }
-
-        var kind = remaining switch
-        {
-            ["config", "init"] => CliCommandKind.ConfigInit,
-            ["config", "show"] => CliCommandKind.ConfigShow,
-            ["config", "validate"] => CliCommandKind.ConfigValidate,
-            ["version"] => CliCommandKind.Version,
-            ["doctor"] => CliCommandKind.Doctor,
-            ["worker", "create"] => CliCommandKind.WorkerCreate,
-            ["worker", "status"] => CliCommandKind.WorkerStatus,
-            ["worker", "delete"] => CliCommandKind.WorkerDelete,
-            ["remote", "setup"] => CliCommandKind.RemoteSetup,
-            ["queue", "add"] => CliCommandKind.QueueAdd,
-            ["queue", "add", _] => CliCommandKind.QueueAddFile,
-            ["run"] => CliCommandKind.Run,
-            ["queue", "list"] => CliCommandKind.QueueList,
-            ["queue", "hold", _] => CliCommandKind.QueueHold,
-            ["queue", "release", _] => CliCommandKind.QueueRelease,
-            ["queue", "next", _] => CliCommandKind.QueueNext,
-            ["queue", "drop"] or ["queue", "drop", _] => CliCommandKind.QueueDrop,
-            ["queue", "retry", _] => CliCommandKind.QueueRetry,
-            ["status"] => CliCommandKind.Status,
-            ["history"] => CliCommandKind.History,
-            ["calibrate"] => CliCommandKind.Calibrate,
-            ["validate", _] => CliCommandKind.Validate,
-            ["finalize"] or ["finalize", _] => CliCommandKind.Finalize,
-            ["cleanup"] => CliCommandKind.Cleanup,
-            ["immich", "run"] => CliCommandKind.ImmichRun,
-            ["immich", "finalize"] => CliCommandKind.ImmichFinalize,
-            _ => CliCommandKind.Invalid
-        };
-
-        if (kind == CliCommandKind.Invalid)
-        {
-            // The names phase A replaced, with no aliases: each says what took its place.
-            return Invalid(remaining switch
-            {
-                ["queue", "cancel", ..] => "'queue cancel' is now 'queue drop'.",
-                ["queue", "run", ..] => "'queue run' is now 'run'.",
-                ["queue", "discover", ..] => "'queue discover' is now 'queue add'.",
-                ["process", ..] => "'process' was removed: use 'queue add <file>', then 'run'.",
-                _ => "Unknown or incomplete command."
-            });
-        }
-
-        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.QueueList or CliCommandKind.Status or CliCommandKind.History or CliCommandKind.Calibrate))
-        {
-            return Invalid("--json is only supported by doctor, queue list, status, history and calibrate.");
-        }
-
-        if (first && kind is not (CliCommandKind.QueueAdd or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue add and immich run.");
-        if (limit is not null && kind != CliCommandKind.ImmichRun) return Invalid("--limit is only supported by immich run.");
-        if (quality is not null && kind != CliCommandKind.ConfigInit) return Invalid("--quality is only supported by config init.");
-        if (first && limit is not null) return Invalid("--first and --limit cannot be used together.");
-        // --first is --limit 1 for immich run; queue add keeps its own --first.
-        if (first && kind == CliCommandKind.ImmichRun) limit = 1;
-        if (all && kind != CliCommandKind.QueueDrop) return Invalid("--all is only supported by queue drop.");
-
-        if (force && kind != CliCommandKind.QueueAddFile)
-        {
-            return Invalid("--force is only supported by queue add <file>.");
-        }
-
-        if (dryRun && kind != CliCommandKind.Cleanup) return Invalid("--dry-run is only supported by cleanup.");
-        if (finalizeReady && kind != CliCommandKind.Finalize) return Invalid("--ready is only supported by finalize.");
-        if (finalizeReady && remaining.Count != 1) return Invalid("finalize --ready does not take a job ID.");
-        if (kind == CliCommandKind.QueueDrop && all == (remaining.Count == 3)) return Invalid("queue drop requires a job ID or --all.");
-        if (kind == CliCommandKind.QueueRetry && remaining.Count != 3) return Invalid("queue retry requires a job ID.");
-        if (modeOverrides.Distinct().Count() > 1) return Invalid("--local and --remote cannot be used together.");
-        var modeOverride = modeOverrides.FirstOrDefault();
-        if (modeOverride is not null && kind is not (CliCommandKind.Run or CliCommandKind.ImmichRun))
-        {
-            return Invalid($"{modeOverride.Flag} is only supported by run and immich run.");
-        }
-
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality);
-    }
-
-    private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);
-}
-
-internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
-{
-    public void Report(T value) => report(value);
 }

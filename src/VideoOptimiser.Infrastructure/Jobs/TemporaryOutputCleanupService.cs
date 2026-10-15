@@ -1,5 +1,7 @@
+using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Infrastructure.Immich;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Infrastructure.Jobs;
 

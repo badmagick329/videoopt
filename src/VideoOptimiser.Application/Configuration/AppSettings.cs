@@ -1,5 +1,5 @@
-using VideoOptimiser.Application.Processing;
 using YamlDotNet.Serialization;
+using VideoOptimiser.Application.Eligibility;
 
 namespace VideoOptimiser.Application.Configuration;
 

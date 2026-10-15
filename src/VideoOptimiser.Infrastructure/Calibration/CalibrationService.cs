@@ -1,17 +1,18 @@
 using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
-using VideoOptimiser.Infrastructure.Immich;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.Infrastructure.Calibration;
 
 /// <summary>
 /// Gathers what <see cref="CalibrationReport.Build"/> needs without side effects: the watch roots scanned as <c>queue
 /// discover</c> scans them, Immich searched as <c>immich run</c> searches it, and the finished jobs. Its scanner and
-/// repository must be the read-only ones (<see cref="UnsavedProbeCache"/>, a read-only <see cref="Jobs.SqliteJobRepository"/>):
+/// repository must be the read-only ones (<see cref="UnsavedProbeCache"/>, a read-only <see cref="SqliteJobRepository"/>):
 /// this class stores nothing itself, and relies on them not to.
 /// </summary>
 public sealed class CalibrationService(IFileScanner scanner, IJobRepository jobs, IImmichClientFactory immichClients, Func<DateTimeOffset>? utcNow = null) : ICalibrationService
@@ -24,9 +25,9 @@ public sealed class CalibrationService(IFileScanner scanner, IJobRepository jobs
     /// </summary>
     public static CalibrationService ReadOnly(IFileReadinessService readiness, Func<string, IMediaProbe> mediaProbes, IImmichClientFactory immichClients, Func<DateTimeOffset>? utcNow = null)
     {
-        var schemaCheck = new Diagnostics.SqliteSchemaCheck();
-        var scanner = new Scanning.FileScanner(readiness, mediaProbes, new UnsavedProbeCache(new Scanning.SqliteMediaProbeCache(schemaCheck, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)));
-        return new CalibrationService(scanner, new Jobs.SqliteJobRepository(schemaCheck, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly), immichClients, utcNow);
+        var schemaCheck = new SqliteSchemaCheck();
+        var scanner = new FileScanner(readiness, mediaProbes, new UnsavedProbeCache(new SqliteMediaProbeCache(schemaCheck, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)));
+        return new CalibrationService(scanner, new SqliteJobRepository(schemaCheck, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly), immichClients, utcNow);
     }
 
     public async Task<CalibrationRun> RunAsync(AppSettings settings, IProgress<ScanProgress>? scanProgress, IProgress<int>? immichProgress, CancellationToken cancellationToken = default)
@@ -66,7 +67,7 @@ public sealed class CalibrationService(IFileScanner scanner, IJobRepository jobs
     /// </summary>
     private async Task<List<CalibrationVideo>> ImmichVideosAsync(AppSettings settings, bool hasDatabase, IReadOnlyList<JobRecord> allJobs, IReadOnlyDictionary<string, ImmichSkipRecord> skips, IProgress<int>? progress, CancellationToken cancellationToken)
     {
-        var history = hasDatabase ? await ImmichDiscoveryService.ImmichHistory.LoadAsync(jobs, settings.Database.Path, cancellationToken) : new ImmichDiscoveryService.ImmichHistory();
+        var history = hasDatabase ? await ImmichHistory.LoadAsync(jobs, settings.Database.Path, cancellationToken) : new ImmichHistory();
         var jobFacts = allJobs
             .Where(job => job.ImmichAssetId is not null && job.ImmichChecksum is not null && job.VideoFacts is not null)
             .GroupBy(job => (job.ImmichAssetId!, job.ImmichChecksum!))
@@ -78,7 +79,7 @@ public sealed class CalibrationService(IFileScanner scanner, IJobRepository jobs
         var seen = new HashSet<string>(StringComparer.Ordinal);
         await foreach (var asset in client.SearchVideosAsync(cutoff, includeFavorites: !settings.Immich.SkipFavorites, cancellationToken))
         {
-            if (!seen.Add(asset.Id) || ImmichDiscoveryService.Exclusion(asset, cutoff, settings.Immich.SkipFavorites) is not null) continue;
+            if (!seen.Add(asset.Id) || ImmichExclusion.Reason(asset, cutoff, settings.Immich.SkipFavorites) is not null) continue;
             if (!settings.Eligibility.Extensions.Contains(Path.GetExtension(asset.OriginalFileName), StringComparer.OrdinalIgnoreCase)) continue;
             progress?.Report(videos.Count + 1);
 

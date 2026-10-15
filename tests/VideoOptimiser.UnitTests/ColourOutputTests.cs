@@ -2,9 +2,9 @@ using System.Text.RegularExpressions;
 using FluentAssertions;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.UnitTests;
 

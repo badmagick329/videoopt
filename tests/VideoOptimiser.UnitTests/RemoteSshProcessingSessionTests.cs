@@ -5,7 +5,10 @@ using System.Text.RegularExpressions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.UnitTests;
 

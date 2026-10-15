@@ -1,5 +1,5 @@
 using FluentAssertions;
-using VideoOptimiser.Infrastructure.Scanning;
+using VideoOptimiser.Infrastructure.Eligibility;
 
 namespace VideoOptimiser.UnitTests;
 

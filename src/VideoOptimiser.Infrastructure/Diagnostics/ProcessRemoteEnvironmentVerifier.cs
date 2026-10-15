@@ -3,8 +3,9 @@ using System.Diagnostics;
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Diagnostics;
+using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.Infrastructure.Diagnostics;
 

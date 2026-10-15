@@ -189,7 +189,7 @@ public sealed class CliCommandParserTests
     public void HelpListsTheImmichCommands()
     {
         CliCommand.Parse(["--help"]).ShowHelp.Should().BeTrue();
-        CliApplication.Usage.Should()
+        CliCommand.Usage.Should()
             .Contain("video-optimiser immich run [--first | --limit <n>] [--config <path>] [--local | --remote]")
             .And.Contain("video-optimiser immich finalize [--config <path>]");
     }

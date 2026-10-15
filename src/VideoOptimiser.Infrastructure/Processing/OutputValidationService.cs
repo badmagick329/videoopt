@@ -1,7 +1,7 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Infrastructure.Processing;

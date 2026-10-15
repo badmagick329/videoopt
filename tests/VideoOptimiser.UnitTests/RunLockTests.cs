@@ -1,12 +1,12 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
 using VideoOptimiser.Domain;
-using VideoOptimiser.Infrastructure.Diagnostics;
+using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Jobs;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.Persistence;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -149,7 +149,7 @@ public sealed class RunLockTests : IDisposable
     private Task<QueuePreparationResult> PrepareAsync(JobSourceKind source)
     {
         var settings = new AppSettings { Database = new DatabaseSettings { Path = DatabasePath } };
-        return new QueueService(new NoFiles(), _repository, new FileFingerprintService(), new NoProcessing()).PrepareAsync(DatabasePath, settings, source);
+        return new QueueService(new NoFiles(), _repository, new FileFingerprintService(), new NoProcessing(), new DatabaseLocks()).PrepareAsync(DatabasePath, settings, source);
     }
 
     /// <summary>Holds a lock as <see cref="DatabaseLock"/> does, with a start time and process ID fixed so the refusal reads the same on any clock.</summary>

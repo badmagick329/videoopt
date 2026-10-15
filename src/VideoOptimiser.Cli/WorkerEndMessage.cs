@@ -1,8 +1,8 @@
 namespace VideoOptimiser.Cli;
 
 /// <summary>
-/// What a run says about the managed worker when it ends (VOPT-54 step 3; <c>WorkerEndPolicy</c> decides). The wording was
-/// approved by the user word for word; ask before changing it.
+/// What a run says about the managed worker when it ends (VOPT-54 step 3; <c>WorkerEndPolicy</c> decides). Changed wording goes
+/// through the humanizer gate (docs index).
 /// </summary>
 internal static class WorkerEndMessage
 {

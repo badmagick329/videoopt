@@ -1,8 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Cli;
+using VideoOptimiser.Domain.Jobs;
+using static CliOutput;
 
 /// <summary>
 /// What happens to the managed worker when a run ends (VOPT-54 step 3). Every end decides (<see cref="WorkerEndPolicy"/>), so

@@ -1,9 +1,8 @@
 using FluentAssertions;
 using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.Scanning;
+using VideoOptimiser.Application.TemporaryOutputs;
+using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Infrastructure.Processing;
 
 namespace VideoOptimiser.UnitTests;

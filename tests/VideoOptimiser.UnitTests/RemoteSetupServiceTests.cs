@@ -5,10 +5,10 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.UnitTests;
 
