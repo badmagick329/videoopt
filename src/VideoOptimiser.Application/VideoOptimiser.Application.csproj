@@ -4,6 +4,9 @@
     <PackageReference Include="Vecc.YamlDotNet.Analyzers.StaticGenerator" Version="18.1.0" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="VideoOptimiser.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\VideoOptimiser.Domain\VideoOptimiser.Domain.csproj" />
   </ItemGroup>
 </Project>

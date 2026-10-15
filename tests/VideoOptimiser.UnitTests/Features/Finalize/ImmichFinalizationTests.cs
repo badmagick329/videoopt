@@ -1,17 +1,15 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Finalize;
 using VideoOptimiser.Application.Immich;
-using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Immich;
-using VideoOptimiser.Infrastructure.Jobs;
+using VideoOptimiser.Infrastructure.Features.Finalize;
 using VideoOptimiser.Infrastructure.Persistence;
-using VideoOptimiser.Infrastructure.Processing;
 using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Finalize;
 
 public sealed class ImmichFinalizationTests : IDisposable
 {

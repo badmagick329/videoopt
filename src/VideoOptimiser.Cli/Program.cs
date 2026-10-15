@@ -12,11 +12,12 @@ using VideoOptimiser.Cli.Features.Calibrate;
 using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
+using VideoOptimiser.Cli.Features.Finalize;
 using VideoOptimiser.Cli.Features.RemoteSetup;
+using VideoOptimiser.Cli.Features.Validate;
 using VideoOptimiser.Cli.Features.Worker;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
-using static CliLocks;
 using static CliOutput;
 
 NativeSqliteBootstrapper.Initialize();
@@ -118,11 +119,11 @@ internal static partial class CliApplication
             CliCommandKind.QueueRetry => await RunQueueRetryAsync(services.GetRequiredService<IJobRetryService>(), configuration, command, cancellationToken),
             CliCommandKind.Status => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
             CliCommandKind.History => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: true, command.Json, cancellationToken),
-            CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
-            CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.Validate => await services.GetRequiredService<ValidateCommand>().RunAsync(configuration, command.JobId!, cancellationToken),
+            CliCommandKind.Finalize => await services.GetRequiredService<FinalizeCommands>().FinalizeAsync(configuration, command, cancellationToken),
             CliCommandKind.Cleanup => await services.GetRequiredService<CleanupCommand>().RunAsync(configuration, command.DryRun, cancellationToken),
             CliCommandKind.ImmichRun => await RunGuardedAsync(services, configuration, command, () => RunImmichRunAsync(services, configuration, command, cancellationToken)),
-            CliCommandKind.ImmichFinalize => await RunImmichFinalizeAsync(services, configuration, cancellationToken),
+            CliCommandKind.ImmichFinalize => await services.GetRequiredService<FinalizeCommands>().ImmichFinalizeAsync(configuration, cancellationToken),
             CliCommandKind.Calibrate => await services.GetRequiredService<CalibrateCommand>().RunAsync(configuration, command.Json, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
@@ -370,86 +371,6 @@ internal static partial class CliApplication
 
         return (int)ExitCode.Success;
     }
-
-    private static async Task<int> RunValidateAsync(IServiceProvider services, LoadedConfiguration configuration, string jobId, CancellationToken cancellationToken)
-    {
-        if (!Guid.TryParse(jobId, out var id)) { WriteError("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
-        var repository = services.GetRequiredService<IJobRepository>();
-        var job = await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken);
-        if (job is null) { WriteError("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
-        // F7 (VOPT-60). A finished job's manifest must not be rewritten, and a failed one cannot become ready again.
-        if (!(job.Status is JobStatus.ReadyToFinalize or JobStatus.Validating || job is { Status: JobStatus.Interrupted, ResumeStatus: JobStatus.Validating }))
-        {
-            WriteError($"validate re-checks a job that is ready to finalise; {job.Id:N} is {job.Status}.");
-            return (int)ExitCode.ProcessingFailure;
-        }
-        if (job.OutputPath is null) { WriteError("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
-        // Validation would fail the job, and cleanup then deletes an AV1 that may be the only copy, so a missing file is
-        // reported and the job left as it is.
-        var missing = !File.Exists(job.SourcePath) ? FinalizationRules.OriginalMissing(job) : !File.Exists(job.OutputPath) ? FinalizationRules.Av1Missing(job) : null;
-        if (missing is not null) { WriteError(missing); return (int)ExitCode.ProcessingFailure; }
-        var store = services.GetRequiredService<IOutputManifestStore>();
-        var manifest = await store.LoadAsync(job.OutputPath, cancellationToken);
-        manifest.Validation = await services.GetRequiredService<IOutputValidationService>().ValidateAsync(manifest, configuration.Settings, cancellationToken);
-        // From here the record and the job must agree, so Ctrl+C cannot leave one written without the other.
-        await store.SaveAsync(manifest, CancellationToken.None);
-        job.ValidationPassed = manifest.Validation.Passed;
-        job.SourceSizeBytes = manifest.Validation.SourceSizeBytes;
-        job.OutputSizeBytes = manifest.Validation.OutputSizeBytes;
-        job.PercentageSaved = manifest.Validation.PercentageSaved;
-        job.Status = manifest.Validation.Passed ? JobStatus.ReadyToFinalize : JobStatus.Failed;
-        job.ResumeStatus = null;
-        if (manifest.Validation.Passed) { job.FailureCategory = null; job.FailureMessage = null; }
-        else { job.FailureCategory = "ValidationFailed"; job.FailureMessage = string.Join("; ", manifest.Validation.Failures); job.CompletedUtc = DateTimeOffset.UtcNow; }
-        await repository.UpdateAsync(configuration.Settings.Database.Path, job, CancellationToken.None);
-        Console.WriteLine(manifest.Validation.Passed ? $"Validation passed: saved {manifest.Validation.PercentageSaved:F1}%" : "Validation failed: " + string.Join("; ", manifest.Validation.Failures));
-        return manifest.Validation.Passed ? (int)ExitCode.Success : (int)ExitCode.ValidationFailure;
-    }
-
-    private static async Task<int> RunFinalizeAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
-    {
-        var repository = services.GetRequiredService<IJobRepository>();
-        var finalizer = services.GetRequiredService<IFinalizationService>();
-        using var finalizeLock = await TakeFinalizeLockAsync(configuration, "finalize", cancellationToken);
-        if (finalizeLock is null) return (int)ExitCode.GeneralFailure;
-        if (!command.FinalizeReady)
-        {
-            if (!Guid.TryParse(command.JobId, out var id)) { WriteError("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
-            var result = await finalizer.FinalizeAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
-            if (result.ExitCode == ExitCode.Success) Console.WriteLine(result.Message);
-            else WriteError(result.Message);
-            return (int)result.ExitCode;
-        }
-
-        var ready = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken))
-            .Where(job => job.Status == JobStatus.ReadyToFinalize || FinalizationRules.IsInterruptedImmich(job) || FinalizationRules.IsInterruptedFile(job))
-            .ToArray();
-        if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
-        foreach (var job in ready) Console.WriteLine(FinalizationConsole.DescribeReady(job));
-        if (ready.Any(job => job.SourceKind == JobSourceKind.File)) Console.WriteLine(DescribeOriginalAction(configuration.Settings.Original));
-        if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) Console.WriteLine("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
-        Console.Write("Finalise these jobs? [y/N] ");
-        if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
-        var report = new FinalizationConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
-        var failed = new List<(JobRecord Job, string Message)>();
-        foreach (var job in ready)
-        {
-            var result = await finalizer.FinalizeAsync(configuration.Settings.Database.Path, job.Id, configuration.Settings, cancellationToken);
-            if (!report.Outcome(job, result)) failed.Add((job, result.Message));
-        }
-
-        report.Summary(ready.Length, failed);
-        return failed.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
-    }
-
-    private static string DescribeOriginalAction(OriginalSettings original) => original.Action.ToLowerInvariant() switch
-    {
-        OriginalActions.Archive => Path.IsPathFullyQualified(original.ArchiveDirectory)
-            ? $"Each original moves to {original.ArchiveDirectory} and its AV1 takes its place."
-            : $"Each original moves to an {original.ArchiveDirectory} folder beside it and its AV1 takes its place.",
-        OriginalActions.Keep => "Each original stays; its AV1 is installed beside it as <name>.av1<extension>.",
-        _ => "Each original is deleted and its AV1 takes its place."
-    };
 
     private static string GetVersion() => typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0-dev";
 }

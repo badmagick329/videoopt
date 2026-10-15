@@ -1,11 +1,11 @@
 using FluentAssertions;
 using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Validate;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Application.Tools;
-using VideoOptimiser.Infrastructure.Processing;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Validate;
 
 public sealed class OutputValidationServiceTests : IDisposable
 {

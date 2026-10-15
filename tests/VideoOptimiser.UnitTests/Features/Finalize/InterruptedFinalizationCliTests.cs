@@ -2,7 +2,7 @@ using FluentAssertions;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Finalize;
 
 /// <summary>
 /// A file job whose finalisation Ctrl+C or a crash interrupted belongs to <c>finalize</c>, which checks whether anything moved

@@ -1,12 +1,10 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Immich;
 
-namespace VideoOptimiser.Infrastructure.Jobs;
+namespace VideoOptimiser.Application.Features.Finalize;
 
 public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStore manifests, IFileFingerprintService fingerprints, ISafeFileInstaller installer, ImmichFinalizer immich) : IFinalizationService
 {

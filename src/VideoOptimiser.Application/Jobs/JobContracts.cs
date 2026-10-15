@@ -1,17 +1,11 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
-using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Jobs;
 
 public sealed record JobProcessingResult(JobRecord Job, ExitCode ExitCode, string Message);
-
-public interface IOutputValidationService
-{
-    Task<ValidationReport> ValidateAsync(OutputManifest manifest, AppSettings settings, CancellationToken cancellationToken = default);
-}
 
 public interface IJobProcessor
 {
@@ -124,11 +118,4 @@ public interface IQueueService
 public interface IJobRetryService
 {
     Task<JobRetryResult> RetryAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default);
-}
-
-public sealed record FinalizationResult(JobRecord? Job, ExitCode ExitCode, string Message);
-
-public interface IFinalizationService
-{
-    Task<FinalizationResult> FinalizeAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default);
 }

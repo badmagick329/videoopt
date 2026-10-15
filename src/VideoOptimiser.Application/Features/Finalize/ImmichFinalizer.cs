@@ -3,9 +3,8 @@ using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Jobs;
 
-namespace VideoOptimiser.Infrastructure.Immich;
+namespace VideoOptimiser.Application.Features.Finalize;
 
 /// <summary>
 /// Replaces an Immich original with its AV1: uploads the output as a new asset, copies what Immich keeps beside the file

@@ -10,7 +10,9 @@ using VideoOptimiser.Cli.Features.Calibrate;
 using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
+using VideoOptimiser.Cli.Features.Finalize;
 using VideoOptimiser.Cli.Features.RemoteSetup;
+using VideoOptimiser.Cli.Features.Validate;
 using VideoOptimiser.Cli.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Eligibility;
@@ -82,12 +84,4 @@ internal static class ServiceRegistration
         .AddSingleton<IImmichDiscoveryService>(provider => new ImmichDiscoveryService(provider.GetRequiredService<IImmichClientFactory>(), provider.GetRequiredService<IJobRepository>(), provider.GetRequiredService<Func<string, IMediaProbe>>(), provider.GetRequiredService<IFileFingerprintService>()))
         .AddSingleton<IImmichReuploadGuard>(provider => new ImmichReuploadGuard(provider.GetRequiredService<IImmichClientFactory>(), provider.GetRequiredService<IJobRepository>()))
         .AddSingleton<IImmichRunService, ImmichRunService>();
-
-    public static IServiceCollection AddValidate(this IServiceCollection services) =>
-        services.AddSingleton<IOutputValidationService, OutputValidationService>();
-
-    public static IServiceCollection AddFinalize(this IServiceCollection services) => services
-        .AddSingleton<ImmichFinalizer>()
-        .AddSingleton<IFinalizationService, FinalizationService>()
-        .AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
 }

@@ -1,9 +1,9 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Application.Features.Finalize;
+using VideoOptimiser.Infrastructure.Features.Finalize;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Finalize;
 
 public sealed class SafeFileInstallerTests : IDisposable
 {

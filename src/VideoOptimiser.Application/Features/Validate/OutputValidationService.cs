@@ -1,10 +1,9 @@
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
 
-namespace VideoOptimiser.Infrastructure.Processing;
+namespace VideoOptimiser.Application.Features.Validate;
 
 public sealed class OutputValidationService(
     Func<string, IMediaProbe> mediaProbeFactory,

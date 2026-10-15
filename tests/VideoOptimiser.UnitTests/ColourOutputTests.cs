@@ -1,8 +1,10 @@
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using VideoOptimiser.Application.Features.Finalize;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli;
+using VideoOptimiser.Cli.Features.Finalize;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 

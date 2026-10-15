@@ -1,8 +1,8 @@
-using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.Features.Finalize;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 
-namespace VideoOptimiser.Cli;
+namespace VideoOptimiser.Cli.Features.Finalize;
 
 /// <summary>
 /// The lines <c>finalize --ready</c> and <c>immich finalize</c> share: what is about to be finalised, one line per job as it

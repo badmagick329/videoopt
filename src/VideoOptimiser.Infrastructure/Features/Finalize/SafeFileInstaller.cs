@@ -1,7 +1,7 @@
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Features.Finalize;
 
-namespace VideoOptimiser.Infrastructure.Processing;
+namespace VideoOptimiser.Infrastructure.Features.Finalize;
 
 /// <summary>
 /// Installs a validated AV1 under the output's extension, which can differ from the original's (a .mov original gets a .mp4).
