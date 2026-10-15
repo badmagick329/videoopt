@@ -34,6 +34,7 @@ public sealed class CleanupCommandTests : IDisposable
     [Fact]
     public async Task ADryRunListsTheFilesAndTheStagedOriginalNoteWithoutAskingOrDeleting()
     {
+        // Two abandoned files share a folder, which is printed once; the total names both kinds found.
         var cleanup = new FakeCleanup(Plan());
 
         var (code, stdout, stderr) = await RunAsync(cleanup, null, "cleanup", "--dry-run");
@@ -43,9 +44,10 @@ public sealed class CleanupCommandTests : IDisposable
         stdout.ReplaceLineEndings("\n").Should().Be(
             $"{Path.Combine(_directory, "out")}\n" +
             "     1.0 MiB  clip-a.mp4.tmp (job failed)\n" +
+            "     3.0 MiB  clip-c.mp4.tmp (job cancelled)\n" +
             $"{Path.Combine(_directory, "staging")}\n" +
             "     2.0 MiB  clip-b.mp4 (job finished)\n" +
-            "Abandoned temporary outputs: 1. Staged Immich originals: 1. Total: 3.0 MiB.\n" +
+            "Abandoned temporary outputs: 2. Staged Immich originals: 1. Total: 6.0 MiB.\n" +
             "Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.\n");
         cleanup.DeleteCalls.Should().Be(0);
     }
@@ -69,39 +71,54 @@ public sealed class CleanupCommandTests : IDisposable
     [Fact]
     public async Task NoAnswerCancelsWithoutDeleting()
     {
-        var cleanup = new FakeCleanup(Plan());
+        var cleanup = new FakeCleanup(Plan(staged: false));
 
         var (code, stdout, stderr) = await RunAsync(cleanup, null, "cleanup");
 
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
-        stdout.ReplaceLineEndings("\n").Should().EndWith("Delete these files? [y/N] Cleanup cancelled.\n");
+        // Only abandoned outputs: the total names just that kind, and the note about staged originals is left out.
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            $"{Path.Combine(_directory, "out")}\n" +
+            "     1.0 MiB  clip-a.mp4.tmp (job failed)\n" +
+            "     3.0 MiB  clip-c.mp4.tmp (job cancelled)\n" +
+            "Abandoned temporary outputs: 2. Total: 4.0 MiB.\n" +
+            "Delete these files? [y/N] Cleanup cancelled.\n");
         cleanup.DeleteCalls.Should().Be(0);
     }
 
     [Fact]
     public async Task AFailedDeleteIsReportedOnStderrAndEndsInPartialSuccess()
     {
-        var cleanup = new FakeCleanup(Plan(), new(1, 1024 * 1024, ["clip-b.mp4: access denied"]));
+        var cleanup = new FakeCleanup(Plan(abandoned: false), new(1, 2 * 1024 * 1024, ["clip-b.mp4: access denied"]));
 
         var (code, stdout, stderr) = await RunAsync(cleanup, "y\n", "cleanup");
 
         code.Should().Be((int)ExitCode.PartialSuccess);
         stderr.ReplaceLineEndings("\n").Should().Be("Could not delete clip-b.mp4: access denied\n");
-        stdout.ReplaceLineEndings("\n").Should().EndWith("Delete these files? [y/N] Deleted 1 file, 1.0 MiB.\n");
+        // Only staged originals: the total names just that kind.
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            $"{Path.Combine(_directory, "staging")}\n" +
+            "     2.0 MiB  clip-b.mp4 (job finished)\n" +
+            "Staged Immich originals: 1. Total: 2.0 MiB.\n" +
+            "Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.\n" +
+            "Delete these files? [y/N] Deleted 1 file, 2.0 MiB.\n");
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private TemporaryOutputCleanupPlan Plan() => new(
-        [new AbandonedTemporaryOutput(Path.Combine(_directory, "out", "clip-a.mp4.tmp"), Guid.NewGuid(), 1, 1024 * 1024, "job failed")],
-        [new StagedImmichOriginal(Path.Combine(_directory, "staging", "clip-b.mp4"), Guid.NewGuid(), 2 * 1024 * 1024, "job finished")],
+    /// <summary>Two abandoned outputs in one folder and one staged original in another, or only one of the kinds.</summary>
+    private TemporaryOutputCleanupPlan Plan(bool abandoned = true, bool staged = true) => new(
+        abandoned
+            ? [new AbandonedTemporaryOutput(Path.Combine(_directory, "out", "clip-a.mp4.tmp"), Guid.NewGuid(), 1, 1024 * 1024, "job failed"),
+               new AbandonedTemporaryOutput(Path.Combine(_directory, "out", "clip-c.mp4.tmp"), Guid.NewGuid(), 1, 3 * 1024 * 1024, "job cancelled")]
+            : [],
+        staged ? [new StagedImmichOriginal(Path.Combine(_directory, "staging", "clip-b.mp4"), Guid.NewGuid(), 2 * 1024 * 1024, "job finished")] : [],
         []);
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(FakeCleanup cleanup, string? input, params string[] args)
     {
-        var config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(config, $"database:\n  path: '{Path.Combine(_directory, "jobs.db")}'\n");
+        var config = await RunCli.WriteConfigAsync(Path.Combine(_directory, "jobs.db"));
         return await ConsoleCapture.RunCliWithInputAsync(input, services =>
         {
             CliFakes.AcceptAnySettings(services);

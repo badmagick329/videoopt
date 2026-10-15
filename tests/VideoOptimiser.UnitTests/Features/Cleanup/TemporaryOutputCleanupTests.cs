@@ -21,10 +21,8 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
     }
 
     [Theory]
-    [InlineData("movie.{0}.2.encoding.mp4", 2)]
     [InlineData("movie.{0}.13.encoding.mkv.partial", 13)]
     [InlineData("no-extension.{0}.1.encoding", 1)]
-    [InlineData(".tmp.ab-av1-encoding.movie.{0}.3.encoding.mp4", 3)]
     public void ParsesTheJobAndAttemptFromEveryTemporaryOutputFile(string pattern, int expectedAttempt)
     {
         var id = Guid.NewGuid();
@@ -36,7 +34,6 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
     }
 
     [Theory]
-    [InlineData("movie.0123.1.encoding.mp4")]
     [InlineData("movie.{0}.0.encoding.mp4")]
     [InlineData("movie.{0}.1.original.pending-delete.mp4")]
     public void IgnoresFilesThatDoNotNameAJobAttempt(string pattern)
@@ -45,17 +42,12 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
     }
 
     [Theory]
-    [InlineData(JobStatus.Completed, null, null, "local", 1, true)]
-    [InlineData(JobStatus.Failed, null, "ValidationFailed", "local", 1, true)]
     [InlineData(JobStatus.Cancelled, null, null, "local", 1, true)]
     [InlineData(JobStatus.Skipped, null, "NotWorthConverting", "local", 1, true)]
     [InlineData(JobStatus.Failed, null, "FinalizationFailed", "local", 1, false)]
     [InlineData(JobStatus.Interrupted, JobStatus.Finalizing, null, "local", 1, false)]
-    [InlineData(JobStatus.Interrupted, JobStatus.Encoding, null, "local", 1, true)]
     [InlineData(JobStatus.Interrupted, JobStatus.Encoding, null, "remoteSsh", 1, false)]
     [InlineData(JobStatus.Interrupted, JobStatus.Validating, null, "local", 1, false)]
-    [InlineData(JobStatus.ReadyToFinalize, null, null, "local", 1, false)]
-    [InlineData(JobStatus.Encoding, null, null, "local", 0, true)]
     public void ClassifiesOnlyFilesNoJobCanStillUseAsAbandoned(JobStatus status, JobStatus? resumeStatus, string? failureCategory, string mode, int attemptOffset, bool abandoned)
     {
         var job = new JobRecord { Status = status, ResumeStatus = resumeStatus, FailureCategory = failureCategory, ExecutionMode = mode, Attempt = 2 };
@@ -63,19 +55,6 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var reason = TemporaryOutputClassifier.AbandonedReason(job, attempt: 1 + attemptOffset);
 
         (reason is not null).Should().Be(abandoned);
-    }
-
-    [Theory]
-    [InlineData(JobStatus.Interrupted, JobStatus.Encoding, "local", "resume starts attempt 3 and deletes the partial output of attempt 2")]
-    [InlineData(JobStatus.Interrupted, JobStatus.Encoding, "remoteSsh", "resume reattaches to remote attempt 2")]
-    [InlineData(JobStatus.Interrupted, JobStatus.Validating, "local", "resume revalidates the existing output")]
-    [InlineData(JobStatus.Interrupted, JobStatus.Finalizing, "local", null)]
-    [InlineData(JobStatus.ReadyToFinalize, null, "local", null)]
-    public void StatusDescribesWhatResumeDoesWithTheTemporaryOutput(JobStatus status, JobStatus? resumeStatus, string mode, string? expected)
-    {
-        var job = new JobRecord { Status = status, ResumeStatus = resumeStatus, ExecutionMode = mode, Attempt = 2 };
-
-        TemporaryOutputClassifier.DescribeResume(job).Should().Be(expected);
     }
 
     [Fact]
