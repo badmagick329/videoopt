@@ -14,7 +14,8 @@ public interface ITemporaryOutputCleanupService
 {
     /// <summary>
     /// Finds abandoned temporary outputs and, under <paramref name="immichStagingDirectory"/> (empty for none), staged Immich
-    /// originals no open job reads.
+    /// originals no open job reads. Callers pass the configured staging folder whether or not Immich is turned on: the copies
+    /// stay on disk when <c>immich.baseUrl</c> is emptied.
     /// </summary>
     Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, string immichStagingDirectory, CancellationToken cancellationToken = default);
     TemporaryOutputCleanupResult Delete(TemporaryOutputCleanupPlan plan);

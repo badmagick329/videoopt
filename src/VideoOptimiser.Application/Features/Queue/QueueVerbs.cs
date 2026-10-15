@@ -179,7 +179,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
     }
 
     private Task<TemporaryOutputCleanupPlan> CleanupPlanAsync(AppSettings settings, CancellationToken cancellationToken) =>
-        cleanup.FindAsync(settings.Database.Path, settings.Immich.IsConfigured ? settings.Immich.StagingDirectory : string.Empty, cancellationToken);
+        cleanup.FindAsync(settings.Database.Path, settings.Immich.StagingDirectory, cancellationToken);
 
     private static bool CleanupDeletesSomeOf(JobRecord job, TemporaryOutputCleanupPlan plan) =>
         plan.Abandoned.Any(file => file.JobId == job.Id) || plan.StagedOriginals.Any(file => file.JobId == job.Id);

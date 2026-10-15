@@ -64,6 +64,7 @@
 - `calibrate` keeps the folder report when Immich can't be searched: it prints the report, then `Immich couldn't be searched, so its videos are not in this report: <reason>.` on stderr, and exits with the Immich failure code. Before, the folder report was lost.
 - `calibrate` says "not worth converting" where it said "not worth it". The JSON keys are unchanged.
 - `remote setup` no longer says it is complete, or suggests a command, while the config still fails validation. It lists the remaining problems on stderr, ends with `The configuration still has the problems above. Fix them, then run 'video-optimiser config validate'.` and exits `3`. Its failures now go to stderr. The Next line is `Next: run 'video-optimiser run'.`, without the extra `--remote`, and repeats `--config` only when it was typed.
+- `cleanup` finds downloaded Immich copies in `immich.stagingDirectory` even after `immich.baseUrl` is emptied. A dry run ends with `Dry run: nothing was deleted.`, and a file it leaves alone is listed as `Kept`, where it said `Skipped`.
 
 ## [0.7.1] - 2026-10-13
 ### Changed

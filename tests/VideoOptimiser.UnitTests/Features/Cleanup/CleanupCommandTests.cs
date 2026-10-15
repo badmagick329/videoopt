@@ -24,11 +24,23 @@ public sealed class CleanupCommandTests : IDisposable
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
         stdout.ReplaceLineEndings("\n").Should().Be(
-            $"Skipped  {Path.Combine(_directory, "unknown.tmp")} (its job is not in this database)\n" +
+            $"Kept  {Path.Combine(_directory, "unknown.tmp")} (its job is not in this database)\n" +
             "No abandoned temporary outputs or staged Immich originals found.\n");
         cleanup.DeleteCalls.Should().Be(0);
-        // Without Immich configured there is no staging folder to search.
-        cleanup.Searched.Should().Be((Path.Combine(_directory, "jobs.db"), string.Empty));
+        // The staging folder is searched whether or not Immich is turned on: a user who emptied immich.baseUrl still has copies in it.
+        cleanup.Searched.Should().Be((Path.Combine(_directory, "jobs.db"), Path.Combine(_directory, "immich-staging")));
+    }
+
+    [Fact]
+    public async Task ADryRunThatFindsNothingStillSaysNothingWasDeleted()
+    {
+        var (code, stdout, stderr) = await RunAsync(new FakeCleanup(new([], [], [])), null, "cleanup", "--dry-run");
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            "No abandoned temporary outputs or staged Immich originals found.\n" +
+            "Dry run: nothing was deleted.\n");
     }
 
     [Fact]
@@ -48,7 +60,8 @@ public sealed class CleanupCommandTests : IDisposable
             $"{Path.Combine(_directory, "staging")}\n" +
             "     2.0 MiB  clip-b.mp4 (job finished)\n" +
             "Abandoned temporary outputs: 2. Staged Immich originals: 1. Total: 6.0 MiB.\n" +
-            "Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.\n");
+            "Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.\n" +
+            "Dry run: nothing was deleted.\n");
         cleanup.DeleteCalls.Should().Be(0);
     }
 
