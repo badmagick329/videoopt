@@ -168,7 +168,7 @@ Normal processing creates the worker once you approve its price. To create it ea
 .\artifacts\local\video-optimiser.exe worker status --config .\video-optimiser.yaml
 ```
 
-`doctor` checks the worker's tools, resources and workspace only while it is running. Without one, it checks the Hetzner token and API access and warns that the host checks were skipped. It takes no lock, so it answers while a run is creating the worker.
+`doctor` checks the worker's tools, resources and workspace only while it is running. Without one, it checks the Hetzner token and API access and warns that the host checks were skipped. It follows `lifecycle` alone, like the `worker` commands: with `lifecycle: "hetzner"` and `mode: "local"` it still checks the token and API access, and warns (`ManagedWorkerBilling`) when a worker or its IPv4 address is left billing. It takes no lock, so it answers while a run is creating the worker.
 
 The first SSH connection uses a dedicated known-hosts file and OpenSSH's `accept-new` behavior. Every later connection requires that exact recorded host key. VideoOptimiser does not modify the user's global OpenSSH configuration.
 

@@ -129,6 +129,84 @@ public sealed class DoctorServiceTests : IDisposable
             .Which.Message.Should().Be("Hetzner API check failed: bad state");
     }
 
+    /// <summary>VOPT-84: the worker commands act on the Hetzner lifecycle in any mode, and so does doctor.</summary>
+    [Theory]
+    [InlineData("hetzner")]
+    [InlineData("HETZNER")]
+    public async Task RunAsyncInLocalModeWithTheHetznerLifecycleChecksTheTokenAndApi(string lifecycleName)
+    {
+        var settings = CreateSettings();
+        settings.Processing.RemoteSsh.Lifecycle = lifecycleName;
+        var lifecycle = new FakeWorkerLifecycle { Exists = false };
+        var remote = new FakeRemoteEnvironmentVerifier();
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), remote, lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.Success);
+        lifecycle.CheckCalls.Should().Be(1);
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "HetznerApiAvailable").Which.Status.Should().Be(DiagnosticStatus.Pass);
+        // Remote host checks belong to remote mode; local mode has no host to skip.
+        report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Code == "RemoteHostChecksSkipped");
+        remote.WasCalled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunAsyncInLocalModeWithTheHetznerLifecycleFailsWithoutAToken()
+    {
+        var settings = CreateSettings();
+        settings.Processing.RemoteSsh.Lifecycle = RemoteLifecycleModes.Hetzner;
+        var lifecycle = new FakeWorkerLifecycle { Check = new WorkerCheck(null, null, "no API token is set") };
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), lifecycle: lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "HetznerApiUnavailable")
+            .Which.Message.Should().Be("Hetzner API check failed: no API token is set");
+    }
+
+    [Fact]
+    public async Task RunAsyncInLocalModeWarnsThatARunningManagedWorkerBills()
+    {
+        var settings = CreateSettings();
+        settings.Processing.RemoteSsh.Lifecycle = RemoteLifecycleModes.Hetzner;
+        var remote = new FakeRemoteEnvironmentVerifier();
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), remote, new FakeWorkerLifecycle()).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.Success);
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "ManagedWorkerBilling").Which.Should().Be(new Diagnostic(
+            DiagnosticCategory.Dependency,
+            DiagnosticStatus.Warning,
+            "ManagedWorkerBilling",
+            "Managed Hetzner worker video-optimiser-1 is running and bills until it is deleted. Delete it with 'worker delete'."));
+        remote.WasCalled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunAsyncInLocalModeWarnsThatARetainedIpv4Bills()
+    {
+        var settings = CreateSettings();
+        settings.Processing.RemoteSsh.Lifecycle = RemoteLifecycleModes.Hetzner;
+        var lifecycle = new FakeWorkerLifecycle { Check = new WorkerCheck(CliFakes.Worker with { Status = RemoteWorkerStatuses.PrimaryIpRetained }, null, null) };
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), lifecycle: lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "ManagedWorkerBilling").Which.Message
+            .Should().Be("The server of managed Hetzner worker video-optimiser-1 is gone, but its IPv4 address still bills. Delete it with 'worker delete'.");
+    }
+
+    [Fact]
+    public async Task RunAsyncInLocalModeWithoutTheHetznerLifecycleNeverAsksHetzner()
+    {
+        var settings = CreateSettings();
+        var lifecycle = new FakeWorkerLifecycle();
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), lifecycle: lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        lifecycle.CheckCalls.Should().Be(0);
+        report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Code == "HetznerApiAvailable" || diagnostic.Code == "ManagedWorkerBilling");
+    }
+
     [Fact]
     public async Task RunAsyncUnderManualLifecycleStillFailsWithoutAHost()
     {

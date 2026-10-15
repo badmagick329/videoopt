@@ -77,9 +77,11 @@ public sealed class DoctorService(
         }
 
         var canCheckRemoteHost = isRemote && toolResults.First(result => result.Name == "ssh").IsAvailable && toolResults.First(result => result.Name == "sftp").IsAvailable;
-        if (remoteWorkerLifecycle.IsManaged(configuration.Settings))
+        // The Hetzner lifecycle alone decides, as for the worker commands (VOPT-56): a server bills whatever mode the config is
+        // in now, so a user who switched back to local still learns about the token, the API and a worker left up.
+        if (string.Equals(configuration.Settings.Processing.RemoteSsh.Lifecycle, RemoteLifecycleModes.Hetzner, StringComparison.OrdinalIgnoreCase))
         {
-            canCheckRemoteHost &= await CheckManagedWorkerAsync(configuration.Settings, diagnostics, cancellationToken);
+            canCheckRemoteHost &= await CheckManagedWorkerAsync(configuration.Settings, isRemote, diagnostics, cancellationToken);
         }
 
         if (canCheckRemoteHost)
@@ -215,11 +217,12 @@ public sealed class DoctorService(
     /// <summary>
     /// A managed worker exists only between its creation by a run or <c>worker create</c> and its deletion, so having none is
     /// the normal state, not a failure. Without one, only the Hetzner token and API access can be checked; with a running one,
-    /// the lookup points the settings at it so the remote host checks run against it. Returns whether such a worker is running.
-    /// The lookup is <see cref="IRemoteWorkerLifecycle.CheckAsync"/>, which never waits for the lifecycle lock a run holds
-    /// while it sets a worker up.
+    /// the lookup points the settings at it so the remote host checks run against it. Returns whether such a worker is running
+    /// and the host checks apply (remote mode). In local mode there is no host to check, so a worker that exists is reported
+    /// as billing instead. The lookup is <see cref="IRemoteWorkerLifecycle.CheckAsync"/>, which never waits for the lifecycle
+    /// lock a run holds while it sets a worker up.
     /// </summary>
-    private async Task<bool> CheckManagedWorkerAsync(AppSettings settings, List<Diagnostic> diagnostics, CancellationToken cancellationToken)
+    private async Task<bool> CheckManagedWorkerAsync(AppSettings settings, bool isRemote, List<Diagnostic> diagnostics, CancellationToken cancellationToken)
     {
         WorkerCheck check;
         try
@@ -241,6 +244,21 @@ public sealed class DoctorService(
 
         var worker = check.Worker;
         diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "HetznerApiAvailable", "Hetzner API accepted the token."));
+        if (!isRemote)
+        {
+            if (worker is not null)
+            {
+                diagnostics.Add(new Diagnostic(
+                    DiagnosticCategory.Dependency,
+                    DiagnosticStatus.Warning,
+                    "ManagedWorkerBilling",
+                    worker.Status == RemoteWorkerStatuses.PrimaryIpRetained
+                        ? $"The server of managed Hetzner worker {worker.Name} is gone, but its IPv4 address still bills. Delete it with 'worker delete'."
+                        : $"Managed Hetzner worker {worker.Name} is {worker.Status} and bills until it is deleted. Delete it with 'worker delete'."));
+            }
+            return false;
+        }
+
         if (worker?.Status == "running") return true;
 
         var state = worker is null ? "No managed Hetzner worker exists" : $"Managed Hetzner worker {worker.ServerId} is {worker.Status}";
