@@ -1,49 +1,21 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Eligibility;
-using VideoOptimiser.Application.Features.Finalize;
 using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Cli;
-using VideoOptimiser.Cli.Features.Finalize;
-using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.UnitTests;
 
 /// <summary>
-/// The text a user or an agent reads from the commands other than a job's own progress: Immich discovery, file discovery and
-/// finalisation. Each is rendered by a small class in the Cli so the layout is tested without the command.
+/// The text a user or an agent reads from the commands other than a job's own progress: Immich discovery and file discovery.
+/// Each is rendered by a small class in the Cli so the layout is tested without the command. Finalisation and the run tally
+/// are pinned by the command transcripts and <c>ColourOutputTests</c>.
 /// </summary>
 public sealed class HumanOutputConsoleTests
 {
     private static readonly DateTime Taken = new(2022, 11, 30, 21, 37, 45);
-
-    [Fact]
-    public void ImmichDiscoveryReadsAsAnIntroOneLinePerDownloadWithItsFactsAndASummary()
-    {
-        var (console, output, error) = ImmichConsole();
-
-        console.Report(new ImmichDiscoveryProgress.Started(1, 0, 418, 3));
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "PXL_20250718_192844658.mp4", new DateTime(2025, 7, 18)));
-        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "rule 1 needs 2GiB", null, 0, Facts("h264", 3840, 2160, 41_700_000, 519_200_000)));
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(2, "PXL_20260223_092415845.mp4", new DateTime(2026, 2, 23)));
-        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, Facts("hevc", 3840, 2160, 33_000_000, 334_900_000), 3));
-        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(3, "VID_x.mp4", new DateTime(2023, 1, 2)));
-        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Issue, "the download does not match Immich's checksum", "it will be tried again next run", 0));
-        console.Report(new ImmichDiscoveryProgress.AssetExcluded("fav.mp4", "0f1e", "is a favourite"));
-
-        output.ToString().Should().Be(
-            "Searching Immich for 1 video to convert.\n" +
-            "Each candidate is downloaded and checked with ffprobe.\n" +
-            "If it doesn't fit your rules, the download is deleted and the video is skipped in future runs.\n" +
-            "418 videos were skipped under different eligibility rules; each is checked again when the search reaches it.\n" +
-            "\n" +
-            "[1] PXL_20250718_192844658.mp4  2025-07-18  h264 4K 42 Mbps  495.1 MiB  skip: rule 1 needs 2GiB\n" +
-            "[2] PXL_20260223_092415845.mp4  2026-02-23  hevc 4K 33 Mbps  319.4 MiB  queued: fits rule 3 (1 of 1)\n" +
-            "[3] VID_x.mp4  2023-01-02  issue: the download does not match Immich's checksum; it will be tried again next run\n");
-        error.ToString().Should().Be("Excluded: fav.mp4 (asset 0f1e) is a favourite; left alone.\n");
-    }
 
     [Fact]
     public void WithoutALimitTheIntroAsksForEveryFittingVideoNamesOpenJobsAndTheQueuedOutcomeHasNoCount()
@@ -80,9 +52,7 @@ public sealed class HumanOutputConsoleTests
     }
 
     [Theory]
-    [InlineData(3840, 2160, "4K")]
     [InlineData(1440, 2560, "1440p")]
-    [InlineData(1920, 1080, "1080p")]
     [InlineData(720, 1280, "720p")]
     [InlineData(640, 480, "640x480")]
     public void ResolutionIsNamedByTheShorterSideSoPortraitAndLandscapeReadAlike(int width, int height, string expected) =>
@@ -96,12 +66,9 @@ public sealed class HumanOutputConsoleTests
         ImmichDiscoveryConsole.Bitrate(null).Should().Be("? Mbps");
     }
 
-    [Theory]
-    [InlineData(41_700_000L, "42 Mbps")]
-    [InlineData(9_960_000L, "10 Mbps")]
-    [InlineData(8_140_000L, "8.1 Mbps")]
-    public void BitrateIsWholeMbpsWithOneDecimalUnderTen(long bitsPerSecond, string expected) =>
-        ImmichDiscoveryConsole.Bitrate(bitsPerSecond).Should().Be(expected);
+    [Fact]
+    public void BitrateRoundsToTenBeforeItDropsTheDecimal() =>
+        ImmichDiscoveryConsole.Bitrate(9_960_000L).Should().Be("10 Mbps");
 
     [Fact]
     public void ALineIsNotBrokenByOtherOutputAndItsOutcomeThenRepeatsTheFile()
@@ -132,24 +99,6 @@ public sealed class HumanOutputConsoleTests
         console.FinishLine();
 
         output.ToString().Should().Be("[1] a.mp4  2022-11-30  stopped\n");
-    }
-
-    [Fact]
-    public void RestagingReadsAsAStepWithAnOutcome()
-    {
-        var (console, output, _) = ImmichConsole();
-        var job = Guid.Parse("11111111-2222-3333-4444-555555555555");
-
-        console.Report(new ImmichProgress.Restaging("a.mp4", job));
-        console.Report(new ImmichProgress.Restaged("a.mp4", null));
-        console.Report(new ImmichProgress.Restaging("b.mp4", job));
-        console.Report(new ImmichProgress.Restaged("b.mp4", "Immich did not return the video again; the job is marked failed"));
-
-        output.ToString().Should().Be(
-            "Downloading again: a.mp4 (job 11111111222233334444555555555555 is open but its staged copy is missing)\n" +
-            "  done: the staged copy is back\n" +
-            "Downloading again: b.mp4 (job 11111111222233334444555555555555 is open but its staged copy is missing)\n" +
-            "  issue: Immich did not return the video again; the job is marked failed\n");
     }
 
     [Fact]
@@ -185,31 +134,6 @@ public sealed class HumanOutputConsoleTests
         ImmichDiscoveryConsole.Summary(Result(queued: 0, alreadyQueued: 0, skipped: 0, reasons: [], restaged: 1), 3).Should().Equal(
             "Found 0 of 3 after checking 0.",
             "Also: 1 staged original downloaded again.");
-    }
-
-    [Fact]
-    public void TheDiscoverySummaryIsOneLineWhenThereIsNothingElseToSay()
-    {
-        ImmichDiscoveryConsole.Summary(Result(queued: 0, alreadyQueued: 0, skipped: 0, reasons: []), 3)
-            .Should().Equal("Found 0 of 3 after checking 0.");
-    }
-
-    [Fact]
-    public void TheGuardSaysNothingWhenItFoundNothingAndOtherwiseWhatItDid()
-    {
-        ReuploadGuardReport.Summary(Guard(4)).Should().BeNull();
-        ReuploadGuardReport.Summary(Guard(1, trashed: 1)).Should().Be("Re-upload guard: 1 converted original was uploaded again and moved to Immich's trash.");
-        ReuploadGuardReport.Summary(Guard(7, trashed: 2, restored: 1, issues: 2)).Should().Be(
-            "Re-upload guard: 2 converted originals were uploaded again and moved to Immich's trash; 1 converted original is out of Immich's trash, so both versions exist; 2 issues.");
-    }
-
-    [Fact]
-    public void GuardReportsUseSentenceCaseNotShouting()
-    {
-        ReuploadGuardReport.FormatProgress(new ScanProgress("a.mp4", "Trashed", "a.mp4 (taken 2022-11-30 21:37) is a converted original the phone uploaded again.")).Should()
-            .Be("Re-upload guard: trashed a.mp4 (taken 2022-11-30 21:37) is a converted original the phone uploaded again.");
-        ReuploadGuardReport.FormatProgress(new ScanProgress("a.mp4", "Restored", "a.mp4 is out of the trash.")).Should().Be("Re-upload guard: restored a.mp4 is out of the trash.");
-        ReuploadGuardReport.FormatProgress(new ScanProgress("asset", "Issue", "Could not read asset 1.")).Should().Be("Re-upload guard issue: Could not read asset 1.");
     }
 
     [Fact]
@@ -274,63 +198,6 @@ public sealed class HumanOutputConsoleTests
             "Queued: 3. Already queued: 2. Held: 1. Ready to finalise: 2. Cache hits: 5. Real probes: 4.\n");
     }
 
-    [Fact]
-    public void FileDiscoveryLeavesOutTheCountsThatAreZero()
-    {
-        var output = new StringWriter { NewLine = "\n" };
-
-        QueueDiscoverConsole.WriteSummary(output, new QueueDiscoveryResult([], AlreadyQueued: 0, Issues: 0, CacheHits: 2));
-
-        output.ToString().Should().Be("Queued: 0. Cache hits: 2.\n");
-    }
-
-    [Fact]
-    public void FinalizeListsEachReadyJobByFileWithItsSizesAndSavings()
-    {
-        FinalizationConsole.DescribeReady(Job("D:\\v\\clip.mp4", before: 1L << 30, after: 400L << 20, saved: 61.1m)).Should().Be("clip.mp4  1.0 GiB -> 400.0 MiB, 61.1% saved");
-        FinalizationConsole.DescribeReady(Job("D:\\v\\old.mp4")).Should().Be("old.mp4  sizes unknown");
-    }
-
-    [Fact]
-    public void FinalizeReportsEachJobThenTheTallyAndRepeatsOnlyTheFailuresWithTheirIds()
-    {
-        var output = new StringWriter { NewLine = "\n" };
-        var error = new StringWriter { NewLine = "\n" };
-        var console = new FinalizationConsole(output, TerminalStyle.Plain, error, TerminalStyle.Plain);
-        var done = Job("D:\\v\\a.mp4");
-        var failed = Job("D:\\v\\b.mp4");
-
-        console.Outcome(done, new FinalizationResult(done, ExitCode.Success, "Installed the AV1 and archived the original.")).Should().BeTrue();
-        console.Outcome(failed, new FinalizationResult(failed, ExitCode.FinalisationFailure, "The AV1 changed since validation.")).Should().BeFalse();
-        console.Summary(2, [(failed, "The AV1 changed since validation.")]);
-
-        output.ToString().Should().Be(
-            "Done    a.mp4: Installed the AV1 and archived the original.\n" +
-            "Finalised: 1. Failed: 1.\n" +
-            $"{failed.Id:N}  b.mp4  The AV1 changed since validation.\n");
-        error.ToString().Should().Be("Failed  b.mp4: The AV1 changed since validation.\n");
-    }
-
-    [Fact]
-    public void FinalizeTallyLeavesOutAZeroCount()
-    {
-        var output = new StringWriter { NewLine = "\n" };
-        var console = new FinalizationConsole(output, TerminalStyle.Plain, new StringWriter(), TerminalStyle.Plain);
-
-        console.Summary(3, []);
-
-        output.ToString().Should().Be("Finalised: 3.\n");
-        OutcomeSummary.Finalisation(0, 2, TerminalStyle.Plain).Should().Be("Failed: 2.");
-    }
-
-    [Theory]
-    [InlineData(1, 0, 0, "Ready to finalise: 1.")]
-    [InlineData(0, 0, 3, "Failed: 3.")]
-    [InlineData(4, 1, 2, "Ready to finalise: 4. Not worth converting: 1. Failed: 2.")]
-    [InlineData(0, 0, 0, "Nothing to finalise.")]
-    public void TheRunTallyNamesOnlyTheOutcomesThatHappened(int ready, int notWorth, int failed, string expected) =>
-        OutcomeSummary.Run(ready, notWorth, failed, TerminalStyle.Plain).Should().Be(expected);
-
     private static CandidateFacts Facts(string codec, int width, int height, long bitsPerSecond, long sizeBytes) => new(codec, width, height, bitsPerSecond, sizeBytes);
 
     private static (ImmichDiscoveryConsole Console, StringWriter Output, StringWriter Error) ImmichConsole()
@@ -343,16 +210,7 @@ public sealed class HumanOutputConsoleTests
     private static ImmichDiscoveryResult Result(int queued, int alreadyQueued, int skipped, SkipReasonCount[] reasons, int restaged = 0, int alreadyConverted = 0, int previouslyFailed = 0, int previouslySkipped = 0, int excluded = 0, int ineligible = 0, int issues = 0) =>
         new([.. Enumerable.Range(0, queued).Select(_ => new JobRecord())], restaged, alreadyQueued, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues, reasons);
 
-    private static ImmichReuploadGuardResult Guard(int checkedCount, int trashed = 0, int restored = 0, int issues = 0) =>
-        new(checkedCount,
-            [.. Enumerable.Range(0, trashed).Select(_ => new ImmichReuploadHit(Guid.NewGuid(), "a", "a.mp4", Taken))],
-            [.. Enumerable.Range(0, restored).Select(_ => new ImmichReuploadHit(Guid.NewGuid(), "a", "a.mp4", Taken))],
-            [.. Enumerable.Range(0, issues).Select(_ => new ImmichReuploadIssue(Guid.NewGuid(), "a", "reason"))]);
-
     private static ScanProgress Checked(int files, int probed) => new("x.mp4", "Checked", string.Empty, files, probed);
-
-    private static JobRecord Job(string path, long? before = null, long? after = null, decimal? saved = null) =>
-        new() { Id = Guid.NewGuid(), SourcePath = path, SourceSizeBytes = before, OutputSizeBytes = after, PercentageSaved = saved };
 
     private sealed class FakeClock
     {
