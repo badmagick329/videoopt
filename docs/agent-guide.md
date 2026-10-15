@@ -209,5 +209,8 @@ A held job (`queue hold`) keeps its status, `Queued` or `Interrupted`; runs pass
 | `alreadyAv1` | `{ videos, bytes }` already AV1 or already converted |
 | `historyLeftOut` | `{ otherSettings, noVideoFacts }`: results not counted |
 | `suggestions` | Each has `kind` and `text`. `raiseMinimumBitrate`: `rule`, `minimumVideoBitrate`. `addRule`: `codec`, `resolution`, `minimumVideoBitrate`. `testOne`: `codec`, `resolution`, `minimumMbps`, `maximumMbps`, `path` and `command` for a file, or `immichAssetId` for an Immich video |
+| `noSuggestions` | `null` when `suggestions` has entries; otherwise `{ reason, text }`. `reason` is `noVideos`, `allAlreadyAv1`, `noResultsAllAdmitted`, `noResultsNothingTestable`, `tooFewResults` or `resultsNeedNoChange`; `text` is the sentence the console prints |
+
+If Immich cannot be searched, `calibrate` still prints the report for the watch folders (the JSON too), then writes `Immich couldn't be searched, so its videos are not in this report: ...` to stderr and exits with the code of any Immich failure (`3` for an API key problem, `6` otherwise). Treat that report as partial.
 
 `history` is `null` when nothing was tried, or `{ converted, convertedBitrateMbps, savedPercent, notWorthIt, notWorthItBitrateMbps }` with each range `{ min, max }` or `null`. It counts only completed and skipped jobs whose quality settings match the current config.

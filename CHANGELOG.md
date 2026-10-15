@@ -60,6 +60,9 @@
 - `doctor` checks the Hetzner token and API whenever `remoteSsh.lifecycle` is `hetzner`, in local mode too, and warns when a worker is left billing: `Managed Hetzner worker <name> is <status> and bills until it is deleted. Delete it with 'worker delete'.`
 - `Ctrl+C` while a run creates or sets up the worker prints `Stopped while the worker <name> was being set up. It stays up, billed hourly.` Before, it said nothing was running on the worker.
 - Worker setup no longer prints `Worker setup: 100%, ready...` while the worker's SSH check still fails; it waits and checks again.
+- `calibrate` says why it has no suggestions, one line per case (no videos, all already AV1, nothing converted yet, too few results, results that call for no change). Before, it always said no group had 3 or more results, which was often false. `calibrate --json` gains `noSuggestions` (`{ reason, text }`, `null` when there are suggestions).
+- `calibrate` keeps the folder report when Immich can't be searched: it prints the report, then `Immich couldn't be searched, so its videos are not in this report: <reason>.` on stderr, and exits with the Immich failure code. Before, the folder report was lost.
+- `calibrate` says "not worth converting" where it said "not worth it". The JSON keys are unchanged.
 
 ## [0.7.1] - 2026-10-13
 ### Changed

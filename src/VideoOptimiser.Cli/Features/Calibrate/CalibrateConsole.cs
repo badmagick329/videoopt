@@ -60,9 +60,9 @@ internal static class CalibrateConsole
         if (leftOut.Count > 0) output.WriteLine($"Left out of \"earlier\": {string.Join(", ", leftOut)}.");
 
         output.WriteLine();
-        if (report.Suggestions.Count == 0)
+        if (report.WhyNoSuggestions is { } reason)
         {
-            output.WriteLine($"No suggestions: no group has {CalibrationReport.MinimumResults} or more results at these settings yet.");
+            output.WriteLine(Text(reason));
             return;
         }
 
@@ -77,7 +77,36 @@ internal static class CalibrateConsole
         report.CodecUnknown.Select(group => new CalibrationUnknownJson(group.Resolution.Label, group.Bitrate.MinimumMbps, group.Bitrate.MaximumMbps, group.Videos, group.Bytes)).ToArray(),
         new CalibrationTotalJson(report.AlreadyAv1Videos, report.AlreadyAv1Bytes),
         new CalibrationLeftOutJson(report.OtherSettings, report.NoVideoFacts),
-        report.Suggestions.Select(SuggestionJson).ToArray());
+        report.Suggestions.Select(SuggestionJson).ToArray(),
+        report.WhyNoSuggestions is { } reason ? new CalibrationNoSuggestionsJson(Name(reason), Text(reason)) : null);
+
+    // One line per state, each true of that state alone: a rule whose results all converted is not "too few results", and
+    // a library of AV1 is not "no results". The JSON names the state so an agent need not parse the sentence.
+    internal static string Text(NoSuggestionsReason reason) => reason switch
+    {
+        NoSuggestionsReason.NoVideos => "No suggestions: no videos were found.",
+        NoSuggestionsReason.AllAlreadyAv1 => "No suggestions: every video found is already AV1.",
+        NoSuggestionsReason.NoResultsAllAdmitted =>
+            "No suggestions yet: no video has been converted at these quality settings, and your rules already take every video that isn't AV1.",
+        NoSuggestionsReason.NoResultsNothingTestable =>
+            "No suggestions yet: no video has been converted at these quality settings, and the videos your rules leave out can't be tested (each is under 1080p or has no known resolution or bitrate).",
+        NoSuggestionsReason.TooFewResults =>
+            $"No suggestions: a change needs {CalibrationReport.MinimumResults} or more results in one group, and no group has that many at these quality settings. No untried group is left to test.",
+        NoSuggestionsReason.ResultsNeedNoChange =>
+            "No suggestions: the results at these quality settings don't call for a change to your rules, and no untried group is left to test.",
+        _ => throw new InvalidOperationException($"Unknown reason {reason}.")
+    };
+
+    private static string Name(NoSuggestionsReason reason) => reason switch
+    {
+        NoSuggestionsReason.NoVideos => "noVideos",
+        NoSuggestionsReason.AllAlreadyAv1 => "allAlreadyAv1",
+        NoSuggestionsReason.NoResultsAllAdmitted => "noResultsAllAdmitted",
+        NoSuggestionsReason.NoResultsNothingTestable => "noResultsNothingTestable",
+        NoSuggestionsReason.TooFewResults => "tooFewResults",
+        NoSuggestionsReason.ResultsNeedNoChange => "resultsNeedNoChange",
+        _ => throw new InvalidOperationException($"Unknown reason {reason}.")
+    };
 
     private static CalibrationSuggestionJson SuggestionJson(CalibrationSuggestion suggestion) => suggestion switch
     {
@@ -90,7 +119,7 @@ internal static class CalibrateConsole
     internal static string Text(CalibrationSuggestion suggestion) => suggestion switch
     {
         RaiseMinimumBitrateSuggestion raise =>
-            $"Rule {raise.Rule}: all {raise.NotWorthIt} results {(raise.NotWorthItBitrateMbps.Min == raise.NotWorthItBitrateMbps.Max ? $"at {raise.NotWorthItBitrateMbps.Min}" : $"from {raise.NotWorthItBitrateMbps.Min} to {raise.NotWorthItBitrateMbps.Max}")} Mbps were not worth it" +
+            $"Rule {raise.Rule}: all {raise.NotWorthIt} results {(raise.NotWorthItBitrateMbps.Min == raise.NotWorthItBitrateMbps.Max ? $"at {raise.NotWorthItBitrateMbps.Min}" : $"from {raise.NotWorthItBitrateMbps.Min} to {raise.NotWorthItBitrateMbps.Max}")} Mbps were not worth converting" +
             (raise.ConvertedFromMbps is { } from ? $"; the {raise.Converted} from {from} Mbps up converted" : string.Empty) +
             $". Consider minimumVideoBitrate: \"{Mbps(raise.MinimumMbps)}\".",
         AddRuleSuggestion add =>
@@ -140,9 +169,9 @@ internal static class CalibrateConsole
         if (history is null) return videos == 0 ? string.Empty : "never tried";
         var converted = history.Converted == 0 ? null :
             $"{history.Converted} converted{(history.ConvertedBitrateMbps is { } bitrate ? $" at {Range(bitrate)} Mbps" : string.Empty)}{(history.SavedPercent is { } saved ? $", saved {Range(saved)}%" : string.Empty)}";
-        var notWorthIt = history.NotWorthIt == 0 ? null :
-            $"{history.NotWorthIt} not worth it{(history.NotWorthItBitrateMbps is { } bitrate2 ? $" at {Range(bitrate2)} Mbps" : string.Empty)}";
-        var parts = history.NotWorthIt > history.Converted ? new[] { notWorthIt, converted } : new[] { converted, notWorthIt };
+        var notWorthConverting = history.NotWorthIt == 0 ? null :
+            $"{history.NotWorthIt} not worth converting{(history.NotWorthItBitrateMbps is { } bitrate2 ? $" at {Range(bitrate2)} Mbps" : string.Empty)}";
+        var parts = history.NotWorthIt > history.Converted ? new[] { notWorthConverting, converted } : new[] { converted, notWorthConverting };
         return $"earlier: {string.Join("; ", parts.OfType<string>())}";
     }
 

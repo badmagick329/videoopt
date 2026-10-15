@@ -40,6 +40,13 @@ internal sealed class CalibrateCommand(ICalibrationService calibration, ISetting
             CalibrateConsole.Write(Console.Out, run.Report);
         }
 
+        if (run.ImmichFailure is { } failure)
+        {
+            // After the report, so the folder half is on screen first; the exit code is the one any Immich failure ends a command with.
+            WriteError($"Immich couldn't be searched, so its videos are not in this report: {failure.Message.TrimEnd('.')}.");
+            return ImmichFailureExitCode(failure);
+        }
+
         return run.ScanIssues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 }

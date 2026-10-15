@@ -2,7 +2,9 @@ using System.Text.Json.Serialization;
 
 namespace VideoOptimiser.Cli.Features.Calibrate;
 
-internal sealed record CalibrationJsonOutput(double MinimumVmaf, CalibrationRuleJson[] Rules, CalibrationGroupJson[] KeptOut, CalibrationUnknownJson[] CodecUnknown, CalibrationTotalJson AlreadyAv1, CalibrationLeftOutJson HistoryLeftOut, CalibrationSuggestionJson[] Suggestions);
+internal sealed record CalibrationJsonOutput(double MinimumVmaf, CalibrationRuleJson[] Rules, CalibrationGroupJson[] KeptOut, CalibrationUnknownJson[] CodecUnknown, CalibrationTotalJson AlreadyAv1, CalibrationLeftOutJson HistoryLeftOut, CalibrationSuggestionJson[] Suggestions, CalibrationNoSuggestionsJson? NoSuggestions);
+// Set only when Suggestions is empty: the state ("reason") and the sentence the console printed for it.
+internal sealed record CalibrationNoSuggestionsJson(string Reason, string Text);
 internal sealed record CalibrationRuleJson(int Number, string[] Codecs, string Resolution, string MinimumVideoBitrate, string MinimumFileSize, int Videos, long Bytes, CalibrationHistoryJson? History);
 // A null resolution is unknown; null Mbps bounds are an unknown bitrate, or a null maximum alone the open top band.
 internal sealed record CalibrationGroupJson(string Codec, string? Resolution, int? MinimumMbps, int? MaximumMbps, int Videos, long Bytes, CalibrationHistoryJson? History);

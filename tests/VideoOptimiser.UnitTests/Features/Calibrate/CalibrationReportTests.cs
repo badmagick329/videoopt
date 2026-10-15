@@ -192,6 +192,72 @@ public sealed class CalibrationReportTests
         report.Suggestions.Should().BeEmpty();
     }
 
+    [Fact]
+    public void WithSuggestionsThereIsNoReasonForHavingNone()
+    {
+        var report = Build([H264Rule()], [Video("a.mp4", "hevc", 3840, 2160, 25)]);
+
+        report.Suggestions.Should().NotBeEmpty();
+        report.WhyNoSuggestions.Should().BeNull();
+    }
+
+    [Fact]
+    public void NoVideosAnywhereIsItsOwnReasonEvenWithEarlierResults()
+    {
+        Build([H264Rule()], [], [Result(true, 20)]).WhyNoSuggestions.Should().Be(NoSuggestionsReason.NoVideos);
+    }
+
+    [Fact]
+    public void VideosThatAreAllAlreadyAV1LeaveNothingToConvert()
+    {
+        var report = Build([H264Rule()], [Video("output.mkv", "av1", 3840, 2160, 10), Immich("replacement.mp4", null, 3840, 2160, 10) with { AlreadyConverted = true }], [Result(true, 20)]);
+
+        report.WhyNoSuggestions.Should().Be(NoSuggestionsReason.AllAlreadyAv1);
+    }
+
+    [Fact]
+    public void WithoutResultsAndEverythingAdmittedThereIsNothingKeptOutToTest()
+    {
+        var report = Build([H264Rule()], [Video("admitted.mp4", "h264", 1920, 1080, 20), Video("output.mkv", "av1", 3840, 2160, 10)]);
+
+        report.WhyNoSuggestions.Should().Be(NoSuggestionsReason.NoResultsAllAdmitted);
+    }
+
+    [Fact]
+    public void WithoutResultsAndOnlyGroupsNoRuleCouldAdmitThereIsNothingToTest()
+    {
+        var report = Build([H264Rule()], [Video("admitted.mp4", "h264", 1920, 1080, 20), Video("small.mp4", "h264", 1080, 1440, 8)]);
+
+        report.WhyNoSuggestions.Should().Be(NoSuggestionsReason.NoResultsNothingTestable);
+    }
+
+    [Fact]
+    public void ARuleWhoseResultsAllConvertedHasTooFewNotWorthConvertingResultsToRaiseAnything()
+    {
+        var report = Build([H264Rule()], [Video("admitted.mp4", "h264", 1920, 1080, 20)], [.. Enumerable.Range(0, 10).Select(index => Result(true, 20 + index))]);
+
+        report.Rules[0].History!.Converted.Should().Be(10);
+        report.WhyNoSuggestions.Should().Be(NoSuggestionsReason.TooFewResults);
+    }
+
+    [Fact]
+    public void EnoughResultsThatSetNoBitrateApartNeedNoChange()
+    {
+        var report = Build([H264Rule()], [Video("admitted.mp4", "h264", 1920, 1080, 20)], [Result(false, 20), Result(false, 25), Result(false, 30), Result(true, 22)]);
+
+        report.WhyNoSuggestions.Should().Be(NoSuggestionsReason.ResultsNeedNoChange);
+    }
+
+    [Fact]
+    public void AKeptOutGroupWithMostlyNotWorthConvertingResultsNeedsNoChangeEither()
+    {
+        var results = Enumerable.Range(0, 3).Select(_ => Result(false, 45, "hevc", 3840, 2160));
+
+        var report = Build([H264Rule()], [Video("admitted.mp4", "h264", 1920, 1080, 20)], [.. results]);
+
+        report.WhyNoSuggestions.Should().Be(NoSuggestionsReason.ResultsNeedNoChange);
+    }
+
     private static CalibrationReport Build(EligibilityRuleSettings[] rules, CalibrationVideo[] videos, JobRecord[]? jobs = null) =>
         CalibrationReport.Build(new AppSettings { Eligibility = new EligibilitySettings { Rules = [.. rules] }, Quality = new QualitySettings { MinimumVmaf = 97 } }, videos, jobs ?? [], Current);
 

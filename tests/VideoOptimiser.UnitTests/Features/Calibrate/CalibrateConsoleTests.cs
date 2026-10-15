@@ -37,18 +37,18 @@ public sealed class CalibrateConsoleTests
         Lines(report).Should().Equal(
             "Admitted by your rules (quality target VMAF 97)",
             "  Rule 1  h264 4k+ >=35Mbps >=300MiB          140 videos  60.0 GiB  earlier: 23 converted at 77-83 Mbps, saved 70-89%",
-            "  Rule 2  h264 1080p-1440p >=15Mbps >=300MiB    0 videos            earlier: 5 not worth it at 20-25 Mbps; 2 converted at 40-45 Mbps, saved 71-80%",
+            "  Rule 2  h264 1080p-1440p >=15Mbps >=300MiB    0 videos            earlier: 5 not worth converting at 20-25 Mbps; 2 converted at 40-45 Mbps, saved 71-80%",
             "  Rule 3  hevc 4k+ >=30Mbps >=300MiB            0 videos",
             "Kept out by your rules",
             "  h264 1080p-1440p 10-15 Mbps  340 videos  10.0 GiB  never tried",
-            "  hevc 4k+ 40-60 Mbps           12 videos   5.0 GiB  earlier: 4 converted at 44-58 Mbps, saved 41-55%; 1 not worth it at 41 Mbps",
+            "  hevc 4k+ 40-60 Mbps           12 videos   5.0 GiB  earlier: 4 converted at 44-58 Mbps, saved 41-55%; 1 not worth converting at 41 Mbps",
             "Codec unknown until downloaded (Immich; bitrate includes audio)",
             "  1080p-1440p 15-20 Mbps  220 videos  3.0 GiB",
             "Already AV1: 58 videos, 120.0 GiB.",
             "Left out of \"earlier\": 99 results from other or unrecorded quality settings, 1 job without video facts.",
             "",
             "Suggestions",
-            "  - Rule 2: all 5 results from 20 to 25 Mbps were not worth it; the 2 from 40 Mbps up converted. Consider minimumVideoBitrate: \"30Mbps\".",
+            "  - Rule 2: all 5 results from 20 to 25 Mbps were not worth converting; the 2 from 40 Mbps up converted. Consider minimumVideoBitrate: \"30Mbps\".",
             "  - hevc 4k+ 40-60 Mbps: 4 of 5 earlier results converted, saving 41-55%. Consider a rule: codecs [\"hevc\"], resolution \"4k+\", minimumVideoBitrate \"40Mbps\".",
             "  - Never tried: h264 1080p-1440p 10-15 Mbps (340 videos, 10.0 GiB). Test one: video-optimiser queue add \"D:\\Videos\\clip.mp4\" --force",
             "  - Never tried in Immich: 1080p-1440p 15-20 Mbps (220 videos, 3.0 GiB). A typical one: PXL_20240512_101500.mp4");
@@ -63,7 +63,69 @@ public sealed class CalibrateConsoleTests
             "Admitted by your rules (quality target VMAF 95.5)",
             "  Rule 1  h264 4k+ >=35Mbps >=300MiB  3 videos  6.0 GiB  never tried",
             "",
-            "No suggestions: no group has 3 or more results at these settings yet.");
+            "No suggestions yet: no video has been converted at these quality settings, and your rules already take every video that isn't AV1.");
+    }
+
+    // One report per state in which there is nothing to suggest; each line must say why, and only what is true of its state.
+    public static TheoryData<NoSuggestionsReason, string, string> EmptyStates => new()
+    {
+        { NoSuggestionsReason.NoVideos, "noVideos", "No suggestions: no videos were found." },
+        { NoSuggestionsReason.AllAlreadyAv1, "allAlreadyAv1", "No suggestions: every video found is already AV1." },
+        { NoSuggestionsReason.NoResultsAllAdmitted, "noResultsAllAdmitted", "No suggestions yet: no video has been converted at these quality settings, and your rules already take every video that isn't AV1." },
+        { NoSuggestionsReason.NoResultsNothingTestable, "noResultsNothingTestable", "No suggestions yet: no video has been converted at these quality settings, and the videos your rules leave out can't be tested (each is under 1080p or has no known resolution or bitrate)." },
+        { NoSuggestionsReason.TooFewResults, "tooFewResults", "No suggestions: a change needs 3 or more results in one group, and no group has that many at these quality settings. No untried group is left to test." },
+        { NoSuggestionsReason.ResultsNeedNoChange, "resultsNeedNoChange", "No suggestions: the results at these quality settings don't call for a change to your rules, and no untried group is left to test." }
+    };
+
+    [Theory]
+    [MemberData(nameof(EmptyStates))]
+    public void EachStateWithNothingToSuggestPrintsItsOwnReasonAndJsonCarriesTheSameOne(NoSuggestionsReason reason, string jsonName, string line)
+    {
+        var report = ReportFor(reason);
+
+        report.WhyNoSuggestions.Should().Be(reason);
+        Lines(report)[^1].Should().Be(line);
+        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
+        json["noSuggestions"]!.ToJsonString().Should().Be(JsonSerializer.Serialize(new { reason = jsonName, text = line }));
+    }
+
+    [Fact]
+    public void WithSuggestionsTheJsonHasNoReasonAndTheTextNeverPrintsOne()
+    {
+        var report = new CalibrationReport(97, [], [NeverTried], [], 0, 0, 0, 0, [new TestOneSuggestion(NeverTried, "clip.mp4", @"D:\Videos\clip.mp4", null)]);
+
+        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
+
+        json["noSuggestions"].Should().BeNull();
+        Lines(report).Should().NotContain(line => line.StartsWith("No suggestions", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void NoWordingInTheReportCallsAResultNotWorthIt()
+    {
+        var history = new CalibrationHistory(1, new IntRange(40, 45), new IntRange(71, 80), 5, new IntRange(20, 25));
+        var report = new CalibrationReport(97, [new CalibrationRuleRow(1, Rule("h264", "4k+", "35Mbps"), 1, GiB, history)], [], [], 0, 0, 0, 0,
+            [new RaiseMinimumBitrateSuggestion(1, 30, 5, new IntRange(20, 25), 1, 40)]);
+
+        string.Join('\n', Lines(report)).Should().NotContainEquivalentOf("not worth it").And.Contain("5 not worth converting at 20-25 Mbps").And.Contain("were not worth converting");
+    }
+
+    private static CalibrationReport ReportFor(NoSuggestionsReason reason)
+    {
+        var admitted = new CalibrationRuleRow(1, Rule("h264", "4k+", "35Mbps"), 3, 6 * GiB, null);
+        var converted = new CalibrationHistory(10, new IntRange(36, 50), new IntRange(40, 60), 0, null);
+        var mixed = new CalibrationHistory(1, new IntRange(22, 22), new IntRange(40, 40), 3, new IntRange(20, 30));
+        var portrait = new CalibrationGroup("h264", new ResolutionBand("<1080p"), new BitrateBand(5, 10), 4, GiB, null);
+        return reason switch
+        {
+            NoSuggestionsReason.NoVideos => new CalibrationReport(97, [admitted with { Videos = 0, Bytes = 0 }], [], [], 0, 0, 0, 0, []),
+            NoSuggestionsReason.AllAlreadyAv1 => new CalibrationReport(97, [admitted with { Videos = 0, Bytes = 0, History = converted }], [], [], 8, 20 * GiB, 0, 0, []),
+            NoSuggestionsReason.NoResultsAllAdmitted => new CalibrationReport(97, [admitted], [], [], 0, 0, 0, 0, []),
+            NoSuggestionsReason.NoResultsNothingTestable => new CalibrationReport(97, [admitted], [portrait], [], 0, 0, 0, 0, []),
+            NoSuggestionsReason.TooFewResults => new CalibrationReport(97, [admitted with { History = converted }], [portrait], [], 0, 0, 0, 0, []),
+            NoSuggestionsReason.ResultsNeedNoChange => new CalibrationReport(97, [admitted with { History = mixed }], [portrait], [], 0, 0, 0, 0, []),
+            _ => throw new ArgumentOutOfRangeException(nameof(reason))
+        };
     }
 
     [Fact]

@@ -33,6 +33,12 @@ internal static class CliOutput
         return false;
     }
 
+    /// <summary>The exit code for an Immich failure: the configuration when the key or its permissions are wrong, otherwise a processing failure.</summary>
+    internal static int ImmichFailureExitCode(ImmichApiException exception) =>
+        exception.Code is "ImmichApiKeyMissing" or "ImmichApiKeyRejected" or "ImmichPermissionMissing" or ImmichTrash.DisabledCode
+            ? (int)ExitCode.InvalidConfiguration
+            : (int)ExitCode.ProcessingFailure;
+
     /// <summary>Says what an error that ended a command means, and returns the exit code for it.</summary>
     internal static int ReportFailure(Exception exception)
     {
@@ -49,9 +55,7 @@ internal static class CliOutput
                 return (int)ExitCode.ProcessingFailure;
             case ImmichApiException immich:
                 WriteError(immich.Message);
-                return immich.Code is "ImmichApiKeyMissing" or "ImmichApiKeyRejected" or "ImmichPermissionMissing" or ImmichTrash.DisabledCode
-                    ? (int)ExitCode.InvalidConfiguration
-                    : (int)ExitCode.ProcessingFailure;
+                return ImmichFailureExitCode(immich);
             case JobChangedException:
                 // A queue verb or a run from another terminal changed the job first; its change stands.
                 WriteError(exception.Message);

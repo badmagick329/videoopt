@@ -139,6 +139,21 @@ public sealed class CalibrationServiceTests : IDisposable
         report.CodecUnknown.Should().ContainSingle().Which.Should().BeEquivalentTo(new { Codec = (string?)null, Resolution = new ResolutionBand("4k+"), Bitrate = new BitrateBand(30, 40) });
     }
 
+    [Fact]
+    public async Task AnImmichFailureAfterTheFolderScanKeepsTheFolderReportAndLeavesOutWhatImmichYieldedSoFar()
+    {
+        await WriteVideoAsync("a.mp4", "h264 20");
+        _settings.Immich = new ImmichSettings { BaseUrl = "http://immich.test" };
+        _immich.Add("half-seen.mp4", "c1");
+        _immich.FailAfterYielding = new ImmichApiException("ImmichUnavailable", "Immich is unreachable at http://immich.test: connection refused");
+
+        var run = await Service(new CountingProbe()).RunAsync(_settings, null, null);
+
+        run.ImmichFailure.Should().BeSameAs(_immich.FailAfterYielding);
+        run.Report.Rules[0].Videos.Should().Be(1, "the folder half is finished");
+        run.Report.CodecUnknown.Should().BeEmpty("a partial search would understate the library");
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();
@@ -197,6 +212,7 @@ public sealed class CalibrationServiceTests : IDisposable
 
         public DateTimeOffset? SearchedBefore { get; private set; }
         public bool? SearchedWithFavorites { get; private set; }
+        public Exception? FailAfterYielding { get; set; }
 
         public ImmichAsset Add(string fileName, string checksum, bool favourite = false, long sizeBytes = 1000, long durationMilliseconds = 60_000, int width = 1920, int height = 1080)
         {
@@ -215,6 +231,8 @@ public sealed class CalibrationServiceTests : IDisposable
                 await Task.Yield();
                 yield return asset;
             }
+
+            if (FailAfterYielding is not null) throw FailAfterYielding;
         }
     }
 }

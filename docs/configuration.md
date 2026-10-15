@@ -45,6 +45,8 @@ It can suggest three kinds of change:
 
 A suggestion based on earlier runs needs at least 3 results, and only results at your current quality settings count, since a video that converts at VMAF 95 may not at 97. Videos converted before `calibrate` existed recorded no settings, so they are left out. Immich reports no codec until a video is downloaded, so Immich videos no run has opened are listed by resolution and bitrate only.
 
+When there is nothing to suggest, the last line says why: no videos were found, every video is already AV1, there are no results yet at your quality settings, there are too few results to judge, or the results point to no change. If Immich cannot be searched, the report still covers your watch folders, and `calibrate` then prints an error saying Immich is missing from it and exits with the same code as any other Immich failure.
+
 ## When a video is not worth converting
 
 Each video gets a size cap, whichever of these is stricter:

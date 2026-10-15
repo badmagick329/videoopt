@@ -38,13 +38,24 @@ public sealed class CalibrationService(IFileScanner scanner, IJobRepository jobs
             }
         }
 
+        ImmichApiException? immichFailure = null;
         if (settings.Immich.IsConfigured)
         {
             var skips = hasDatabase ? await jobs.ListImmichSkipsAsync(databasePath, cancellationToken) : new Dictionary<string, ImmichSkipRecord>();
-            videos.AddRange(await ImmichVideosAsync(settings, hasDatabase, [.. finished, .. open], skips, immichProgress, cancellationToken));
+            try
+            {
+                // Added only once the whole search has finished: the videos of a search that broke off would understate Immich
+                // and skew every count, which is worse than leaving Immich out and saying so.
+                videos.AddRange(await ImmichVideosAsync(settings, hasDatabase, [.. finished, .. open], skips, immichProgress, cancellationToken));
+            }
+            catch (ImmichApiException exception)
+            {
+                // The folder scan can take minutes and is already done; the caller reports this beside its report.
+                immichFailure = exception;
+            }
         }
 
-        return new CalibrationRun(CalibrationReport.Build(settings, videos, finished, QualityFingerprint.Compute(settings)), scanIssues);
+        return new CalibrationRun(CalibrationReport.Build(settings, videos, finished, QualityFingerprint.Compute(settings)), scanIssues, immichFailure);
     }
 
     /// <summary>

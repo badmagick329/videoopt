@@ -89,6 +89,31 @@ public sealed record AddRuleSuggestion(CalibrationGroup Group, int MinimumMbps) 
 public sealed record TestOneSuggestion(CalibrationGroup Group, string Name, string? Path, string? ImmichAssetId) : CalibrationSuggestion;
 
 /// <summary>
+/// Why a report has no suggestions: one state per cause, so the line printed for it is true of that state alone. A report
+/// with suggestions has none of these.
+/// </summary>
+public enum NoSuggestionsReason
+{
+    /// <summary>No video was found in the watch roots or Immich.</summary>
+    NoVideos,
+
+    /// <summary>Videos were found, and every one is already AV1.</summary>
+    AllAlreadyAv1,
+
+    /// <summary>No results, and the rules admit every video that is not AV1: nothing is kept out to test.</summary>
+    NoResultsAllAdmitted,
+
+    /// <summary>No results, and every group the rules keep out or leave codec-unknown is one no rule could name (under 1080p, or a resolution or bitrate unknown).</summary>
+    NoResultsNothingTestable,
+
+    /// <summary>Results exist, but no rule has 3 not-worth-converting results and no kept-out group has 3 results.</summary>
+    TooFewResults,
+
+    /// <summary>Enough results to judge, and they point to no change.</summary>
+    ResultsNeedNoChange
+}
+
+/// <summary>
 /// What the <c>calibrate</c> command reports: what each rule admits now, what the rules keep out, and what earlier runs at
 /// the current quality settings found. Built from data alone so every grouping and suggestion rule is testable without
 /// files, ffprobe or Immich.
@@ -109,6 +134,33 @@ public sealed record CalibrationReport(
 
     /// <summary>Never-tried groups named, largest first. More would bury the history-based suggestions.</summary>
     public const int MaximumTestSuggestions = 3;
+
+    /// <summary>
+    /// Why <see cref="Suggestions"/> is empty, or null when it is not. Derived from the report's own figures so that a report
+    /// can never print a reason its numbers contradict. The checks run from the least to the most history, because each later
+    /// state assumes the earlier ones do not hold.
+    /// </summary>
+    public NoSuggestionsReason? WhyNoSuggestions
+    {
+        get
+        {
+            if (Suggestions.Count > 0) return null;
+
+            // AV1 videos sit outside every group, so what is left here are the videos a rule admits or keeps out.
+            var convertible = Rules.Sum(row => row.Videos) + KeptOut.Sum(group => group.Videos) + CodecUnknown.Sum(group => group.Videos);
+            if (convertible == 0) return AlreadyAv1Videos == 0 ? NoSuggestionsReason.NoVideos : NoSuggestionsReason.AllAlreadyAv1;
+
+            // Nothing tried yet, so no group can have been tried, and any never-tried group a rule could name would have been
+            // suggested: what is kept out or codec-unknown is all out of a rule's reach.
+            if (Rules.All(row => row.History is null) && KeptOut.All(group => group.History is null))
+                return KeptOut.Count == 0 && CodecUnknown.Count == 0 ? NoSuggestionsReason.NoResultsAllAdmitted : NoSuggestionsReason.NoResultsNothingTestable;
+
+            // The same evidence the two history-based suggestions need: a rule's not-worth-converting results, and a kept-out
+            // group's results of any kind.
+            var enough = Rules.Any(row => row.History?.NotWorthIt >= MinimumResults) || KeptOut.Any(group => group.History?.Results >= MinimumResults);
+            return enough ? NoSuggestionsReason.ResultsNeedNoChange : NoSuggestionsReason.TooFewResults;
+        }
+    }
 
     /// <summary>
     /// <paramref name="finishedJobs"/> are terminal jobs; only completed and skipped ones are results, and only those whose
@@ -201,8 +253,8 @@ public sealed record CalibrationReport(
     private static string Label(CalibrationGroup group) => $"{group.Codec} {group.Resolution.Label} {group.Bitrate.MinimumMbps:D3}";
 
     /// <summary>
-    /// Raises a rule's minimum bitrate when its "not worth it" results all sit below its conversions. The new minimum is the
-    /// first band edge above the highest "not worth it" result, or that result's next whole Mbps when no edge fits below the
+    /// Raises a rule's minimum bitrate when its "not worth converting" results all sit below its conversions. The new minimum is the
+    /// first band edge above the highest "not worth converting" result, or that result's next whole Mbps when no edge fits below the
     /// lowest conversion; with neither, the results are too close to split.
     /// </summary>
     private static RaiseMinimumBitrateSuggestion? RaiseMinimumBitrate(int rule, List<Result> results)
@@ -213,7 +265,7 @@ public sealed record CalibrationReport(
         var highestNotWorthIt = notWorthIt.Max();
         long? lowestConverted = converted.Length == 0 ? null : converted.Min();
 
-        // The new minimum is above every "not worth it" result, so requiring it to admit every conversion also rejects a
+        // The new minimum is above every "not worth converting" result, so requiring it to admit every conversion also rejects a
         // conversion at or below one of them: no bitrate separates the two outcomes then.
         bool Admits(long minimumBitsPerSecond) => lowestConverted is null || minimumBitsPerSecond <= lowestConverted;
         var edge = BitrateBand.Edges.Select(mbps => (int?)mbps).FirstOrDefault(mbps => mbps * 1_000_000L > highestNotWorthIt);

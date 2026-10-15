@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Features.Calibrate;
+using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain;
 
@@ -130,10 +131,44 @@ public sealed class CalibrateCommandTests : IDisposable
                   "command": "{{command}}",
                   "text": "Never tried: hevc 4k{{Plus}} 20-30 Mbps (1 video, 3.0 GiB). Test one: {{command}}"
                 }
-              ]
+              ],
+              "noSuggestions": null
             }
 
-            """);
+            """.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public async Task WhenImmichFailsAfterTheFolderScanTheFolderReportStillPrintsAndTheFailureIsNamedOnStderr()
+    {
+        var failure = new ImmichApiException("ImmichUnavailable", "Immich is unreachable at http://immich.test: connection refused");
+        var service = new FakeCalibration(Run(scanIssues: 0) with { ImmichFailure = failure });
+
+        var (code, stdout, stderr) = await RunAsync(service, CliFakes.AcceptAnySettings, "calibrate");
+
+        code.Should().Be((int)ExitCode.ProcessingFailure);
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            "Admitted by your rules (quality target VMAF 97)\n" +
+            "  Rule 1  h264 1080p-1440p >=15Mbps >=1MiB  1 video  2.0 GiB  never tried\n" +
+            "Kept out by your rules\n" +
+            "  hevc 4k+ 20-30 Mbps  1 video  3.0 GiB  never tried\n" +
+            "\n" +
+            "Suggestions\n" +
+            $"  - Never tried: hevc 4k+ 20-30 Mbps (1 video, 3.0 GiB). Test one: video-optimiser queue add \"{Clip}\" --force\n");
+        stderr.ReplaceLineEndings("\n").Should().Be("Immich couldn't be searched, so its videos are not in this report: Immich is unreachable at http://immich.test: connection refused.\n");
+    }
+
+    [Fact]
+    public async Task AnImmichKeyProblemEndsInTheConfigurationExitCodeAndJsonStillCarriesTheFolderReport()
+    {
+        var failure = new ImmichApiException("ImmichApiKeyRejected", "Immich rejected the API key in IMMICH_API_KEY (HTTP 401).");
+        var service = new FakeCalibration(Run(scanIssues: 2) with { ImmichFailure = failure });
+
+        var (code, stdout, stderr) = await RunAsync(service, CliFakes.AcceptAnySettings, "calibrate", "--json");
+
+        code.Should().Be((int)ExitCode.InvalidConfiguration, "the Immich failure outranks the scan issues");
+        JsonDocument.Parse(stdout).RootElement.GetProperty("rules")[0].GetProperty("videos").GetInt32().Should().Be(1);
+        stderr.ReplaceLineEndings("\n").Should().Be("Immich couldn't be searched, so its videos are not in this report: Immich rejected the API key in IMMICH_API_KEY (HTTP 401).\n");
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
