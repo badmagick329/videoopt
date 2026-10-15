@@ -60,7 +60,7 @@ public sealed class DoctorCommandTests : IDisposable
               ]
             }
 
-            """);
+            """.ReplaceLineEndings("\n"));
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
