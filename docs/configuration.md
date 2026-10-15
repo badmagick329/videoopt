@@ -23,7 +23,9 @@ eligibility:
 - `resolution` is `1080p-1440p`, `1440p-4k` or `4k+`, measured by total pixels.
 - `minimumVideoBitrate` is the video stream's bitrate as ffprobe reports it. A file without one never matches.
 - Only files with an extension in `eligibility.extensions` are scanned. The default is `.mkv`, `.mp4`, `.mov` and `.m4v`.
-- Discovery never queues a video too small to save `savings.minimumBytesSaved` (100 MiB by default).
+- `queue add` never queues a video too small to save `savings.minimumBytesSaved` (100 MiB by default), even with `--force`.
+
+`queue add` scans the watch folders. `queue add <file>` queues one file after the same checks. A file outside your watch roots or rules is refused with exit `5`, and the message gives the command to queue it anyway with `--force`. `--force` skips only those two checks, and `queue retry` keeps it.
 
 The starter config has two H.264 rules, one for `4k+` and one for `1080p-1440p`. Phones usually record HEVC, so add `hevc` rules before converting phone videos.
 
@@ -41,11 +43,13 @@ It can suggest three kinds of change:
 
 - a higher `minimumVideoBitrate`, when a rule's lower-bitrate videos were never worth converting;
 - a new rule, when videos the rules keep out converted well;
-- a typical file to test from the largest groups never tried.
+- a typical file to test from the largest groups never tried. The suggestion ends with `Test one:` and a `queue add "<file>" --force` command. Run it, then `run`. If other videos are waiting, `queue next <job-id>` puts the test file first.
 
 A suggestion based on earlier runs needs at least 3 results, and only results at your current quality settings count, since a video that converts at VMAF 95 may not at 97. Videos converted before `calibrate` existed recorded no settings, so they are left out. Immich reports no codec until a video is downloaded, so Immich videos no run has opened are listed by resolution and bitrate only.
 
-When there is nothing to suggest, the last line says why: no videos were found, every video is already AV1, there are no results yet at your quality settings, there are too few results to judge, or the results point to no change. If Immich cannot be searched, the report still covers your watch folders, and `calibrate` then prints an error saying Immich is missing from it and exits with the same code as any other Immich failure.
+When there is nothing to suggest, the last line says why: no videos were found, every video found is already AV1, no video has been converted at your quality settings yet, there are too few results to judge, or the results call for no change. `calibrate --json` gives the same reason in `noSuggestions`.
+
+If Immich cannot be searched, the report still covers your watch folders. `calibrate` then prints `Immich couldn't be searched, so its videos are not in this report: <reason>.` on standard error and exits with the same code as any other Immich failure.
 
 ## When a video is not worth converting
 
@@ -54,21 +58,23 @@ Each video gets a size cap, whichever of these is stricter:
 - keep at most `quality.maxEncodedPercent` of its size (default `80`);
 - save at least `savings.minimumBytesSaved` (default `100MiB`).
 
-When no quality setting meets both your VMAF target and the cap, the job ends as `Not worth converting: <file>. <why>` and names the best setting it found. That counts as a normal outcome: the run still exits `0`, and a managed Hetzner server is deleted without asking. A video too small to save `minimumBytesSaved` is skipped before its CRF search, so it is never uploaded or searched.
+When no quality setting meets both your VMAF target and the cap, the video ends as `Not worth converting: <why>` and the reason names the best setting it found. That counts as a normal outcome: the run still exits `0`, and a Hetzner worker is handled as after any finished run. A video too small to save `minimumBytesSaved` is skipped before its CRF search, so it is never uploaded or searched. `history` lists these videos.
 
 To let more videos through, follow the reason. If it names the size cap, raise `quality.maxEncodedPercent` or lower `savings.minimumBytesSaved`, whichever it names. If it says even the lowest allowed CRF missed the VMAF, size was not the problem, and only a lower `quality.minimumVmaf` or `quality.crfSearch.minCrf` helps.
 
-A skipped video is checked again when its file changes, or when you change `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat`, `crfSearch.minCrf`, `crfSearch.maxCrf` or `savings.minimumBytesSaved`. To try one again now, run `queue retry <job-id>`.
+A video not worth converting is checked again when its file changes, or when you change `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat`, `crfSearch.minCrf`, `crfSearch.maxCrf` or `savings.minimumBytesSaved`. To try one again now, run `queue retry <job-id>`; `history` shows the ID.
 
 ## What finalize does to originals
 
-`original.action` decides:
+`finalize --ready` says what will happen to the originals and asks once before it changes anything. `original.action` decides:
 
 | Action | The original | The AV1 |
 | --- | --- | --- |
 | `delete` (default) | Deleted | Takes the original's name and place |
 | `archive` | Moved to `original.archiveDirectory` | Takes the original's name and place |
 | `keep` | Left where it is | Saved beside it as `<name>.av1.mp4` or `<name>.av1.mkv` |
+
+This table is for videos from your watch folders. An Immich video's original always goes to Immich's trash (see [immich.md](immich.md)).
 
 `archiveDirectory` is either a folder name, such as `Archive`, created beside each original, or a full path that collects every original in one place. Nothing is overwritten: a taken name gets a number, as in `movie (2).mp4`. The AV1 takes the original's Date created and Date modified, so it sorts where the original did.
 

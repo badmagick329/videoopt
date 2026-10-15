@@ -134,7 +134,7 @@ internal static class CalibrateConsole
         _ => throw new InvalidOperationException($"Unknown suggestion {suggestion.GetType().Name}.")
     };
 
-    // --force because the group is one the rules keep out; process stops before replacing anything, so this only tests.
+    // --force because the group is one the rules keep out; the run that follows stops before replacing anything, so this only tests.
     private static string TestCommand(string path, ICommandHints hints) => hints.Command($"queue add \"{path}\" --force");
 
     private static void WriteGroups(TextWriter output, IReadOnlyList<CalibrationGroup> groups, bool withHistory = true)

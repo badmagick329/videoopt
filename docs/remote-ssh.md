@@ -1,8 +1,8 @@
 # Remote SSH processing
 
-Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a server when work starts, using the first type on your list that Hetzner has in stock, once you approve its hourly price, and deletes it after every required output is safely downloaded.
+Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a worker when a video first needs one, using the first server type on your list that Hetzner has in stock, once you approve its hourly price. When the run ends it deletes the worker if `deleteAfterRun` is true, which is the default.
 
-Setup is one-time: build the controller, create a Hetzner API token, and run `remote setup`. Do **not** create a server in the Hetzner console; VideoOptimiser creates it through the API.
+Setup is one-time: build the controller, create a Hetzner API token, and run `remote setup`. Do **not** create a server in the Hetzner console; VideoOptimiser creates the worker through the API.
 
 ## 1. Build the Windows controller
 
@@ -30,7 +30,7 @@ It creates the password-disabled, non-sudo `videoopt` SSH user and the `/var/tmp
 .\artifacts\local\video-optimiser.exe remote setup --config .\video-optimiser.yaml
 ```
 
-`remote setup` creates no server and costs nothing. It sets up managed Hetzner workers only: with `lifecycle: "manual"` and a `host` set, it stops with exit `3` and points you to [Manual SSH lifecycle](#manual-ssh-lifecycle). If it cannot reach the Hetzner API or run `ssh-keygen`, it exits `4`. In order, it:
+`remote setup` creates no worker and costs nothing. It sets up managed Hetzner workers only: with `lifecycle: "manual"` and a `host` set, it stops with exit `3` and points you to [Manual SSH lifecycle](#manual-ssh-lifecycle). If it cannot reach the Hetzner API or run `ssh-keygen`, it exits `4`. In order, it:
 
 1. **Checks the Hetzner API token.** With none, it prints how to create one and exits `3`. In the Hetzner Cloud project, open **Security > API Tokens** and create a token with **Read & Write** permission; Hetzner shows it only once. Then create the ignored token file beside your config file (`apiTokenFile` sets another path, relative to the config):
 
@@ -43,17 +43,17 @@ It creates the password-disabled, non-sudo `videoopt` SSH user and the `/var/tmp
 2. **Finds or creates the SSH key.** It uses `processing.remoteSsh.identityFile` when that file exists. Otherwise it uses `%USERPROFILE%\.ssh\video-optimiser-hetzner-ed25519`, creating it with `ssh-keygen` if it is missing. A new key has no passphrase, because VideoOptimiser runs ssh without a prompt. It never overwrites a key file.
 3. **Uploads the public key to the Hetzner project**, unless the project already has that key under any name; then it reuses that name. A new upload is named `video-optimiser-hetzner`, or `video-optimiser-hetzner-2` and so on when the name is taken. This is the only change it makes in Hetzner. A read-only token exits `3`.
 4. **Shows the `processing:` section it will write** and asks `Write this to <config>? A backup goes to <config>.bak. [y/N]`. The section keeps your own values, sets `mode: "remoteSsh"` and `lifecycle: "hetzner"`, and fills in `identityFile` and `sshKeyName`. On `y`, it saves the old file as `<config>.bak`, replaces only the `processing:` section, and validates the result. If the edit itself makes the file invalid, it restores the backup and exits `3`. If the file already had other problems, such as a missing `watch.roots`, it keeps the edit, lists every remaining problem on standard error, prints no completion line or next command, and exits `3`; fix them, then run `config validate`. Comments inside the old `processing:` section are replaced; everything outside it stays as written. Any other answer, or no input, changes nothing, so you can paste the section yourself.
-5. **Prints the next command**: `immich run --first` when Immich is configured, otherwise `run`. The edit has already set `mode: "remoteSsh"`, so neither needs `--remote`. The line repeats `--config` only if you typed it.
+5. **Prints the next command**: `Next: run 'video-optimiser immich run --first'.` when Immich is configured, otherwise `Next: run 'video-optimiser run'.` The edit has already set `mode: "remoteSsh"`, so neither needs `--remote`. The line repeats `--config` only if you typed it.
 
 Running it again is safe: it finds the same key file and the same Hetzner entry.
 
 `.env` is already excluded by `.gitignore`, and the controller loads it automatically. The token is never copied into YAML, the job database, recovery state, or command output. Do not commit or share `.env`. For CI or a temporary override, an existing `VIDEO_OPTIMISER_HETZNER_TOKEN` environment variable takes precedence over the file.
 
-VideoOptimiser sends the key's Hetzner name in each server-creation request. Hetzner installs the public key for `root`; the cloud-init bootstrap copies it to the restricted `videoopt` account, and Windows connects as `videoopt` with the private key. Deleting a server does not delete the project's SSH key, so later workers reuse it.
+VideoOptimiser sends the key's Hetzner name in each create request. Hetzner installs the public key for `root`; the cloud-init bootstrap copies it to the restricted `videoopt` account, and Windows connects as `videoopt` with the private key. Deleting a worker does not delete the project's SSH key, so later workers reuse it.
 
-The image must be Ubuntu 24.04 x86-64; the bootstrap intentionally rejects Ubuntu 26.04. The controller enables public IPv4, disables IPv6, marks the Primary IPv4 for automatic deletion, and applies ownership labels before it will reuse or delete a server.
+The image must be Ubuntu 24.04 x86-64; the bootstrap intentionally rejects Ubuntu 26.04. The controller enables public IPv4, disables IPv6, marks the IPv4 address for automatic deletion, and applies ownership labels before it will reuse or delete a worker.
 
-### How the server is chosen
+### How the worker is chosen
 
 VideoOptimiser tries each server type in `serverTypes` order, and each type in every location in `locations` order, before moving to the next type. With the defaults that is `cx43` in hel1, fsn1 and nbg1, then `cx53` in the same three, and so on.
 
@@ -77,9 +77,9 @@ Create the worker? [y/N]
 - **Fallbacks:** availability is only an indicator, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`). The next type and location is then tried without asking again: one `y` approves every candidate up to the second line's price.
 - **Declining:** any answer other than `y` or `yes`, or no input at all, creates nothing. The command prints `No worker was created.`, exits `0`, and leaves the jobs queued.
 - **Scripts** approve by piping the answer: `'y' | .\artifacts\local\video-optimiser.exe run --config .\video-optimiser.yaml`.
-- **A server that's already running** is reused without asking; it is already billing.
+- **A worker that's already running** is reused without asking; it is already billing.
 
-Before each create request it prints the type, location and price, such as `Creating Hetzner cpx42 in hel1 (EUR 0.134/h incl. VAT).` If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No server is left running.
+Before each create request it prints the type, location and price, such as `Creating Hetzner cpx42 in hel1 (EUR 0.134/h incl. VAT).` If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No worker is left running.
 
 Gross hourly prices in the EU on 2026-10-12, for choosing your list:
 
@@ -150,7 +150,7 @@ The worker's type and location show in `worker status`.
          deleteAfterRun: true
    ```
 
-6. Validate the settings without creating a server:
+6. Validate the settings without creating a worker:
 
    ```powershell
    .\artifacts\local\video-optimiser.exe config validate --config .\video-optimiser.yaml
@@ -172,7 +172,7 @@ Normal processing creates the worker once you approve its price. To create it ea
 
 The first SSH connection uses a dedicated known-hosts file and OpenSSH's `accept-new` behavior. Every later connection requires that exact recorded host key. VideoOptimiser does not modify the user's global OpenSSH configuration.
 
-During the first build, the controller prints phase-based setup percentages for dependency installation, libvmaf, SVT-AV1, FFmpeg, ab-av1, SSH configuration, and final verification. Long unchanged phases emit an elapsed-time heartbeat every minute. Each SSH readiness check is independently bounded, so a stalled OpenSSH session is terminated and retried instead of leaving the command frozen indefinitely. Every other SSH and SFTP connection sends a keepalive after 15 seconds with nothing received, so one to a worker that stops answering ends within about a minute instead of hanging.
+During the first build, the controller prints phase-based bootstrapping percentages for dependency installation, libvmaf, SVT-AV1, FFmpeg, ab-av1, SSH configuration, and final verification. Long unchanged phases emit an elapsed-time heartbeat every minute. Each SSH readiness check is independently bounded, so a stalled OpenSSH session is terminated and retried instead of leaving the command frozen indefinitely. Every other SSH and SFTP connection sends a keepalive after 15 seconds with nothing received, so one to a worker that stops answering ends within about a minute instead of hanging.
 
 `worker create` deliberately leaves the worker running. Delete it explicitly if no processing command will use it:
 
@@ -194,7 +194,10 @@ For one video, queue it, then run:
 
 ```powershell
 .\artifacts\local\video-optimiser.exe queue add "D:\Videos\clip.mkv" --config .\video-optimiser.yaml
+.\artifacts\local\video-optimiser.exe run --config .\video-optimiser.yaml
 ```
+
+`run` converts everything in the queue. `queue list` shows the order, `queue next <job-id>` puts a video first, and `queue hold <job-id>` keeps one out until `queue release <job-id>`.
 
 For an initial test with an empty queue, queue only one eligible video:
 
@@ -202,32 +205,55 @@ For an initial test with an empty queue, queue only one eligible video:
 .\artifacts\local\video-optimiser.exe queue add --first --config .\video-optimiser.yaml
 ```
 
-`--first` limits only newly found videos; it does not remove existing queued jobs. An empty `run` does not create a server. With work to do and no server running, `run` shows the price and asks `Create the worker? [y/N]` first; see [How the server is chosen](#how-the-server-is-chosen).
+`--first` limits only newly found videos; it does not remove existing queued jobs. An empty `run` does not create a worker. With work to do and no worker running, `run` shows the price and asks `Create the worker? [y/N]` first; see [How the worker is chosen](#how-the-worker-is-chosen). Before that it prints where it will encode, such as `Encoding on a new Hetzner worker created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.`
 
-When a run finishes, failed videos included, `deleteAfterRun: true` deletes the server, after outputs have been downloaded, checksum-verified, and validated locally, and confirms that the separately billable Primary IPv4 was also deleted. With `false` the run ends with `The worker <name> stays up, billed hourly, until it is deleted.` and the `worker delete` command, as does a run that never used a worker kept from an earlier run. The original video remains untouched in `ReadyToFinalize` state.
+### How a run ends
 
-When it creates a server, the command says setup takes several minutes and prints a `Bootstrapping: 35%, building SVT-AV1...` line at each stage, with the time spent in a stage if it runs long. SSH refusals while the server boots are expected and stay silent for the first 3 minutes; after that `Still waiting for the worker's SSH` appears at most once a minute. `Worker ready after 7m 36s.` ends the wait. While an original is staged, the command reports local hashing, remote capacity checks, resumable upload bytes/percentage, and checksum verification. Downloads report the same resumable bytes/percentage and verification phases. A step that runs longer than 10 seconds prints a progress line at most every 10 seconds: a transfer gives its percentage, rate and time left, and local hashing gives `Checking the checksum: N% of <size>` under a line that names what is being checked, such as `Checking the original's checksum before upload.`, so `Staging` or `Downloading` does not remain silent.
+When a run finishes, failed videos included, `deleteAfterRun: true` deletes the worker if the run used it, after outputs have been downloaded, checksum-verified, and validated locally, and confirms that the separately billable IPv4 address was also deleted. With `false` the run ends with `The worker <name> stays up, billed hourly, until it is deleted.` and `To delete it: video-optimiser worker delete`. So does a run that never used a worker kept from an earlier run, and a run that ends with an error once the worker exists. The original videos stay untouched, ready to finalise.
 
-If the application crashes, the network becomes unreachable, or bootstrap times out, the worker is kept; an error once the worker exists ends with the same two lines. A lost connection is tried 3 times, and an upload resumes where it stopped. A transfer counts as a lost connection when ssh itself fails (exit 255) or sftp's messages say the connection died (`Connection closed`, `Connection reset`, `Broken pipe`, `Connection timed out`); any other sftp failure, such as `Permission denied` or `No space left on device`, fails the job at once with sftp's own message; then the job is marked `Interrupted` and the run stops there, because every later job would fail the same way. The jobs after it stay queued, and the command prints how many videos were not converted, the command that resumes, and `worker delete` to delete the worker instead. Run the same command again to reconnect and resume.
+If the delete fails, the run prints `Couldn't delete the worker <name>: <reason>` and `It's still billing hourly.` with the `worker delete` command, and exits `1` (`9` after `Ctrl+C`).
 
-Press `Ctrl+C` once and the run stops after the video it is converting. With a managed worker up, it asks `Delete the worker when the run stops? [y/N]` straight away, so you can answer and leave: `y` deletes the worker once the video is done (keep the window open until it says so), `N` keeps it up, billed hourly. The video keeps converting while the question waits; its progress lines print after your answer. Press `Ctrl+C` again to stop at once. That stops only this PC's side: a CRF search or encode keeps running on the worker, which keeps billing, and the command prints what is still running and the command that picks it up again, then asks `Delete the worker now?`, naming the work deleting it would lose. Stopped while downloading, the finished encode is waiting on the worker, and deleting the worker loses it too. A `y` given at the first press is asked again when deleting would lose work. With redirected input nothing is asked: the worker is kept, and the lines name `worker delete`. The rerun follows a stage that is still running: it prints `Picked up the encode running on the worker.` (or `Picked up the CRF search running on the worker.`) and shows only what is new, not the log the earlier run already showed. If the encode finished in the meantime it prints `The encode on the worker had already finished.` and goes straight to the download, without uploading the original again. On a new worker it uploads and encodes again with the CRF it found. An upload or download stopped by `Ctrl+C` resumes where it stopped. A small recovery file and a worker-specific known-hosts file are stored beside the configured SQLite database; neither contains credentials.
+When it creates a worker, the command says bootstrapping takes several minutes and prints a `Bootstrapping: 35%, building SVT-AV1...` line at each stage, with the time spent in a stage if it runs long. SSH refusals while the worker boots are expected and stay silent for the first 3 minutes; after that `Still waiting for the worker's SSH` appears at most once a minute. `Worker ready after 7m 36s.` ends the wait. While an original is staged, the command reports local hashing, remote capacity checks, resumable upload bytes/percentage, and checksum verification. Downloads report the same resumable bytes/percentage and verification phases. A step that runs longer than 10 seconds prints a progress line at most every 10 seconds: a transfer gives its percentage, rate and time left, and local hashing gives `Checking the checksum: N% of <size>` under a line that names what is being checked, such as `Checking the original's checksum before upload.`, so an upload or download does not stay silent.
 
-Inspect or remove a retained worker with:
+### When the worker stops answering
+
+If the application crashes, the network becomes unreachable, or bootstrapping times out, the worker is kept. A lost connection is tried 3 times, and an upload resumes where it stopped. A transfer counts as a lost connection when ssh itself fails (exit 255) or sftp's messages say the connection died (`Connection closed`, `Connection reset`, `Broken pipe`, `Connection timed out`). Any other sftp failure, such as `Permission denied` or `No space left on device`, fails the video at once with sftp's own message.
+
+When the worker can't be reached, the video's line is `Worker unreachable: <reason>.` and the run stops at that video, because every later one would fail the same way. The video is stopped, not failed, and resumes from its stage. The videos after it stay queued. The run then prints `Stopped: the worker <name> can't be reached, so 3 videos were not converted.` For a Hetzner worker it adds `The worker stays up, billed hourly, until it is deleted.`, `To resume: video-optimiser run` and `To delete it instead: video-optimiser worker delete`. A manual host gets only `To resume:`. Run the same command again to reconnect and resume.
+
+### Stopping a run with Ctrl+C
+
+The first `Ctrl+C` while a video converts stops the run after that video, so its CRF search, encode and download are kept. It prints `Stopping after this video (the encode has about 7m 36s left). Press Ctrl+C again to stop now.` The time appears only while encoding. When the video is done, the run prints `Stopped after clip.mp4; 3 videos are still waiting.`, its usual summary, and `To convert the rest: video-optimiser run`, and exits `9`.
+
+With a Hetzner worker up, that first press also asks `Delete the worker when the run stops? [y/N]`, so you can answer and leave. `y` deletes the worker once the video is done (`The worker will be deleted when the run stops. Keep this window open until it says it's deleted.`). `N` keeps it up, billed hourly (`The worker will stay up when the run stops.`). The video keeps converting while the question waits, and its lines print after your answer. With redirected input nothing is asked: the worker is kept, and the lines name `worker delete`. An unanswered question is asked again as `Delete the worker now? [y/N]` when the run ends.
+
+A second `Ctrl+C` stops at once, and so does a first one when no video is converting (during Immich discovery, while the worker is created, at a prompt). This stops only this PC's side:
+
+- On this PC, or with nothing running on the worker, the run prints `Stopped now. clip.mp4 continues from its last finished step on the next run.` and `To resume: video-optimiser run`.
+- A CRF search or encode keeps running on the worker, which keeps billing. The run prints `Stopped watching. The encode of clip.mp4 is still running on the worker <name>.`, `The worker is billed hourly until it is deleted.`, and the commands to pick it up again or to stop it. Then it asks `Delete the worker now? The encode in progress is lost. [y/N]`. A `y` given at the first press is asked again here, because deleting now loses work. An `N` prints `To delete it later: video-optimiser worker delete`.
+- Stopped while downloading, the finished encode is waiting on the worker, and deleting the worker loses it too: `Delete the worker now? The finished encode is lost. [y/N]`.
+- A press while the worker is being deleted stops nothing. It prints `Deleting the worker; closing this window now leaves it billing.`
+
+The rerun follows a stage that is still running: it prints `Picked up the encode running on the worker.` (or `Picked up the CRF search running on the worker.`) and shows only what is new, not the log the earlier run already showed. If the encode finished in the meantime it prints `The encode on the worker had already finished.` and goes straight to the download, without uploading the original again. On a new worker it uploads and encodes again with the CRF it found. An upload or download stopped by `Ctrl+C` resumes where it stopped. A small recovery file and a worker-specific known-hosts file are stored beside the configured SQLite database; neither contains credentials.
+
+### Kept workers
+
+Inspect or delete a kept worker with:
 
 ```powershell
 .\artifacts\local\video-optimiser.exe worker status --config .\video-optimiser.yaml
 .\artifacts\local\video-optimiser.exe worker delete --config .\video-optimiser.yaml
 ```
 
-The delete command verifies the exact server ID and ownership labels. It refuses ambiguous or unowned resources. When the server is already gone from Hetzner, it says `The worker <name> is already gone from Hetzner; its record on this PC is removed.` and still deletes a retained IPv4 address and the record.
+The delete command verifies the exact server ID and ownership labels. It refuses ambiguous or unowned resources. When the worker is already gone from Hetzner, it says `The worker <name> is already gone from Hetzner; its record on this PC is removed.` and still deletes a leftover IPv4 address and the record.
 
-`worker status` takes no lock, so it answers while a run is creating the worker. It prints the worker's line, or `No Hetzner worker exists.`; when Hetzner can't be asked (no API token, no answer within 15 seconds) it prints the worker recorded on this PC, or `No Hetzner worker is recorded on this PC.`, and then `Hetzner wasn't checked: <reason>.`. `worker create` and `worker delete` need the lock: while another command holds it, such as a run that is setting up a worker, they print `Waiting for another video-optimiser command that is using the worker; Ctrl+C stops waiting.` and keep waiting. `Ctrl+C` in `worker create` after the server exists stops the command with exit code `9`, prints the two `stays up` lines and leaves the server running; before the server exists it creates nothing.
+`worker status` takes no lock, so it answers while a run is creating the worker. It prints the worker's line, or `No Hetzner worker exists.`; when Hetzner can't be asked (no API token, no answer within 15 seconds) it prints the worker recorded on this PC, or `No Hetzner worker is recorded on this PC.`, and then `Hetzner wasn't checked: <reason>.`. `worker create` and `worker delete` need the lock: while another command holds it, such as a run that is setting up a worker, they print `Waiting for another video-optimiser command that is using the worker; Ctrl+C stops waiting.` and keep waiting. `Ctrl+C` in `worker create` after the worker exists stops the command with exit code `9`, prints `The worker <name> stays up, billed hourly, until it is deleted.` and `To delete it: video-optimiser worker delete`, and leaves the worker running; before the worker exists it creates nothing.
 
-`status` shows a worker that bills too, with its type, location, age and hourly price, checked against Hetzner. It takes no lock, so it answers while a run is creating the worker. When Hetzner can't be asked (no API token, no answer within 15 seconds), it shows the worker recorded on this PC and says why it wasn't checked. A worker is `Worker: none.` when Hetzner has no server for this database, and `Worker: <name>'s server is gone, but its IPv4 address still bills.` when only the Primary IPv4 is left; `worker delete` removes it.
+`status`, and a bare `video-optimiser`, print a card that shows a billing worker too, with its type, location, age and hourly price, checked against Hetzner. It takes no lock, so it answers while a run is creating the worker. When Hetzner can't be asked (no API token, no answer within 15 seconds), it shows the worker recorded on this PC and says why it wasn't checked. The card says `Worker: none.` when Hetzner has no worker for this database, and `Worker: <name> is gone from Hetzner, but its IPv4 address still bills.` when only the IPv4 address is left; `worker delete` removes it. The card also lists the next commands worth running, and `worker delete` is one of them when a worker bills and no run is going.
 
 The `worker` commands follow `lifecycle` alone, so they still work after you set `mode` back to `"local"`, and they take no `--local` or `--remote`. With any other `lifecycle`, `worker create` and `worker delete` exit `3` and `worker status` exits `0`; each names the setting and its current value.
 
-## Failed jobs and retained workers
+## Failed videos and kept workers
 
 A run creates the managed worker only once a job will use it. Each job is first checked on this PC (the original exists, sits under a watch root, passes the eligibility rules and can save `savings.minimumBytesSaved`); a run in which every job fails those checks, or is already ready to finalise, creates no server and prints nothing about one. A file still being written, or one ffprobe cannot read yet, counts as needing the server, since it may be fine by the time its job runs. A video stopped while its AV1 was being checked, with the AV1 still on this PC, is checked here and needs no server. Before creating a managed worker, `run` checks each queued or resumable job against the current processing mode, remote identity, and deterministic workspace. A never-started queued job adopts the current configuration. A partially processed or interrupted job with a different configuration fails before provisioning. Under `--local` or `--remote`, which set the mode for one run, a job started in the other mode is left for a later run instead and printed as `<file> is left for a later run: it started on ...`, with the command that resumes it: a plain `run` when the config matches where the video started, `run --local` or `run --remote` when the config uses the other mode, and when the config points at another worker (or the same worker under another `workingDirectory`), a line to set `processing.remoteSsh` back or to `queue drop` the video.
 
@@ -237,7 +263,7 @@ A video that joins a run after it started (released with `queue release`, moved 
 
 When `deleteAfterRun` is enabled, a run that finishes deletes the worker, failed videos included: a `queue retry` is a new job that starts again from the upload, so nothing a failed video left on the worker is reused. A run you stop asks instead, and with redirected input it keeps the worker and prints the `worker delete` command.
 
-To retry a job that failed because its remote configuration changed, create a new queued job. The failed job stays in history, and the new job does not reuse its previous remote output or workspace:
+To try a failed video again, for example after its remote configuration changed, queue it as a new job. The failed job stays in `history`, which lists its ID, and the new job does not reuse its previous remote output or workspace:
 
 ```powershell
 .\artifacts\local\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
@@ -245,7 +271,7 @@ To retry a job that failed because its remote configuration changed, create a ne
 
 ## 5. Finalise locally
 
-Finalisation remains local and can happen after the server has been deleted:
+Finalisation remains local and can happen after the worker has been deleted:
 
 ```powershell
 .\artifacts\local\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
@@ -269,4 +295,4 @@ processing:
     minimumFreeDiskMultiplier: 2.5
 ```
 
-Bootstrap it as root with `scripts/bootstrap-remote-worker.sh`, then change the alias to `User videoopt`. In manual mode VideoOptimiser never creates or deletes the server. Delete the server and any retained Primary IP in Hetzner after all expected results are safely local; powering a server off does not stop billing.
+Bootstrap it as root with `scripts/bootstrap-remote-worker.sh`, then change the alias to `User videoopt`. In manual mode VideoOptimiser never creates or deletes the worker. Delete the server and any leftover IPv4 address in Hetzner after all expected results are safely local; powering a server off does not stop billing.
