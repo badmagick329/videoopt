@@ -248,27 +248,26 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
     /// <summary>The answer to <see cref="Quote"/>, or null while it was never asked.</summary>
     public bool? Approved { get; private set; }
 
+    /// <summary>Runs where the real lifecycle sits at the price prompt, before any server exists, such as a Ctrl+C.</summary>
+    public Action? AtPrompt { get; set; }
+
+    /// <summary>Runs while the worker bootstraps, after its server exists, such as a Ctrl+C.</summary>
+    public Action? DuringBootstrap { get; set; }
+
     public async Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null, CancellationToken cancellationToken = default)
     {
         EnsureCalls++;
         DatabasePaths.Add(databasePath);
         if (confirmCreation is not null && Quote is not null)
         {
+            if (AtPrompt is not null) { AtPrompt(); cancellationToken.ThrowIfCancellationRequested(); }
             Approved = await confirmCreation(Quote, cancellationToken);
             if (!Approved.Value) throw new RemoteWorkerCreationDeclinedException();
             progress?.Report("Creating Hetzner cx43 in hel1.");
         }
         Exists = true;
+        if (DuringBootstrap is not null) { DuringBootstrap(); cancellationToken.ThrowIfCancellationRequested(); }
         return CliFakes.Worker;
-    }
-
-    public async Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
-    {
-        DatabasePaths.Add(databasePath);
-        var worker = await ReadRecordedAsync(databasePath, cancellationToken);
-        // As the real lifecycle does, so a host check goes to the worker it found.
-        if (worker is not null) settings.Processing.RemoteSsh.Host = worker.Address;
-        return worker;
     }
 
     /// <summary>Thrown when the state file is read, as an unreadable one would be.</summary>
@@ -283,8 +282,18 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
     public Task<WorkerCheck> CheckAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
     {
         DatabasePaths.Add(databasePath);
-        return Task.FromResult(Check ?? new WorkerCheck(Exists ? CliFakes.Worker : null, 0.0119m, null));
+        CheckCalls++;
+        if (CheckFailure is not null) return Task.FromException<WorkerCheck>(CheckFailure);
+        var check = Check ?? new WorkerCheck(Exists ? CliFakes.Worker : null, 0.0119m, null);
+        // As the real lifecycle does, so a host check goes to the worker it found.
+        if (check is { NotCheckedReason: null, Worker: { } worker }) settings.Processing.RemoteSsh.Host = worker.Address;
+        return Task.FromResult(check);
     }
+
+    public int CheckCalls { get; private set; }
+
+    /// <summary>Thrown by the check, as the real one does for what it does not turn into a reason, such as an unreadable state file.</summary>
+    public Exception? CheckFailure { get; set; }
 
     public Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {

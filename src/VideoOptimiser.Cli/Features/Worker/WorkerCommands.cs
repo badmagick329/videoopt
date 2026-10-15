@@ -35,18 +35,39 @@ internal sealed class WorkerCommands(IRemoteWorkerLifecycle lifecycle, ISettings
         return (int)ExitCode.InvalidConfiguration;
     }
 
-    public async Task<int> CreateAsync(LoadedConfiguration configuration, CancellationToken cancellationToken)
+    public async Task<int> CreateAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         if (ReportInvalidSettings(validator, configuration)) return (int)ExitCode.InvalidConfiguration;
-        var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConsolePrompts.ConfirmServerCreationAsync, cancellationToken);
-        Console.WriteLine($"Worker ready: {worker.Name} ({worker.ServerId}) {worker.Address}{DescribePlacement(worker)}");
-        return (int)ExitCode.Success;
+        var databasePath = configuration.Settings.Database.Path;
+        try
+        {
+            var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, databasePath, new InlineProgress<string>(Console.WriteLine), ConsolePrompts.ConfirmServerCreationAsync, cancellationToken);
+            Console.WriteLine($"Worker ready: {worker.Name} ({worker.ServerId}) {worker.Address}{DescribePlacement(worker)}");
+            return (int)ExitCode.Success;
+        }
+        catch (OperationCanceledException)
+        {
+            // The state file is written the moment the server exists, so a record means a server that bills from now on. A
+            // press before that (the price prompt, the lock wait) leaves nothing, and stays silent as every stop there does.
+            if (await lifecycle.ReadRecordedAsync(databasePath, CancellationToken.None) is not { } worker) throw;
+            foreach (var line in WorkerKeepLines.For(worker.Name, command)) Console.WriteLine(line);
+            return (int)ExitCode.Cancelled;
+        }
     }
 
+    /// <summary>
+    /// Reads through <see cref="IRemoteWorkerLifecycle.CheckAsync"/>, which never takes the lifecycle lock: a run holds it for
+    /// a worker's whole setup, and a status question must not wait for that. When Hetzner couldn't be asked, the record on
+    /// this PC is shown with the reason, and "none" only means none recorded.
+    /// </summary>
     public async Task<int> StatusAsync(LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
-        var worker = await lifecycle.GetAsync(configuration.Settings, configuration.Settings.Database.Path, cancellationToken);
-        Console.WriteLine(worker is null ? "No managed Hetzner worker exists." : $"{worker.Name}  server {worker.ServerId}  {worker.Status}  {worker.Address}{DescribePlacement(worker)}");
+        var check = await lifecycle.CheckAsync(configuration.Settings, configuration.Settings.Database.Path, cancellationToken);
+        var worker = check.Worker;
+        var asked = check.NotCheckedReason is null;
+        if (worker is not null) Console.WriteLine($"{worker.Name}  server {worker.ServerId}  {worker.Status}  {worker.Address}{DescribePlacement(worker)}");
+        else Console.WriteLine(asked ? "No managed Hetzner worker exists." : "No managed Hetzner worker is recorded on this PC.");
+        if (!asked) Console.WriteLine($"Hetzner wasn't checked: {check.NotCheckedReason!.TrimEnd('.')}.");
         return (int)ExitCode.Success;
     }
 

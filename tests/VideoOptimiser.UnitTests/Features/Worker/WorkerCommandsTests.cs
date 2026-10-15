@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Worker;
+using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.UnitTests.Features.Worker;
@@ -70,6 +71,38 @@ public sealed class WorkerCommandsTests : IDisposable
         stdout.ReplaceLineEndings("\n").Should().Be("Will create cpx42 in fsn1 at EUR 0.134/h incl. VAT.\nCreate the server? [y/N] \nNo server was created.\n");
     }
 
+    /// <summary>
+    /// A press after the server exists leaves it billing, so the command says so and how to delete it, as a run does. The
+    /// exit code stays 9.
+    /// </summary>
+    [Fact]
+    public async Task CtrlCWhileTheWorkerSetsUpSaysItStaysUpAndHowToDeleteIt()
+    {
+        var lifecycle = new FakeWorkerLifecycle { Exists = false, DuringBootstrap = Stop.Press };
+
+        var (code, stdout, stderr) = await RunAsync(lifecycle, null, CliFakes.AcceptAnySettings, "worker", "create");
+
+        code.Should().Be((int)ExitCode.Cancelled);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            "The worker video-optimiser-1 stays up, billed hourly, until it is deleted.\n" +
+            $"To delete it: video-optimiser worker delete --config \"{_config}\"\n");
+    }
+
+    /// <summary>Nothing exists yet at the price prompt, so there is nothing to say about a worker.</summary>
+    [Fact]
+    public async Task CtrlCAtThePricePromptSaysNothingAndCreatesNothing()
+    {
+        var lifecycle = new FakeWorkerLifecycle { Exists = false, Quote = new RemoteWorkerCreationQuote(new("cx43", "hel1", 0.031m), new("cx43", "hel1", 0.031m)), AtPrompt = Stop.Press };
+
+        var (code, stdout, stderr) = await RunAsync(lifecycle, null, CliFakes.AcceptAnySettings, "worker", "create");
+
+        code.Should().Be((int)ExitCode.Cancelled);
+        stdout.Should().BeEmpty();
+        stderr.Should().BeEmpty();
+        lifecycle.Exists.Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(true, "video-optimiser-1  server 42  running  203.0.113.10  cx43 in hel1\n")]
     [InlineData(false, "No managed Hetzner worker exists.\n")]
@@ -83,6 +116,36 @@ public sealed class WorkerCommandsTests : IDisposable
         stderr.Should().BeEmpty();
         stdout.ReplaceLineEndings("\n").Should().Be(expected);
         lifecycle.DatabasePaths.Should().Equal(DatabasePath);
+        // Status reads through the check, which never takes the lifecycle lock a run holds while it sets a worker up.
+        lifecycle.CheckCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task StatusSaysWhyHetznerWasNotAskedAndShowsTheRecordedWorker()
+    {
+        var lifecycle = new FakeWorkerLifecycle { Check = new WorkerCheck(CliFakes.Worker with { Status = RemoteWorkerStatuses.Recorded }, null, "no API token is set") };
+
+        var (code, stdout, stderr) = await RunAsync(lifecycle, null, CliFakes.AcceptAnySettings, "worker", "status");
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            "video-optimiser-1  server 42  recorded  203.0.113.10  cx43 in hel1\n" +
+            "Hetzner wasn't checked: no API token is set.\n");
+    }
+
+    [Fact]
+    public async Task StatusWithNoRecordAndNoAnswerFromHetznerDoesNotClaimThereIsNoWorker()
+    {
+        var lifecycle = new FakeWorkerLifecycle { Check = new WorkerCheck(null, null, "Hetzner didn't answer within 15 seconds") };
+
+        var (code, stdout, stderr) = await RunAsync(lifecycle, null, CliFakes.AcceptAnySettings, "worker", "status");
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            "No managed Hetzner worker is recorded on this PC.\n" +
+            "Hetzner wasn't checked: Hetzner didn't answer within 15 seconds.\n");
     }
 
     [Theory]
@@ -103,15 +166,25 @@ public sealed class WorkerCommandsTests : IDisposable
 
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
 
-    public void Dispose() => Directory.Delete(_directory, recursive: true);
+    private string _config = "";
+
+    /// <summary>The Ctrl+C of the command under test.</summary>
+    private RunStop Stop { get; } = new();
+
+    public void Dispose()
+    {
+        Stop.Dispose();
+        Directory.Delete(_directory, recursive: true);
+    }
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(IRemoteWorkerLifecycle lifecycle, string? input, Action<IServiceCollection> settings, params string[] args)
     {
-        var config = await RunCli.WriteConfigAsync(DatabasePath, "processing:", "  mode: \"local\"", "  remoteSsh:", "    lifecycle: \"hetzner\"");
+        _config = await RunCli.WriteConfigAsync(DatabasePath, "processing:", "  mode: \"local\"", "  remoteSsh:", "    lifecycle: \"hetzner\"");
         return await ConsoleCapture.RunCliWithInputAsync(input, services =>
         {
             settings(services);
             services.AddSingleton(lifecycle);
-        }, [.. args, "--config", config]);
+            services.AddSingleton(Stop);
+        }, [.. args, "--config", _config]);
     }
 }

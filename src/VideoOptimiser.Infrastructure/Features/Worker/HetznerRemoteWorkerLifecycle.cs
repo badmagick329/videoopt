@@ -56,7 +56,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         CancellationToken cancellationToken = default)
     {
         RequireManaged(settings);
-        await using var lifecycleLock = await WorkerStateStore.AcquireLockAsync(databasePath, cancellationToken);
+        await using var lifecycleLock = await WorkerStateStore.AcquireLockAsync(databasePath, progress, cancellationToken);
         var token = GetToken(settings);
         var controller = ControllerId(databasePath);
         var statePath = WorkerStateStore.StatePath(databasePath);
@@ -79,25 +79,6 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         ApplyConnection(settings, state);
         await _readiness.WaitUntilReadyAsync(settings, state, progress, cancellationToken);
         return state.ToInfo("ready");
-    }
-
-    public async Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
-    {
-        RequireManaged(settings);
-        await using var lifecycleLock = await WorkerStateStore.AcquireLockAsync(databasePath, cancellationToken);
-        var token = GetToken(settings);
-        var state = await ResolveStateAsync(token, ControllerId(databasePath), WorkerStateStore.StatePath(databasePath), cancellationToken, retainStateWhenServerMissing: true);
-        if (state is null) return null;
-        var server = await _cloud.GetServerAsync(token, state.ServerId, cancellationToken);
-        if (server is null)
-        {
-            var status = state.PrimaryIpv4Id > 0 && await _cloud.PrimaryIpExistsAsync(token, state.PrimaryIpv4Id, cancellationToken)
-                ? RemoteWorkerStatuses.PrimaryIpRetained
-                : "server-missing";
-            return state.ToInfo(status);
-        }
-        ApplyConnection(settings, state);
-        return state.ToInfo(server.Value.Status);
     }
 
     public async Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default)
@@ -134,7 +115,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         timeout.CancelAfter(_checkTimeout);
         try
         {
-            return await LookUpAsync(token, ControllerId(databasePath), state, timeout.Token);
+            return await LookUpAsync(settings, databasePath, token, ControllerId(databasePath), state, timeout.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -149,17 +130,20 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     }
 
     /// <summary>
-    /// The read half of <see cref="ResolveStateAsync"/> and <see cref="GetAsync"/> with every write left out. A recorded server
-    /// that is gone is not cleaned up here: whether its IPv4 still bills is the answer, and <see cref="DeleteAsync"/> removes it.
+    /// The read half of <see cref="ResolveStateAsync"/> with every write left out. A recorded server that is gone is not
+    /// cleaned up here: whether its IPv4 still bills is the answer, and <see cref="DeleteAsync"/> removes it. A server it finds
+    /// also becomes the connection in <paramref name="settings"/> (in memory only), so doctor's host checks reach the worker.
     /// </summary>
-    private async Task<WorkerCheck> LookUpAsync(string token, string controller, WorkerState? state, CancellationToken cancellationToken)
+    private async Task<WorkerCheck> LookUpAsync(AppSettings settings, string databasePath, string token, string controller, WorkerState? state, CancellationToken cancellationToken)
     {
         if (state is not null)
         {
             if (await _cloud.GetServerAsync(token, state.ServerId, cancellationToken) is { } server)
             {
                 HetznerCloudClient.VerifyOwnership(server, controller);
-                return new WorkerCheck(Refreshed(state, server).ToInfo(server.Status), server.HourlyGross, null);
+                var refreshed = Refreshed(state, server);
+                ApplyConnection(settings, refreshed);
+                return new WorkerCheck(refreshed.ToInfo(server.Status), server.HourlyGross, null);
             }
             if (state.PrimaryIpv4Id > 0 && await _cloud.PrimaryIpExistsAsync(token, state.PrimaryIpv4Id, cancellationToken))
                 return new WorkerCheck(state.ToInfo(RemoteWorkerStatuses.PrimaryIpRetained), null, null);
@@ -171,13 +155,15 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         if (servers.Count == 0) return new WorkerCheck(null, null, null);
         HetznerCloudClient.VerifyOwnership(servers[0], controller);
         var found = servers[0];
+        // The record that ResolveStateAsync would recover; here it only names the known-hosts file and is never written.
+        ApplyConnection(settings, new WorkerState(found.Id, found.PrimaryIpv4Id, found.Name, found.Address, found.Location, found.ServerType, WorkerStateStore.KnownHostsPath(databasePath, found.Id), controller, found.CreatedUtc));
         return new WorkerCheck(new RemoteWorkerInfo(found.Id, found.Name, found.Address, found.Status, found.CreatedUtc, found.ServerType, found.Location), found.HourlyGross, null);
     }
 
     public async Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
         RequireManaged(settings);
-        await using var lifecycleLock = await WorkerStateStore.AcquireLockAsync(databasePath, cancellationToken);
+        await using var lifecycleLock = await WorkerStateStore.AcquireLockAsync(databasePath, progress, cancellationToken);
         var token = GetToken(settings);
         var controller = ControllerId(databasePath);
         var statePath = WorkerStateStore.StatePath(databasePath);
@@ -191,7 +177,11 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
 
         var server = await _cloud.GetServerAsync(token, state.ServerId, cancellationToken);
         if (server is not null) HetznerCloudClient.VerifyOwnership(server.Value, controller);
-        progress?.Report($"Deleting Hetzner server {state.ServerId}.");
+        // A server deleted in the Hetzner console leaves only a record here (and maybe its IPv4); claiming to delete it would
+        // be wrong, and the user needs to know the record was a leftover.
+        progress?.Report(server is null
+            ? $"The worker {state.Name} is already gone from Hetzner; its record on this PC is removed."
+            : $"Deleting Hetzner server {state.ServerId}.");
         if (server is not null)
         {
             var actionId = await _cloud.DeleteServerAsync(token, state.ServerId, cancellationToken);

@@ -216,20 +216,30 @@ public sealed class DoctorService(
     /// A managed worker exists only between its creation by a run or <c>worker create</c> and its deletion, so having none is
     /// the normal state, not a failure. Without one, only the Hetzner token and API access can be checked; with a running one,
     /// the lookup points the settings at it so the remote host checks run against it. Returns whether such a worker is running.
+    /// The lookup is <see cref="IRemoteWorkerLifecycle.CheckAsync"/>, which never waits for the lifecycle lock a run holds
+    /// while it sets a worker up.
     /// </summary>
     private async Task<bool> CheckManagedWorkerAsync(AppSettings settings, List<Diagnostic> diagnostics, CancellationToken cancellationToken)
     {
-        RemoteWorkerInfo? worker;
+        WorkerCheck check;
         try
         {
-            worker = await remoteWorkerLifecycle.GetAsync(settings, settings.Database.Path, cancellationToken);
+            check = await remoteWorkerLifecycle.CheckAsync(settings, settings.Database.Path, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
         {
+            // CheckAsync turns what Hetzner says into a reason; this is the rest, such as an unreadable state file.
             diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "HetznerApiUnavailable", $"Hetzner API check failed: {exception.Message}"));
             return false;
         }
 
+        if (check.NotCheckedReason is not null)
+        {
+            diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "HetznerApiUnavailable", $"Hetzner API check failed: {check.NotCheckedReason}"));
+            return false;
+        }
+
+        var worker = check.Worker;
         diagnostics.Add(new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Pass, "HetznerApiAvailable", "Hetzner API accepted the token."));
         if (worker?.Status == "running") return true;
 

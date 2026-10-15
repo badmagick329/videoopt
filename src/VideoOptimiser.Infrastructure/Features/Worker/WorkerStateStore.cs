@@ -18,10 +18,17 @@ internal static class WorkerStateStore
     internal static string StatePath(string databasePath) => Path.GetFullPath(databasePath) + ".hetzner-worker.json";
     internal static string KnownHostsPath(string databasePath, long serverId) => Path.GetFullPath(databasePath) + $".hetzner-{serverId.ToString(CultureInfo.InvariantCulture)}.known_hosts";
 
-    internal static async Task<FileStream> AcquireLockAsync(string databasePath, CancellationToken cancellationToken)
+    internal const string WaitingForLock = "Waiting for another video-optimiser command that is using the worker; Ctrl+C stops waiting.";
+
+    /// <summary>
+    /// A run holds this lock through a worker's whole bootstrap (up to 90 minutes), so a command that waits for it would look
+    /// hung. <paramref name="progress"/> hears <see cref="WaitingForLock"/> once, only when the lock isn't free at the first try.
+    /// </summary>
+    internal static async Task<FileStream> AcquireLockAsync(string databasePath, IProgress<string>? progress, CancellationToken cancellationToken)
     {
         var path = Path.GetFullPath(databasePath) + ".hetzner-worker.lock";
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var told = false;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -31,6 +38,8 @@ internal static class WorkerStateStore
             }
             catch (IOException)
             {
+                if (!told) progress?.Report(WaitingForLock);
+                told = true;
                 await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
             }
         }

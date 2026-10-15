@@ -115,7 +115,6 @@ public interface IRemoteWorkerLifecycle
         IProgress<string>? progress = null,
         Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null,
         CancellationToken cancellationToken = default);
-    Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// The worker in the local state file, without a Hetzner API call or the lifecycle lock, so a run can say where it will
@@ -126,9 +125,11 @@ public interface IRemoteWorkerLifecycle
 
     /// <summary>
     /// What is billing for this database, asked of Hetzner for at most 15 seconds, without the lifecycle lock and without
-    /// writing or deleting anything, in any <c>processing.mode</c>. <see cref="GetAsync"/> takes the lock, so a read of it
-    /// waits for the whole bootstrap of a run that is creating a worker; a status card must answer at once. Never throws for
-    /// a Hetzner failure: that is <see cref="WorkerCheck.NotCheckedReason"/>.
+    /// writing or deleting anything, in any <c>processing.mode</c>. Taking the lock would make a read wait for the whole
+    /// bootstrap of a run that is creating a worker; <c>worker status</c>, the status card and <c>doctor</c> must answer at
+    /// once. A server it finds also becomes <c>processing.remoteSsh</c>'s host, user and known-hosts file in
+    /// <paramref name="settings"/>, in memory only, so a host check can reach it. Never throws for a Hetzner failure: that is
+    /// <see cref="WorkerCheck.NotCheckedReason"/>.
     /// </summary>
     Task<WorkerCheck> CheckAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default);
 }

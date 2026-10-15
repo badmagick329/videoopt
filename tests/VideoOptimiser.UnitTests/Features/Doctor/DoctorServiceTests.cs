@@ -106,13 +106,27 @@ public sealed class DoctorServiceTests : IDisposable
     {
         var settings = CreateHetznerSettings();
         var remote = new FakeRemoteEnvironmentVerifier();
-        var lifecycle = new FakeWorkerLifecycle { ReadFailure = new InvalidOperationException("Hetzner API token 'VIDEO_OPTIMISER_HETZNER_TOKEN' was not found.") };
+        var lifecycle = new FakeWorkerLifecycle { Check = new WorkerCheck(null, null, "no API token is set") };
 
         var report = await CreateDoctor(new FakeToolVerifier(true), remote, lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
         report.ExitCode.Should().Be(ExitCode.MissingDependency);
-        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "HetznerApiUnavailable" && diagnostic.Message.Contains("was not found"));
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "HetznerApiUnavailable")
+            .Which.Message.Should().Be("Hetzner API check failed: no API token is set");
         remote.WasCalled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunAsyncUnderHetznerFailsWhenTheWorkerStateCannotBeRead()
+    {
+        var settings = CreateHetznerSettings();
+        var lifecycle = new FakeWorkerLifecycle { CheckFailure = new InvalidDataException("bad state") };
+
+        var report = await CreateDoctor(new FakeToolVerifier(true), new FakeRemoteEnvironmentVerifier(), lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "HetznerApiUnavailable")
+            .Which.Message.Should().Be("Hetzner API check failed: bad state");
     }
 
     [Fact]

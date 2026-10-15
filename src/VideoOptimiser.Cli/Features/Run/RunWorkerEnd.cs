@@ -161,7 +161,7 @@ internal sealed class RunWorkerEnd(IRemoteWorkerLifecycle lifecycle, RunWorkerSt
             if (!WorkerEndPolicy.IsAffirmative(response))
             {
                 if (stopLike) Console.WriteLine(StoppedRunMessage.DeleteLater(remoteStage, command));
-                else PrintLines(WorkerEndMessage.Keep(worker, command));
+                else PrintLines(WorkerKeepLines.For(worker, command));
                 return true;
             }
             fate = WorkerFate.Delete;
@@ -170,7 +170,7 @@ internal sealed class RunWorkerEnd(IRemoteWorkerLifecycle lifecycle, RunWorkerSt
         if (fate == WorkerFate.Keep)
         {
             // A stop's lines and U3 already say the worker stays and how to delete it.
-            if (!stopLike) PrintLines(WorkerEndMessage.Keep(worker, command));
+            if (!stopLike) PrintLines(WorkerKeepLines.For(worker, command));
             return true;
         }
         return await DeleteWorkerAsync(configuration, command, worker);

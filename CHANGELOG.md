@@ -54,6 +54,9 @@
 - `run` and `immich run` refuse to start while another run uses the same database, and name it: `Another run is using this database: video-optimiser run, started 14:02 (process 1234).`, exit `1`. Before, the second run marked the first one's active job interrupted. The lock is a `.run.lock` file beside the database, released when the run's process ends, however it ends.
 - A run that starts during `finalize` or `immich finalize` leaves the video being finalised alone. Before, it set the job back, and a correctly installed folder video then ended `FinalizationFailed`. A second finalise while one is running refuses: `Another finalise is running on this database, started 14:02 (process 1234). Wait for it to finish.`, exit `1`.
 - An upload to the worker that loses its connection resumes from the bytes already on the worker instead of uploading the whole original again. It prints `Lost the connection to the worker; resuming the upload at <done> of <size>...`, or `...; uploading <size> again from the start...` when nothing usable reached the worker.
+- `worker status` and `doctor` no longer freeze while a run sets up a worker: they ask Hetzner without the worker lock. When Hetzner can't be asked, `worker status` shows the worker recorded on this PC and says `Hetzner wasn't checked: <reason>.` `worker create` and `worker delete`, which still need the lock, print `Waiting for another video-optimiser command that is using the worker; Ctrl+C stops waiting.` instead of waiting in silence.
+- `Ctrl+C` in `worker create` after the worker exists now prints `The worker <name> stays up, billed hourly, until it is deleted.` and the `worker delete` command, and exits `9`. Before, it exited with nothing said.
+- `worker delete` on a worker already gone from Hetzner says `The worker <name> is already gone from Hetzner; its record on this PC is removed.` instead of `Deleting Hetzner server <id>.`
 
 ## [0.7.1] - 2026-10-13
 ### Changed

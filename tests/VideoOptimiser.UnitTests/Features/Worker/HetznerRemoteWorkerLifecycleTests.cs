@@ -536,7 +536,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         using var fixture = new Fixture();
         using (var creating = fixture.CreateLifecycle()) await creating.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
         // A run that is creating a worker holds this lock through the whole bootstrap; a status read must not wait for it.
-        await using var held = await WorkerStateStore.AcquireLockAsync(fixture.DatabasePath, CancellationToken.None);
+        await using var held = await WorkerStateStore.AcquireLockAsync(fixture.DatabasePath, null, CancellationToken.None);
         using var lifecycle = fixture.CreateLifecycle();
 
         var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath).WaitAsync(TimeSpan.FromSeconds(10));
@@ -545,6 +545,103 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         check.Worker.Should().NotBeNull();
         check.Worker!.ServerId.Should().Be(42);
         check.Worker.Status.Should().Be("running");
+    }
+
+    [Fact]
+    public async Task CheckPointsTheSettingsAtTheWorkerItFoundSoDoctorCanReachIt()
+    {
+        using var fixture = new Fixture();
+        using (var creating = fixture.CreateLifecycle()) await creating.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        var settings = fixture.Settings;
+        (settings.Processing.RemoteSsh.Host, settings.Processing.RemoteSsh.User, settings.Processing.RemoteSsh.KnownHostsFile) = ("", "", "");
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var check = await lifecycle.CheckAsync(settings, fixture.DatabasePath);
+
+        check.Worker.Should().NotBeNull();
+        settings.Processing.RemoteSsh.Host.Should().Be(check.Worker!.Address);
+        settings.Processing.RemoteSsh.User.Should().Be("videoopt");
+        settings.Processing.RemoteSsh.KnownHostsFile.Should().Be(fixture.DatabasePath + ".hetzner-42.known_hosts");
+    }
+
+    [Fact]
+    public async Task DeleteWaitsWithOneLineWhileAnotherCommandHoldsTheLifecycleLock()
+    {
+        using var fixture = new Fixture();
+        var messages = new List<string>();
+        var held = await WorkerStateStore.AcquireLockAsync(fixture.DatabasePath, null, CancellationToken.None);
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var deleting = lifecycle.DeleteAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
+        await WaitForAsync(() => messages.Count > 0);
+        // Long enough for several of the lock's retries: the line is printed once, not on each.
+        await Task.Delay(700);
+
+        messages.Should().Equal("Waiting for another video-optimiser command that is using the worker; Ctrl+C stops waiting.");
+        deleting.IsCompleted.Should().BeFalse();
+        await held.DisposeAsync();
+        (await deleting.WaitAsync(TimeSpan.FromSeconds(10))).Should().BeFalse("no worker exists to delete");
+        messages.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task EnsureWaitsWithOneLineAndCtrlCStopsTheWait()
+    {
+        using var fixture = new Fixture();
+        var messages = new List<string>();
+        await using var held = await WorkerStateStore.AcquireLockAsync(fixture.DatabasePath, null, CancellationToken.None);
+        using var lifecycle = fixture.CreateLifecycle();
+        using var stop = new CancellationTokenSource();
+
+        var ensuring = lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add), cancellationToken: stop.Token);
+        await WaitForAsync(() => messages.Count > 0);
+        stop.Cancel();
+
+        await ((Func<Task>)(() => ensuring)).Should().ThrowAsync<OperationCanceledException>();
+        messages.Should().Equal("Waiting for another video-optimiser command that is using the worker; Ctrl+C stops waiting.");
+        fixture.Handler.CreateCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DeleteSaysNothingAboutWaitingWhenTheLockIsFree()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+        var messages = new List<string>();
+
+        (await lifecycle.DeleteAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add))).Should().BeFalse();
+
+        messages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DeleteOfAServerThatIsAlreadyGoneSaysSoInsteadOfDeletingIt()
+    {
+        using var fixture = new Fixture { AutoDeletePrimaryIpWithServer = false };
+        using var lifecycle = fixture.CreateLifecycle();
+        var created = await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        fixture.Handler.DeleteServerOutOfBand();
+        var messages = new List<string>();
+
+        var deleted = await lifecycle.DeleteAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
+
+        deleted.Should().BeTrue();
+        messages.Should().Equal(
+            $"The worker {created.Name} is already gone from Hetzner; its record on this PC is removed.",
+            "Deleting retained Primary IPv4 99.",
+            "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped.");
+        fixture.Handler.PrimaryIpDeleted.Should().BeTrue();
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("The condition never held.");
+            await Task.Delay(20);
+        }
     }
 
     [Fact]

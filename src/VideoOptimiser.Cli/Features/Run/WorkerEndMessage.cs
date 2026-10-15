@@ -14,13 +14,6 @@ internal static class WorkerEndMessage
     /// <summary>A press while the worker is deleted stops nothing; closing the window would cut the delete off.</summary>
     public const string DeletingPress = "Deleting the worker; closing this window now leaves it billing.";
 
-    /// <summary>Every end that keeps the worker without saying so in other lines.</summary>
-    public static IReadOnlyList<string> Keep(string worker, CliCommand command) =>
-    [
-        $"The worker {worker} stays up, billed hourly, until it is deleted.",
-        $"To delete it: {StoppedRunMessage.DeleteCommand(command)}"
-    ];
-
     public static IReadOnlyList<string> DeleteFailed(string worker, string reason, CliCommand command) =>
     [
         $"Couldn't delete the worker {worker}: {reason}",

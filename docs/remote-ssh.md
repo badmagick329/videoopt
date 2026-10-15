@@ -168,7 +168,7 @@ Normal processing creates the worker once you approve its price. To create it ea
 .\artifacts\local\video-optimiser.exe worker status --config .\video-optimiser.yaml
 ```
 
-`doctor` checks the worker's tools, resources and workspace only while it is running. Without one, it checks the Hetzner token and API access and warns that the host checks were skipped.
+`doctor` checks the worker's tools, resources and workspace only while it is running. Without one, it checks the Hetzner token and API access and warns that the host checks were skipped. It takes no lock, so it answers while a run is creating the worker.
 
 The first SSH connection uses a dedicated known-hosts file and OpenSSH's `accept-new` behavior. Every later connection requires that exact recorded host key. VideoOptimiser does not modify the user's global OpenSSH configuration.
 
@@ -219,7 +219,9 @@ Inspect or remove a retained worker with:
 .\artifacts\local\video-optimiser.exe worker delete --config .\video-optimiser.yaml
 ```
 
-The delete command verifies the exact server ID and ownership labels. It refuses ambiguous or unowned resources.
+The delete command verifies the exact server ID and ownership labels. It refuses ambiguous or unowned resources. When the server is already gone from Hetzner, it says `The worker <name> is already gone from Hetzner; its record on this PC is removed.` and still deletes a retained Primary IPv4 address and the record.
+
+`worker status` takes no lock, so it answers while a run is creating the worker. It prints the worker's line, or `No managed Hetzner worker exists.`; when Hetzner can't be asked (no API token, no answer within 15 seconds) it prints the worker recorded on this PC, or `No managed Hetzner worker is recorded on this PC.`, and then `Hetzner wasn't checked: <reason>.`. `worker create` and `worker delete` need the lock: while another command holds it, such as a run that is setting up a worker, they print `Waiting for another video-optimiser command that is using the worker; Ctrl+C stops waiting.` and keep waiting. `Ctrl+C` in `worker create` after the server exists stops the command with exit code `9`, prints the two `stays up` lines and leaves the server running; before the server exists it creates nothing.
 
 `status` shows a worker that bills too, with its type, location, age and hourly price, checked against Hetzner. It takes no lock, so it answers while a run is creating the worker. When Hetzner can't be asked (no API token, no answer within 15 seconds), it shows the worker recorded on this PC and says why it wasn't checked. A worker is `Worker: none.` when Hetzner has no server for this database, and `Worker: <name>'s server is gone, but its IPv4 address still bills.` when only the Primary IPv4 is left; `worker delete` removes it.
 
