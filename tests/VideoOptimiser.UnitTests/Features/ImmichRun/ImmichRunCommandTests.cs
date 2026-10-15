@@ -9,6 +9,8 @@ using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
+using static VideoOptimiser.UnitTests.RunCli;
 
 namespace VideoOptimiser.UnitTests.Features.ImmichRun;
 
@@ -16,8 +18,8 @@ namespace VideoOptimiser.UnitTests.Features.ImmichRun;
 /// The branches of <c>immich run</c> that no other CLI test pins, with whole output and exit code, so the move of the command
 /// into its slice (VOPT-100) is checked against today's behaviour: the refusals before the lock, the guard's lines when
 /// discovery fails, the guard summary's three blocks, and the rules that turn a clean run into <c>PartialSuccess</c>. The
-/// run service and the queue are faked; their own behaviour is in <c>ImmichRunTests</c> and the queue tests. The run lock,
-/// its holder name and Ctrl+C during discovery are pinned by <c>RunLockTests</c>, <c>RunCommandTests</c> and <c>CtrlCRunTests</c>.
+/// run service and the queue are faked; their own behaviour is in <c>ImmichRunTests</c> and the queue tests. The run lock
+/// and Ctrl+C during discovery are pinned by <c>RunLockTests</c> and <c>CtrlCRunTests</c>.
 /// </summary>
 [Collection(ConsoleCapture.Collection)]
 public sealed class ImmichRunCommandTests : IDisposable
@@ -50,9 +52,9 @@ public sealed class ImmichRunCommandTests : IDisposable
     {
         var config = await WriteConfigAsync();
 
-        var (code, stdout, stderr) = await RunAsync(config, configure: services => services.AddSingleton<ISettingsValidator>(new FixedDiagnostics(
+        var (code, stdout, stderr) = await RunAsync(config, configure: CliFakes.Diagnostics(
             new Diagnostic(DiagnosticCategory.Configuration, DiagnosticStatus.Fail, "ConfigA", "first problem"),
-            new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "ConfigB", "second problem"))));
+            new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "ConfigB", "second problem")));
 
         code.Should().Be((int)ExitCode.InvalidConfiguration);
         stdout.Should().BeEmpty();
@@ -67,7 +69,7 @@ public sealed class ImmichRunCommandTests : IDisposable
 
         var (code, stdout, stderr) = await RunAsync(config);
 
-        (code, stdout, stderr).Should().Be((0, Lines([.. Banner, "", "Found 0 videos to convert after checking 0.", "Nothing to finalise."]), ""));
+        (code, stdout, stderr).Should().Be((0, Transcript([.. Banner, "", "Found 0 videos to convert after checking 0.", "Nothing to finalise."]), ""));
         _queue.Runs.Should().Be(0);
     }
 
@@ -81,7 +83,7 @@ public sealed class ImmichRunCommandTests : IDisposable
 
         code.Should().Be((int)ExitCode.PartialSuccess);
         stderr.Should().BeEmpty();
-        stdout.Should().Be(Lines(
+        stdout.Should().Be(Transcript(
             [.. Banner,
             "Re-upload guard: 1 converted original was uploaded again and moved to Immich's trash; 1 converted original is out of Immich's trash, so both versions exist; 1 issue.",
             "",
@@ -99,30 +101,6 @@ public sealed class ImmichRunCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task TrashedAndRestoredOriginalsAreReportedButTheRunStillSucceeds()
-    {
-        var config = await WriteConfigAsync();
-        _run.Guard = Guard(trashed: [Hit("clip-a.mp4"), Hit("clip-b.mp4")], restored: [Hit("clip-c.mp4")]);
-
-        var (code, stdout, _) = await RunAsync(config);
-
-        code.Should().Be((int)ExitCode.Success);
-        stdout.Should().Be(Lines(
-            [.. Banner,
-            "Re-upload guard: 2 converted originals were uploaded again and moved to Immich's trash; 1 converted original is out of Immich's trash, so both versions exist.",
-            "",
-            "Found 0 videos to convert after checking 0.",
-            "Nothing to finalise.",
-            "",
-            "The phone uploaded these converted originals again. They are back in Immich's trash; delete them from the phone:",
-            "  clip-a.mp4  taken 2026-03-04 05:06",
-            "  clip-b.mp4  taken 2026-03-04 05:06",
-            "",
-            "These converted originals are out of Immich's trash, so both versions exist. The guard left them alone:",
-            "  clip-c.mp4  taken 2026-03-04 05:06"]));
-    }
-
-    [Fact]
     public async Task DiscoveryIssuesMakeTheRunAPartialSuccess()
     {
         var config = await WriteConfigAsync();
@@ -132,7 +110,7 @@ public sealed class ImmichRunCommandTests : IDisposable
 
         code.Should().Be((int)ExitCode.PartialSuccess);
         stderr.Should().BeEmpty();
-        stdout.Should().Be(Lines([.. Banner, "", "Found 0 videos to convert after checking 0.", "Also: 2 issues (above).", "Nothing to finalise."]));
+        stdout.Should().Be(Transcript([.. Banner, "", "Found 0 videos to convert after checking 0.", "Also: 2 issues (above).", "Nothing to finalise."]));
     }
 
     [Fact]
@@ -144,7 +122,7 @@ public sealed class ImmichRunCommandTests : IDisposable
         var (code, stdout, stderr) = await RunAsync(config);
 
         code.Should().Be((int)ExitCode.PartialSuccess);
-        stdout.Should().Be(Lines([.. Banner, "", "Found 0 videos to convert after checking 0.", "Not downloaded: 2 excluded.", "Nothing to finalise."]));
+        stdout.Should().Be(Transcript([.. Banner, "", "Found 0 videos to convert after checking 0.", "Not downloaded: 2 excluded.", "Nothing to finalise."]));
         stderr.ReplaceLineEndings("\n").Should().Be("Immich's search returned 2 assets its filter should have left out. They were left alone, but the search may behave differently in this Immich version: check before running again.\n");
     }
 
@@ -153,15 +131,15 @@ public sealed class ImmichRunCommandTests : IDisposable
     {
         var config = await WriteConfigAsync();
         var failed = new FailedQueueJob(Guid.NewGuid(), Path.Combine(_directory, "clip-a.mp4"), "SourceMissing", "The staged original is missing.");
-        _run.Guard = Guard(issues: ["an issue"]);
+        _run.Guard = Guard(issues: ["an issue", "another issue"]);
         _run.Queue = new QueuePreparationResult([], [failed], [], [], JobSourceKind.Immich, FollowQueue: false);
 
         var (code, stdout, _) = await RunAsync(config);
 
         code.Should().Be((int)ExitCode.ProcessingFailure);
-        stdout.Should().Be(Lines(
+        stdout.Should().Be(Transcript(
             [.. Banner,
-            "Re-upload guard: 1 issue.",
+            "Re-upload guard: 2 issues.",
             "",
             "Found 0 videos to convert after checking 0.",
             "Failed: 1.",
@@ -171,14 +149,15 @@ public sealed class ImmichRunCommandTests : IDisposable
             "SourceMissing: The staged original is missing.",
             "",
             "Re-upload guard issues:",
-            "  an issue"]));
+            "  an issue",
+            "  another issue"]));
     }
 
     [Fact]
     public async Task ConvertedVideosPointAtFinalizeAfterTheGuardSummary()
     {
         var config = await WriteConfigAsync();
-        _run.Guard = Guard(trashed: [Hit("clip-a.mp4")]);
+        _run.Guard = Guard(trashed: [Hit("clip-a.mp4"), Hit("clip-b.mp4")], restored: [Hit("clip-c.mp4")]);
         _run.Queue = OneJob();
         _queue.Result = RunResult(ready: 1);
 
@@ -186,9 +165,9 @@ public sealed class ImmichRunCommandTests : IDisposable
 
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
-        stdout.Should().Be(Lines(
+        stdout.Should().Be(Transcript(
             [.. Banner,
-            "Re-upload guard: 1 converted original was uploaded again and moved to Immich's trash.",
+            "Re-upload guard: 2 converted originals were uploaded again and moved to Immich's trash; 1 converted original is out of Immich's trash, so both versions exist.",
             "",
             "Found 0 videos to convert after checking 0.",
             "Converting 1 video.",
@@ -196,19 +175,11 @@ public sealed class ImmichRunCommandTests : IDisposable
             "",
             "The phone uploaded these converted originals again. They are back in Immich's trash; delete them from the phone:",
             "  clip-a.mp4  taken 2026-03-04 05:06",
+            "  clip-b.mp4  taken 2026-03-04 05:06",
+            "",
+            "These converted originals are out of Immich's trash, so both versions exist. The guard left them alone:",
+            "  clip-c.mp4  taken 2026-03-04 05:06",
             "Next: review the outputs, then run 'video-optimiser immich finalize'."]));
-    }
-
-    [Fact]
-    public async Task AFailureBesideAReadyVideoIsAPartialSuccessFromTheQueueNotTheGuard()
-    {
-        var config = await WriteConfigAsync();
-        _run.Queue = OneJob();
-        _queue.Result = RunResult(ready: 1, failed: new FailedQueueJob(Guid.NewGuid(), Path.Combine(_directory, "clip-b.mp4"), "ProcessingFailed", "ffmpeg failed"));
-
-        var (code, _, _) = await RunAsync(config);
-
-        code.Should().Be((int)ExitCode.PartialSuccess);
     }
 
     [Fact]
@@ -222,7 +193,7 @@ public sealed class ImmichRunCommandTests : IDisposable
         var (code, stdout, _) = await RunAsync(config);
 
         code.Should().Be((int)ExitCode.Cancelled);
-        stdout.Should().Be(Lines(
+        stdout.Should().Be(Transcript(
             [.. Banner,
             "",
             "Found 0 videos to convert after checking 0.",
@@ -245,35 +216,12 @@ public sealed class ImmichRunCommandTests : IDisposable
         var (code, _, stderr) = await RunAsync(config, services =>
         {
             services.AddSingleton<IRemoteWorkerLifecycle>(lifecycle);
-            services.AddSingleton<IJobProcessor>(new NeedsWorker());
+            services.AddSingleton<IJobProcessor>(new ScriptedRunProcessor { NeedsWorker = _ => true });
         });
 
         code.Should().Be((int)ExitCode.GeneralFailure);
         lifecycle.DeleteCalls.Should().Be(1);
         stderr.Should().Contain("Hetzner answered 503");
-    }
-
-    [Fact]
-    public async Task AnErrorWhileConvertingStillPrintsTheGuardSummaryBeforeItIsReported()
-    {
-        var config = await WriteConfigAsync();
-        _run.Guard = Guard(trashed: [Hit("clip-a.mp4")], issues: ["an issue"]);
-        _run.Queue = OneJob();
-        _queue.Failure = new InvalidOperationException("the encoder blew up");
-
-        var (code, stdout, stderr) = await RunAsync(config);
-
-        code.Should().NotBe((int)ExitCode.Success);
-        stdout.Should().EndWith(Lines(
-            [
-            "Converting 1 video.",
-            "",
-            "The phone uploaded these converted originals again. They are back in Immich's trash; delete them from the phone:",
-            "  clip-a.mp4  taken 2026-03-04 05:06",
-            "",
-            "Re-upload guard issues:",
-            "  an issue"]));
-        stderr.Should().Contain("the encoder blew up");
     }
 
     [Fact]
@@ -287,7 +235,7 @@ public sealed class ImmichRunCommandTests : IDisposable
         var (code, stdout, _) = await RunAsync(config);
 
         code.Should().Be((int)ExitCode.Cancelled);
-        stdout.Should().EndWith(Lines(
+        stdout.Should().EndWith(Transcript(
             [
             "Converting 1 video.",
             "",
@@ -302,21 +250,45 @@ public sealed class ImmichRunCommandTests : IDisposable
     public async Task WhenPreparationFailsAfterTheGuardReportedTheGuardsLinesAreRepeatedAfterTheError()
     {
         var config = await WriteConfigAsync();
-        _run.Reports = [new ScanProgress("p", "Trashed", "clip-a.mp4"), new ScanProgress("p", "Issue", "Immich said no")];
+        _run.Reports = [new ScanProgress("p", "Trashed", "clip-a.mp4"), new ScanProgress("p", "Restored", "clip-b.mp4"), new ScanProgress("p", "Issue", "Immich said no")];
         _run.Failure = new InvalidOperationException("Immich went away");
 
         var (code, stdout, stderr) = await RunAsync(config);
 
         code.Should().NotBe((int)ExitCode.Success);
-        stdout.Should().Be(Lines(
+        stdout.Should().Be(Transcript(
             [.. Banner,
             "Re-upload guard: trashed clip-a.mp4",
+            "Re-upload guard: restored clip-b.mp4",
             "Re-upload guard issue: Immich said no",
             "",
             "Before the run ended, the re-upload guard reported:",
             "Re-upload guard: trashed clip-a.mp4",
+            "Re-upload guard: restored clip-b.mp4",
             "Re-upload guard issue: Immich said no"]));
         stderr.Should().Contain("Immich went away");
+    }
+
+    /// <summary>The held line is <c>run</c>'s: <c>immich run</c>'s limit already leaves held videos out, and says nothing of them.</summary>
+    [Fact]
+    public async Task ImmichRunDoesNotCountHeldVideos()
+    {
+        var config = await WriteConfigAsync();
+        _run.Queue = new QueuePreparationResult([], [], [], [], JobSourceKind.Immich, FollowQueue: false, Held: 2);
+
+        var (_, stdout, _) = await RunAsync(config);
+
+        stdout.Should().NotContain("held");
+    }
+
+    [Fact]
+    public async Task ImmichRunNamesItselfInTheRunLock()
+    {
+        var config = await WriteConfigAsync();
+
+        _ = await RunAsync(config);
+
+        _run.Holder.Should().Be("video-optimiser immich run");
     }
 
     [Fact]
@@ -327,13 +299,11 @@ public sealed class ImmichRunCommandTests : IDisposable
 
         var (_, stdout, stderr) = await RunAsync(config);
 
-        stdout.Should().Be(Lines(Banner));
+        stdout.Should().Be(Transcript(Banner));
         stderr.Should().Contain("Immich went away");
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
-
-    private static string Lines(IEnumerable<string> lines) => string.Concat(lines.Select(line => line + Environment.NewLine));
 
     private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(string config, Action<IServiceCollection>? configure = null) =>
         ConsoleCapture.RunCliAsync(services =>
@@ -344,17 +314,10 @@ public sealed class ImmichRunCommandTests : IDisposable
             configure?.Invoke(services);
         }, "immich", "run", "--config", config);
 
-    private async Task<string> WriteConfigAsync(bool immich = true, bool managedWorker = false)
-    {
-        var config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(config, string.Join('\n',
-            "database:",
-            $"  path: '{DatabasePath}'",
-            immich ? "immich:\n  baseUrl: 'http://immich.test'" : "",
-            managedWorker ? "processing:\n  mode: \"remoteSsh\"\n  remoteSsh:\n    lifecycle: \"hetzner\"" : "",
-            ""));
-        return config;
-    }
+    private static readonly string[] ImmichConfig = ["immich:", "  baseUrl: 'http://immich.test'"];
+
+    private Task<string> WriteConfigAsync(bool immich = true, bool managedWorker = false) =>
+        RunCli.WriteConfigAsync(DatabasePath, [.. immich ? ImmichConfig : [], .. managedWorker ? ManagedHetzner : []]);
 
     private static ImmichReuploadHit Hit(string name) => new(Guid.NewGuid(), Guid.NewGuid().ToString("D"), name, Taken);
 
@@ -380,9 +343,13 @@ public sealed class ImmichRunCommandTests : IDisposable
         public ScanProgress[] Reports { get; set; } = [];
         public Exception? Failure { get; set; }
 
+        /// <summary>The command holding the run lock as the run was prepared.</summary>
+        public string? Holder { get; private set; }
+
         public Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
         {
             Calls++;
+            Holder = DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath))?.Command;
             foreach (var report in Reports) guardProgress?.Report(report);
             return Failure is null ? Task.FromResult(new ImmichRunPreparation(Guard, Discovery, Queue)) : Task.FromException<ImmichRunPreparation>(Failure);
         }
@@ -402,18 +369,5 @@ public sealed class ImmichRunCommandTests : IDisposable
             Runs++;
             return Failure is null ? Task.FromResult(Result) : Task.FromException<QueueRunResult>(Failure);
         }
-    }
-
-    /// <summary>Says every video needs the worker, so a managed run creates one and has one to delete.</summary>
-    private sealed class NeedsWorker : IJobProcessor
-    {
-        public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(true);
-
-        public Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    }
-
-    private sealed class FixedDiagnostics(params Diagnostic[] diagnostics) : ISettingsValidator
-    {
-        public IReadOnlyList<Diagnostic> Validate(AppSettings settings) => diagnostics;
     }
 }

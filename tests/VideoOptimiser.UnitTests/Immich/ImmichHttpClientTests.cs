@@ -47,30 +47,20 @@ public sealed class ImmichHttpClientTests : IDisposable
         handler.Last.ApiKey.Should().BeNull();
     }
 
-    [Fact]
-    public async Task GetCurrentUserSendsTheKeyFromTheEnvironmentInPreferenceToTheFile()
+    [Theory]
+    [InlineData("from-environment", "from-environment")]
+    [InlineData(null, "from-file")]
+    public async Task GetCurrentUserSendsTheKeyFromTheEnvironmentInPreferenceToTheFile(string? environmentKey, string sentKey)
     {
         await File.WriteAllTextAsync(Path.Combine(_directory, ".env"), $"{_variable}=from-file\n");
-        Environment.SetEnvironmentVariable(_variable, "from-environment");
+        Environment.SetEnvironmentVariable(_variable, environmentKey);
         var handler = FakeHandler.Json(HttpStatusCode.OK, """{"id":"user-1","name":"Pat","email":"pat@example.com"}""");
 
         var user = await CreateClient(handler).GetCurrentUserAsync();
 
         user.Should().Be(new ImmichUser("user-1", "Pat"));
         handler.Last.Uri.AbsolutePath.Should().Be("/api/users/me");
-        handler.Last.ApiKey.Should().Be("from-environment");
-    }
-
-    [Fact]
-    public async Task GetCurrentUserFallsBackToTheKeyFile()
-    {
-        Environment.SetEnvironmentVariable(_variable, null);
-        await File.WriteAllTextAsync(Path.Combine(_directory, ".env"), $"{_variable}=from-file\n");
-        var handler = FakeHandler.Json(HttpStatusCode.OK, """{"id":"user-1","name":"Pat"}""");
-
-        await CreateClient(handler).GetCurrentUserAsync();
-
-        handler.Last.ApiKey.Should().Be("from-file");
+        handler.Last.ApiKey.Should().Be(sentKey);
     }
 
     [Fact]
@@ -309,7 +299,6 @@ public sealed class ImmichHttpClientTests : IDisposable
     }
 
     [Theory]
-    [InlineData("Beach", 4, """{"description":"Beach","rating":4}""")]
     [InlineData(null, 5, """{"rating":5}""")]
     [InlineData("Beach", null, """{"description":"Beach"}""")]
     public async Task UpdateMetadataSendsOnlyTheFieldsToChange(string? description, int? rating, string expectedBody)

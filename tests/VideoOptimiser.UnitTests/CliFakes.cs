@@ -16,14 +16,18 @@ internal static class CliFakes
     public static readonly RemoteWorkerInfo Worker = new(42, "video-optimiser-1", "203.0.113.10", "running", null, "cx43", "hel1");
 
     /// <summary>Settings validation checks real files (keys, tools); these tests are about what a run prints.</summary>
-    public static void AcceptAnySettings(IServiceCollection services) => services.AddSingleton<ISettingsValidator, NoDiagnostics>();
+    public static void AcceptAnySettings(IServiceCollection services) => Diagnostics()(services);
+
+    /// <summary>A settings validator that reports exactly these diagnostics, for tests of how a command shows them.</summary>
+    public static Action<IServiceCollection> Diagnostics(params Diagnostic[] diagnostics) =>
+        services => services.AddSingleton<ISettingsValidator>(new FixedDiagnostics(diagnostics));
 
     /// <summary>Redirected input: the worker question is never asked, and a test never waits on the console.</summary>
     public static void NotInteractive(IServiceCollection services) => services.AddSingleton<IConsoleInput>(new ScriptedInput(interactive: false));
 
-    private sealed class NoDiagnostics : ISettingsValidator
+    private sealed class FixedDiagnostics(Diagnostic[] diagnostics) : ISettingsValidator
     {
-        public IReadOnlyList<Diagnostic> Validate(AppSettings settings) => [];
+        public IReadOnlyList<Diagnostic> Validate(AppSettings settings) => diagnostics;
     }
 }
 

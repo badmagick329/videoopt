@@ -129,12 +129,15 @@ public sealed class RunLockTests : IDisposable
     {
         var (finalizing, interruptedImmich) = await CreateFinalisationsAsync();
 
-        await PrepareAsync(JobSourceKind.Immich);
+        // A folder-only run, which filters by source kind, still returns an Immich finalisation to ready: the check runs first.
+        var preparation = await PrepareAsync(JobSourceKind.File);
 
         var file = (await _repository.GetAsync(DatabasePath, finalizing.Id))!;
         file.Status.Should().Be(JobStatus.Interrupted);
         file.ResumeStatus.Should().Be(JobStatus.Finalizing);
         (await _repository.GetAsync(DatabasePath, interruptedImmich.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
+        preparation.RunnableJobs.Should().BeEmpty();
+        preparation.FailedJobs.Should().BeEmpty();
     }
 
     private async Task<(JobRecord Finalizing, JobRecord InterruptedImmich)> CreateFinalisationsAsync()

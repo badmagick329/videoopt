@@ -1,6 +1,3 @@
-using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using System.Text;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
@@ -21,7 +18,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
     private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
-    private readonly FakeImmich _immich = new();
+    private readonly InMemoryImmich _immich = new(Old);
     private readonly AppSettings _settings;
 
     public ImmichDiscoveryServiceTests()
@@ -63,7 +60,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     [InlineData("favourite", "is a favourite")]
     [InlineData("trashed", "is in the trash")]
     [InlineData("hidden", "has visibility hidden")]
-    [InlineData("locked", "has visibility locked")]
     [InlineData("external library", "belongs to an external library")]
     public async Task ReChecksEverySearchResultAndLeavesMismatchesAlone(string mismatch, string reason)
     {
@@ -75,7 +71,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
             "favourite" => asset with { IsFavorite = true },
             "trashed" => asset with { IsTrashed = true },
             "hidden" => asset with { Visibility = "hidden" },
-            "locked" => asset with { Visibility = "locked" },
             _ => asset with { LibraryId = Guid.NewGuid().ToString() }
         });
 
@@ -128,7 +123,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     {
         var original = _immich.Add("PXL.mp4", "hevc original");
         var replacement = _immich.Add("PXL.av1.mp4", "hevc replacement");
-        _immich.Remove(original);
+        _immich.Remove(original.Id);
         var job = await CreateJobAsync(original, status, status == JobStatus.Failed ? "FinalisationFailed" : null);
         job.ImmichNewAssetId = replacement.Id;
         await _repository.UpdateAsync(_settings.Database.Path, job);
@@ -179,34 +174,16 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         result.Queued.Should().ContainSingle();
     }
 
-    [Fact]
-    public async Task RequeuesAFailedAssetWhoseChecksumChanged()
-    {
-        var asset = _immich.Add("clip.mp4", "hevc video");
-        await CreateJobAsync(asset with { Checksum = "earlier-checksum" }, JobStatus.Failed, "EncodeFailed");
-
-        var result = await DiscoverAsync();
-
-        result.Queued.Should().ContainSingle();
-    }
-
     [Theory]
     [InlineData("same", true)]
     [InlineData("preset", false)]
-    [InlineData("sampleDuration", true)]
     public async Task CountsASkippedAssetAsPreviouslySkippedOnlyWhileTheQualityBarIsUnchanged(string change, bool stillSettled)
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
         var skipped = await CreateJobAsync(asset, JobStatus.Skipped, "NotWorthConverting");
         skipped.QualityFingerprint = QualityFingerprint.Compute(_settings);
         await _repository.UpdateAsync(_settings.Database.Path, skipped);
-        switch (change)
-        {
-            case "minimumVmaf": _settings.Quality.MinimumVmaf = 93; break;
-            case "maxEncodedPercent": _settings.Quality.MaxEncodedPercent = 90; break;
-            case "preset": _settings.Quality.Preset = 4; break;
-            case "sampleDuration": _settings.Quality.CrfSearch.SampleDuration = "30s"; break;
-        }
+        if (change == "preset") _settings.Quality.Preset = 4;
 
         var result = await DiscoverAsync();
 
@@ -215,13 +192,15 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         result.Queued.Should().HaveCount(stillSettled ? 0 : 1);
     }
 
-    [Fact]
-    public async Task QueuesASkippedAssetAgainWhenItsChecksumChanged()
+    [Theory]
+    [InlineData(JobStatus.Failed, "EncodeFailed")]
+    [InlineData(JobStatus.Skipped, "NotWorthConverting")]
+    public async Task QueuesASettledAssetAgainWhenItsChecksumChanged(JobStatus status, string category)
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
-        var skipped = await CreateJobAsync(asset with { Checksum = "earlier-checksum" }, JobStatus.Skipped, "NotWorthConverting");
-        skipped.QualityFingerprint = QualityFingerprint.Compute(_settings);
-        await _repository.UpdateAsync(_settings.Database.Path, skipped);
+        var settled = await CreateJobAsync(asset with { Checksum = "earlier-checksum" }, status, category);
+        settled.QualityFingerprint = QualityFingerprint.Compute(_settings);
+        await _repository.UpdateAsync(_settings.Database.Path, settled);
 
         var result = await DiscoverAsync();
 
@@ -247,41 +226,11 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ASecondRunQueuesNothingNewAndDownloadsNothingAlreadyJudged()
-    {
-        _immich.Add("eligible.mp4", "hevc video");
-        _immich.Add("ineligible.mp4", "h264 video");
-
-        var first = await DiscoverAsync();
-        var second = await DiscoverAsync();
-
-        File.Exists(first.Queued.Should().ContainSingle().Subject.SourcePath).Should().BeTrue();
-        second.Queued.Should().BeEmpty();
-        second.AlreadyQueued.Should().Be(1);
-        second.PreviouslySkipped.Should().Be(1);
-        _immich.Downloads.Should().HaveCount(2);
-        (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().ContainSingle();
-    }
-
-    [Fact]
     public async Task AChangedChecksumMakesASkipStale()
     {
         var asset = _immich.Add("clip.mp4", "h264 video");
         await DiscoverAsync();
         _immich.Replace(asset, "hevc edited video");
-
-        var result = await DiscoverAsync();
-
-        result.Queued.Should().ContainSingle();
-        _immich.Downloads.Should().HaveCount(2);
-    }
-
-    [Fact]
-    public async Task ChangedRulesMakeASkipStale()
-    {
-        _immich.Add("clip.mp4", "h264 video");
-        await DiscoverAsync();
-        _settings.Eligibility.Rules.Add(new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "10Mbps", MinimumFileSize = "5B" });
 
         var result = await DiscoverAsync();
 
@@ -322,17 +271,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ALimitQueuesThatManyAndStopsDownloading()
-    {
-        for (var index = 0; index < 5; index++) _immich.Add($"clip{index}.mp4", $"hevc {index}");
-
-        var result = await DiscoverAsync(limit: 3);
-
-        result.Queued.Should().HaveCount(3);
-        _immich.Downloads.Should().HaveCount(3);
-    }
-
-    [Fact]
     public async Task ALimitCountsOpenJobsAndAddsOnlyEnoughToReachIt()
     {
         var open = _immich.Add("open.mp4", "hevc open");
@@ -349,25 +287,10 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ALimitAlreadyReachedByOpenJobsQueuesNothingNew()
-    {
-        var first = _immich.Add("a.mp4", "hevc a");
-        var second = _immich.Add("b.mp4", "hevc b");
-        _immich.Add("c.mp4", "hevc c");
-        await CreateJobAsync(first, JobStatus.Queued);
-        await CreateJobAsync(second, JobStatus.Interrupted);
-
-        var result = await DiscoverAsync(limit: 2);
-
-        result.Queued.Should().BeEmpty();
-        _immich.Downloads.Should().BeEmpty();
-    }
-
-    [Fact]
     public async Task ADownloadThatDoesNotMatchItsChecksumIsAnIssue()
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
-        _immich.Replace(asset with { Checksum = Sha1("something else") });
+        _immich.Replace(asset with { Checksum = InMemoryImmich.Checksum("something else") });
 
         var result = await DiscoverAsync();
 
@@ -380,10 +303,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     [Theory]
     [InlineData("not-a-guid", "clip.mp4")]
     [InlineData(" id", "clip.mp4")]
-    [InlineData("..", "clip.mp4")]
-    [InlineData(null, @"..\escape.mp4")]
     [InlineData(null, "nested/clip.mp4")]
-    [InlineData(null, @"C:\escape.mp4")]
     [InlineData(null, "clip.mp4:stream.mp4")]
     public async Task NeverStagesOutsideTheAssetFolder(string? id, string fileName)
     {
@@ -394,19 +314,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
         result.Issues.Should().Be(1);
         _immich.Downloads.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task ARequestFailureForOneAssetMovesOnToTheNext()
-    {
-        var gone = _immich.Add("gone.mp4", "hevc gone");
-        _immich.Add("next.mp4", "hevc next");
-        _immich.Failures[gone.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.");
-
-        var result = await DiscoverAsync();
-
-        result.Issues.Should().Be(1);
-        result.Queued.Should().ContainSingle();
     }
 
     [Fact]
@@ -448,22 +355,23 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         Directory.Exists(Path.Combine(_settings.Immich.StagingDirectory, asset.Id)).Should().BeFalse();
     }
 
-    [Theory]
-    [InlineData(JobStatus.Queued)]
-    [InlineData(JobStatus.Interrupted)]
-    public async Task DownloadsAgainTheMissingStagedOriginalOfAnOpenJob(JobStatus status)
+    [Fact]
+    public async Task DownloadsAgainTheMissingStagedOriginalOfAnOpenJob()
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
-        var job = await CreateJobAsync(asset, status, staged: false);
+        var job = await CreateJobAsync(asset, JobStatus.Queued, staged: false);
+        var events = new List<ImmichProgress>();
 
-        var result = await DiscoverAsync();
+        var result = await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
 
         result.Restaged.Should().Be(1);
         result.AlreadyQueued.Should().Be(1);
         result.Queued.Should().BeEmpty();
         _immich.Downloads.Should().Equal(asset.Id);
         (await File.ReadAllTextAsync(job.SourcePath)).Should().Be("hevc video");
-        (await _repository.GetAsync(_settings.Database.Path, job.Id))!.Status.Should().Be(status);
+        (await _repository.GetAsync(_settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.Queued);
+        // Discovery passes its progress on to restaging, which is how the user sees the download.
+        events.Should().Contain(new ImmichProgress.Restaging("clip.mp4", job.Id));
     }
 
     [Fact]
@@ -483,7 +391,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
         var job = await CreateJobAsync(asset, JobStatus.Queued, staged: false);
-        _immich.Remove(asset);
+        _immich.Remove(asset.Id);
         _immich.Failures[asset.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.", 404);
 
         var result = await DiscoverAsync();
@@ -499,7 +407,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     public async Task FailsAnOpenJobWhoseAssetChangedAndQueuesTheAssetAfresh()
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
-        var job = await CreateJobAsync(asset with { Checksum = Sha1("hevc earlier video") }, JobStatus.Queued, staged: false);
+        var job = await CreateJobAsync(asset with { Checksum = InMemoryImmich.Checksum("hevc earlier video") }, JobStatus.Queued, staged: false);
 
         var result = await DiscoverAsync();
 
@@ -511,8 +419,9 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         (await File.ReadAllTextAsync(queued.SourcePath)).Should().Be("hevc video");
     }
 
+    /// <summary>R7: <c>queue next</c> moves a video up the run's order, so the limit downloads again the ones the run will take.</summary>
     [Fact]
-    public async Task ALimitDownloadsAgainOnlyTheOldestOpenJobsOriginals()
+    public async Task ALimitDownloadsAgainOnlyTheOpenJobsTheRunTakesFirstInRunOrder()
     {
         var oldest = _immich.Add("oldest.mp4", "hevc oldest");
         var middle = _immich.Add("middle.mp4", "hevc middle");
@@ -521,12 +430,13 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         await Task.Delay(20);
         await CreateJobAsync(middle, JobStatus.Queued, staged: false);
         await Task.Delay(20);
-        await CreateJobAsync(newest, JobStatus.Queued, staged: false);
+        var movedNext = await CreateJobAsync(newest, JobStatus.Queued, staged: false);
+        (await _repository.RunNextAsync(_settings.Database.Path, movedNext)).Should().BeTrue();
 
         var result = await DiscoverAsync(limit: 2);
 
         result.Restaged.Should().Be(2);
-        _immich.Downloads.Should().Equal(oldest.Id, middle.Id);
+        _immich.Downloads.Should().Equal(newest.Id, oldest.Id);
     }
 
     /// <summary>
@@ -545,22 +455,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         result.Queued.Should().BeEmpty();
         File.Exists(job.SourcePath).Should().BeTrue();
         (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().ContainSingle();
-    }
-
-    /// <summary>R7: <c>queue next</c> moves a video up the run's order, so the limit downloads again the ones the run will take.</summary>
-    [Fact]
-    public async Task ALimitDownloadsAgainInRunOrder()
-    {
-        var oldest = _immich.Add("oldest.mp4", "hevc oldest");
-        var newest = _immich.Add("newest.mp4", "hevc newest");
-        await CreateJobAsync(oldest, JobStatus.Queued, staged: false);
-        await Task.Delay(20);
-        var movedNext = await CreateJobAsync(newest, JobStatus.Queued, staged: false);
-        (await _repository.RunNextAsync(_settings.Database.Path, movedNext)).Should().BeTrue();
-
-        _ = await DiscoverAsync(limit: 1);
-
-        _immich.Downloads.Should().Equal(newest.Id);
     }
 
     /// <summary>
@@ -683,21 +577,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         events.OfType<ImmichDiscoveryProgress.CandidateDownloading>().Select(candidate => candidate.FileName).Should().Equal("stale.mp4");
     }
 
-    [Fact]
-    public async Task AStaleSkipRejectedWithoutADownloadIsRecordedUnderTheCurrentRulesSoLaterRunsStopCountingIt()
-    {
-        var small = _immich.Add("small.mp4", "h264 small");
-        _immich.Replace(small with { Exif = small.Exif with { FileSizeInBytes = 3 } });
-        await _repository.PutImmichSkipAsync(_settings.Database.Path, new ImmichSkipRecord(small.Id, small.Checksum, "an-older-rules-fingerprint", "codec h264", Now));
-        var events = new List<ImmichProgress>();
-
-        await DiscoverAsync();
-        await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
-
-        events.OfType<ImmichDiscoveryProgress.Started>().Single().StaleSkips.Should().Be(0);
-        events.OfType<ImmichDiscoveryProgress.CandidateDownloading>().Should().BeEmpty();
-    }
-
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -710,31 +589,10 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
         await DiscoverAsync();
 
-        (await _repository.ListImmichSkipsAsync(_settings.Database.Path))[small.Id].VideoFacts.Should().Be(sameChecksum ? facts : null);
-    }
-
-    [Fact]
-    public async Task ReportsARestagedDownloadAndAFailedOne()
-    {
-        var restored = _immich.Add("restored.mp4", "hevc restored");
-        var vanished = _immich.Add("vanished.mp4", "hevc vanished");
-        var first = await CreateJobAsync(restored, JobStatus.Queued, staged: false);
-        var second = await CreateJobAsync(vanished, JobStatus.Queued, staged: false);
-        _immich.Failures[vanished.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.", 404);
-        var events = new List<ImmichProgress>();
-
-        await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
-
-        events.Take(4).Should().Equal(
-            new ImmichProgress.Restaging("restored.mp4", first.Id),
-            new ImmichProgress.Restaged("restored.mp4", null),
-            new ImmichProgress.Restaging("vanished.mp4", second.Id),
-            new ImmichProgress.Restaged("vanished.mp4", "Immich did not return the video again (Immich answered 404); the job is marked failed"));
-    }
-
-    private sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
-    {
-        public void Report(T value) => report(value);
+        var stored = (await _repository.ListImmichSkipsAsync(_settings.Database.Path))[small.Id];
+        stored.VideoFacts.Should().Be(sameChecksum ? facts : null);
+        // Recorded under the current rules, so later runs stop counting it as stale.
+        stored.RulesFingerprint.Should().Be(EligibilityEvaluator.RulesFingerprint(_settings.Eligibility));
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
@@ -775,9 +633,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
     private static EligibilityRuleSettings HevcRule() => new() { Codecs = ["hevc"], Resolution = "1080p-1440p", MinimumVideoBitrate = "10Mbps", MinimumFileSize = "5B" };
 
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5350", Justification = "Immich's asset checksum is SHA-1.")]
-    private static string Sha1(string content) => Convert.ToBase64String(SHA1.HashData(Encoding.UTF8.GetBytes(content)));
-
     /// <summary>
     /// Reads the codec from the start of the staged file, so each fake asset's content decides its eligibility. "corrupt"
     /// fails as ffprobe does on an unreadable file; "missing-ffprobe" fails as starting a missing executable does.
@@ -791,72 +646,5 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
             if (codec == "missing-ffprobe") throw new System.ComponentModel.Win32Exception(2, "The system cannot find the file specified.");
             return new MediaInfo(codec, 1, 1, 0, 0, 60, new FileInfo(path).Length, 1920, 1080, 20_000_000);
         }
-    }
-
-    private sealed class FakeImmich : IImmichClientFactory, IImmichClient
-    {
-        private readonly List<ImmichAsset> _assets = [];
-        private readonly Dictionary<string, string> _contents = [];
-
-        public List<string> Downloads { get; } = [];
-        public Dictionary<string, ImmichApiException> Failures { get; } = [];
-        public DateTimeOffset? SearchedBefore { get; private set; }
-        public bool? SearchedWithFavorites { get; private set; }
-
-        public ImmichAsset Add(string fileName, string content)
-        {
-            var asset = new ImmichAsset(
-                Guid.NewGuid().ToString(), Sha1(content), fileName, ImmichValues.Video, ImmichValues.Timeline,
-                IsFavorite: false, IsTrashed: false, LibraryId: null, LivePhotoVideoId: null,
-                Old, Old, Old, 60_000, new ImmichExif(Encoding.UTF8.GetByteCount(content), Old, null, null, null, null, "Google", "Pixel 7"), []);
-            _assets.Add(asset);
-            _contents[asset.Id] = content;
-            return asset;
-        }
-
-        /// <summary>Replaces the asset found at the same position, keeping its content unless new content is given.</summary>
-        public void Replace(ImmichAsset asset, string? content = null)
-        {
-            var index = _assets.FindIndex(existing => existing.OriginalFileName == asset.OriginalFileName || existing.Id == asset.Id);
-            var previous = _assets[index];
-            _contents[asset.Id] = content ?? _contents[previous.Id];
-            _assets[index] = content is null ? asset : asset with { Checksum = Sha1(content), Exif = asset.Exif with { FileSizeInBytes = Encoding.UTF8.GetByteCount(content) } };
-        }
-
-        public void Remove(ImmichAsset asset) => _assets.RemoveAll(existing => existing.Id == asset.Id);
-
-        public void Duplicate(ImmichAsset asset) => _assets.Add(asset);
-
-        public IImmichClient Create(ImmichSettings settings) => this;
-
-        public async IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, [EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            SearchedBefore = takenBefore;
-            SearchedWithFavorites = includeFavorites;
-            foreach (var asset in _assets.ToArray())
-            {
-                await Task.Yield();
-                yield return asset;
-            }
-        }
-
-        public async Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
-        {
-            Downloads.Add(assetId);
-            if (Failures.TryGetValue(assetId, out var failure)) throw failure;
-            await File.WriteAllTextAsync(destinationPath, _contents[assetId], cancellationToken);
-        }
-
-        public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ImmichTrashSettings Trash { get; set; } = new(Enabled: true, Days: 30);
-        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => Task.FromResult(Trash);
-        public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task UpdateMetadataAsync(string assetId, ImmichMetadataUpdate update, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

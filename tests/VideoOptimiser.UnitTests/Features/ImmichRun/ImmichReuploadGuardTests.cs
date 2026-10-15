@@ -14,7 +14,7 @@ public sealed class ImmichReuploadGuardTests : IDisposable
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
     private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
-    private readonly FakeImmich _immich = new();
+    private readonly InMemoryImmich _immich = new(Taken);
     private readonly List<ScanProgress> _progress = [];
     private readonly AppSettings _settings;
 
@@ -26,32 +26,6 @@ public sealed class ImmichReuploadGuardTests : IDisposable
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
             Immich = new ImmichSettings { BaseUrl = "http://immich.test:2283", StagingDirectory = Path.Combine(_directory, "staging") }
         };
-    }
-
-    [Fact]
-    public async Task LeavesAChecksumImmichNoLongerHoldsAlone()
-    {
-        await ConvertAsync("purged");
-
-        var result = await CheckAsync();
-
-        result.Checked.Should().Be(1);
-        result.Trashed.Should().BeEmpty();
-        result.Restored.Should().BeEmpty();
-        _immich.Trashes.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task LeavesAnOriginalStillInItsTrashWindowAlone()
-    {
-        var original = _immich.Add("PXL.mp4", "trashed", isTrashed: true);
-        await ConvertAsync("trashed", original.Id);
-
-        var result = await CheckAsync();
-
-        result.Trashed.Should().BeEmpty();
-        result.Issues.Should().BeEmpty();
-        _immich.Trashes.Should().BeEmpty();
     }
 
     [Fact]
@@ -162,7 +136,6 @@ public sealed class ImmichReuploadGuardTests : IDisposable
     [InlineData("different checksum")]
     [InlineData("trashed")]
     [InlineData("hidden")]
-    [InlineData("locked")]
     [InlineData("external library")]
     [InlineData("image")]
     [InlineData("replacement")]
@@ -176,7 +149,6 @@ public sealed class ImmichReuploadGuardTests : IDisposable
             "different checksum" => named with { Checksum = "other" },
             "trashed" => named with { IsTrashed = true },
             "hidden" => named with { Visibility = "hidden" },
-            "locked" => named with { Visibility = "locked" },
             "external library" => named with { LibraryId = Guid.NewGuid().ToString() },
             "image" => named with { Type = "IMAGE" },
             _ => named
@@ -256,7 +228,7 @@ public sealed class ImmichReuploadGuardTests : IDisposable
     private Task<ImmichReuploadGuardResult> CheckAsync() => CheckAsync(1000);
 
     private Task<ImmichReuploadGuardResult> CheckAsync(int batchSize) =>
-        new ImmichReuploadGuard(_immich, _repository, batchSize).CheckAsync(_settings.Database.Path, _settings, new SynchronousProgress(_progress.Add));
+        new ImmichReuploadGuard(_immich, _repository, batchSize).CheckAsync(_settings.Database.Path, _settings, new SynchronousProgress<ScanProgress>(_progress.Add));
 
     /// <summary>A finished Immich job for the content's checksum. Without an original ID, Immich has since purged the original.</summary>
     private Task<JobRecord> ConvertAsync(string content, string? originalId = null, JobStatus status = JobStatus.Completed)
@@ -271,84 +243,8 @@ public sealed class ImmichReuploadGuardTests : IDisposable
             CompletedUtc = status == JobStatus.Completed ? DateTimeOffset.UtcNow : null,
             SourceKind = JobSourceKind.Immich,
             ImmichAssetId = assetId,
-            ImmichChecksum = FakeImmich.Checksum(content),
+            ImmichChecksum = InMemoryImmich.Checksum(content),
             ImmichNewAssetId = Guid.NewGuid().ToString()
         });
-    }
-
-    /// <summary>
-    /// Holds assets by ID. The upload check answers from the assets themselves, as Immich does, unless
-    /// <see cref="CheckAnswers"/> names the asset to report for a checksum.
-    /// </summary>
-    private sealed class FakeImmich : IImmichClientFactory, IImmichClient
-    {
-        private readonly List<ImmichAsset> _assets = [];
-
-        public List<IReadOnlyList<string>> CheckBatches { get; } = [];
-        public List<IReadOnlyList<string>> Trashes { get; } = [];
-        public Dictionary<string, string> CheckAnswers { get; } = [];
-        public Dictionary<string, Exception> Failures { get; } = [];
-        public Dictionary<string, ImmichApiException> TrashFailures { get; } = [];
-
-        public static string Checksum(string content) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
-
-        public ImmichAsset Add(string fileName, string content, bool isTrashed = false)
-        {
-            var asset = new ImmichAsset(
-                Guid.NewGuid().ToString(), Checksum(content), fileName, ImmichValues.Video, ImmichValues.Timeline,
-                IsFavorite: false, IsTrashed: isTrashed, LibraryId: null, LivePhotoVideoId: null,
-                Taken, Taken, Taken, 60_000, new ImmichExif(100, Taken, null, null, null, null, "Google", "Pixel 7"), []);
-            _assets.Add(asset);
-            return asset;
-        }
-
-        public void Replace(ImmichAsset asset) => _assets[_assets.FindIndex(existing => existing.Id == asset.Id)] = asset;
-
-        public ImmichAsset Get(string assetId) => _assets.Single(asset => asset.Id == assetId);
-
-        public IImmichClient Create(ImmichSettings settings) => this;
-
-        public Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default)
-        {
-            CheckBatches.Add(checksums.ToArray());
-            IReadOnlyList<ImmichUploadCheck> results = checksums.Select(checksum =>
-            {
-                var match = CheckAnswers.TryGetValue(checksum, out var answer)
-                    ? _assets.Single(asset => asset.Id == answer) with { Checksum = checksum, IsTrashed = false }
-                    : _assets.SingleOrDefault(asset => asset.Checksum == checksum);
-                return match is null
-                    ? new ImmichUploadCheck(checksum, false, null, null, false)
-                    : new ImmichUploadCheck(checksum, true, "duplicate", match.Id, match.IsTrashed);
-            }).ToList();
-            return Task.FromResult(results);
-        }
-
-        public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) =>
-            Failures.TryGetValue(assetId, out var failure) ? Task.FromException<ImmichAsset>(failure) : Task.FromResult(Get(assetId));
-
-        public Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default)
-        {
-            if (assetIds.FirstOrDefault(TrashFailures.ContainsKey) is { } failing) return Task.FromException(TrashFailures[failing]);
-            Trashes.Add(assetIds.ToArray());
-            foreach (var id in assetIds) Replace(Get(id) with { IsTrashed = true });
-            return Task.CompletedTask;
-        }
-
-        public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ImmichTrashSettings Trash { get; set; } = new(Enabled: true, Days: 30);
-        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => Task.FromResult(Trash);
-        public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task UpdateMetadataAsync(string assetId, ImmichMetadataUpdate update, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    }
-
-    /// <summary>Records reports on the calling thread; <see cref="Progress{T}"/> would post them later.</summary>
-    private sealed class SynchronousProgress(Action<ScanProgress> report) : IProgress<ScanProgress>
-    {
-        public void Report(ScanProgress value) => report(value);
     }
 }

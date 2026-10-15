@@ -4,7 +4,6 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
-using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
@@ -211,29 +210,6 @@ public sealed class RunCommandTests : IDisposable
         _processor.Processed.Should().Equal("clip.mp4", "IMG_0001.MOV");
     }
 
-    /// <summary>The held line is <c>run</c>'s: <c>immich run</c>'s limit already leaves held videos out, and says nothing of them.</summary>
-    [Fact]
-    public async Task ImmichRunDoesNotCountHeldVideos()
-    {
-        await WriteConfigAsync(immich: true);
-        var preparation = new FixedImmichPreparation(new QueuePreparationResult([], [], [], [], JobSourceKind.Immich, FollowQueue: false, Held: 2));
-
-        var (_, output, _) = await RunAsync(services => services.AddSingleton<IImmichRunService>(preparation), "immich", "run");
-
-        output.Should().NotContain("held");
-    }
-
-    [Fact]
-    public async Task ImmichRunNamesItselfInTheRunLock()
-    {
-        await WriteConfigAsync(immich: true);
-        var preparation = new HolderReadingPreparation(DatabasePath);
-
-        _ = await RunAsync(services => services.AddSingleton<IImmichRunService>(preparation), "immich", "run");
-
-        preparation.Holder.Should().Be("video-optimiser immich run");
-    }
-
     [Theory]
     [InlineData("'queue run' is now 'run'.", "queue", "run")]
     [InlineData("'queue discover' is now 'queue add'.", "queue", "discover", "--first")]
@@ -299,30 +275,11 @@ public sealed class RunCommandTests : IDisposable
         }
     }
 
-    /// <summary>An <c>immich run</c> whose guard and search found nothing, with <paramref name="queue"/> to convert.</summary>
-    private sealed class FixedImmichPreparation(QueuePreparationResult queue) : IImmichRunService
-    {
-        public Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ImmichRunPreparation(new ImmichReuploadGuardResult(0, [], [], []), new ImmichDiscoveryResult([], 0, 0, 0, 0, 0, 0, 0, 0, 0, []), queue));
-    }
-
-    /// <summary>Reads the run lock's holder as <c>immich run</c> prepares, then ends the run.</summary>
-    private sealed class HolderReadingPreparation(string databasePath) : IImmichRunService
-    {
-        public string? Holder { get; private set; }
-
-        public Task<ImmichRunPreparation> PrepareAsync(string ignored, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
-        {
-            Holder = DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath))?.Command;
-            throw new OperationCanceledException();
-        }
-    }
-
     /// <summary>
     /// Serves <see cref="Content"/> for every download, or a 404 when <see cref="Gone"/>, or <see cref="Failure"/>, or the
     /// failure <see cref="Failures"/> names for that asset.
     /// </summary>
-    private sealed class FakeImmich : IImmichClientFactory, IImmichClient
+    private sealed class FakeImmich : ImmichClientStub
     {
         public static readonly ImmichApiException NotFound = new("ImmichRequestFailed", "Immich returned HTTP 404 for GET /api/assets.", 404);
 
@@ -330,26 +287,12 @@ public sealed class RunCommandTests : IDisposable
         public Exception? Failure { get; set; }
         public Dictionary<string, Exception> Failures { get; } = [];
 
-        public IImmichClient Create(ImmichSettings settings) => this;
-
-        public async Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+        public override async Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
         {
             if (Failure is not null) throw Failure;
             if (Failures.TryGetValue(assetId, out var failure)) throw failure;
             if (Gone) throw NotFound;
             await File.WriteAllTextAsync(destinationPath, Content, cancellationToken);
         }
-
-        public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task UpdateMetadataAsync(string assetId, ImmichMetadataUpdate update, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

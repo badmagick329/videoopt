@@ -68,6 +68,12 @@ internal sealed class FixedSessionFactory(IProcessingSession session) : IProcess
     public IProcessingSession Create(JobRecord job, AppSettings settings) => session;
 }
 
+/// <summary>Hands each report to the callback on the reporting thread; <see cref="Progress{T}"/> would post it later.</summary>
+internal sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T value) => report(value);
+}
+
 /// <summary>Keeps every line reported, synchronously, unlike <see cref="Progress{T}"/>.</summary>
 internal sealed class ListProgress(List<JobProgress>? lines = null) : IProgress<JobProgress>
 {
