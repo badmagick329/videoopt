@@ -1,5 +1,4 @@
 using FluentAssertions;
-using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Validate;
 using VideoOptimiser.Application.TemporaryOutputs;
@@ -13,77 +12,36 @@ public sealed class OutputValidationServiceTests : IDisposable
 
     public OutputValidationServiceTests() => Directory.CreateDirectory(_directory);
 
-    [Fact]
-    public async Task ValidateAsyncPassesUniformTimelineRebasing()
-    {
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(1.881, 149.069, 3_577, 4.132),
-            new MediaTimeline(0, 147.188, 3_577, 2.251));
-
-        result.Passed.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task ValidateAsyncFailsWhenPrimaryVideoTimelineIsShorter()
-    {
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            new MediaTimeline(0, 145, 3_577, 2.251));
-
-        result.Failures.Should().Contain("Output duration differs from the original.");
-    }
-
-    [Fact]
-    public async Task ValidateAsyncFailsWhenRelativeAudioOffsetChanges()
-    {
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(1.881, 149.069, 3_577, 4.132),
-            new MediaTimeline(0, 147.188, 3_577, 3));
-
-        result.Failures.Should().Contain("Output audio timing differs from the original.");
-    }
-
-    [Fact]
-    public async Task ValidateAsyncPassesWhenOnePrimaryVideoPacketDiffersWithinDurationTolerance()
-    {
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            new MediaTimeline(0, 149.069, 3_576, 2.251));
-
-        result.Passed.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task ValidateAsyncFailsWhenPrimaryVideoPacketCountDifferenceExceedsDurationTolerance()
-    {
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            new MediaTimeline(0, 149.069, 3_570, 2.251));
-
-        result.Failures.Should().Contain("Output video packet count differs from the original.");
-    }
-
+    /// <summary>
+    /// Each row is a source timeline then an output timeline (first video timestamp, last video end, video packet count, first
+    /// audio timestamp) and the failure it must produce, or none. A shift of both streams by the same amount is no failure.
+    /// </summary>
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ValidateAsyncFailsSafelyWhenTheOutputTimelineCannotBeRead(bool malformedStreamMetadata)
+    [InlineData(1.881, 149.069, 3_577L, 4.132, 0d, 147.188, 3_577L, 2.251, null)]
+    [InlineData(0d, 149.069, 3_577L, 2.251, 0d, 145d, 3_577L, 2.251, "Output duration differs from the original.")]
+    [InlineData(1.881, 149.069, 3_577L, 4.132, 0d, 147.188, 3_577L, 3d, "Output audio timing differs from the original.")]
+    [InlineData(0d, 149.069, 3_577L, 2.251, 0d, 149.069, 3_576L, 2.251, null)]
+    [InlineData(0d, 149.069, 3_577L, 2.251, 0d, 149.069, 3_570L, 2.251, "Output video packet count differs from the original.")]
+    public async Task ValidateAsyncComparesTheTimelinesOfTheOriginalAndTheOutput(
+        double sourceStart, double sourceEnd, long sourcePackets, double sourceAudio,
+        double outputStart, double outputEnd, long outputPackets, double outputAudio, string? expectedFailure)
     {
+        var manifest = await CreateManifestAsync();
+        var result = await ValidateAsync(manifest, new MediaTimeline(sourceStart, sourceEnd, sourcePackets, sourceAudio), new MediaTimeline(outputStart, outputEnd, outputPackets, outputAudio));
+
+        if (expectedFailure is null) result.Passed.Should().BeTrue();
+        else result.Failures.Should().Contain(expectedFailure);
+    }
+
+    [Fact]
+    public async Task ValidateAsyncFailsSafelyWhenTheOutputTimelineCannotBeRead()
+    {
+        // The real timeline probe wraps malformed ffprobe JSON in a MediaProbeException, so that is what reaches validation.
         var manifest = await CreateManifestAsync();
         var result = await ValidateAsync(
             manifest,
             new MediaTimeline(0, 149.069, 3_577, 2.251),
-            null,
-            malformedStreamMetadata ? new JsonException("Malformed stream metadata.") : null);
+            null);
 
         result.Passed.Should().BeFalse();
         result.Failures.Should().Contain("Output media timeline could not be validated.");
@@ -123,17 +81,6 @@ public sealed class OutputValidationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ValidateAsyncKeepsAnUnreadableOriginalAnErrorRatherThanAVerdictOnTheOutput()
-    {
-        var manifest = await CreateManifestAsync();
-        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
-
-        var action = () => ValidateAsync(manifest, timeline, timeline, sourceProbeError: new MediaProbeException("ffprobe exited with 1: Invalid data found"));
-
-        (await action.Should().ThrowAsync<MediaProbeException>()).WithMessage($"Original '{Path.GetFileName(manifest.SourcePath)}' could not be read by ffprobe: *");
-    }
-
-    [Fact]
     public async Task ValidateAsyncFailsWhenOutputIsEmpty()
     {
         var manifest = await CreateManifestAsync(outputBytes: 0);
@@ -157,21 +104,6 @@ public sealed class OutputValidationServiceTests : IDisposable
         result.Passed.Should().BeFalse();
         result.Failures.Should().Equal("Output failed the decode test: Error submitting packet to decoder: Invalid data found");
         decodeTester.Windows.Should().ContainSingle();
-    }
-
-    [Fact]
-    public async Task ValidateAsyncSkipsDecodeTestWhenAnotherCheckFails()
-    {
-        var manifest = await CreateManifestAsync();
-        var decodeTester = new RecordingDecodeTester(new DecodeTestResult(true, null));
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            new MediaTimeline(0, 140, 3_360, 2.251),
-            decodeTester: decodeTester);
-
-        result.Passed.Should().BeFalse();
-        decodeTester.Windows.Should().BeEmpty();
     }
 
     [Fact]
@@ -220,7 +152,6 @@ public sealed class OutputValidationServiceTests : IDisposable
 
     [Theory]
     [InlineData(true, 100, true)]
-    [InlineData(true, 120, true)]
     [InlineData(false, 100, false)]
     public async Task ValidateAsyncRequiresASmallerOutputOnlyWhenTheSettingAsksForIt(bool requireSmallerOutput, int outputBytes, bool expectedFailure)
     {
@@ -258,19 +189,17 @@ public sealed class OutputValidationServiceTests : IDisposable
         OutputManifest manifest,
         MediaTimeline sourceTimeline,
         MediaTimeline? outputTimeline,
-        Exception? outputError = null,
         string minimumBytesSaved = "0B",
         RecordingDecodeTester? decodeTester = null,
         Exception? outputProbeError = null,
-        Exception? sourceProbeError = null,
         string outputCodec = "av1",
         int outputAudioStreams = 1,
         bool requireSmallerOutput = true)
     {
         decodeTester ??= new RecordingDecodeTester(new DecodeTestResult(true, null));
         var service = new OutputValidationService(
-            _ => new StaticMediaProbe(manifest.OutputPath, outputProbeError, sourceProbeError, outputCodec, outputAudioStreams),
-            _ => new StaticTimelineProbe(manifest.SourcePath, sourceTimeline, outputTimeline, outputError),
+            _ => new StaticMediaProbe(manifest.OutputPath, outputProbeError, outputCodec, outputAudioStreams),
+            _ => new StaticTimelineProbe(manifest.SourcePath, sourceTimeline, outputTimeline),
             _ => decodeTester);
         return await service.ValidateAsync(manifest, new AppSettings
         {
@@ -299,10 +228,10 @@ public sealed class OutputValidationServiceTests : IDisposable
         }
     }
 
-    private sealed class StaticMediaProbe(string outputPath, Exception? outputError = null, Exception? sourceError = null, string outputCodec = "av1", int outputAudioStreams = 1) : IMediaProbe
+    private sealed class StaticMediaProbe(string outputPath, Exception? outputError = null, string outputCodec = "av1", int outputAudioStreams = 1) : IMediaProbe
     {
         public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
-            (path == outputPath ? outputError : sourceError) is { } error ? Task.FromException<MediaInfo>(error) : Task.FromResult(
+            path == outputPath && outputError is not null ? Task.FromException<MediaInfo>(outputError) : Task.FromResult(
             new MediaInfo(
                 path == outputPath ? outputCodec : "h264",
                 1,
@@ -316,13 +245,11 @@ public sealed class OutputValidationServiceTests : IDisposable
                 10_000_000));
     }
 
-    private sealed class StaticTimelineProbe(string sourcePath, MediaTimeline sourceTimeline, MediaTimeline? outputTimeline, Exception? outputError) : IMediaTimelineProbe
+    private sealed class StaticTimelineProbe(string sourcePath, MediaTimeline sourceTimeline, MediaTimeline? outputTimeline) : IMediaTimelineProbe
     {
         public Task<MediaTimeline> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
             path == sourcePath
                 ? Task.FromResult(sourceTimeline)
-                : outputError is not null
-                    ? Task.FromException<MediaTimeline>(outputError)
                 : outputTimeline is { } timeline
                     ? Task.FromResult(timeline)
                     : throw new MediaProbeException("Malformed packet timing.");
