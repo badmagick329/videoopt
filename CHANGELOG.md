@@ -72,6 +72,7 @@
 - A stop while a rerun fetches an encode that already finished says the finished encode is waiting on the worker, not that it is still running (VOPT-86).
 - When `--local` or `--remote` makes `run` leave a started video for a later run, the line names the command that resumes it, according to your config: `clip.mp4 is left for a later run: it started on the Hetzner worker. To resume it: video-optimiser run`. Before, it always said to run without `--local`/`--remote`, which failed when the config's mode or worker had changed too.
 - A video whose original vanishes or can't be read just before it starts now fails alone (`SourceMissing` for a vanished file), and the run goes on. Before, it ended the run with exit `3`.
+- An sftp transfer that exits `1` because its connection dropped now resumes on the next run like any lost connection, instead of failing the video. Any other sftp failure fails the video with sftp's own message: `SFTP transfer failed: <message>`.
 
 ## [0.7.1] - 2026-10-13
 ### Changed

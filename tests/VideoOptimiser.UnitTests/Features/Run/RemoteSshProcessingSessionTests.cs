@@ -181,6 +181,82 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Transfers.Should().Equal("put", "reput");
     }
 
+    /// <summary>
+    /// sftp ends a transfer whose connection dropped with status 1 as often as 255 (VOPT-83). Judged by stderr, such a drop resumes
+    /// like any other, instead of failing the job for good; the status alone said it was a refused file.
+    /// </summary>
+    [Theory]
+    [InlineData("Connection closed")]
+    [InlineData("Connection reset by peer")]
+    [InlineData("Write failed: Broken pipe")]
+    [InlineData("Read from remote host 203.0.113.10: Connection timed out")]
+    [InlineData("client_loop: send disconnect: Error")]
+    [InlineData("packet_write_wait: Connection to 203.0.113.10 port 22: Input/output error")]
+    public async Task AnUploadWhoseConnectionDroppedWithExitStatusOneResumesLikeAnyDrop(string stderr)
+    {
+        var source = await SourceAsync();
+        var runner = new DroppedUploadRunner($"40 {Sha256(Original.AsSpan(0, 40))}", firstExit: 1, firstError: stderr);
+        var progress = new ListProgress();
+
+        await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", progress);
+
+        runner.Transfers.Should().Equal("put", "reput");
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Uploading 100 B to the worker..."),
+            JobProgress.Step("Lost the connection to the worker; resuming the upload at 40 B of 100 B..."),
+            JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
+    }
+
+    /// <summary>A refused file is no drop: reconnecting cannot help, so the job fails with sftp's own line saying what to fix.</summary>
+    [Fact]
+    public async Task AnUploadSftpRefusedFailsWithSftpsOwnLine()
+    {
+        var source = await SourceAsync();
+        var runner = new DroppedUploadRunner($"0 {Sha256(Original.AsSpan(0, 0))}", firstExit: 1, firstError: "remote open(\"/var/tmp/video-optimiser/a/source.mkv.partial\"): No space left on device");
+
+        var action = async () => await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", new ListProgress());
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("SFTP transfer failed: remote open(\"/var/tmp/video-optimiser/a/source.mkv.partial\"): No space left on device");
+        runner.Transfers.Should().Equal("put");
+    }
+
+    [Theory]
+    [InlineData(1, "Connection closed")]
+    [InlineData(1, "Read from remote host 203.0.113.10: Connection reset by peer")]
+    [InlineData(255, "ssh: connect to host 203.0.113.10 port 22: Network is unreachable")]
+    public async Task ADownloadWhoseConnectionDroppedIsTriedAgainAndFinishes(int exitCode, string stderr)
+    {
+        var runner = new FlakyDownloadRunner(Output, Good, [new ExternalProcessResult(exitCode, string.Empty, stderr)]);
+
+        await CreateSession(Guid.NewGuid(), runner).RetrieveOutputAsync(Output, 1);
+
+        runner.Transfers.Should().Be(2);
+        (await File.ReadAllBytesAsync(Output)).Should().Equal(Good);
+    }
+
+    [Fact]
+    public async Task ADownloadThatKeepsLosingItsConnectionLeavesTheJobResumable()
+    {
+        var drop = new ExternalProcessResult(1, string.Empty, "Connection closed");
+        var runner = new FlakyDownloadRunner(Output, Good, [drop, drop, drop]);
+
+        var action = async () => await CreateSession(Guid.NewGuid(), runner).RetrieveOutputAsync(Output, 1);
+
+        await action.Should().ThrowAsync<RemoteConnectionException>().WithMessage("SFTP connection failed: Connection closed");
+        runner.Transfers.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task ADownloadSftpRefusedFailsAtOnceWithSftpsOwnLine()
+    {
+        var runner = new FlakyDownloadRunner(Output, Good, [new ExternalProcessResult(1, string.Empty, "remote open(\"/var/tmp/video-optimiser/a/encode-1/output.mkv\"): Permission denied")]);
+
+        var action = async () => await CreateSession(Guid.NewGuid(), runner).RetrieveOutputAsync(Output, 1);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("SFTP transfer failed: remote open(\"/var/tmp/video-optimiser/a/encode-1/output.mkv\"): Permission denied");
+        runner.Transfers.Should().Be(1);
+    }
+
     [Fact]
     public async Task AnUploadWhoseRecheckCannotReachTheWorkerFailsAsUnreachable()
     {
@@ -772,6 +848,23 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         }
     }
 
+    /// <summary>A download whose first sftp calls end as <paramref name="failures"/> say, each writing nothing; the next one writes the output.</summary>
+    private sealed class FlakyDownloadRunner(string output, byte[] good, IEnumerable<ExternalProcessResult> failures) : IExternalProcessRunner
+    {
+        private readonly Queue<ExternalProcessResult> _failures = new(failures);
+
+        public int Transfers { get; private set; }
+
+        public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request.FileName == "ssh") return OkAsync($"{good.Length}\n{Sha256(good)}");
+            Transfers++;
+            if (_failures.TryDequeue(out var failure)) return Task.FromResult(failure);
+            File.WriteAllBytes(output + ".partial", good);
+            return OkAsync();
+        }
+    }
+
     private sealed class FailingSizePollRunner : IExternalProcessRunner
     {
         private readonly TaskCompletionSource<ExternalProcessResult> _sftp = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -868,7 +961,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     /// </summary>
     /// <param name="afterRefusedRetry">When set, the second sftp call exits 1, as reput does onto a partial the dropped session
     /// finished after the re-check, and the partial check then answers this.</param>
-    private sealed class DroppedUploadRunner(string? afterDrop, string? afterRefusedRetry = null) : IExternalProcessRunner
+    private sealed class DroppedUploadRunner(string? afterDrop, string? afterRefusedRetry = null, int firstExit = 255, string firstError = "Connection closed") : IExternalProcessRunner
     {
         public List<string> Transfers { get; } = [];
         public bool PartialRemovedAfterDrop { get; private set; }
@@ -879,7 +972,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
             if (request.FileName == "sftp")
             {
                 Transfers.Add(request.StandardInput!.Split(' ')[0]);
-                if (Transfers.Count == 1) return Result(255, "Connection closed");
+                if (Transfers.Count == 1) return Result(firstExit, firstError);
                 return Transfers.Count == 2 && afterRefusedRetry is not null ? Result(1, "destination file bigger or same size as source file") : Result(0);
             }
             var command = request.Arguments[^1];

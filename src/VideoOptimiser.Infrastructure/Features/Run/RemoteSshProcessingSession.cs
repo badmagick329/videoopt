@@ -111,7 +111,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 new TransferMonitor(new ThrottledProgress(progress, _clock, source.Length, verifiedPartialLength, showRate: true), verifiedPartialLength, async token => await RemoteFileSizeAsync(partial, token)),
                 retryLostConnection: false, cancellationToken);
             if (transfer.ExitCode == 0) break;
-            if (transfer.ExitCode != 255)
+            if (!LostConnection(transfer))
             {
                 // The dropped session can finish the partial after the re-check, and reput then refuses the equal-size destination.
                 if (attempt == 1 || await VerifyPartialUploadAsync(sourcePath, partial, source.Length, progress, cancellationToken) != source.Length)
@@ -479,11 +479,24 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 continue;
             }
             if (result.ExitCode == 0 || !retryLostConnection) return result;
-            if (result.ExitCode != 255) throw SftpTransferFailed(result);
+            if (!LostConnection(result)) throw SftpTransferFailed(result);
             if (attempt >= TransferAttempts) throw LostSftpConnection(result);
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
     }
+
+    /// <summary>What OpenSSH prints, in whole or in part, when a connection dies under a running transfer.</summary>
+    private static readonly string[] ConnectionLossMarkers = ["Connection closed", "Connection reset", "Broken pipe", "Connection timed out", "client_loop", "packet_write"];
+
+    /// <summary>
+    /// Whether a failed sftp lost its connection, so the job may resume, rather than failed for a reason a retry cannot change.
+    /// Exit 255 is ssh's own failure and always counts. A drop under a running transfer can also end with status 1, which sftp
+    /// uses for a refused file too, so the exit code alone would fail a job that only needs to reconnect (VOPT-83); stderr tells
+    /// them apart. A refused file (permission denied, no space left, a missing path) matches none of the markers and stays a
+    /// failure whose message carries sftp's own line, which names what to fix.
+    /// </summary>
+    internal static bool LostConnection(ExternalProcessResult result) =>
+        result.ExitCode == 255 || ConnectionLossMarkers.Any(marker => result.StandardError.Contains(marker, StringComparison.OrdinalIgnoreCase));
 
     private static InvalidOperationException SftpTransferFailed(ExternalProcessResult result) =>
         new($"SFTP transfer failed: {FirstLine(result.StandardError)}");
