@@ -78,7 +78,7 @@ public sealed class WorkerCommandsTests : IDisposable
     [Fact]
     public async Task CtrlCWhileTheWorkerSetsUpSaysItStaysUpAndHowToDeleteIt()
     {
-        var lifecycle = new FakeWorkerLifecycle { Exists = false, DuringBootstrap = Stop.Press };
+        var lifecycle = new FakeWorkerLifecycle { Exists = false, DuringSetup = _ => { Stop.Press(); return Task.CompletedTask; } };
 
         var (code, stdout, stderr) = await RunAsync(lifecycle, null, CliFakes.AcceptAnySettings, "worker", "create");
 

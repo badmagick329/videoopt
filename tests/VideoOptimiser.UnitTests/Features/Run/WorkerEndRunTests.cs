@@ -287,6 +287,62 @@ public sealed class WorkerEndRunTests : IDisposable
             $"Delete the worker now? [y/N] To delete it later: video-optimiser worker delete {Config}"));
     }
 
+    /// <summary>
+    /// A Ctrl+C while the worker is still being set up (VOPT-67): no video has started, but "Nothing is running" would be
+    /// wrong, as the bootstrap is running on it. The delete question carries no loss suffix: there is no work to lose.
+    /// </summary>
+    [Fact]
+    public async Task ACtrlCWhileTheWorkerIsBeingSetUpSaysSoAndAsksWhetherToDeleteIt()
+    {
+        await WriteConfigAsync();
+        await QueueJobsAsync(1);
+        _lifecycle.Exists = false;
+        _input.Then("n");
+        _lifecycle.DuringSetup = cancellationToken =>
+        {
+            _stop.Press();
+            return Task.Delay(Timeout.Infinite, cancellationToken);
+        };
+
+        var (code, output, _) = await RunAsync();
+
+        output.Should().Be(Transcript(
+            "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
+            "",
+            $"Stopped while the worker {Worker} was being set up. It stays up, billed hourly.",
+            $"To resume: video-optimiser run {Config}",
+            $"Delete the worker now? [y/N] To delete it later: video-optimiser worker delete {Config}"));
+        code.Should().Be((int)ExitCode.Cancelled);
+        _lifecycle.DeleteCalls.Should().Be(0);
+    }
+
+    /// <summary>Redirected input is never asked, so the kept worker's lines say how to resume and how to delete it.</summary>
+    [Fact]
+    public async Task ACtrlCWhileTheWorkerIsBeingSetUpUnderRedirectedInputKeepsIt()
+    {
+        await WriteConfigAsync();
+        await QueueJobsAsync(1);
+        _lifecycle.Exists = false;
+        _input = new ScriptedInput(interactive: false);
+        _state = new RunWorkerState(_input);
+        _lifecycle.DuringSetup = cancellationToken =>
+        {
+            _stop.Press();
+            return Task.Delay(Timeout.Infinite, cancellationToken);
+        };
+
+        var (code, output, _) = await RunAsync();
+
+        output.Should().Be(Transcript(
+            "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
+            "",
+            $"Stopped while the worker {Worker} was being set up. It stays up, billed hourly.",
+            $"To resume: video-optimiser run {Config}",
+            $"To delete it instead: video-optimiser worker delete {Config}"));
+        code.Should().Be((int)ExitCode.Cancelled);
+        _input.Reads.Should().Be(0);
+    }
+
     /// <summary>Redirected input is never asked: a stop now keeps the worker with the lines approved under VOPT-47.</summary>
     [Fact]
     public async Task RedirectedInputKeepsTheWorkerWithTheStopLinesUnchanged()

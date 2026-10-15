@@ -421,6 +421,23 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     [Fact]
+    public async Task AFailedVideooptSshCheckNeverReportsTheWorkerSetUpAsComplete()
+    {
+        using var fixture = new Fixture();
+        // The bootstrap script is done (root probe answers 100%), but the videoopt user cannot connect yet; the next round can.
+        fixture.Processes.Results.Enqueue(new ExternalProcessResult(0, "percent=100\nstage=Ready\n", string.Empty));
+        fixture.Processes.Results.Enqueue(new ExternalProcessResult(255, string.Empty, "videoopt@203.0.113.42: Permission denied (publickey)."));
+        using var lifecycle = fixture.CreateLifecycle();
+        var messages = new List<string>();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
+
+        messages.Should().NotContain(message => message.StartsWith("Worker setup: 100%", StringComparison.Ordinal));
+        messages.Where(message => message.StartsWith("Worker ready", StringComparison.Ordinal)).Should().ContainSingle();
+        fixture.Processes.Requests.Should().HaveCount(4);
+    }
+
+    [Fact]
     public async Task ANewWorkerIsToldItWillTakeSeveralMinutesBeforeTheFirstProgressLine()
     {
         using var fixture = new Fixture();

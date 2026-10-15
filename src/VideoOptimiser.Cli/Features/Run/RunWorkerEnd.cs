@@ -141,8 +141,8 @@ internal sealed class RunWorkerEnd(IRemoteWorkerLifecycle lifecycle, RunWorkerSt
             {
                 // Nothing to lose, and the user said y: the video resumes on a new worker.
                 WorkerFate.Delete => StoppedRunMessage.StoppedNow(interrupted, command),
-                WorkerFate.Keep => StoppedRunMessage.Lines(interrupted, worker, managed: true, command),
-                _ => StoppedRunMessage.LinesBeforeQuestion(interrupted, worker, command)
+                WorkerFate.Keep => StoppedRunMessage.Lines(interrupted, worker, managed: true, command, state.SettingUpWorker),
+                _ => StoppedRunMessage.LinesBeforeQuestion(interrupted, worker, command, state.SettingUpWorker)
             });
         }
         else if (end == RunEnd.WorkerUnreachable && fate != WorkerFate.Delete)
@@ -239,6 +239,12 @@ internal sealed class RunWorkerState(IConsoleInput input)
 
     /// <summary>Whether a managed worker was up when the conversion began, so the first Ctrl+C asks about it.</summary>
     public bool AskAtFirstPress { get; set; }
+
+    /// <summary>
+    /// True from the start of creating or bootstrapping the managed worker until that has finished. A stop in between leaves
+    /// the setup running on a worker that bills, which the stop lines must not call idle. Left set when the setup is stopped.
+    /// </summary>
+    public bool SettingUpWorker { get; set; }
 
     /// <summary>Set once the run has decided; an error after that is not a second end.</summary>
     public bool Concluded { get; set; }

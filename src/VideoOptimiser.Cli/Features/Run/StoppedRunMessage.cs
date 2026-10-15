@@ -36,7 +36,8 @@ internal static class StoppedRunMessage
     /// <param name="interrupted">The job Ctrl+C stopped, or null when it came between jobs or before the first one.</param>
     /// <param name="worker">The managed server's name, or the SSH host of a manual one.</param>
     /// <param name="managed">A manual host is not billed or deleted by this tool, so it gets only the lines that hold for it.</param>
-    public static IReadOnlyList<string> Lines(JobInterruptedException? interrupted, string worker, bool managed, CliCommand command)
+    /// <param name="settingUp">The stop came while the managed worker was still being created or bootstrapped (VOPT-67): "Nothing is running" would be wrong, as its setup is.</param>
+    public static IReadOnlyList<string> Lines(JobInterruptedException? interrupted, string worker, bool managed, CliCommand command, bool settingUp = false)
     {
         var rerun = $"video-optimiser {RerunCommand(command)}";
         var delete = DeleteCommand(command);
@@ -58,9 +59,11 @@ internal static class StoppedRunMessage
         var downloading = interrupted is { Remote: true, Stage: JobStatus.Downloading };
         return
         [
-            downloading
-                ? $"Stopped. The encoded output is waiting on the worker {worker}, which stays up, billed hourly."
-                : $"Stopped. Nothing is running on the worker {worker}, but it stays up, billed hourly, so the job can resume.",
+            settingUp
+                ? $"Stopped while the worker {worker} was being set up. It stays up, billed hourly."
+                : downloading
+                    ? $"Stopped. The encoded output is waiting on the worker {worker}, which stays up, billed hourly."
+                    : $"Stopped. Nothing is running on the worker {worker}, but it stays up, billed hourly, so the job can resume.",
             $"To resume: {rerun}",
             $"To delete it instead: {delete}{(downloading ? " (the finished encode is lost)" : string.Empty)}"
         ];
@@ -71,10 +74,10 @@ internal static class StoppedRunMessage
     /// question replaces. With nothing running there, the first line no longer says the worker stays "so the job can resume":
     /// a video resumes on a new worker too.
     /// </summary>
-    public static IReadOnlyList<string> LinesBeforeQuestion(JobInterruptedException? interrupted, string worker, CliCommand command)
+    public static IReadOnlyList<string> LinesBeforeQuestion(JobInterruptedException? interrupted, string worker, CliCommand command, bool settingUp = false)
     {
-        var lines = Lines(interrupted, worker, managed: true, command).SkipLast(1).ToList();
-        if (Lost(interrupted?.Remote == true ? interrupted.Stage : null) is null) lines[0] = $"Stopped. Nothing is running on the worker {worker}, but it stays up, billed hourly.";
+        var lines = Lines(interrupted, worker, managed: true, command, settingUp).SkipLast(1).ToList();
+        if (!settingUp && Lost(interrupted?.Remote == true ? interrupted.Stage : null) is null) lines[0] = $"Stopped. Nothing is running on the worker {worker}, but it stays up, billed hourly.";
         return lines;
     }
 

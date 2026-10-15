@@ -58,6 +58,8 @@
 - `Ctrl+C` in `worker create` after the worker exists now prints `The worker <name> stays up, billed hourly, until it is deleted.` and the `worker delete` command, and exits `9`. Before, it exited with nothing said.
 - `worker delete` on a worker already gone from Hetzner says `The worker <name> is already gone from Hetzner; its record on this PC is removed.` instead of `Deleting Hetzner server <id>.`
 - `doctor` checks the Hetzner token and API whenever `remoteSsh.lifecycle` is `hetzner`, in local mode too, and warns when a worker is left billing: `Managed Hetzner worker <name> is <status> and bills until it is deleted. Delete it with 'worker delete'.`
+- `Ctrl+C` while a run creates or sets up the worker prints `Stopped while the worker <name> was being set up. It stays up, billed hourly.` Before, it said nothing was running on the worker.
+- Worker setup no longer prints `Worker setup: 100%, ready...` while the worker's SSH check still fails; it waits and checks again.
 
 ## [0.7.1] - 2026-10-13
 ### Changed

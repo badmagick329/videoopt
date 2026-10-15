@@ -101,6 +101,9 @@ internal sealed class WorkerReadiness
                         Failed(processingResult is null
                             ? $"videoopt SSH check exceeded {_readinessProbeTimeout.TotalSeconds:0}s"
                             : FirstNonEmpty(processingResult.StandardError, processingResult.StandardOutput, $"videoopt SSH exited with code {processingResult.ExitCode}"));
+                        // The script is done but the worker is not usable yet: say nothing of 100% (it reads as ready), and check again.
+                        await _delay(TimeSpan.FromSeconds(15), cancellationToken);
+                        continue;
                     }
 
                     var observedAt = _utcNow();

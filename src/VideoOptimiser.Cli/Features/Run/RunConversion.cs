@@ -75,7 +75,10 @@ internal sealed class RunConversion(IQueueService queue, IQueueDiscovery discove
         var managedWork = managed && await AnyJobNeedsWorkerAsync(configuration, preparation.RunnableJobs, cancellationToken);
         if (managedWork)
         {
+            // Not reset in a finally: a stop leaves the flag set for the lines that follow it.
+            state.SettingUpWorker = true;
             await EnsureWorkerReadyAsync(configuration, cancellationToken);
+            state.SettingUpWorker = false;
             state.Used = true;
         }
         await workerEnd.PrepareQuestionAsync(configuration, cancellationToken);
