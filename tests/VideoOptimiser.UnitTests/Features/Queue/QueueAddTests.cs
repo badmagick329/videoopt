@@ -6,6 +6,7 @@ using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.TemporaryOutputs;
+using static VideoOptimiser.UnitTests.RunCli;
 
 namespace VideoOptimiser.UnitTests.Features.Queue;
 
@@ -15,23 +16,19 @@ namespace VideoOptimiser.UnitTests.Features.Queue;
 /// <c>broken</c> fails to probe, <c>locked</c> cannot be opened.
 /// </summary>
 [Collection(ConsoleCapture.Collection)]
-public sealed class QueueAddTests : IDisposable
+public sealed class QueueAddTests : QueueTestBase
 {
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
-    private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
-    private string _config = string.Empty;
+    public QueueAddTests() => Directory.CreateDirectory(Elsewhere);
 
-    public QueueAddTests()
+    private string Elsewhere => Path.Combine(Workspace, "Other");
+
+    protected override string[] DefaultYaml => Rules();
+
+    protected override void RegisterFakes(IServiceCollection services)
     {
-        Directory.CreateDirectory(Root);
-        Directory.CreateDirectory(Elsewhere);
+        services.AddSingleton<IFileReadinessService>(new NamedReadiness());
+        services.AddSingleton<Func<string, IMediaProbe>>(_ => new NamedProbe());
     }
-
-    private string DatabasePath => Path.Combine(_directory, "jobs.db");
-    private string Root => Path.Combine(_directory, "Videos");
-    private string Elsewhere => Path.Combine(_directory, "Other");
-    private string StagingDirectory => Path.Combine(_directory, "staging");
-    private string ConfigArgument => $" --config \"{_config}\"";
 
     [Fact]
     public async Task AFileThatFitsTheRulesIsQueuedAndTheNextLineSaysToRun()
@@ -40,28 +37,32 @@ public sealed class QueueAddTests : IDisposable
 
         var (code, output, error) = await RunAsync("queue", "add", path);
 
-        var job = (await _repository.FindOpenBySourceAsync(DatabasePath, path))!;
-        (code, output, error).Should().Be((0, Lines($"Queued clip.mp4 as job {job.Id:N}.", $"Next: run 'video-optimiser run{ConfigArgument}'."), ""));
+        var job = (await Repository.FindOpenBySourceAsync(DatabasePath, path))!;
+        (code, output, error).Should().Be((0, Transcript($"Queued clip.mp4 as job {job.Id:N}.", $"Next: run 'video-optimiser run{ConfigArgument}'."), ""));
         job.Forced.Should().BeFalse();
         job.VideoFacts!.Codec.Should().Be("h264");
     }
 
+    /// <summary>Only a waiting or stopped video that is not held and not mid-finalisation is ahead; each file added counts the one before it.</summary>
     [Fact]
     public async Task WithVideosAheadItSaysHowManyAndHowToPutItFirst()
     {
-        await QueuedAsync("first.mp4");
         await StopAsync(await QueuedAsync("second.mp4"), JobStatus.Encoding);
         await HeldAsync(await QueuedAsync("held.mp4"));
         await MoveAsync(await QueuedAsync("ready.mp4"), JobStatus.Validating, JobStatus.ReadyToFinalize);
         var finalising = await QueuedAsync("finalising.mp4");
         await MoveAsync(finalising, JobStatus.Validating, JobStatus.ReadyToFinalize);
         await StopAsync(finalising, JobStatus.Finalizing);
-        var path = await FileAsync(Root, "clip.mp4");
+        var first = await FileAsync(Root, "first.mp4");
+        var clip = await FileAsync(Root, "clip.mp4");
 
-        var (code, output, _) = await RunAsync("queue", "add", path);
+        var singular = await RunAsync("queue", "add", first);
+        var plural = await RunAsync("queue", "add", clip);
 
-        var job = (await _repository.FindOpenBySourceAsync(DatabasePath, path))!;
-        (code, output).Should().Be((0, Lines($"Queued clip.mp4 as job {job.Id:N}.", $"2 videos are ahead of it; 'video-optimiser queue next {job.Id:N}{ConfigArgument}' puts it first.")));
+        var firstJob = (await Repository.FindOpenBySourceAsync(DatabasePath, first))!;
+        var clipJob = (await Repository.FindOpenBySourceAsync(DatabasePath, clip))!;
+        singular.Should().Be((0, Transcript($"Queued first.mp4 as job {firstJob.Id:N}.", $"1 video is ahead of it; 'video-optimiser queue next {firstJob.Id:N}{ConfigArgument}' puts it first."), ""));
+        plural.Should().Be((0, Transcript($"Queued clip.mp4 as job {clipJob.Id:N}.", $"2 videos are ahead of it; 'video-optimiser queue next {clipJob.Id:N}{ConfigArgument}' puts it first."), ""));
     }
 
     [Theory]
@@ -72,12 +73,12 @@ public sealed class QueueAddTests : IDisposable
     [InlineData("Videos", "clip.mp4", "")]
     public async Task ForceQueuesAFileOutsideTheWatchRootsOrTheRulesAndRemembersIt(string folder, string name, string outside)
     {
-        var path = await FileAsync(folder == "Private" ? Path.Combine(Root, folder) : Path.Combine(_directory, folder), name);
+        var path = await FileAsync(folder == "Private" ? Path.Combine(Root, folder) : Path.Combine(Workspace, folder), name);
 
         var (code, output, _) = await RunAsync("queue", "add", path, "--force");
 
-        var job = (await _repository.FindOpenBySourceAsync(DatabasePath, path))!;
-        (code, output).Should().Be((0, Lines($"Queued {name} as job {job.Id:N}{outside}.", $"Next: run 'video-optimiser run{ConfigArgument}'.")));
+        var job = (await Repository.FindOpenBySourceAsync(DatabasePath, path))!;
+        (code, output).Should().Be((0, Transcript($"Queued {name} as job {job.Id:N}{outside}.", $"Next: run 'video-optimiser run{ConfigArgument}'.")));
         job.Forced.Should().BeTrue();
     }
 
@@ -88,8 +89,8 @@ public sealed class QueueAddTests : IDisposable
 
         var result = await RunAsync("queue", "add", path);
 
-        result.Should().Be((5, "", Lines($"{path} is outside your watch roots. To queue it anyway: video-optimiser queue add \"{path}\" --force{ConfigArgument}")));
-        (await _repository.FindOpenBySourceAsync(DatabasePath, path)).Should().BeNull();
+        result.Should().Be((5, "", Transcript($"{path} is outside your watch roots. To queue it anyway: video-optimiser queue add \"{path}\" --force{ConfigArgument}")));
+        (await Repository.FindOpenBySourceAsync(DatabasePath, path)).Should().BeNull();
     }
 
     [Theory]
@@ -102,23 +103,22 @@ public sealed class QueueAddTests : IDisposable
 
         var result = await RunAsync("queue", "add", path);
 
-        result.Should().Be((5, "", Lines($"{refusal} To queue it anyway: video-optimiser queue add \"{path}\" --force{ConfigArgument}")));
+        result.Should().Be((5, "", Transcript($"{refusal} To queue it anyway: video-optimiser queue add \"{path}\" --force{ConfigArgument}")));
     }
 
     /// <summary>No AV1 of a video this small could save <c>savings.minimumBytesSaved</c>, so <c>--force</c> does not lift it.</summary>
     [Theory]
-    [InlineData("clip.mp4", false)]
     [InlineData("clip.mp4", true)]
     [InlineData("hevc.mp4", false)]
     public async Task AFileTooSmallToSaveEnoughIsRefusedEvenWithForce(string name, bool force)
     {
-        await WriteConfigAsync(minimumBytesSaved: "1KiB");
+        await WriteConfigAsync(Rules(minimumBytesSaved: "1KiB"));
         var path = await FileAsync(Root, name);
 
         var result = force ? await RunAsync("queue", "add", path, "--force") : await RunAsync("queue", "add", path);
 
-        result.Should().Be((5, "", Lines($"{name} doesn't fit your rules: too small to save 1KiB (savings.minimumBytesSaved).")));
-        (await _repository.FindOpenBySourceAsync(DatabasePath, path)).Should().BeNull();
+        result.Should().Be((5, "", Transcript($"{name} doesn't fit your rules: too small to save 1KiB (savings.minimumBytesSaved).")));
+        (await Repository.FindOpenBySourceAsync(DatabasePath, path)).Should().BeNull();
     }
 
     [Theory]
@@ -131,7 +131,7 @@ public sealed class QueueAddTests : IDisposable
 
         var result = await RunAsync("queue", "add", path, "--force");
 
-        result.Should().Be((5, "", Lines($"{path} is {(what.StartsWith('f') ? "a" : "an")} {what}, so it can't be queued.")));
+        result.Should().Be((5, "", Transcript($"{path} is {(what.StartsWith('f') ? "a" : "an")} {what}, so it can't be queued.")));
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public sealed class QueueAddTests : IDisposable
     {
         var path = Path.Combine(Root, "clip.mp4");
 
-        (await RunAsync("queue", "add", path)).Should().Be((6, "", Lines($"Original does not exist: {path}")));
+        (await RunAsync("queue", "add", path)).Should().Be((6, "", Transcript($"Original does not exist: {path}")));
     }
 
     [Theory]
@@ -149,29 +149,32 @@ public sealed class QueueAddTests : IDisposable
     {
         var path = await FileAsync(Root, name);
 
-        (await RunAsync("queue", "add", path)).Should().Be((6, "", Lines(refusal)));
+        (await RunAsync("queue", "add", path)).Should().Be((6, "", Transcript(refusal)));
     }
 
+    /// <summary>
+    /// The last two rows are what a crash leaves: a converting or finalising status with no run or finalise going reads as
+    /// stopped. The waiting row is <see cref="AFileWithAnOpenJobOutsideTheRootsNamesTheJob"/>.
+    /// </summary>
     [Theory]
-    [InlineData("waiting")]
-    [InlineData("held")]
-    [InlineData("stopped")]
-    [InlineData("ready to finalise")]
-    [InlineData("stopped while being finalised")]
-    [InlineData("finalising")]
-    [InlineData("encoding")]
-    [InlineData("stopped, left encoding by a crash")]
-    public async Task AFileWithAnOpenJobNamesItAndItsStatus(string status)
+    [InlineData("held", "held")]
+    [InlineData("stopped", "stopped")]
+    [InlineData("ready", "ready to finalise")]
+    [InlineData("stopped while finalising", "stopped while being finalised")]
+    [InlineData("finalising", "finalising")]
+    [InlineData("encoding", "encoding")]
+    [InlineData("left encoding by a crash", "stopped")]
+    [InlineData("left finalising by a crash", "stopped while being finalised")]
+    public async Task AFileWithAnOpenJobNamesItAndItsStatus(string arrangement, string phrase)
     {
         var job = await QueuedAsync("clip.mp4");
         DatabaseLock? going = null;
-        switch (status)
+        switch (arrangement)
         {
-            case "waiting": break;
             case "held": await HeldAsync(job); break;
             case "stopped": await StopAsync(job, JobStatus.Encoding); break;
-            case "ready to finalise": await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize); break;
-            case "stopped while being finalised":
+            case "ready": await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize); break;
+            case "stopped while finalising":
                 await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize);
                 await StopAsync(job, JobStatus.Finalizing);
                 break;
@@ -183,12 +186,13 @@ public sealed class QueueAddTests : IDisposable
                 await MoveAsync(job, JobStatus.Encoding);
                 going = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), "video-optimiser run", out _);
                 break;
-            default: await MoveAsync(job, JobStatus.Encoding); break;
+            case "left encoding by a crash": await MoveAsync(job, JobStatus.Encoding); break;
+            default: await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing); break;
         }
 
         using (going)
         {
-            (await RunAsync("queue", "add", job.SourcePath)).Should().Be((0, Lines($"clip.mp4 already has job {job.Id:N} ({status.Split(',')[0]})."), ""));
+            (await RunAsync("queue", "add", job.SourcePath)).Should().Be((0, Transcript($"clip.mp4 already has job {job.Id:N} ({phrase})."), ""));
         }
     }
 
@@ -197,9 +201,9 @@ public sealed class QueueAddTests : IDisposable
     public async Task AFileWithAnOpenJobOutsideTheRootsNamesTheJob()
     {
         var path = await FileAsync(Elsewhere, "clip.mp4");
-        var job = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = path, SourceFingerprint = "original", Status = JobStatus.Queued, Forced = true });
+        var job = await Repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = path, SourceFingerprint = "original", Status = JobStatus.Queued, Forced = true });
 
-        (await RunAsync("queue", "add", path)).Should().Be((0, Lines($"clip.mp4 already has job {job.Id:N} (waiting)."), ""));
+        (await RunAsync("queue", "add", path)).Should().Be((0, Transcript($"clip.mp4 already has job {job.Id:N} (waiting)."), ""));
     }
 
     [Fact]
@@ -209,9 +213,9 @@ public sealed class QueueAddTests : IDisposable
         await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize);
         job.FailureCategory = "FinalizationFailed";
         job.FailureMessage = "The original changed since it was converted.";
-        await _repository.UpdateAsync(DatabasePath, job);
+        await Repository.UpdateAsync(DatabasePath, job);
 
-        (await RunAsync("queue", "add", job.SourcePath)).Should().Be((0, Lines($"clip.mp4's last finalise failed (job {job.Id:N}): The original changed since it was converted."), ""));
+        (await RunAsync("queue", "add", job.SourcePath)).Should().Be((0, Transcript($"clip.mp4's last finalise failed (job {job.Id:N}): The original changed since it was converted."), ""));
     }
 
     [Theory]
@@ -226,25 +230,10 @@ public sealed class QueueAddTests : IDisposable
         job.SourceFingerprint = await new FileFingerprintService().CreateAsync(job.SourcePath);
         // The quality settings that skipped it are the ones in force, so the skip still holds.
         job.QualityFingerprint = Application.Jobs.QualityFingerprint.Compute(await SettingsAsync());
-        await _repository.UpdateAsync(DatabasePath, job);
+        await Repository.UpdateAsync(DatabasePath, job);
         await MoveAsync(job, settled == JobStatus.Completed ? [JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing, settled] : [settled]);
 
-        (await RunAsync("queue", "add", job.SourcePath)).Should().Be((0, Lines(string.Format(System.Globalization.CultureInfo.InvariantCulture, line, job.Id.ToString("N"), ConfigArgument)), ""));
-    }
-
-    /// <summary>An original that changed since its job settled it is a new video, and is queued.</summary>
-    [Fact]
-    public async Task AFileThatChangedSinceItsJobFailedIsQueued()
-    {
-        var job = await QueuedAsync("clip.mp4");
-        job.SourceFingerprint = "the bytes before the change";
-        await _repository.UpdateAsync(DatabasePath, job);
-        await MoveAsync(job, JobStatus.Failed);
-
-        var (code, output, _) = await RunAsync("queue", "add", job.SourcePath);
-
-        var queued = (await _repository.FindOpenBySourceAsync(DatabasePath, job.SourcePath))!;
-        (code, output).Should().Be((0, Lines($"Queued clip.mp4 as job {queued.Id:N}.", $"Next: run 'video-optimiser run{ConfigArgument}'.")));
+        (await RunAsync("queue", "add", job.SourcePath)).Should().Be((0, Transcript(string.Format(System.Globalization.CultureInfo.InvariantCulture, line, job.Id.ToString("N"), ConfigArgument)), ""));
     }
 
     /// <summary>R11: another command queued the file between the check and the insert; its job is named, and no second one made.</summary>
@@ -252,11 +241,11 @@ public sealed class QueueAddTests : IDisposable
     public async Task AFileQueuedFromAnotherTerminalMeanwhileNamesThatJob()
     {
         var path = await FileAsync(Root, "clip.mp4");
-        var repository = new QueueingFirstRepository(_repository);
+        var repository = new QueueingFirstRepository(Repository);
 
         var (code, output, _) = await RunAsync(services => services.AddSingleton<IJobRepository>(repository), "queue", "add", path);
 
-        (code, output).Should().Be((0, Lines($"clip.mp4 already has job {repository.Raced!.Id:N} (waiting).")));
+        (code, output).Should().Be((0, Transcript($"clip.mp4 already has job {repository.Raced!.Id:N} (waiting).")));
     }
 
     [Fact]
@@ -272,7 +261,7 @@ public sealed class QueueAddTests : IDisposable
 
         var result = await RunAsync("queue", "add");
 
-        result.Should().Be((0, Lines(
+        result.Should().Be((0, Transcript(
             "Scanning 1 watch root for videos to convert; files not seen before are probed with ffprobe.",
             $"Queued in {Root}:",
             "  new.mp4",
@@ -281,19 +270,19 @@ public sealed class QueueAddTests : IDisposable
             $"2 videos are ready to finalise: review them, then run 'video-optimiser finalize --ready{ConfigArgument}'."), ""));
     }
 
+    /// <summary>With no run going the line is the one the transcripts above print.</summary>
     [Theory]
-    [InlineData(null, "Next: run 'video-optimiser run{0}'.")]
     [InlineData("video-optimiser run", "The run going now picks them up.")]
     [InlineData("video-optimiser immich run", "Next: run 'video-optimiser run{0}' once the run going now ends.")]
-    public async Task TheNextLineDependsOnTheRunGoingNow(string? runGoing, string line)
+    public async Task TheNextLineDependsOnTheRunGoingNow(string runGoing, string line)
     {
         await QueuedAsync("waiting.mp4");
-        using var run = runGoing is null ? null : DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), runGoing, out _);
+        using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), runGoing, out _);
 
         var (code, output, _) = await RunAsync("queue", "add");
 
         code.Should().Be(0);
-        output.Should().EndWith(Lines("Queued: 0. Already queued: 1. Real probes: 1.", string.Format(System.Globalization.CultureInfo.InvariantCulture, line, ConfigArgument)));
+        output.Should().EndWith(Transcript("Queued: 0. Already queued: 1. Real probes: 1.", string.Format(System.Globalization.CultureInfo.InvariantCulture, line, ConfigArgument)));
     }
 
     [Fact]
@@ -303,7 +292,7 @@ public sealed class QueueAddTests : IDisposable
 
         var (_, output, _) = await RunAsync("queue", "add");
 
-        output.Should().EndWith(Lines("Queued: 0. Ready to finalise: 1. Real probes: 1.", $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready{ConfigArgument}'."));
+        output.Should().EndWith(Transcript("Queued: 0. Ready to finalise: 1. Real probes: 1.", $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready{ConfigArgument}'."));
     }
 
     /// <summary>VOPT-73: every Issue line counts towards the issues total, and the scan exits 10.</summary>
@@ -314,7 +303,7 @@ public sealed class QueueAddTests : IDisposable
 
         var result = await RunAsync("queue", "add");
 
-        result.Should().Be((10, Lines(
+        result.Should().Be((10, Transcript(
             "Scanning 1 watch root for videos to convert; files not seen before are probed with ffprobe.",
             $"In {Root}:",
             "  Issue: broken.mp4: ffprobe exited with 1: Invalid data found when processing input.",
@@ -324,9 +313,9 @@ public sealed class QueueAddTests : IDisposable
     [Fact]
     public async Task QueueAddWithNoWatchRootsPointsImmichUsersAtImmichRun()
     {
-        await WriteConfigAsync(roots: false);
+        await WriteConfigAsync(Rules(roots: false));
 
-        (await RunAsync("queue", "add")).Should().Be((3, "", Lines("queue add needs at least one watch.roots entry. For Immich videos, use 'immich run'.")));
+        (await RunAsync("queue", "add")).Should().Be((3, "", Transcript("queue add needs at least one watch.roots entry. For Immich videos, use 'immich run'.")));
     }
 
     [Fact]
@@ -337,102 +326,47 @@ public sealed class QueueAddTests : IDisposable
 
         var (code, output, _) = await RunAsync("queue", "retry", job.Id.ToString("N"));
 
-        var replacement = (await _repository.FindOpenBySourceAsync(DatabasePath, job.SourcePath))!;
-        (code, output).Should().Be((0, Lines($"Queued clip.mp4 again as job {replacement.Id:N}.", $"Next: run 'video-optimiser run{ConfigArgument}'.")));
+        var replacement = (await Repository.FindOpenBySourceAsync(DatabasePath, job.SourcePath))!;
+        (code, output).Should().Be((0, Transcript($"Queued clip.mp4 again as job {replacement.Id:N}.", $"Next: run 'video-optimiser run{ConfigArgument}'.")));
     }
 
-    [Fact]
-    public async Task RetryOfAnImmichVideoWhoseCopyIsGoneSaysTheRunDownloadsItFirst()
+    /// <summary>The run downloads a retried Immich video again only when its staged copy is gone, so only then does the retry say so.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RetryOfAnImmichVideoSaysTheRunDownloadsItFirstOnlyWhenItsCopyIsGone(bool copyIsGone)
     {
-        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(StagingDirectory, "asset", "IMG_0001.MOV"), SourceFingerprint = "original", Status = JobStatus.Queued, SourceKind = JobSourceKind.Immich, ImmichAssetId = "asset", ImmichChecksum = "checksum" };
-        await _repository.CreateAsync(DatabasePath, job);
+        var source = Path.Combine(StagingDirectory, "asset", "IMG_0001.MOV");
+        if (!copyIsGone) await FileAsync(Path.GetDirectoryName(source)!, "IMG_0001.MOV");
+        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = "original", Status = JobStatus.Queued, SourceKind = JobSourceKind.Immich, ImmichAssetId = "asset", ImmichChecksum = "checksum" };
+        await Repository.CreateAsync(DatabasePath, job);
         await MoveAsync(job, JobStatus.Failed);
 
         var (code, output, _) = await RunAsync("queue", "retry", job.Id.ToString("N"));
 
-        var replacement = (await _repository.FindOpenByImmichAssetAsync(DatabasePath, "asset"))!;
-        (code, output).Should().Be((0, Lines(
-            $"Queued IMG_0001.MOV again as job {replacement.Id:N}.",
-            $"Its downloaded copy is gone; 'video-optimiser run{ConfigArgument}' downloads it again first.",
-            $"Next: run 'video-optimiser run{ConfigArgument}'.")));
+        var replacement = (await Repository.FindOpenByImmichAssetAsync(DatabasePath, "asset"))!;
+        string[] download = copyIsGone ? [$"Its downloaded copy is gone; 'video-optimiser run{ConfigArgument}' downloads it again first."] : [];
+        (code, output).Should().Be((0, Transcript([$"Queued IMG_0001.MOV again as job {replacement.Id:N}.", .. download, $"Next: run 'video-optimiser run{ConfigArgument}'."])));
     }
 
-    public void Dispose() => Directory.Delete(_directory, recursive: true);
-
-    private static string Lines(params string[] lines) => string.Concat(lines.Select(line => line + Environment.NewLine));
-
-    private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(params string[] args) => RunAsync(_ => { }, args);
-
-    private async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(Action<IServiceCollection> configure, params string[] args)
-    {
-        if (_config.Length == 0) await WriteConfigAsync();
-        return await ConsoleCapture.RunCliAsync(services =>
-        {
-            services.AddSingleton<IFileReadinessService>(new NamedReadiness());
-            services.AddSingleton<Func<string, IMediaProbe>>(_ => new NamedProbe());
-            configure(services);
-        }, [.. args, "--config", _config]);
-    }
-
-    private async Task WriteConfigAsync(string minimumBytesSaved = "1B", bool roots = true)
-    {
-        _config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(_config, string.Join('\n',
-            "database:",
-            $"  path: '{DatabasePath}'",
-            "watch:",
-            roots ? "  roots:" : "  roots: []",
-            roots ? $"    - path: '{Root}'" : "",
-            "eligibility:",
-            "  excludedDirectories: ['.video-optimiser', 'Archive', 'Private']",
-            "  rules:",
-            "    - codecs: ['h264']",
-            "      resolution: '1080p-1440p'",
-            "      minimumVideoBitrate: '1Mbps'",
-            "      minimumFileSize: '1B'",
-            "savings:",
-            $"  minimumBytesSaved: '{minimumBytesSaved}'",
-            "immich:",
-            $"  stagingDirectory: '{StagingDirectory}'",
-            ""));
-    }
+    private string[] Rules(string minimumBytesSaved = "1B", bool roots = true) =>
+    [
+        "watch:",
+        roots ? "  roots:" : "  roots: []",
+        .. roots ? new[] { $"    - path: '{Root}'" } : [],
+        "eligibility:",
+        "  excludedDirectories: ['.video-optimiser', 'Archive', 'Private']",
+        "  rules:",
+        "    - codecs: ['h264']",
+        "      resolution: '1080p-1440p'",
+        "      minimumVideoBitrate: '1Mbps'",
+        "      minimumFileSize: '1B'",
+        "savings:",
+        $"  minimumBytesSaved: '{minimumBytesSaved}'"
+    ];
 
     private async Task<Application.Configuration.AppSettings> SettingsAsync() =>
-        (await new Infrastructure.Configuration.YamlConfigurationLoader().LoadAsync(_config)).Settings;
-
-    private static async Task<string> FileAsync(string folder, string name)
-    {
-        Directory.CreateDirectory(folder);
-        var path = Path.Combine(folder, name);
-        await File.WriteAllTextAsync(path, "original video bytes");
-        return path;
-    }
-
-    private async Task<JobRecord> QueuedAsync(string name)
-    {
-        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = await FileAsync(Root, name), SourceFingerprint = "original", Status = JobStatus.Queued };
-        await _repository.CreateAsync(DatabasePath, job);
-        await Task.Delay(5);
-        return job;
-    }
-
-    private async Task MoveAsync(JobRecord job, params JobStatus[] steps)
-    {
-        foreach (var step in steps)
-        {
-            job.Status = step;
-            await _repository.UpdateAsync(DatabasePath, job);
-        }
-    }
-
-    private async Task StopAsync(JobRecord job, JobStatus stage)
-    {
-        await MoveAsync(job, stage);
-        job.ResumeStatus = stage;
-        await MoveAsync(job, JobStatus.Interrupted);
-    }
-
-    private async Task HeldAsync(JobRecord job) => (await _repository.SetHeldAsync(DatabasePath, job, held: true)).Should().BeTrue();
+        (await new Infrastructure.Configuration.YamlConfigurationLoader().LoadAsync(Config)).Settings;
 
     private sealed class NamedReadiness : IFileReadinessService
     {

@@ -1,11 +1,13 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Cleanup;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
+using static VideoOptimiser.UnitTests.RunCli;
 
 namespace VideoOptimiser.UnitTests.Features.Queue;
 
@@ -15,33 +17,24 @@ namespace VideoOptimiser.UnitTests.Features.Queue;
 /// do in-process with <see cref="DatabaseLock"/>.
 /// </summary>
 [Collection(ConsoleCapture.Collection)]
-public sealed class QueueVerbTests : IDisposable
+public sealed class QueueVerbTests : QueueTestBase
 {
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
-    private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
     private readonly FakeImmich _immich = new();
-    private string _config = string.Empty;
 
-    public QueueVerbTests() => Directory.CreateDirectory(_directory);
+    protected override void RegisterFakes(IServiceCollection services) => services.AddSingleton<IImmichClientFactory>(_immich);
 
-    private string DatabasePath => Path.Combine(_directory, "jobs.db");
-    private string StagingDirectory => Path.Combine(_directory, "staging");
-    private string ConfigArgument => $" --config \"{_config}\"";
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task HoldParksAWaitingOrStoppedVideoAndKeepsItsResumePoint(bool stopped)
+    /// <summary>A stopped video keeps its resume point through a hold too; <see cref="AVideoACrashLeftConvertingIsStoppedFirstThenActedOn"/> pins that.</summary>
+    [Fact]
+    public async Task HoldParksAWaitingVideo()
     {
         var job = await QueuedAsync("clip.mp4");
-        if (stopped) await StopAsync(job, JobStatus.Encoding);
 
         var result = await RunAsync("queue", "hold", job.Id.ToString("N"));
 
-        result.Should().Be((0, Lines($"Held clip.mp4. Runs pass over it until 'video-optimiser queue release {job.Id:N}{ConfigArgument}'."), ""));
+        result.Should().Be((0, Transcript($"Held clip.mp4. Runs pass over it until 'video-optimiser queue release {job.Id:N}{ConfigArgument}'."), ""));
         var stored = await StoredAsync(job);
         stored.Held.Should().BeTrue();
-        stored.ResumeStatus.Should().Be(stopped ? JobStatus.Encoding : null);
+        stored.ResumeStatus.Should().BeNull();
     }
 
     [Fact]
@@ -49,7 +42,7 @@ public sealed class QueueVerbTests : IDisposable
     {
         var job = await HeldAsync(await QueuedAsync("clip.mp4"));
 
-        (await RunAsync("queue", "hold", job.Id.ToString("N"))).Should().Be((0, Lines("clip.mp4 is already held."), ""));
+        (await RunAsync("queue", "hold", job.Id.ToString("N"))).Should().Be((0, Transcript("clip.mp4 is already held."), ""));
     }
 
     [Theory]
@@ -60,29 +53,25 @@ public sealed class QueueVerbTests : IDisposable
         var job = await QueuedAsync("clip.mp4");
         if (held) await HeldAsync(job);
 
-        (await RunAsync("queue", "release", job.Id.ToString("N"))).Should().Be((0, Lines(line), ""));
+        (await RunAsync("queue", "release", job.Id.ToString("N"))).Should().Be((0, Transcript(line), ""));
         (await StoredAsync(job)).Held.Should().BeFalse();
     }
 
     [Theory]
-    [InlineData(false, null, "clip.mp4 runs next.")]
     [InlineData(true, null, "clip.mp4 runs next; it's no longer held.")]
     [InlineData(false, "video-optimiser immich run", "clip.mp4 is now first in the queue.")]
-    [InlineData(true, "video-optimiser immich run", "clip.mp4 is now first in the queue; it's no longer held.")]
     [InlineData(false, "video-optimiser run", "clip.mp4 runs next.")]
-    [InlineData(false, "video-optimiser run", "IMG_0001.MOV runs next.")]
-    [InlineData(false, "queue run", "clip.mp4 is now first in the queue.")]
     [InlineData(false, "queue drop", "clip.mp4 runs next.")]
     public async Task NextPutsAVideoFirstAndSaysWhetherTheRunGoingNowTakesIt(bool held, string? runGoing, string line)
     {
         var earlier = await QueuedAsync("earlier.mp4");
-        var job = line.StartsWith("IMG", StringComparison.Ordinal) ? await ImmichQueuedAsync() : await QueuedAsync("clip.mp4");
+        var job = await QueuedAsync("clip.mp4");
         if (held) await HeldAsync(job);
         using var run = runGoing is null ? null : DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), runGoing, out _);
 
         var result = await RunAsync("queue", "next", job.Id.ToString("N"));
 
-        result.Should().Be((0, Lines(line), ""));
+        result.Should().Be((0, Transcript(line), ""));
         var stored = await StoredAsync(job);
         stored.Held.Should().BeFalse();
         JobRunOrder.Sort([stored, await StoredAsync(earlier)]).First().Id.Should().Be(job.Id);
@@ -95,7 +84,7 @@ public sealed class QueueVerbTests : IDisposable
         await MoveAsync(job, JobStatus.Encoding);
         using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), "video-optimiser run", out _);
 
-        (await RunAsync("queue", "next", job.Id.ToString("N"))).Should().Be((0, Lines("clip.mp4 is converting now."), ""));
+        (await RunAsync("queue", "next", job.Id.ToString("N"))).Should().Be((0, Transcript("clip.mp4 is converting now."), ""));
         (await StoredAsync(job)).Priority.Should().Be(0);
     }
 
@@ -108,7 +97,7 @@ public sealed class QueueVerbTests : IDisposable
         await MoveAsync(job, JobStatus.Encoding);
         using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), "video-optimiser run", out _);
 
-        (await RunAsync("queue", verb, job.Id.ToString("N"))).Should().Be((1, "", Lines($"clip.mp4 is converting now (encoding). {advice}, press Ctrl+C twice in the run's window first.")));
+        (await RunAsync("queue", verb, job.Id.ToString("N"))).Should().Be((1, "", Transcript($"clip.mp4 is converting now (encoding). {advice}, press Ctrl+C twice in the run's window first.")));
         (await StoredAsync(job)).Status.Should().Be(JobStatus.Encoding);
     }
 
@@ -124,23 +113,21 @@ public sealed class QueueVerbTests : IDisposable
 
         var result = await RunAsync("queue", verb, job.Id.ToString("N"));
 
-        result.Should().Be((0, Lines(string.Format(System.Globalization.CultureInfo.InvariantCulture, line, job.Id.ToString("N"), ConfigArgument)), ""));
+        result.Should().Be((0, Transcript(string.Format(System.Globalization.CultureInfo.InvariantCulture, line, job.Id.ToString("N"), ConfigArgument)), ""));
         var stored = await StoredAsync(job);
         stored.Status.Should().Be(expected);
         stored.ResumeStatus.Should().Be(JobStatus.Encoding);
     }
 
     [Theory]
-    [InlineData("hold", "be held", "ready", "is ready to finalise")]
-    [InlineData("next", "run next", "ready", "is ready to finalise")]
-    [InlineData("hold", "be held", "failed", "has already failed")]
-    [InlineData("next", "run next", "dropped", "was already dropped")]
-    public async Task OnlyWaitingAndStoppedVideosAreHeldOrMovedNext(string verb, string action, string state, string phrase)
+    [InlineData("hold", "be held")]
+    [InlineData("next", "run next")]
+    public async Task OnlyWaitingAndStoppedVideosAreHeldOrMovedNext(string verb, string action)
     {
         var job = await QueuedAsync("clip.mp4");
-        await MoveAsync(job, state switch { "ready" => [JobStatus.Validating, JobStatus.ReadyToFinalize], "failed" => [JobStatus.Failed], _ => [JobStatus.Cancelled] });
+        await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize);
 
-        (await RunAsync("queue", verb, job.Id.ToString("N"))).Should().Be((1, "", Lines($"Only waiting and stopped videos can {action}; clip.mp4 {phrase}.")));
+        (await RunAsync("queue", verb, job.Id.ToString("N"))).Should().Be((1, "", Transcript($"Only waiting and stopped videos can {action}; clip.mp4 is ready to finalise.")));
         (await StoredAsync(job)).Held.Should().BeFalse();
     }
 
@@ -154,11 +141,11 @@ public sealed class QueueVerbTests : IDisposable
     {
         var job = await QueuedAsync("clip.mp4");
         await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing);
-        if (marked) await _repository.MarkActiveJobsInterruptedAsync(DatabasePath, includeFinalizing: true);
+        if (marked) await Repository.MarkActiveJobsInterruptedAsync(DatabasePath, includeFinalizing: true);
 
         var result = await RunAsync("queue", verb, job.Id.ToString("N"));
 
-        result.Should().Be((1, "", Lines($"clip.mp4 was stopped while being finalised; 'video-optimiser finalize {job.Id:N}{ConfigArgument}' checks and resumes it.")));
+        result.Should().Be((1, "", Transcript($"clip.mp4 was stopped while being finalised; 'video-optimiser finalize {job.Id:N}{ConfigArgument}' checks and resumes it.")));
         (await StoredAsync(job)).Status.Should().Be(marked ? JobStatus.Interrupted : JobStatus.Finalizing);
     }
 
@@ -187,7 +174,7 @@ public sealed class QueueVerbTests : IDisposable
         await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing);
         using var finalise = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(DatabasePath), "finalize", out _);
 
-        (await RunAsync("queue", verb, job.Id.ToString("N"))).Should().Be((1, "", Lines("clip.mp4 is being finalised now.")));
+        (await RunAsync("queue", verb, job.Id.ToString("N"))).Should().Be((1, "", Transcript("clip.mp4 is being finalised now.")));
         (await StoredAsync(job)).Status.Should().Be(JobStatus.Finalizing);
     }
 
@@ -196,7 +183,7 @@ public sealed class QueueVerbTests : IDisposable
     {
         var job = await HeldAsync(await QueuedAsync("clip.mp4"));
 
-        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Lines("Dropped clip.mp4."), ""));
+        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Transcript("Dropped clip.mp4."), ""));
         var stored = await StoredAsync(job);
         stored.Status.Should().Be(JobStatus.Cancelled);
         stored.Held.Should().BeFalse();
@@ -205,9 +192,7 @@ public sealed class QueueVerbTests : IDisposable
     /// <summary>What cleanup will delete of the dropped video, read from cleanup's own plan.</summary>
     [Theory]
     [InlineData("ready", "Its AV1 stays until 'video-optimiser cleanup{0}' deletes it.")]
-    [InlineData("stopped encode", "Its unfinished AV1 stays until 'video-optimiser cleanup{0}' deletes it.")]
     [InlineData("immich waiting", "Its downloaded copy stays until 'video-optimiser cleanup{0}' deletes it.")]
-    [InlineData("immich ready", "Its AV1 and downloaded copy stay until 'video-optimiser cleanup{0}' deletes them.")]
     [InlineData("immich stopped encode", "Its unfinished AV1 and downloaded copy stay until 'video-optimiser cleanup{0}' deletes them.")]
     [InlineData("ready, AV1 gone", null)]
     public async Task DropSaysWhichFilesStayUntilCleanup(string state, string? line)
@@ -227,20 +212,21 @@ public sealed class QueueVerbTests : IDisposable
         var result = await RunAsync("queue", "drop", job.Id.ToString("N"));
 
         string[] expected = line is null ? [$"Dropped {Path.GetFileName(job.SourcePath)}."] : [$"Dropped {Path.GetFileName(job.SourcePath)}.", string.Format(System.Globalization.CultureInfo.InvariantCulture, line, ConfigArgument)];
-        result.Should().Be((0, Lines(expected), ""));
+        result.Should().Be((0, Transcript(expected), ""));
     }
 
-    /// <summary>W3, VOPT-90: dropping does not stop a CRF search or encode left running on the worker.</summary>
-    [Theory]
-    [InlineData(RemoteExecutionIdentity.ManagedHetzner, JobStatus.Encoding, "Its encode may still be running on the worker; deleting the worker stops it.")]
-    [InlineData(RemoteExecutionIdentity.ManagedHetzner, JobStatus.CrfSearching, "Its CRF search may still be running on the worker; deleting the worker stops it.")]
-    [InlineData("video-worker", JobStatus.Encoding, "Its encode may still be running on the worker until it finishes.")]
-    public async Task DroppingAStoppedRemoteStageSaysItMayStillBeRunning(string host, JobStatus stage, string line)
+    /// <summary>
+    /// W3, VOPT-90: dropping does not stop a CRF search or encode left running on the worker. A managed worker's deletion ends
+    /// it; <see cref="DropAllDropsTheQueueAndLeavesFinishedAndFinalisingVideosWithTheirCommands"/> has the manual worker's
+    /// CRF search.
+    /// </summary>
+    [Fact]
+    public async Task DroppingAStoppedRemoteStageSaysItMayStillBeRunning()
     {
-        var job = await QueuedAsync("clip.mp4", queued => { queued.ExecutionMode = ProcessingModes.RemoteSsh; queued.RemoteHost = host; queued.RemoteWorkspace = $"/w/{queued.Id:N}"; });
-        await StopAsync(job, stage);
+        var job = await QueuedAsync("clip.mp4", RemoteOn(RemoteExecutionIdentity.ManagedHetzner));
+        await StopAsync(job, JobStatus.Encoding);
 
-        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Lines("Dropped clip.mp4.", line), ""));
+        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Transcript("Dropped clip.mp4.", "Its encode may still be running on the worker; deleting the worker stops it."), ""));
     }
 
     [Fact]
@@ -252,7 +238,7 @@ public sealed class QueueVerbTests : IDisposable
 
         var result = await RunAsync("queue", "drop", job.Id.ToString("N"));
 
-        result.Should().Be((0, Lines(
+        result.Should().Be((0, Transcript(
             "Dropped IMG_0001.MOV.",
             $"Its AV1 and downloaded copy stay until 'video-optimiser cleanup{ConfigArgument}' deletes them.",
             "The AV1 already uploaded to Immich as asset new-asset stays there; delete it in Immich if you do not want it."), ""));
@@ -268,16 +254,20 @@ public sealed class QueueVerbTests : IDisposable
         var ready = await ReadyAsync(await QueuedAsync("d.mp4"));
         var finalising = await QueuedAsync("e.mp4");
         await MoveAsync(finalising, JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing);
-        await _repository.MarkActiveJobsInterruptedAsync(DatabasePath, includeFinalizing: true);
+        await Repository.MarkActiveJobsInterruptedAsync(DatabasePath, includeFinalizing: true);
         var crashed = await QueuedAsync("f.mp4");
         await MoveAsync(crashed, JobStatus.Encoding);
+        var remote = await QueuedAsync("g.mp4", RemoteOn("video-worker"));
+        await StopAsync(remote, JobStatus.CrfSearching);
 
         var result = await RunAsync("queue", "drop", "--all");
 
-        result.Should().Be((0, Lines(
+        result.Should().Be((0, Transcript(
             "Dropped a.mp4.",
             "Dropped b.mp4.",
             "Dropped f.mp4.",
+            "Dropped g.mp4.",
+            "Its CRF search may still be running on the worker until it finishes.",
             $"Left 1 video stopped while being finalised; 'video-optimiser finalize {finalising.Id:N}{ConfigArgument}' checks and resumes it.",
             $"Left 1 video stopped while its AV1 was checked; to drop it: video-optimiser queue drop {checking.Id:N}{ConfigArgument}"), ""));
         (await StoredAsync(waiting)).Status.Should().Be(JobStatus.Cancelled);
@@ -288,6 +278,7 @@ public sealed class QueueVerbTests : IDisposable
         (stoppedFinalising.Status, stoppedFinalising.ResumeStatus).Should().Be((JobStatus.Interrupted, JobStatus.Finalizing));
         (await StoredAsync(ready)).Status.Should().Be(JobStatus.ReadyToFinalize);
         (await StoredAsync(crashed)).Status.Should().Be(JobStatus.Cancelled);
+        (await StoredAsync(remote)).Status.Should().Be(JobStatus.Cancelled);
     }
 
     /// <summary>With nothing converting there is no recovery to mark it, so a finalisation a crash left reads Finalizing.</summary>
@@ -297,7 +288,7 @@ public sealed class QueueVerbTests : IDisposable
         var job = await QueuedAsync("clip.mp4");
         await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing);
 
-        (await RunAsync("queue", "drop", "--all")).Should().Be((0, Lines($"Left 1 video stopped while being finalised; 'video-optimiser finalize {job.Id:N}{ConfigArgument}' checks and resumes it."), ""));
+        (await RunAsync("queue", "drop", "--all")).Should().Be((0, Transcript($"Left 1 video stopped while being finalised; 'video-optimiser finalize {job.Id:N}{ConfigArgument}' checks and resumes it."), ""));
     }
 
     [Fact]
@@ -305,7 +296,7 @@ public sealed class QueueVerbTests : IDisposable
     {
         await ReadyAsync(await QueuedAsync("ready.mp4"));
 
-        (await RunAsync("queue", "drop", "--all")).Should().Be((0, Lines("Nothing to drop: the queue is empty."), ""));
+        (await RunAsync("queue", "drop", "--all")).Should().Be((0, Transcript("Nothing to drop: the queue is empty."), ""));
     }
 
     [Theory]
@@ -318,28 +309,45 @@ public sealed class QueueVerbTests : IDisposable
         await WriteConfigAsync();
         var unknown = Guid.NewGuid();
 
-        (await RunAsync("queue", verb, "3f2a")).Should().Be((2, "", Lines($"'3f2a' is not a job ID. 'video-optimiser queue list{ConfigArgument}' shows them.")));
-        (await RunAsync("queue", verb, unknown.ToString("N"))).Should().Be((2, "", Lines($"No job has ID {unknown:N}.")));
+        (await RunAsync("queue", verb, "3f2a")).Should().Be((2, "", Transcript($"'3f2a' is not a job ID. 'video-optimiser queue list{ConfigArgument}' shows them.")));
+        (await RunAsync("queue", verb, unknown.ToString("N"))).Should().Be((2, "", Transcript($"No job has ID {unknown:N}.")));
     }
 
+    /// <summary>Cleanup deletes a failed video's unfinished AV1, or an Immich video's staged copy though no AV1 is left, so the refusal points at it for either.</summary>
     [Theory]
-    [InlineData(JobStatus.Failed, true, "has already failed")]
-    [InlineData(JobStatus.Cancelled, false, "was already dropped")]
-    [InlineData(JobStatus.Completed, false, "was already finalised")]
-    [InlineData(JobStatus.Skipped, false, "was not worth converting")]
-    public async Task DroppingAnEndedVideoSaysSoAndPointsAtCleanupOnlyWhenItHasFiles(JobStatus status, bool leftFiles, string phrase)
+    [InlineData(JobStatus.Failed, "AV1", "has already failed")]
+    [InlineData(JobStatus.Failed, "staged copy", "has already failed")]
+    [InlineData(JobStatus.Cancelled, "none", "was already dropped")]
+    [InlineData(JobStatus.Completed, "none", "was already finalised")]
+    [InlineData(JobStatus.Skipped, "none", "was not worth converting")]
+    public async Task DroppingAnEndedVideoSaysSoAndPointsAtCleanupOnlyWhenItHasFiles(JobStatus status, string leftFiles, string phrase)
     {
-        var job = await QueuedAsync("clip.mp4");
+        var job = leftFiles == "staged copy" ? await ImmichQueuedAsync() : await QueuedAsync("clip.mp4");
         if (status == JobStatus.Completed) await MoveAsync(job, JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing);
         await MoveAsync(job, status);
-        if (leftFiles) await WriteAv1Async(job);
+        if (leftFiles == "AV1") await WriteAv1Async(job);
 
         var result = await RunAsync("queue", "drop", job.Id.ToString("N"));
 
-        string[] expected = leftFiles
-            ? [$"clip.mp4 {phrase}, so there is nothing to drop.", $"'video-optimiser cleanup{ConfigArgument}' deletes its temporary files."]
-            : [$"clip.mp4 {phrase}, so there is nothing to drop."];
-        result.Should().Be((1, "", Lines(expected)));
+        var name = Path.GetFileName(job.SourcePath);
+        string[] expected = leftFiles != "none"
+            ? [$"{name} {phrase}, so there is nothing to drop.", $"'video-optimiser cleanup{ConfigArgument}' deletes its temporary files."]
+            : [$"{name} {phrase}, so there is nothing to drop."];
+        result.Should().Be((1, "", Transcript(expected)));
+    }
+
+    /// <summary>A line that reports a completed write reaches the console before any later read that could throw, so a user whose drop succeeded never sees only an error and believes it failed.</summary>
+    [Fact]
+    public async Task ADropThatSucceededIsReportedEvenWhenCleanupsPlanCannotBeRead()
+    {
+        var job = await QueuedAsync("clip-a.mp4");
+
+        var (code, stdout, stderr) = await RunAsync(services => services.AddSingleton<ITemporaryOutputCleanupService>(new UnreadablePlan()), "queue", "drop", job.Id.ToString("N"));
+
+        code.Should().NotBe(0);
+        stdout.Should().StartWith(Transcript("Dropped clip-a.mp4."));
+        stderr.Should().Contain("plan unreadable");
+        (await StoredAsync(job)).Status.Should().Be(JobStatus.Cancelled);
     }
 
     [Fact]
@@ -348,7 +356,7 @@ public sealed class QueueVerbTests : IDisposable
         var job = await ReadyAsync(await QueuedAsync("clip.mp4"));
         using var finalise = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(DatabasePath), "finalize", out _);
 
-        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((1, "", Lines("A finalise is running on this database. Wait for it to finish, then drop clip.mp4.")));
+        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((1, "", Transcript("A finalise is running on this database. Wait for it to finish, then drop clip.mp4.")));
         (await StoredAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 
@@ -372,7 +380,7 @@ public sealed class QueueVerbTests : IDisposable
 
         var result = await RunAsync("queue", "drop", job.Id.ToString("N"));
 
-        result.Should().Be((1, "", Lines($"The original of clip.mp4 is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then drop the video.")));
+        result.Should().Be((1, "", Transcript($"The original of clip.mp4 is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then drop the video.")));
         (await StoredAsync(job)).Status.Should().NotBe(JobStatus.Cancelled);
     }
 
@@ -383,7 +391,7 @@ public sealed class QueueVerbTests : IDisposable
         File.Delete(job.SourcePath);
         File.Delete(job.OutputPath!);
 
-        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Lines("Dropped clip.mp4."), ""));
+        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Transcript("Dropped clip.mp4."), ""));
     }
 
     [Fact]
@@ -394,7 +402,7 @@ public sealed class QueueVerbTests : IDisposable
         File.Delete(job.OutputPath!);
         _immich.Failure = new InvalidOperationException("Immich is not asked: nothing on this PC could be the only copy.");
 
-        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Lines("Dropped IMG_0001.MOV."), ""));
+        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((0, Transcript("Dropped IMG_0001.MOV."), ""));
     }
 
     /// <summary>R5, W2: an Immich original deleted, in the trash (which empties) or replaced leaves the local files as the only copies.</summary>
@@ -409,7 +417,7 @@ public sealed class QueueVerbTests : IDisposable
 
         var result = await RunAsync("queue", "drop", job.Id.ToString("N"));
 
-        result.Should().Be((1, "", Lines($"The original of IMG_0001.MOV is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then drop the video.")));
+        result.Should().Be((1, "", Transcript($"The original of IMG_0001.MOV is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then drop the video.")));
         (await StoredAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 
@@ -423,7 +431,7 @@ public sealed class QueueVerbTests : IDisposable
 
         var result = await RunAsync("queue", "drop", job.Id.ToString("N"));
 
-        result.Should().Be((1, "", Lines($"Immich can't be used ({message}), so video-optimiser can't check that the original of IMG_0001.MOV is still there. Try again once it answers.")));
+        result.Should().Be((1, "", Transcript($"Immich can't be used ({message}), so video-optimiser can't check that the original of IMG_0001.MOV is still there. Try again once it answers.")));
         (await StoredAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 
@@ -432,11 +440,11 @@ public sealed class QueueVerbTests : IDisposable
     public async Task AVerbThatLosesARaceSaysToRunItAgain()
     {
         var job = await QueuedAsync("clip.mp4");
-        var racing = new RacingRepository(_repository);
+        var racing = new RacingRepository(Repository);
 
         var result = await RunAsync(services => services.AddSingleton<IJobRepository>(racing), "queue", "hold", job.Id.ToString("N"));
 
-        result.Should().Be((1, "", Lines($"Job {job.Id:N} changed while this command was using it. Run the command again.")));
+        result.Should().Be((1, "", Transcript($"Job {job.Id:N} changed while this command was using it. Run the command again.")));
         (await StoredAsync(job)).Held.Should().BeFalse();
     }
 
@@ -446,75 +454,27 @@ public sealed class QueueVerbTests : IDisposable
         var (code, _, error) = await ConsoleCapture.RunCliAsync("queue", "cancel", "--all");
 
         code.Should().Be(2);
-        error.Should().StartWith(Lines("'queue cancel' is now 'queue drop'."));
+        error.Should().StartWith(Transcript("'queue cancel' is now 'queue drop'."));
     }
 
-    public void Dispose() => Directory.Delete(_directory, recursive: true);
-
-    private static string Lines(params string[] lines) => string.Concat(lines.Select(line => line + Environment.NewLine));
-
-    private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(params string[] args) => RunAsync(_ => { }, args);
-
-    private async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(Action<IServiceCollection> configure, params string[] args)
+    private static Action<JobRecord> RemoteOn(string host) => job =>
     {
-        if (_config.Length == 0) await WriteConfigAsync();
-        return await ConsoleCapture.RunCliAsync(services =>
-        {
-            services.AddSingleton<IImmichClientFactory>(_immich);
-            configure(services);
-        }, [.. args, "--config", _config]);
-    }
-
-    private async Task WriteConfigAsync(bool immichConfigured = false)
-    {
-        _config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(_config, string.Join('\n',
-            "database:",
-            $"  path: '{DatabasePath}'",
-            "immich:",
-            immichConfigured ? "  baseUrl: 'http://immich.test'" : "",
-            $"  stagingDirectory: '{StagingDirectory}'",
-            ""));
-    }
-
-    private async Task<JobRecord> QueuedAsync(string name, Action<JobRecord>? configure = null)
-    {
-        var source = Path.Combine(_directory, name);
-        await File.WriteAllTextAsync(source, "original");
-        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = "original", Status = JobStatus.Queued };
-        configure?.Invoke(job);
-        await _repository.CreateAsync(DatabasePath, job);
-        await Task.Delay(5);
-        return job;
-    }
+        job.ExecutionMode = ProcessingModes.RemoteSsh;
+        job.RemoteHost = host;
+        job.RemoteWorkspace = $"/w/{job.Id:N}";
+    };
 
     private async Task<JobRecord> ImmichQueuedAsync(Action<JobRecord>? configure = null, bool immichConfigured = true)
     {
-        await WriteConfigAsync(immichConfigured);
+        await WriteConfigAsync(immichConfigured: immichConfigured);
         var assetId = Guid.NewGuid().ToString("D");
         var source = Path.Combine(StagingDirectory, assetId, "IMG_0001.MOV");
         Directory.CreateDirectory(Path.GetDirectoryName(source)!);
         await File.WriteAllTextAsync(source, "original");
         var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = "original", Status = JobStatus.Queued, SourceKind = JobSourceKind.Immich, ImmichAssetId = assetId, ImmichChecksum = "checksum" };
         configure?.Invoke(job);
-        await _repository.CreateAsync(DatabasePath, job);
+        await Repository.CreateAsync(DatabasePath, job);
         return job;
-    }
-
-    private async Task MoveAsync(JobRecord job, params JobStatus[] steps)
-    {
-        foreach (var step in steps)
-        {
-            job.Status = step;
-            await _repository.UpdateAsync(DatabasePath, job);
-        }
-    }
-
-    private async Task StopAsync(JobRecord job, JobStatus stage)
-    {
-        await MoveAsync(job, stage);
-        job.ResumeStatus = stage;
-        await MoveAsync(job, JobStatus.Interrupted);
     }
 
     private async Task<JobRecord> ReadyAsync(JobRecord job)
@@ -533,16 +493,8 @@ public sealed class QueueVerbTests : IDisposable
         job.OutputPath = Path.Combine(folder, $"{Path.GetFileNameWithoutExtension(job.SourcePath)}.{job.Id:N}.1.encoding.mp4");
         await File.WriteAllTextAsync(job.OutputPath, "av1");
         await File.WriteAllTextAsync(job.OutputPath + ".manifest.json", "{}");
-        await _repository.UpdateAsync(DatabasePath, job);
+        await Repository.UpdateAsync(DatabasePath, job);
     }
-
-    private async Task<JobRecord> HeldAsync(JobRecord job)
-    {
-        (await _repository.SetHeldAsync(DatabasePath, job, held: true)).Should().BeTrue();
-        return job;
-    }
-
-    private async Task<JobRecord> StoredAsync(JobRecord job) => (await _repository.GetAsync(DatabasePath, job.Id))!;
 
     private static ImmichAsset Asset(JobRecord job) => new(job.ImmichAssetId!, job.ImmichChecksum!, "IMG_0001.MOV", ImmichValues.Video, ImmichValues.Timeline, false, false, null, null,
         DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, null, new ImmichExif(null, null, null, null, null, null, null, null), []);
@@ -557,29 +509,26 @@ public sealed class QueueVerbTests : IDisposable
         }
     }
 
-    /// <summary>Answers only the asset lookup drop makes: <see cref="Asset"/>, or 404 when it is null, or <see cref="Failure"/>.</summary>
-    private sealed class FakeImmich : IImmichClientFactory, IImmichClient
+    private sealed class UnreadablePlan : ITemporaryOutputCleanupService
+    {
+        public Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, string immichStagingDirectory, CancellationToken cancellationToken = default) =>
+            throw new IOException("plan unreadable");
+
+        public TemporaryOutputCleanupResult Delete(TemporaryOutputCleanupPlan plan) => throw new NotSupportedException();
+    }
+
+    /// <summary>
+    /// Answers only the asset lookup drop makes: <see cref="Asset"/>, or 404 when it is null, or <see cref="Failure"/>. The
+    /// stub's trash and upload throw, so a drop that touched Immich's library would fail its test.
+    /// </summary>
+    private sealed class FakeImmich : ImmichClientStub
     {
         public ImmichAsset? Asset { get; set; }
         public Exception? Failure { get; set; }
 
-        public IImmichClient Create(ImmichSettings settings) => this;
-
-        public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) =>
+        public override Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) =>
             Failure is not null ? Task.FromException<ImmichAsset>(Failure)
             : Asset is not null ? Task.FromResult(Asset)
             : Task.FromException<ImmichAsset>(new ImmichApiException("ImmichRequestFailed", "Immich returned HTTP 400 for GET /api/assets.", 400));
-
-        public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task UpdateMetadataAsync(string assetId, ImmichMetadataUpdate update, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

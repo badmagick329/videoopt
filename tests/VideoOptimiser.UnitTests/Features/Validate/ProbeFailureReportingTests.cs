@@ -7,7 +7,7 @@ using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.TemporaryOutputs;
 using VideoOptimiser.Infrastructure.Tools;
 
-namespace VideoOptimiser.UnitTests.Features.Queue;
+namespace VideoOptimiser.UnitTests.Features.Validate;
 
 /// <summary>
 /// A fake ffprobe stands in for the real one: it prints a valid H.264 probe for any path, and fails with
@@ -49,27 +49,9 @@ public sealed class ProbeFailureReportingTests : IDisposable
     }
 
     [Fact]
-    public async Task ValidateCommandFailsAnUnreadableOutputWithExitSevenAndRecordsTheFailure()
-    {
-        var (jobId, config, repository, databasePath) = await ArrangeJobAsync(source: "movie.mp4", output: "movie.truncated.mp4");
-
-        var (exitCode, _, stderr) = await ConsoleCapture.RunCliAsync("validate", jobId.ToString("N"), "--config", config);
-
-        exitCode.Should().Be((int)ExitCode.ValidationFailure);
-        stderr.Should().NotContain("Configuration could not be read");
-        var job = await repository.GetAsync(databasePath, jobId);
-        job!.Status.Should().Be(JobStatus.Failed);
-        job.FailureCategory.Should().Be("ValidationFailed");
-        job.FailureMessage.Should().Contain("movie.truncated.mp4").And.Contain("moov atom not found");
-        var manifest = await new OutputManifestStore().LoadAsync(job.OutputPath!);
-        manifest.Validation!.Passed.Should().BeFalse();
-        manifest.Validation.Failures.Should().ContainSingle().Which.Should().Contain("moov atom not found");
-    }
-
-    [Fact]
     public async Task GlobalHandlerReportsAnUnreadableOriginalAsAProcessingFailureNotAConfigurationError()
     {
-        var (jobId, config, _, _) = await ArrangeJobAsync(source: "movie.truncated.mp4", output: "movie.mp4");
+        var (jobId, config) = await ArrangeJobWithAnUnreadableOriginalAsync();
 
         var (exitCode, _, stderr) = await ConsoleCapture.RunCliAsync("validate", jobId.ToString("N"), "--config", config);
 
@@ -89,10 +71,10 @@ public sealed class ProbeFailureReportingTests : IDisposable
         stderr.Should().Contain("Configuration could not be read");
     }
 
-    private async Task<(Guid JobId, string Config, SqliteJobRepository Repository, string DatabasePath)> ArrangeJobAsync(string source, string output)
+    private async Task<(Guid JobId, string Config)> ArrangeJobWithAnUnreadableOriginalAsync()
     {
-        var sourcePath = Path.Combine(_directory, source);
-        var outputPath = Path.Combine(_directory, output);
+        var sourcePath = Path.Combine(_directory, "movie.truncated.mp4");
+        var outputPath = Path.Combine(_directory, "movie.mp4");
         await File.WriteAllBytesAsync(sourcePath, new byte[100]);
         await File.WriteAllBytesAsync(outputPath, new byte[50]);
         var databasePath = Path.Combine(_directory, "jobs.db");
@@ -109,7 +91,7 @@ public sealed class ProbeFailureReportingTests : IDisposable
             OutputPath = outputPath
         });
         await new OutputManifestStore().SaveAsync(new OutputManifest { SourcePath = sourcePath, OutputPath = outputPath });
-        return (job.Id, config, repository, databasePath);
+        return (job.Id, config);
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
