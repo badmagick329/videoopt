@@ -22,6 +22,13 @@ internal sealed class ValidateCommand(IJobRepository repository, IOutputManifest
             WriteError($"validate re-checks a job that is ready to finalise; {job.Id:N} is {job.Status}.");
             return (int)ExitCode.ProcessingFailure;
         }
+        // VOPT-91. A job stopped while its AV1 was checked can be held, and the write that records the verdict is refused for a
+        // held row. Refusing first keeps the record and the job as they were instead of saving one without the other.
+        if (job.Held)
+        {
+            WriteError($"{Path.GetFileName(job.SourcePath)} is held. To check its AV1, run '{command.Hint($"queue release {job.Id:N}")}' first.");
+            return (int)ExitCode.ProcessingFailure;
+        }
         if (job.OutputPath is null) { WriteError("Job or temporary output was not found."); return (int)ExitCode.ProcessingFailure; }
         // Validation would fail the job, and cleanup then deletes an AV1 that may be the only copy, so a missing file is
         // reported and the job left as it is.

@@ -129,6 +129,32 @@ public sealed class ValidateCommandTests : IDisposable
         _validation.Calls.Should().Be(0);
     }
 
+    /// <summary>
+    /// VOPT-91: a held job stopped while its AV1 was checked passes the status check. Validating it would save the record
+    /// and then fail the write to the held row, every time, so the refusal comes first and nothing is written.
+    /// </summary>
+    [Fact]
+    public async Task AHeldJobIsRefusedBeforeAnythingIsValidatedOrWritten()
+    {
+        var job = await CreateReadyJobAsync(after: [JobStatus.Validating]);
+        job.ResumeStatus = JobStatus.Validating;
+        job.Status = JobStatus.Interrupted;
+        await _repository.UpdateAsync(DatabasePath, job);
+        (await _repository.SetHeldAsync(DatabasePath, job, held: true)).Should().BeTrue();
+        var manifestPath = new OutputManifestStore().GetPath(job.OutputPath!);
+        var before = await File.ReadAllTextAsync(manifestPath);
+
+        var (code, stdout, stderr) = await RunAsync(job.Id.ToString("N"));
+
+        code.Should().Be((int)ExitCode.ProcessingFailure);
+        stdout.Should().BeEmpty();
+        stderr.ReplaceLineEndings("\n").Should().Be($"clip-a.mp4 is held. To check its AV1, run 'video-optimiser queue release {job.Id:N} --config \"{ConfigPath}\"' first.\n");
+        (await File.ReadAllTextAsync(manifestPath)).Should().Be(before);
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        (stored.Status, stored.ResumeStatus, stored.Held).Should().Be((JobStatus.Interrupted, JobStatus.Validating, true));
+        _validation.Calls.Should().Be(0);
+    }
+
     [Fact]
     public async Task APassRecordsTheSavingsClearsAnOldFailureAndReadiesTheJob()
     {
