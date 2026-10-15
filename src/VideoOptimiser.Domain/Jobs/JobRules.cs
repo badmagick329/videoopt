@@ -25,6 +25,10 @@ public static class JobStateTransitions
         // A finalisation that stops before completing returns to ready, from Finalizing or after a crash from Interrupted:
         // each Immich step can run again, and a file job returns only when nothing moved (VOPT-70).
         (JobStatus.Finalizing, JobStatus.ReadyToFinalize or JobStatus.Completed or JobStatus.Failed or JobStatus.Interrupted) => true,
+        // Failed is final except for one case (VOPT-85): before VOPT-70 a Ctrl+C during a folder job's finalisation, even before any
+        // file moved, failed it for review. The table sees statuses only, so FinalizationService alone gates this, and only after
+        // it shows that the original and the AV1 are where they started; nothing else may take a failed job back.
+        (JobStatus.Failed, JobStatus.ReadyToFinalize) => true,
         (JobStatus.Interrupted, JobStatus.ReadyToFinalize or JobStatus.Queued or JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Downloading or JobStatus.Validating or JobStatus.Failed or JobStatus.Cancelled) => true,
         _ => false
     };
@@ -77,6 +81,14 @@ public static class FinalizationRules
     /// otherwise it needs review (VOPT-70).
     /// </summary>
     public static bool IsInterruptedFile(JobRecord job) => job.SourceKind == JobSourceKind.File && IsInterrupted(job);
+
+    /// <summary>
+    /// A file job that failed for review after its finalisation was cut off: an older version failed it even when nothing had
+    /// moved, and the review path still does when something did. Only <c>finalize &lt;id&gt;</c> re-checks it, since a
+    /// job in this state may have nothing left to finalise; <c>finalize --ready</c> and runs leave it alone (VOPT-85).
+    /// </summary>
+    public static bool IsFailedFileReview(JobRecord job) =>
+        job is { SourceKind: JobSourceKind.File, Status: JobStatus.Failed, ResumeStatus: JobStatus.Finalizing, FailureCategory: FailureCategories.ManualInterventionRequired };
 
     private static bool IsInterrupted(JobRecord job) =>
         job.Status == JobStatus.Finalizing || job.Status == JobStatus.Interrupted && job.ResumeStatus == JobStatus.Finalizing;

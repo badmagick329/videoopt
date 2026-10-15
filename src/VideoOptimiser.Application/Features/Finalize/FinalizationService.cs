@@ -17,7 +17,8 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             FinalizationRules.ReturnToReady(job, FinalizationRules.InterruptedMessage);
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
         }
-        var resumingFile = FinalizationRules.IsInterruptedFile(job);
+        // A failed review is checked again like an interrupted file: VOPT-85, jobs an older version failed with nothing moved.
+        var resumingFile = FinalizationRules.IsInterruptedFile(job) || FinalizationRules.IsFailedFileReview(job);
         if (job.Status != JobStatus.ReadyToFinalize && !resumingFile || job.OutputPath is null) return new FinalizationResult(job, ExitCode.ValidationFailure, "Job is not ready to finalise.");
         var fromImmich = job.SourceKind == JobSourceKind.Immich;
         // VOPT-60: a missing file stops only this job, which stays as it is, so a batch finalises the rest and prints its
@@ -127,6 +128,8 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
     /// </summary>
     private async Task<FinalizationResult> RequireReviewAsync(string databasePath, JobRecord job)
     {
+        // Already failed for review: the check found it still so, and rewriting would only move its failure time.
+        if (FinalizationRules.IsFailedFileReview(job)) return new FinalizationResult(job, ExitCode.FinalisationFailure, FinalizationRules.ManualReviewMessage);
         job.Status = JobStatus.Failed;
         job.ResumeStatus = JobStatus.Finalizing;
         job.FailureCategory = FailureCategories.ManualInterventionRequired;

@@ -157,6 +157,25 @@ public sealed class ImmichFinalizationTests : IDisposable
         _immich.Get(original.Id).IsTrashed.Should().BeTrue();
     }
 
+    /// <summary>VOPT-85 takes back only a folder job's failed finalisation; an Immich job with the same marks stays failed.</summary>
+    [Fact]
+    public async Task FinalizeDoesNotTakeBackAFailedImmichJobMarkedForReview()
+    {
+        var original = _immich.Add("PXL.mp4", "original");
+        var job = await ReadyJobAsync(original);
+        job.Status = JobStatus.Failed;
+        job.ResumeStatus = JobStatus.Finalizing;
+        job.FailureCategory = FailureCategories.ManualInterventionRequired;
+        await _repository.UpdateAsync(_settings.Database.Path, job);
+
+        var result = await FinalizeAsync(job);
+
+        result.ExitCode.Should().Be(ExitCode.ValidationFailure);
+        result.Message.Should().Be("Job is not ready to finalise.");
+        (await JobAsync(job)).Status.Should().Be(JobStatus.Failed);
+        _immich.Get(original.Id).IsTrashed.Should().BeFalse();
+    }
+
     [Fact]
     public async Task SavesTheUploadedAssetIdBeforeCopyingAnything()
     {

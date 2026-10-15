@@ -118,6 +118,50 @@ public sealed class FolderFinalizationTests : IDisposable
         File.Exists(output).Should().BeTrue();
     }
 
+    /// <summary>
+    /// VOPT-85: before VOPT-70 a Ctrl+C even before any file moved left the job failed for review. Its files are as they were
+    /// and the AV1 is validated, so `finalize` takes it back instead of leaving only `queue retry`, which encodes again.
+    /// </summary>
+    [Fact]
+    public async Task AFailedFinalisationWhoseFilesNeverMovedFinalises()
+    {
+        var (settings, job, source, _) = await ReadyJobAsync();
+        await FailAsAnOlderVersionDidAsync(settings, job);
+
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        var stored = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Completed);
+        stored.FailureCategory.Should().BeNull();
+        stored.FailureMessage.Should().BeNull();
+        stored.ResumeStatus.Should().BeNull();
+        (await File.ReadAllTextAsync(source)).Should().Be("av1");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AFailedFinalisationWhoseFilesMovedStaysFailedAndCleanupKeepsTheAv1(bool originalEdited)
+    {
+        var (settings, job, source, output) = await ReadyJobAsync();
+        await FailAsAnOlderVersionDidAsync(settings, job);
+        var failedUtc = (await _repository.GetAsync(settings.Database.Path, job.Id))!.CompletedUtc;
+        if (originalEdited) await File.WriteAllTextAsync(source, "edited since");
+        else File.Move(source, Path.Combine(_directory, "movie.pending-delete.mp4"));
+
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Be("Finalisation was interrupted and requires manual review.");
+        var stored = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Failed);
+        stored.FailureCategory.Should().Be("ManualInterventionRequired");
+        stored.CompletedUtc.Should().Be(failedUtc, "a check that changed nothing leaves the record as it was");
+        TemporaryOutputClassifier.AbandonedReason(stored, stored.Attempt).Should().BeNull();
+        File.Exists(output).Should().BeTrue();
+    }
+
     /// <summary>Without the validation record nothing proves the files never moved, so it is reviewed, not converted again.</summary>
     [Fact]
     public async Task AnInterruptedFinalisationWithoutItsValidationRecordNeedsReview()
@@ -188,6 +232,18 @@ public sealed class FolderFinalizationTests : IDisposable
         job.Status = JobStatus.Finalizing;
         await _repository.UpdateAsync(settings.Database.Path, job);
         await _repository.MarkActiveJobsInterruptedAsync(settings.Database.Path, includeFinalizing: true);
+    }
+
+    /// <summary>The state a Ctrl+C during `finalize` left before VOPT-70: failed for review, nothing moved.</summary>
+    private async Task FailAsAnOlderVersionDidAsync(AppSettings settings, JobRecord job)
+    {
+        await InterruptFinalizationAsync(settings, job);
+        job = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+        job.Status = JobStatus.Failed;
+        job.FailureCategory = FailureCategories.ManualInterventionRequired;
+        job.FailureMessage = FinalizationRules.ManualReviewMessage;
+        job.CompletedUtc = DateTimeOffset.UtcNow.AddHours(-1);
+        await _repository.UpdateAsync(settings.Database.Path, job);
     }
 
     private sealed class CancelledFingerprints : IFileFingerprintService
