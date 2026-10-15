@@ -2,12 +2,13 @@ using System.Text.Json;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Cli;
+using VideoOptimiser.Cli.Features.Calibrate;
+using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
 using VideoOptimiser.Domain;
@@ -116,10 +117,10 @@ internal static partial class CliApplication
             CliCommandKind.History => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: true, command.Json, cancellationToken),
             CliCommandKind.Validate => await RunValidateAsync(services, configuration, command.JobId!, cancellationToken),
             CliCommandKind.Finalize => await RunFinalizeAsync(services, configuration, command, cancellationToken),
-            CliCommandKind.Cleanup => await RunCleanupAsync(services.GetRequiredService<ITemporaryOutputCleanupService>(), configuration, command.DryRun, cancellationToken),
+            CliCommandKind.Cleanup => await services.GetRequiredService<CleanupCommand>().RunAsync(configuration, command.DryRun, cancellationToken),
             CliCommandKind.ImmichRun => await RunGuardedAsync(services, configuration, command, () => RunImmichRunAsync(services, configuration, command, cancellationToken)),
             CliCommandKind.ImmichFinalize => await RunImmichFinalizeAsync(services, configuration, cancellationToken),
-            CliCommandKind.Calibrate => await RunCalibrateAsync(services, configuration, command.Json, cancellationToken),
+            CliCommandKind.Calibrate => await services.GetRequiredService<CalibrateCommand>().RunAsync(configuration, command.Json, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }
@@ -154,13 +155,6 @@ internal static partial class CliApplication
         cancellationToken.ThrowIfCancellationRequested();
         if (response is null) Console.WriteLine();
         return Task.FromResult(WorkerEndPolicy.IsAffirmative(response));
-    }
-
-    private static bool ReportInvalidSettings(IServiceProvider services, LoadedConfiguration configuration)
-    {
-        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
-        foreach (var diagnostic in diagnostics) WriteError($"[{diagnostic.Code}] {diagnostic.Message}");
-        return diagnostics.Count > 0;
     }
 
     /// <summary>
@@ -531,59 +525,6 @@ internal static partial class CliApplication
         OriginalActions.Keep => "Each original stays; its AV1 is installed beside it as <name>.av1<extension>.",
         _ => "Each original is deleted and its AV1 takes its place."
     };
-
-    private static async Task<int> RunCleanupAsync(ITemporaryOutputCleanupService cleanup, LoadedConfiguration configuration, bool dryRun, CancellationToken cancellationToken)
-    {
-        var settings = configuration.Settings;
-        var plan = await cleanup.FindAsync(settings.Database.Path, settings.Immich.IsConfigured ? settings.Immich.StagingDirectory : string.Empty, cancellationToken);
-        foreach (var path in plan.UnknownJobFiles) Console.WriteLine($"Skipped  {path} (its job is not in this database)");
-        if (plan.Count == 0) { Console.WriteLine("No abandoned temporary outputs or staged Immich originals found."); return (int)ExitCode.Success; }
-        CleanupReport.WriteFiles(Console.Out, plan);
-        Console.WriteLine(CleanupReport.Summary(plan));
-        if (plan.StagedOriginals.Count > 0) Console.WriteLine("Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.");
-        if (dryRun) return (int)ExitCode.Success;
-
-        Console.Write("Delete these files? [y/N] ");
-        if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Cleanup cancelled."); return (int)ExitCode.Success; }
-        var result = cleanup.Delete(plan);
-        foreach (var failure in result.Failures) WriteError($"Could not delete {failure}");
-        Console.WriteLine($"Deleted {OutputWords.Count(result.Deleted, "file", "files")}, {HumanReadableValues.FormatSize(result.DeletedBytes)}.");
-        return result.Failures.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
-    }
-
-    /// <summary>
-    /// <c>calibrate</c>: what the rules admit and keep out, and suggestions. Scan issues end in <see cref="ExitCode.PartialSuccess"/>,
-    /// as for <c>queue add</c>, because the report is missing the videos they left out.
-    /// </summary>
-    private static async Task<int> RunCalibrateAsync(IServiceProvider services, LoadedConfiguration configuration, bool json, CancellationToken cancellationToken)
-    {
-        if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
-        // With --json, stdout carries the JSON alone; an agent has no use for progress lines.
-        var scanProgress = json ? null : new QueueDiscoverConsole(Console.Out);
-        var immichProgress = json ? null : new ImmichSearchConsole(Console.Out);
-        CalibrationRun run;
-        try
-        {
-            run = await services.GetRequiredService<ICalibrationService>().RunAsync(configuration.Settings, scanProgress, immichProgress, cancellationToken);
-        }
-        catch (DatabaseOutdatedException exception)
-        {
-            WriteError($"{Path.GetFileName(exception.DatabasePath)} is from an older version of video-optimiser. Run 'video-optimiser status' once to upgrade it, then run calibrate again.");
-            return (int)ExitCode.GeneralFailure;
-        }
-
-        if (json)
-        {
-            Console.WriteLine(JsonSerializer.Serialize(CalibrateConsole.ToJson(run.Report), CliJsonContext.Default.CalibrationJsonOutput));
-        }
-        else
-        {
-            if (scanProgress!.WroteLines || immichProgress!.WroteLines) Console.WriteLine();
-            CalibrateConsole.Write(Console.Out, run.Report);
-        }
-
-        return run.ScanIssues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
-    }
 
     private static string GetVersion() => typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0-dev";
 }

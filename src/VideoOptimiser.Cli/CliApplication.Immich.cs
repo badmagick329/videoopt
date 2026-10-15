@@ -17,7 +17,7 @@ internal static partial class CliApplication
 {
     private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
-        if (!RequireImmich(configuration) || ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
+        if (!RequireImmich(configuration) || ReportInvalidSettings(services.GetRequiredService<ISettingsValidator>(), configuration)) return (int)ExitCode.InvalidConfiguration;
         // Before discovery, which marks active jobs interrupted and queues new ones.
         using var runLock = TakeRunLock(services, configuration, ImmichRunHolder);
         if (runLock is null) return (int)ExitCode.GeneralFailure;

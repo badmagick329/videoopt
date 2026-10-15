@@ -1,9 +1,9 @@
 using FluentAssertions;
-using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Calibrate;
 using VideoOptimiser.Domain.Jobs;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Calibrate;
 
 public sealed class CalibrationReportTests
 {

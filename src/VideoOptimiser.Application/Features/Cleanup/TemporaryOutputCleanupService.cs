@@ -3,7 +3,7 @@ using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
 
-namespace VideoOptimiser.Infrastructure.Jobs;
+namespace VideoOptimiser.Application.Features.Cleanup;
 
 /// <summary>
 /// Finds abandoned temporary outputs in the <c>.video-optimiser</c> folder beside each original the database has a job

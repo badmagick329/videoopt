@@ -1,7 +1,7 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 
-namespace VideoOptimiser.Application.Calibration;
+namespace VideoOptimiser.Application.Features.Calibrate;
 
 /// <summary>
 /// A video the eligibility rules are applied to: a probed file in a watch root, or an Immich asset. <see cref="Codec"/> is

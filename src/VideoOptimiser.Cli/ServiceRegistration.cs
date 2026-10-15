@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
@@ -7,9 +6,10 @@ using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Cli.Features.Calibrate;
+using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
-using VideoOptimiser.Infrastructure.Calibration;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Eligibility;
 using VideoOptimiser.Infrastructure.Immich;
@@ -94,12 +94,4 @@ internal static class ServiceRegistration
         .AddSingleton<ImmichFinalizer>()
         .AddSingleton<IFinalizationService, FinalizationService>()
         .AddSingleton<ISafeFileInstaller, SafeFileInstaller>();
-
-    public static IServiceCollection AddCleanup(this IServiceCollection services) =>
-        services.AddSingleton<ITemporaryOutputCleanupService, TemporaryOutputCleanupService>();
-
-    // calibrate promises to write nothing, so it gets its own read-only store and a probe cache that never saves.
-    public static IServiceCollection AddCalibrate(this IServiceCollection services) =>
-        services.AddSingleton<ICalibrationService>(provider => CalibrationService.ReadOnly(
-            provider.GetRequiredService<IFileReadinessService>(), provider.GetRequiredService<Func<string, IMediaProbe>>(), provider.GetRequiredService<IImmichClientFactory>()));
 }

@@ -16,7 +16,7 @@ internal static partial class CliApplication
 {
     private static async Task<int> RunRunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
-        if (ReportInvalidSettings(services, configuration)) return (int)ExitCode.InvalidConfiguration;
+        if (ReportInvalidSettings(services.GetRequiredService<ISettingsValidator>(), configuration)) return (int)ExitCode.InvalidConfiguration;
         using var runLock = TakeRunLock(services, configuration, RunHolder);
         if (runLock is null) return (int)ExitCode.GeneralFailure;
         await PrintRunBannerAsync(services, configuration, command.ModeOverride, cancellationToken);

@@ -1,6 +1,6 @@
 using VideoOptimiser.Application.TemporaryOutputs;
 
-namespace VideoOptimiser.Application.Jobs;
+namespace VideoOptimiser.Application.Features.Cleanup;
 
 public sealed record TemporaryOutputCleanupPlan(IReadOnlyList<AbandonedTemporaryOutput> Abandoned, IReadOnlyList<StagedImmichOriginal> StagedOriginals, IReadOnlyList<string> UnknownJobFiles)
 {

@@ -1,11 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FluentAssertions;
-using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Cli;
+using VideoOptimiser.Application.Features.Calibrate;
+using VideoOptimiser.Cli.Features.Calibrate;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Calibrate;
 
 /// <summary>The approved wording of <c>calibrate</c>, line for line, and the agreed <c>--json</c> shape.</summary>
 public sealed class CalibrateConsoleTests
@@ -98,7 +98,7 @@ public sealed class CalibrateConsoleTests
                 new TestOneSuggestion(Unknown, "PXL_1.mp4", null, "asset-1")
             ]);
 
-        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report), CliJsonContext.Default.CalibrationJsonOutput))!;
+        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
 
         json.AsObject().Select(property => property.Key).Should().Equal("minimumVmaf", "rules", "keptOut", "codecUnknown", "alreadyAv1", "historyLeftOut", "suggestions");
         json["rules"]![0]!.ToJsonString().Should().Be(

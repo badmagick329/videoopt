@@ -1,34 +1,20 @@
-using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Persistence;
 
-namespace VideoOptimiser.Infrastructure.Calibration;
+namespace VideoOptimiser.Application.Features.Calibrate;
 
 /// <summary>
 /// Gathers what <see cref="CalibrationReport.Build"/> needs without side effects: the watch roots scanned as <c>queue
 /// discover</c> scans them, Immich searched as <c>immich run</c> searches it, and the finished jobs. Its scanner and
-/// repository must be the read-only ones (<see cref="UnsavedProbeCache"/>, a read-only <see cref="SqliteJobRepository"/>):
-/// this class stores nothing itself, and relies on them not to.
+/// repository must be the read-only ones that <c>ReadOnlyCalibration</c> (Infrastructure) builds: a probe cache that never
+/// saves and a job repository opened read-only. This class stores nothing itself, and relies on them not to.
 /// </summary>
 public sealed class CalibrationService(IFileScanner scanner, IJobRepository jobs, IImmichClientFactory immichClients, Func<DateTimeOffset>? utcNow = null) : ICalibrationService
 {
     private readonly Func<DateTimeOffset> _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
-
-    /// <summary>
-    /// The service as the CLI runs it: a read-only store that migrates nothing, and a probe cache that never saves. Built
-    /// here rather than in the CLI so tests check the same wiring the command uses.
-    /// </summary>
-    public static CalibrationService ReadOnly(IFileReadinessService readiness, Func<string, IMediaProbe> mediaProbes, IImmichClientFactory immichClients, Func<DateTimeOffset>? utcNow = null)
-    {
-        var schemaCheck = new SqliteSchemaCheck();
-        var scanner = new FileScanner(readiness, mediaProbes, new UnsavedProbeCache(new SqliteMediaProbeCache(schemaCheck, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)));
-        return new CalibrationService(scanner, new SqliteJobRepository(schemaCheck, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly), immichClients, utcNow);
-    }
 
     public async Task<CalibrationRun> RunAsync(AppSettings settings, IProgress<ScanProgress>? scanProgress, IProgress<int>? immichProgress, CancellationToken cancellationToken = default)
     {
@@ -98,16 +84,4 @@ public sealed class CalibrationService(IFileScanner scanner, IJobRepository jobs
 
     private static long? OverallBitrate(long sizeBytes, long? durationMilliseconds) =>
         sizeBytes > 0 && durationMilliseconds is > 0 and { } duration ? sizeBytes * 8 * 1000 / duration : null;
-}
-
-/// <summary>
-/// The probe cache as <c>calibrate</c> uses it: read when the database exists, and never written, so files probed during the
-/// report stay unknown to the next run. Storing them would break the command's promise to write nothing.
-/// </summary>
-public sealed class UnsavedProbeCache(IMediaProbeCache inner) : IMediaProbeCache
-{
-    public async Task<IReadOnlyList<MediaProbeCacheEntry>> LoadAllAsync(string databasePath, CancellationToken cancellationToken = default) =>
-        File.Exists(databasePath) ? await inner.LoadAllAsync(databasePath, cancellationToken) : [];
-
-    public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

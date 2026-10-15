@@ -3,7 +3,7 @@ using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain.Jobs;
 
-namespace VideoOptimiser.Application.Calibration;
+namespace VideoOptimiser.Application.Features.Calibrate;
 
 /// <summary>A whole-number range, for bitrates in Mbps and savings in percent.</summary>
 public sealed record IntRange(int Min, int Max);

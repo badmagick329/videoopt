@@ -2,20 +2,20 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
-using VideoOptimiser.Application.Calibration;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
+using VideoOptimiser.Application.Features.Calibrate;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Calibration;
+using VideoOptimiser.Infrastructure.Features.Calibrate;
 using VideoOptimiser.Infrastructure.Persistence;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Calibrate;
 
 /// <summary>
-/// <c>calibrate</c> as the CLI wires it (<see cref="CalibrationService.ReadOnly"/>) against a real database: what it reads,
+/// <c>calibrate</c> as the CLI wires it (<see cref="ReadOnlyCalibration"/>) against a real database: what it reads,
 /// and that it leaves the database file exactly as it found it.
 /// </summary>
 public sealed class CalibrationServiceTests : IDisposable
@@ -145,7 +145,7 @@ public sealed class CalibrationServiceTests : IDisposable
         Directory.Delete(_directory, recursive: true);
     }
 
-    private CalibrationService Service(IMediaProbe probe) => CalibrationService.ReadOnly(new ReadyFiles(), _ => probe, _immich, () => Now);
+    private CalibrationService Service(IMediaProbe probe) => ReadOnlyCalibration.Create(new ReadyFiles(), _ => probe, _immich, () => Now);
 
     /// <summary>A file whose content names its codec and Mbps, which <see cref="CountingProbe"/> reads back.</summary>
     private async Task<string> WriteVideoAsync(string name, string content)

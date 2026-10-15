@@ -1,11 +1,10 @@
 using FluentAssertions;
-using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.Features.Cleanup;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Cleanup;
 
 public sealed class TemporaryOutputCleanupTests : IDisposable
 {

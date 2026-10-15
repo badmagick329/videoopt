@@ -1,3 +1,4 @@
+using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.Tools;
@@ -15,6 +16,14 @@ internal static class CliOutput
 
     /// <summary>An error or a refusal, in red on a terminal. Usage text and other help are written as they are.</summary>
     internal static void WriteError(string? text) => Console.Error.WriteLine(ErrorStyle.Red(text ?? string.Empty));
+
+    /// <summary>Prints each problem the settings have, as an error, and says whether there were any.</summary>
+    internal static bool ReportInvalidSettings(ISettingsValidator validator, LoadedConfiguration configuration)
+    {
+        var diagnostics = validator.Validate(configuration.Settings);
+        foreach (var diagnostic in diagnostics) WriteError($"[{diagnostic.Code}] {diagnostic.Message}");
+        return diagnostics.Count > 0;
+    }
 
     /// <summary>Says what an error that ended a command means, and returns the exit code for it.</summary>
     internal static int ReportFailure(Exception exception)

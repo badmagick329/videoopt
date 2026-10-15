@@ -1,8 +1,8 @@
 using System.Globalization;
-using VideoOptimiser.Application.Calibration;
+using VideoOptimiser.Application.Features.Calibrate;
 using VideoOptimiser.Domain;
 
-namespace VideoOptimiser.Cli;
+namespace VideoOptimiser.Cli.Features.Calibrate;
 
 /// <summary>
 /// The Immich half of <c>calibrate</c>'s progress, paced like <see cref="QueueDiscoverConsole"/>: silent for a search that
