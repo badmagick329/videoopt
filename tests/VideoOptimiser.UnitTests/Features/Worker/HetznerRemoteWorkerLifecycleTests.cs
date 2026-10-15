@@ -3,12 +3,12 @@ using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.Features.Worker;
 using VideoOptimiser.Infrastructure.Tools;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Worker;
 
 public sealed class HetznerRemoteWorkerLifecycleTests
 {
@@ -158,6 +158,21 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
 
         await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*400*bad request*");
+        fixture.Handler.CreateCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AMalformedErrorBodyStillNamesTheStatusAndWhatHetznerSent()
+    {
+        using var fixture = new Fixture();
+        // Valid JSON, but not the documented shape: the code is a number and the message an array.
+        const string body = """{"error":{"code":400,"message":["bad request"]}}""";
+        fixture.Handler.CreateErrorBody = body;
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage($"Hetzner API returned 400 (BadRequest): {body}");
         fixture.Handler.CreateCount.Should().Be(1);
     }
 
@@ -744,6 +759,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         public int? ServerTypePageSize { get; set; }
         public int ServerTypeRequests { get; private set; }
         public Queue<(HttpStatusCode Status, string Code, string Message)> CreateFailures { get; } = new();
+        /// <summary>A raw body for a 400 answer to the create request, for error bodies <see cref="Error"/> cannot write.</summary>
+        public string? CreateErrorBody { get; set; }
         public List<string> CreateLocations { get; } = [];
         public List<string> CreateServerTypes { get; } = [];
 
@@ -783,6 +800,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                 CreateCount++;
                 CreateLocations.Add(CreatePayload.RootElement.GetProperty("location").GetString()!);
                 CreateServerTypes.Add(CreatePayload.RootElement.GetProperty("server_type").GetString()!);
+                if (CreateErrorBody is not null)
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(CreateErrorBody, Encoding.UTF8, "application/json") };
                 if (CreateFailures.TryDequeue(out var failure))
                     return Error(failure.Status, failure.Code, failure.Message);
                 ServerExists = true;

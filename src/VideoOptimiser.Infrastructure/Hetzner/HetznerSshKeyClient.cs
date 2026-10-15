@@ -1,8 +1,7 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 
-namespace VideoOptimiser.Infrastructure.Processing;
+namespace VideoOptimiser.Infrastructure.Hetzner;
 
 internal sealed record HetznerSshKey(long Id, string Name, string Fingerprint);
 
@@ -18,20 +17,20 @@ internal sealed class HetznerSshKeyException(HttpStatusCode? statusCode, string 
 /// </summary>
 internal sealed class HetznerSshKeyClient : IDisposable
 {
-    private const string ApiBase = "https://api.hetzner.cloud/v1/";
+    private const string UserAgent = "video-optimiser/remote-setup";
     private const int MaxPages = 10;
     private readonly HttpClient _http;
     private readonly bool _ownsHttpClient;
 
     public HetznerSshKeyClient()
-        : this(new HttpClient { BaseAddress = new Uri(ApiBase) }, ownsHttpClient: true)
+        : this(new HttpClient { BaseAddress = new Uri(HetznerHttp.ApiBase) }, ownsHttpClient: true)
     {
     }
 
     public HetznerSshKeyClient(HttpClient http, bool ownsHttpClient = false)
     {
         _http = http;
-        _http.BaseAddress ??= new Uri(ApiBase);
+        _http.BaseAddress ??= new Uri(HetznerHttp.ApiBase);
         _ownsHttpClient = ownsHttpClient;
     }
 
@@ -90,11 +89,7 @@ internal sealed class HetznerSshKeyClient : IDisposable
 
     private async Task<JsonDocument> SendJsonAsync(string token, HttpMethod method, string path, byte[]? payload, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(method, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Headers.UserAgent.ParseAdd("video-optimiser/remote-setup");
-        if (payload is not null) request.Content = new ByteArrayContent(payload) { Headers = { ContentType = new MediaTypeHeaderValue("application/json") } };
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await HetznerHttp.SendAsync(_http, token, UserAgent, method, path, payload, cancellationToken);
         if (!response.IsSuccessStatusCode) throw await ApiExceptionAsync(response, cancellationToken);
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         try
@@ -109,17 +104,7 @@ internal sealed class HetznerSshKeyClient : IDisposable
 
     private static async Task<HetznerSshKeyException> ApiExceptionAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        var message = body;
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-            if (document.RootElement.ValueKind == JsonValueKind.Object &&
-                document.RootElement.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object &&
-                error.TryGetProperty("message", out var value) && value.ValueKind == JsonValueKind.String)
-                message = value.GetString()!;
-        }
-        catch (JsonException) { }
+        var (_, message) = await HetznerHttp.ReadErrorAsync(response, cancellationToken);
         return new HetznerSshKeyException(response.StatusCode, $"Hetzner API returned {(int)response.StatusCode} ({response.StatusCode}): {message}");
     }
 

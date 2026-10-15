@@ -1,8 +1,9 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Infrastructure.Configuration;
+using VideoOptimiser.Infrastructure.Features.RemoteSetup;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.RemoteSetup;
 
 public sealed class ProcessingBlockTests
 {

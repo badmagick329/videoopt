@@ -5,12 +5,13 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Features.RemoteSetup;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
+using VideoOptimiser.Infrastructure.Hetzner;
 using VideoOptimiser.Infrastructure.Tools;
 
-namespace VideoOptimiser.Infrastructure.Processing;
+namespace VideoOptimiser.Infrastructure.Features.RemoteSetup;
 
 public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
 {

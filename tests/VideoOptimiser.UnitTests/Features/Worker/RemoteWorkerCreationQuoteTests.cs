@@ -1,7 +1,7 @@
 using FluentAssertions;
-using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Features.Worker;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Worker;
 
 public sealed class RemoteWorkerCreationQuoteTests
 {

@@ -3,6 +3,7 @@ using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Application.TemporaryOutputs;
@@ -11,6 +12,8 @@ using VideoOptimiser.Cli.Features.Calibrate;
 using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
+using VideoOptimiser.Cli.Features.RemoteSetup;
+using VideoOptimiser.Cli.Features.Worker;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using static CliLocks;
@@ -91,7 +94,7 @@ internal static partial class CliApplication
         var configuration = await configurationLoader.LoadAsync(command.ConfigurationPath, cancellationToken);
         command.ModeOverride?.Apply(configuration.Settings);
         if (command.Kind is CliCommandKind.WorkerCreate or CliCommandKind.WorkerStatus or CliCommandKind.WorkerDelete
-            && RequireManagedLifecycle(command.Kind, configuration) is { } refused)
+            && WorkerCommands.RequireManagedLifecycle(command.Kind, configuration) is { } refused)
         {
             return refused;
         }
@@ -100,10 +103,10 @@ internal static partial class CliApplication
             CliCommandKind.ConfigShow => ConfigCommands.Show(configuration),
             CliCommandKind.ConfigValidate => services.GetRequiredService<ConfigCommands>().Validate(configuration),
             CliCommandKind.Doctor => await services.GetRequiredService<DoctorCommand>().RunAsync(configuration, command.Json, cancellationToken),
-            CliCommandKind.WorkerCreate => await RunWorkerCreateAsync(services, configuration, cancellationToken),
-            CliCommandKind.WorkerStatus => await RunWorkerStatusAsync(services, configuration, cancellationToken),
-            CliCommandKind.WorkerDelete => await RunWorkerDeleteAsync(services, configuration, cancellationToken),
-            CliCommandKind.RemoteSetup => (int)await services.GetRequiredService<IRemoteSetupService>().RunAsync(configuration, ConfirmAsync, new InlineProgress<string>(Console.WriteLine), cancellationToken),
+            CliCommandKind.WorkerCreate => await services.GetRequiredService<WorkerCommands>().CreateAsync(configuration, cancellationToken),
+            CliCommandKind.WorkerStatus => await services.GetRequiredService<WorkerCommands>().StatusAsync(configuration, cancellationToken),
+            CliCommandKind.WorkerDelete => await services.GetRequiredService<WorkerCommands>().DeleteAsync(configuration, cancellationToken),
+            CliCommandKind.RemoteSetup => await services.GetRequiredService<RemoteSetupCommand>().RunAsync(configuration, cancellationToken),
             CliCommandKind.QueueAdd => await RunQueueAddAsync(services.GetRequiredService<IQueueService>(), configuration, command, cancellationToken),
             CliCommandKind.QueueAddFile => await RunQueueAddFileAsync(services, configuration, command, cancellationToken),
             CliCommandKind.Run => await RunGuardedAsync(services, configuration, command, () => RunRunAsync(services, configuration, command, cancellationToken)),
@@ -136,25 +139,6 @@ internal static partial class CliApplication
             ? await lifecycle.ReadRecordedAsync(configuration.Settings.Database.Path, cancellationToken)
             : null;
         Console.WriteLine(RunBanner.Describe(configuration.Settings, worker, modeOverride?.Flag));
-    }
-
-    /// <summary>
-    /// Reads the answer even when input is redirected, like <c>finalize</c>, so an agent or script approves by piping
-    /// <c>'y'</c>; the worker question refuses redirected input (<see cref="IConsoleInput.IsInteractive"/>). No input at all declines.
-    /// </summary>
-    private static Task<bool> ConfirmServerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken) =>
-        ConfirmAsync(quote.FormatPrompt(), cancellationToken);
-
-    private static Task<bool> ConfirmAsync(string prompt, CancellationToken cancellationToken)
-    {
-        Console.Write(prompt);
-        string? response;
-        try { response = Console.ReadLine(); }
-        catch (IOException) { response = null; }
-        // Ctrl+C at the prompt ends the read with no answer; report it as a cancellation, not a decline.
-        cancellationToken.ThrowIfCancellationRequested();
-        if (response is null) Console.WriteLine();
-        return Task.FromResult(WorkerEndPolicy.IsAffirmative(response));
     }
 
     /// <summary>
@@ -310,7 +294,7 @@ internal static partial class CliApplication
     }
 
     private static Task<RemoteWorkerInfo> EnsureWorkerReadyAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken) =>
-        services.GetRequiredService<IRemoteWorkerLifecycle>().EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
+        services.GetRequiredService<IRemoteWorkerLifecycle>().EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConsolePrompts.ConfirmServerCreationAsync, cancellationToken);
 
     /// <summary>
     /// Runs a run command so that every way it ends, once it holds the run lock, decides the managed worker's fate: a stop
@@ -357,65 +341,6 @@ internal static partial class CliApplication
         {
             _ = ReportFailure(exception);
         }
-    }
-
-    /// <summary>
-    /// The worker commands act on the managed server whatever <c>processing.mode</c> says, so a user who switched back to
-    /// local can still delete a server that is billing (VOPT-56). <c>lifecycle</c> alone decides; the mode is set to remote
-    /// in memory only, because the lifecycle treats a server as managed only in remote mode. Returns the exit code when it refuses.
-    /// </summary>
-    private static int? RequireManagedLifecycle(CliCommandKind kind, LoadedConfiguration configuration)
-    {
-        // An empty "lifecycle:" in YAML deserialises as null, so the value is compared with string.Equals.
-        var lifecycle = configuration.Settings.Processing.RemoteSsh.Lifecycle;
-        if (string.Equals(lifecycle, RemoteLifecycleModes.Hetzner, StringComparison.OrdinalIgnoreCase))
-        {
-            ProcessingModeOverride.Remote.Apply(configuration.Settings);
-            return null;
-        }
-        var name = kind switch { CliCommandKind.WorkerCreate => "worker create", CliCommandKind.WorkerStatus => "worker status", _ => "worker delete" };
-        var current = string.IsNullOrWhiteSpace(lifecycle) ? "it is not set." : $"it is \"{lifecycle}\".";
-        var message = $"'{name}' needs processing.remoteSsh.lifecycle set to \"hetzner\" in {configuration.Path}; {current}";
-        // worker status is a read-only question, so "not managed" is an answer on stdout, as it has always been.
-        if (kind == CliCommandKind.WorkerStatus)
-        {
-            Console.WriteLine(message);
-            return (int)ExitCode.Success;
-        }
-        WriteError(message);
-        return (int)ExitCode.InvalidConfiguration;
-    }
-
-    private static async Task<int> RunWorkerCreateAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
-    {
-        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        var diagnostics = services.GetRequiredService<ISettingsValidator>().Validate(configuration.Settings);
-        if (diagnostics.Count > 0) { foreach (var diagnostic in diagnostics) WriteError($"[{diagnostic.Code}] {diagnostic.Message}"); return (int)ExitCode.InvalidConfiguration; }
-        var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), ConfirmServerCreationAsync, cancellationToken);
-        Console.WriteLine($"Worker ready: {worker.Name} ({worker.ServerId}) {worker.Address}{DescribePlacement(worker)}");
-        return (int)ExitCode.Success;
-    }
-
-    private static async Task<int> RunWorkerStatusAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
-    {
-        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        var worker = await lifecycle.GetAsync(configuration.Settings, configuration.Settings.Database.Path, cancellationToken);
-        Console.WriteLine(worker is null ? "No managed Hetzner worker exists." : $"{worker.Name}  server {worker.ServerId}  {worker.Status}  {worker.Address}{DescribePlacement(worker)}");
-        return (int)ExitCode.Success;
-    }
-
-    // A worker recovered from Hetzner without a stored state file can lack either.
-    private static string DescribePlacement(RemoteWorkerInfo worker) =>
-        worker.ServerType.Length == 0 ? string.Empty
-        : worker.Location.Length == 0 ? $"  {worker.ServerType}"
-        : $"  {worker.ServerType} in {worker.Location}";
-
-    private static async Task<int> RunWorkerDeleteAsync(IServiceProvider services, LoadedConfiguration configuration, CancellationToken cancellationToken)
-    {
-        var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
-        var deleted = await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
-        if (!deleted) Console.WriteLine("No managed Hetzner worker exists.");
-        return (int)ExitCode.Success;
     }
 
     private static async Task<int> RunJobListAsync(IJobRepository repository, LoadedConfiguration configuration, bool terminal, bool json, CancellationToken cancellationToken)

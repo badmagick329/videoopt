@@ -1,4 +1,5 @@
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;

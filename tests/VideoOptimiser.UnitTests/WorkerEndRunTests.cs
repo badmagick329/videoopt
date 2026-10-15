@@ -1,8 +1,8 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.Processing;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;

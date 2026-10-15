@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Processing;
+using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
 
@@ -80,6 +80,9 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
     public int EnsureCalls { get; private set; }
     public int DeleteCalls { get; private set; }
 
+    /// <summary>The database path each create, status and delete was given; it picks the state file, the lock and the server's owner label.</summary>
+    public List<string> DatabasePaths { get; } = [];
+
     /// <summary>Whether the local state file records a worker.</summary>
     public bool Exists { get; set; } = true;
 
@@ -96,11 +99,16 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
     public Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null, CancellationToken cancellationToken = default)
     {
         EnsureCalls++;
+        DatabasePaths.Add(databasePath);
         Exists = true;
         return Task.FromResult(CliFakes.Worker);
     }
 
-    public Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default) => ReadRecordedAsync(databasePath, cancellationToken);
+    public Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
+    {
+        DatabasePaths.Add(databasePath);
+        return ReadRecordedAsync(databasePath, cancellationToken);
+    }
 
     /// <summary>Thrown when the state file is read, as an unreadable one would be.</summary>
     public Exception? ReadFailure { get; set; }
@@ -112,6 +120,7 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
     {
         cancellationToken.ThrowIfCancellationRequested();
         DeleteCalls++;
+        DatabasePaths.Add(databasePath);
         if (!Exists) return Task.FromResult(false);
         progress?.Report($"Deleting Hetzner server {CliFakes.Worker.ServerId}.");
         DuringDelete?.Invoke();

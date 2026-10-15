@@ -10,6 +10,8 @@ using VideoOptimiser.Cli.Features.Calibrate;
 using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
+using VideoOptimiser.Cli.Features.RemoteSetup;
+using VideoOptimiser.Cli.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Eligibility;
 using VideoOptimiser.Infrastructure.Immich;
@@ -64,12 +66,6 @@ internal static class ServiceRegistration
         services.AddSingleton<IConsoleInput, ConsoleInput>();
         return services;
     }
-
-    public static IServiceCollection AddWorker(this IServiceCollection services) =>
-        services.AddSingleton<IRemoteWorkerLifecycle, HetznerRemoteWorkerLifecycle>();
-
-    public static IServiceCollection AddRemoteSetup(this IServiceCollection services) =>
-        services.AddSingleton<IRemoteSetupService, RemoteSetupService>();
 
     // IQueueService also serves the run until VOPT-99 and VOPT-101 split it.
     public static IServiceCollection AddQueue(this IServiceCollection services) => services

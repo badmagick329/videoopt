@@ -7,10 +7,11 @@ using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
-using VideoOptimiser.Infrastructure.Processing;
+using VideoOptimiser.Infrastructure.Features.RemoteSetup;
+using VideoOptimiser.Infrastructure.Hetzner;
 using VideoOptimiser.Infrastructure.Tools;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.RemoteSetup;
 
 public sealed class RemoteSetupServiceTests
 {

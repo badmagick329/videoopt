@@ -1,5 +1,6 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Worker;
 
 namespace VideoOptimiser.Application.Processing;
 

@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text;
 using VideoOptimiser.Application.Configuration;
 
-namespace VideoOptimiser.Infrastructure.Configuration;
+namespace VideoOptimiser.Infrastructure.Features.RemoteSetup;
 
 /// <summary>
 /// Renders and splices the top-level <c>processing:</c> section as text. The section is edited as text, not by

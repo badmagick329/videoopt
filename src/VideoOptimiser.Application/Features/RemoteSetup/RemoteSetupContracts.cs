@@ -1,7 +1,7 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Domain;
 
-namespace VideoOptimiser.Application.Processing;
+namespace VideoOptimiser.Application.Features.RemoteSetup;
 
 /// <summary>
 /// The one-time setup for managed Hetzner workers: token check, SSH key, and the <c>processing:</c> config section.

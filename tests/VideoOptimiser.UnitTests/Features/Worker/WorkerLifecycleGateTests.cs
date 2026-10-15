@@ -1,18 +1,17 @@
 using FluentAssertions;
-using VideoOptimiser.Cli;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Worker;
 
 /// <summary>
 /// The worker commands decide on <c>processing.remoteSsh.lifecycle</c> alone (VOPT-56): with <c>mode: local</c> a billing
 /// server must still be deletable. Runs the real CLI against a temporary config; no test reaches Hetzner.
 /// </summary>
 [Collection(ConsoleCapture.Collection)]
-public sealed class WorkerCommandTests : IDisposable
+public sealed class WorkerLifecycleGateTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
 
-    public WorkerCommandTests() => Directory.CreateDirectory(_directory);
+    public WorkerLifecycleGateTests() => Directory.CreateDirectory(_directory);
 
     [Theory]
     [InlineData("create", "\"manual\"", "it is \"manual\".", false, 3)]

@@ -1,7 +1,7 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 
-namespace VideoOptimiser.Application.Processing;
+namespace VideoOptimiser.Application.Features.Worker;
 
 /// <param name="ServerType">Empty when Hetzner did not report it for a recovered worker.</param>
 /// <param name="Location">Empty when unknown, as for <paramref name="ServerType"/>.</param>
