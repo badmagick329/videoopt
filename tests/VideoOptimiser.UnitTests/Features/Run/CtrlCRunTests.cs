@@ -136,7 +136,7 @@ public sealed class CtrlCRunTests : IDisposable
             "Encoding on this PC.",
             "",
             "Stopped now.",
-            $"To resume: video-optimiser immich run --config \"{config}\""));
+            $"To resume: video-optimiser run --config \"{config}\""));
         code.Should().Be((int)ExitCode.Cancelled);
     }
 
@@ -163,7 +163,7 @@ public sealed class CtrlCRunTests : IDisposable
     /// <summary>Ctrl+C during Immich discovery, which observes the run's token as the real service does.</summary>
     private sealed class PressingDiscovery(RunStop stop) : IImmichRunService
     {
-        public Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
+        public Task<ImmichQueueAddition> AddToQueueAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichProgress>? discoveryProgress = null, CancellationToken cancellationToken = default)
         {
             stop.Press();
             cancellationToken.ThrowIfCancellationRequested();

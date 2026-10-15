@@ -15,7 +15,7 @@ namespace VideoOptimiser.Cli.Features.Run;
 /// none leaves a worker billing without a line that says so. The question and the delete run on their own token: the run's
 /// is already cancelled after a stop, and a cancelled delete would leave the worker billing silently.
 /// </summary>
-internal sealed class RunWorkerEnd(IRemoteWorkerLifecycle lifecycle, IJobRepository jobs, RunWorkerState state, RunStop stop)
+internal sealed class RunWorkerEnd(IRemoteWorkerLifecycle lifecycle, RunWorkerState state, RunStop stop)
 {
     /// <summary>The run lock, or null after saying who holds it. Taking it starts the run: from then on every end decides the worker's fate (<see cref="GuardAsync"/>).</summary>
     /// <param name="command">How the refusal names this run to a later one, such as <c>video-optimiser run</c>.</param>
@@ -114,11 +114,10 @@ internal sealed class RunWorkerEnd(IRemoteWorkerLifecycle lifecycle, IJobReposit
         state.Concluded = true;
         var answer = state.Question.TakeOver();
         var settings = configuration.Settings;
-        var immichJobsLeft = await ImmichJobsLeftAsync(configuration, command);
         var recorded = lifecycle.IsManaged(settings) ? await lifecycle.ReadRecordedAsync(settings.Database.Path, CancellationToken.None) : null;
         if (recorded is null)
         {
-            if (end == RunEnd.StoppedNow) ReportStopWithoutManagedWorker(configuration, command, interrupted, immichJobsLeft);
+            if (end == RunEnd.StoppedNow) ReportStopWithoutManagedWorker(configuration, command, interrupted);
             return true;
         }
 
@@ -141,15 +140,15 @@ internal sealed class RunWorkerEnd(IRemoteWorkerLifecycle lifecycle, IJobReposit
             PrintLines(fate switch
             {
                 // Nothing to lose, and the user said y: the video resumes on a new worker.
-                WorkerFate.Delete => StoppedRunMessage.StoppedNow(interrupted, command, immichJobsLeft),
-                WorkerFate.Keep => StoppedRunMessage.Lines(interrupted, worker, managed: true, command, immichJobsLeft),
-                _ => StoppedRunMessage.LinesBeforeQuestion(interrupted, worker, command, immichJobsLeft)
+                WorkerFate.Delete => StoppedRunMessage.StoppedNow(interrupted, command),
+                WorkerFate.Keep => StoppedRunMessage.Lines(interrupted, worker, managed: true, command),
+                _ => StoppedRunMessage.LinesBeforeQuestion(interrupted, worker, command)
             });
         }
         else if (end == RunEnd.WorkerUnreachable && fate != WorkerFate.Delete)
         {
             Console.WriteLine();
-            var lines = UnreachableWorkerMessage.Lines(unreachableJob!, managed: true, command, immichJobsLeft);
+            var lines = UnreachableWorkerMessage.Lines(unreachableJob!, managed: true, command);
             PrintLines(fate == WorkerFate.Ask ? lines.SkipLast(1) : lines);
         }
 
@@ -177,26 +176,19 @@ internal sealed class RunWorkerEnd(IRemoteWorkerLifecycle lifecycle, IJobReposit
         return await DeleteWorkerAsync(configuration, command, worker);
     }
 
-    /// <summary>For an <c>immich run</c> the user limited, <see cref="StoppedRunMessage.CountImmichJobsLeft"/>; null otherwise.</summary>
-    public async Task<int?> ImmichJobsLeftAsync(LoadedConfiguration configuration, CliCommand command)
-    {
-        if (command.Kind != CliCommandKind.ImmichRun || command.Limit is null) return null;
-        return StoppedRunMessage.CountImmichJobsLeft(await jobs.ListAsync(configuration.Settings.Database.Path, terminal: false, CancellationToken.None));
-    }
-
     /// <summary>
     /// A stop now with no managed worker up: a manual host hears what is still running there, and otherwise, on this PC or
     /// before any worker existed, the video continues from its last finished step.
     /// </summary>
-    private void ReportStopWithoutManagedWorker(LoadedConfiguration configuration, CliCommand command, JobInterruptedException? interrupted, int? immichJobsLeft)
+    private void ReportStopWithoutManagedWorker(LoadedConfiguration configuration, CliCommand command, JobInterruptedException? interrupted)
     {
         var settings = configuration.Settings;
         IReadOnlyList<string> lines = [];
         if (settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase) && !lifecycle.IsManaged(settings))
         {
-            lines = StoppedRunMessage.Lines(interrupted, settings.Processing.RemoteSsh.Host, managed: false, command, immichJobsLeft);
+            lines = StoppedRunMessage.Lines(interrupted, settings.Processing.RemoteSsh.Host, managed: false, command);
         }
-        if (lines.Count == 0) lines = StoppedRunMessage.StoppedNow(interrupted, command, immichJobsLeft);
+        if (lines.Count == 0) lines = StoppedRunMessage.StoppedNow(interrupted, command);
         // Sets the lines apart from the job's block, and ends a creation prompt that Ctrl+C left open.
         Console.WriteLine();
         PrintLines(lines);

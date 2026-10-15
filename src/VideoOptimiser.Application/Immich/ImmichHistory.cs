@@ -7,21 +7,31 @@ namespace VideoOptimiser.Application.Immich;
 public sealed class ImmichHistory
 {
     private readonly HashSet<string> _openAssets = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _heldAssets = new(StringComparer.Ordinal);
     private readonly HashSet<string> _convertedAssets = new(StringComparer.Ordinal);
     private readonly HashSet<string> _convertedChecksums = new(StringComparer.Ordinal);
     private readonly HashSet<string> _replacements = new(StringComparer.Ordinal);
     private readonly Dictionary<string, JobRecord> _latestTerminal = new(StringComparer.Ordinal);
 
+    /// <summary>Assets with an open job, held ones included: a held video is parked, so its asset is not queued a second time.</summary>
     public IReadOnlySet<string> OpenAssets => _openAssets;
-    public IReadOnlySet<string> HeldAssets => _heldAssets;
+
+    /// <summary>The open Immich jobs by what happens to them next, as <c>queue add</c> counts files: held, ready to finalise, or the rest (a run takes those).</summary>
+    public int Held { get; private set; }
+    public int ReadyToFinalize { get; private set; }
+    public int Waiting { get; private set; }
 
     public static async Task<ImmichHistory> LoadAsync(IJobRepository jobs, string databasePath, CancellationToken cancellationToken)
     {
         var history = new ImmichHistory();
         foreach (var job in await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
         {
-            if (job.ImmichAssetId is { } assetId) (job.Held ? history._heldAssets : history._openAssets).Add(assetId);
+            if (job.ImmichAssetId is { } assetId)
+            {
+                history._openAssets.Add(assetId);
+                if (job.Held) history.Held++;
+                else if (job.Status == JobStatus.ReadyToFinalize || FinalizationRules.IsInterruptedImmich(job)) history.ReadyToFinalize++;
+                else history.Waiting++;
+            }
             if (job.ImmichNewAssetId is { } replacement) history._replacements.Add(replacement);
         }
 

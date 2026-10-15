@@ -11,14 +11,14 @@ namespace VideoOptimiser.Application.Features.ImmichRun;
 /// <summary>
 /// Finds old Immich videos worth converting, stages each one locally and queues it as an Immich job. Eligibility needs a
 /// probe of the real file, so every candidate that survives the free checks is downloaded once; an ineligible one is
-/// recorded as an Immich skip so later runs leave it alone until its checksum or the eligibility rules change.
+/// recorded as an Immich skip so later runs leave it alone until its checksum or the eligibility rules change. It does not
+/// download again a queued video's missing copy: <c>run</c> does that for the videos it is about to convert.
 /// </summary>
 public sealed class ImmichDiscoveryService(
     IImmichClientFactory clients,
     IJobRepository jobs,
     Func<string, IMediaProbe> mediaProbeFactory,
     IFileFingerprintService fingerprints,
-    IImmichRestaging restaging,
     Func<DateTimeOffset>? utcNow = null) : IImmichDiscoveryService
 {
     private readonly Func<DateTimeOffset> _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
@@ -34,32 +34,25 @@ public sealed class ImmichDiscoveryService(
         // the search instead.
         if (!Domain.HumanReadableValues.TryParseSize(settings.Savings.MinimumBytesSaved, out var minimumBytesSaved))
             throw new InvalidOperationException("savings.minimumBytesSaved must be validated before Immich discovery.");
-        // Before the history load: a job this fails has ended, so the search below may stage its asset afresh.
-        // Ready jobs no longer read the original, and a job interrupted during finalisation needs it left as it is. A held job
-        // is parked: nothing but the queue verbs writes it, and the run passes over it. Run order, so the limit takes the
-        // jobs the run will.
-        var restageCandidates = JobRunOrder.Sort((await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
-                .Where(job => job.SourceKind == JobSourceKind.Immich && job.Status is not (JobStatus.ReadyToFinalize or JobStatus.Finalizing) && job.ResumeStatus != JobStatus.Finalizing && !job.Held))
-            .Take(limit ?? int.MaxValue);
-        var restage = await restaging.RestageAsync(client, databasePath, settings, restageCandidates, progress, cancellationToken);
-        var issues = restage.Failed.Count;
         var history = await ImmichHistory.LoadAsync(jobs, databasePath, cancellationToken);
         var skips = await jobs.ListImmichSkipsAsync(databasePath, cancellationToken);
         // Said up front because each of these is downloaded again: the user would otherwise see a long run of downloads
         // for videos an earlier run already judged.
         var staleSkips = skips.Values.Count(skip => !string.Equals(skip.RulesFingerprint, rulesFingerprint, StringComparison.Ordinal));
-        progress?.Report(new ImmichDiscoveryProgress.Started(limit, history.OpenAssets.Count, staleSkips, settings.Eligibility.Rules.Count));
+        progress?.Report(new ImmichDiscoveryProgress.Started(limit, staleSkips, settings.Eligibility.Rules.Count));
 
         var queued = new List<JobRecord>();
-        int alreadyQueued = 0, alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, excluded = 0, ineligible = 0, skipped = 0, candidates = 0;
+        // Every open job counts here, whether or not the search reaches its asset; only a job queued from another terminal
+        // meanwhile is added below.
+        var alreadyQueued = history.Waiting;
+        int alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, excluded = 0, ineligible = 0, skipped = 0, issues = 0, candidates = 0;
         var skipReasons = new Dictionary<string, int>(StringComparer.Ordinal);
         // Paging can return an asset twice if the library changes between pages; judge each one once.
         var seen = new HashSet<string>(StringComparer.Ordinal);
         await foreach (var asset in client.SearchVideosAsync(cutoff, includeFavorites: !settings.Immich.SkipFavorites, cancellationToken))
         {
-            // A limit counts videos in flight, open ones included: a rerun after a failed start resumes those videos and adds
-            // only enough to reach the limit. The search is oldest first, so open jobs' assets come before new ones.
-            if (queued.Count + alreadyQueued >= limit) break;
+            // A limit counts the new videos this search queues, not the open ones: a rerun adds that many again.
+            if (queued.Count >= limit) break;
             if (!seen.Add(asset.Id)) continue;
 
             if (ImmichExclusion.Reason(asset, cutoff, settings.Immich.SkipFavorites) is { } exclusion)
@@ -69,9 +62,8 @@ public sealed class ImmichDiscoveryService(
                 continue;
             }
 
-            // A held video is parked: it neither counts towards the limit nor can be queued twice.
-            if (history.HeldAssets.Contains(asset.Id)) continue;
-            if (history.OpenAssets.Contains(asset.Id)) { alreadyQueued++; continue; }
+            // An open video, held ones included, is never queued twice.
+            if (history.OpenAssets.Contains(asset.Id)) continue;
             if (history.IsConverted(asset)) { alreadyConverted++; continue; }
             if (history.IsSettledSkip(asset, qualityFingerprint)) { previouslySkipped++; continue; }
             if (history.IsSettledFailure(asset)) { previouslyFailed++; continue; }
@@ -93,7 +85,7 @@ public sealed class ImmichDiscoveryService(
             if (StagedPath(settings.Immich.StagingDirectory, asset) is not { } stagedPath)
             {
                 issues++;
-                progress?.Report(new ImmichProgress.AssetIssue(asset.OriginalFileName, $"asset {asset.Id} has an ID or file name that cannot be staged safely; it is left alone"));
+                progress?.Report(new ImmichProgress.AssetIssue(asset.OriginalFileName, "the name Immich gives it can't be saved safely on this PC; left alone"));
                 continue;
             }
 
@@ -152,7 +144,7 @@ public sealed class ImmichDiscoveryService(
                     alreadyQueued++;
                 }
                 keepStaged = true;
-                progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, queued.Count + alreadyQueued, facts, rule));
+                progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, queued.Count, facts, rule));
             }
             // Failures of this one asset: Immich refused the request, or ffprobe could not read the file. Anything else
             // (Immich unreachable, a rejected key, a missing ffprobe, a full or unwritable staging disk) would fail every
@@ -168,7 +160,7 @@ public sealed class ImmichDiscoveryService(
             }
         }
 
-        return new ImmichDiscoveryResult(queued, restage.Restaged, alreadyQueued, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues,
+        return new ImmichDiscoveryResult(queued, alreadyQueued, history.Held, history.ReadyToFinalize, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues,
             [.. skipReasons.OrderByDescending(pair => pair.Value).ThenBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => new SkipReasonCount(pair.Key, pair.Value))]);
     }
 

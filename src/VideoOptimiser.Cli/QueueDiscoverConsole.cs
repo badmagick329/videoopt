@@ -71,6 +71,12 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
             foreach (var path in folder) output.WriteLine($"  {Path.GetFileName(path)}");
         }
 
+        WriteCounts(output, result);
+    }
+
+    /// <summary>The counts that are not zero, and the notes under them. <c>queue add immich</c> prints this alone: it lists its queued videos as it downloads them.</summary>
+    public static void WriteCounts(TextWriter output, QueueDiscoveryResult result)
+    {
         var counts = new List<string> { $"Queued: {result.QueuedPaths.Count}." };
         void Add(int count, string label) { if (count > 0) counts.Add($"{label}: {count}."); }
         Add(result.AlreadyQueued, "Already queued");

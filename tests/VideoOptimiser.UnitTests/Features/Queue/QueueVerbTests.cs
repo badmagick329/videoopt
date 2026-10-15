@@ -59,7 +59,7 @@ public sealed class QueueVerbTests : QueueTestBase
 
     [Theory]
     [InlineData(true, null, "clip.mp4 runs next; it's no longer held.")]
-    [InlineData(false, "video-optimiser immich run", "clip.mp4 is now first in the queue.")]
+    [InlineData(false, "video-optimiser queue process", "clip.mp4 is now first in the queue.")]
     [InlineData(false, "video-optimiser run", "clip.mp4 runs next.")]
     [InlineData(false, "queue drop", "clip.mp4 runs next.")]
     public async Task NextPutsAVideoFirstAndSaysWhetherTheRunGoingNowTakesIt(bool held, string? runGoing, string line)

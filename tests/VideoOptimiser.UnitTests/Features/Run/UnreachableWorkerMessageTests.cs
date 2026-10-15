@@ -20,7 +20,7 @@ public sealed class UnreachableWorkerMessageTests
     {
         var command = CliCommand.Parse(["run", "--config", "my.yaml"]);
 
-        UnreachableWorkerMessage.Lines(new JobRecord { ResumeStatus = stage }, managed: true, command, immichJobsLeft: null).Should().Equal(
+        UnreachableWorkerMessage.Lines(new JobRecord { ResumeStatus = stage }, managed: true, command).Should().Equal(
             "The worker stays up, billed hourly, until it is deleted.",
             "To resume: video-optimiser run --config \"my.yaml\"",
             $"To delete it instead: video-optimiser worker delete --config \"my.yaml\"{suffix}");

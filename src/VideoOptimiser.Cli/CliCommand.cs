@@ -16,6 +16,7 @@ internal enum CliCommandKind
     WorkerDelete,
     RemoteSetup,
     QueueAdd,
+    QueueAddImmich,
     QueueAddFile,
     Run,
     QueueList,
@@ -48,6 +49,7 @@ Usage:
   video-optimiser worker delete [--config <path>]
   video-optimiser remote setup [--config <path>]
   video-optimiser queue add [--first] [--config <path>]
+  video-optimiser queue add immich [--first | --limit <n>] [--config <path>]
   video-optimiser queue add <file> [--force] [--config <path>]
   video-optimiser run [--config <path>] [--local | --remote]
   video-optimiser queue list [--config <path>] [--json]
@@ -157,6 +159,8 @@ Usage:
             ["worker", "delete"] => CliCommandKind.WorkerDelete,
             ["remote", "setup"] => CliCommandKind.RemoteSetup,
             ["queue", "add"] => CliCommandKind.QueueAdd,
+            // The word itself selects it; a file named "immich" is given as ".\immich".
+            ["queue", "add", "immich"] => CliCommandKind.QueueAddImmich,
             ["queue", "add", _] => CliCommandKind.QueueAddFile,
             ["run"] => CliCommandKind.Run,
             ["queue", "list"] => CliCommandKind.QueueList,
@@ -194,12 +198,12 @@ Usage:
             return Invalid("--json is only supported by doctor, queue list, status, history and calibrate.");
         }
 
-        if (first && kind is not (CliCommandKind.QueueAdd or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue add and immich run.");
-        if (limit is not null && kind != CliCommandKind.ImmichRun) return Invalid("--limit is only supported by immich run.");
+        if (first && kind is not (CliCommandKind.QueueAdd or CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue add, queue add immich and immich run.");
+        if (limit is not null && kind is not (CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun)) return Invalid("--limit is only supported by queue add immich and immich run.");
         if (quality is not null && kind != CliCommandKind.ConfigInit) return Invalid("--quality is only supported by config init.");
         if (first && limit is not null) return Invalid("--first and --limit cannot be used together.");
-        // --first is --limit 1 for immich run; queue add keeps its own --first.
-        if (first && kind == CliCommandKind.ImmichRun) limit = 1;
+        // --first is --limit 1 for the Immich commands; queue add keeps its own --first.
+        if (first && kind is CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun) limit = 1;
         if (all && kind != CliCommandKind.QueueDrop) return Invalid("--all is only supported by queue drop.");
 
         if (force && kind != CliCommandKind.QueueAddFile)

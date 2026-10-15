@@ -140,7 +140,8 @@ All commands take `--config <path>`.
 | `validate <job-id>` | Re-run the checks on a job's output. |
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one. |
 | `cleanup [--dry-run]` | Delete temporary files no job will use again. |
-| `immich run [--first \| --limit <n>]`, `immich finalize` | The same flow for an Immich library. |
+| `queue add immich [--first \| --limit <n>]` | Download up to `n` new old videos from Immich, check them against your rules and queue the ones that fit. |
+| `immich run [--first \| --limit <n>]`, `immich finalize` | `immich run` is `queue add immich` plus `run`: it converts the whole queue. `--limit` counts new videos only. `immich finalize` replaces the originals in Immich. |
 | `remote setup` | One-time Hetzner setup. Creates no server. |
 | `worker create`, `worker status`, `worker delete` | Manage the Hetzner server by hand. |
 | `version` | Print the version. |

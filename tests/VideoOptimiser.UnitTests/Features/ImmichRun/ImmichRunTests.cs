@@ -17,8 +17,8 @@ using VideoOptimiser.Infrastructure.Tools;
 namespace VideoOptimiser.UnitTests.Features.ImmichRun;
 
 /// <summary>
-/// <c>immich run</c> then <c>immich finalize</c> through the real services, with Immich and the encoder faked: what the CLI
-/// runs, minus the console and the worker lifecycle.
+/// <c>queue add immich</c>, <c>run</c> then <c>immich finalize</c> through the real services, with Immich and the encoder
+/// faked: what the CLI runs, minus the console and the worker lifecycle.
 /// </summary>
 public sealed class ImmichRunTests : IDisposable
 {
@@ -58,8 +58,7 @@ public sealed class ImmichRunTests : IDisposable
         _run = new ImmichRunService(
             _immich,
             new ImmichReuploadGuard(_immich, _repository),
-            new ImmichDiscoveryService(_immich, _repository, _ => new H264Probe(bitrate: 20_000_000), fingerprints, new ImmichRestaging(_immich, _repository, () => Now), () => Now),
-            _queue);
+            new ImmichDiscoveryService(_immich, _repository, _ => new H264Probe(bitrate: 20_000_000), fingerprints, () => Now));
         _finalizer = new FinalizationService(_repository, manifests, fingerprints, new SafeFileInstaller(), new ImmichFinalizer(_immich, _repository, manifests));
     }
 
@@ -69,7 +68,7 @@ public sealed class ImmichRunTests : IDisposable
         _immich.Add("PXL_20260301.mp4", "original");
         _immich.Trash = new ImmichTrashSettings(Enabled: false, Days: 30);
 
-        var call = () => _run.PrepareAsync(_settings.Database.Path, _settings, limit: null);
+        var call = () => _run.AddToQueueAsync(_settings.Database.Path, _settings, limit: null);
 
         (await call.Should().ThrowAsync<ImmichApiException>()).Which.Code.Should().Be(ImmichTrash.DisabledCode);
         (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().BeEmpty();
@@ -80,13 +79,11 @@ public sealed class ImmichRunTests : IDisposable
     {
         var original = _immich.Add("PXL_20260301.mp4", "original");
 
-        var preparation = await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null);
-        var processed = await _queue.RunAsync(_settings.Database.Path, _settings, preparation.Queue);
+        var added = await _run.AddToQueueAsync(_settings.Database.Path, _settings, limit: null);
+        var processed = await _queue.RunAsync(_settings.Database.Path, _settings, await _queue.PrepareAsync(_settings.Database.Path, _settings, sourceKind: null));
 
-        preparation.Guard.Checked.Should().Be(0);
-        // The round is the set its limit chose (until phase A step 7): a video queued meanwhile waits for the next round.
-        preparation.Queue.FollowQueue.Should().BeFalse();
-        var job = preparation.Discovery.Queued.Should().ContainSingle().Subject;
+        added.Guard.Checked.Should().Be(0);
+        var job = added.Discovery.Queued.Should().ContainSingle().Subject;
         processed.ReadyToFinalize.Should().Be(1);
         _immich.Get(original.Id).IsTrashed.Should().BeFalse("nothing touches Immich before finalize");
 
@@ -101,28 +98,30 @@ public sealed class ImmichRunTests : IDisposable
         _immich.Remove(original.Id);
         var reupload = _immich.Add("PXL_20260301.mp4", "original");
 
-        var next = await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null);
+        var next = await _run.AddToQueueAsync(_settings.Database.Path, _settings, limit: null);
 
         next.Guard.Trashed.Should().ContainSingle().Which.AssetId.Should().Be(reupload.Id);
         _immich.Get(reupload.Id).IsTrashed.Should().BeTrue();
         next.Discovery.Queued.Should().BeEmpty();
         next.Discovery.AlreadyConverted.Should().Be(1, "the AV1 asset is old-dated, so the search returns it");
-        next.Queue.RunnableJobs.Should().BeEmpty();
+        (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().BeEmpty();
         _immich.Get(av1.Id).IsTrashed.Should().BeFalse();
     }
 
     [Fact]
-    public async Task ALimitProcessesAtMostThatManyOpenJobs()
+    public async Task ALimitCountsOnlyTheVideosQueuedByThatSearch()
     {
         _immich.Add("a.mp4", "video a");
         _immich.Add("b.mp4", "video b");
         _immich.Add("c.mp4", "video c");
-        await _run.PrepareAsync(_settings.Database.Path, _settings, limit: null);
 
-        var preparation = await _run.PrepareAsync(_settings.Database.Path, _settings, limit: 2);
+        var first = await _run.AddToQueueAsync(_settings.Database.Path, _settings, limit: 2);
+        var second = await _run.AddToQueueAsync(_settings.Database.Path, _settings, limit: 2);
 
-        preparation.Discovery.Queued.Should().BeEmpty();
-        preparation.Queue.RunnableJobs.Should().HaveCount(2);
+        first.Discovery.Queued.Should().HaveCount(2);
+        second.Discovery.Queued.Should().ContainSingle();
+        second.Discovery.AlreadyQueued.Should().Be(2);
+        (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().HaveCount(3);
     }
 
     [Fact]
@@ -146,7 +145,7 @@ public sealed class ImmichRunTests : IDisposable
         _immich.FailSearch = new ImmichApiException("ImmichUnavailable", "Immich did not answer.");
         var reports = new List<ScanProgress>();
 
-        var action = () => _run.PrepareAsync(_settings.Database.Path, _settings, limit: null, new SynchronousProgress<ScanProgress>(reports.Add));
+        var action = () => _run.AddToQueueAsync(_settings.Database.Path, _settings, limit: null, new SynchronousProgress<ScanProgress>(reports.Add));
 
         await action.Should().ThrowAsync<ImmichApiException>();
         reports.Should().ContainSingle(report => report.Stage == "Trashed");

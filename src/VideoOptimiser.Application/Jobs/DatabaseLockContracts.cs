@@ -2,8 +2,8 @@ namespace VideoOptimiser.Application.Jobs;
 
 /// <summary>
 /// How commands name themselves in the database's lock files. They are Application's, not the CLI's, because the queue verbs
-/// must tell a <c>run</c> (which takes the next video from the queue as it is) from an <c>immich run</c> (which keeps the
-/// videos it started with), and a verb holding the run lock for a moment from a run.
+/// must tell a run (<c>run</c> or <c>immich run</c>, which take the next video from the queue as it is) from a verb holding
+/// the run lock for a moment, and from a run of an older version, which keeps the videos it started with.
 /// </summary>
 public static class LockHolders
 {

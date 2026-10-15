@@ -271,7 +271,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ALimitCountsOpenJobsAndAddsOnlyEnoughToReachIt()
+    public async Task ALimitCountsOnlyTheNewVideosItQueues()
     {
         var open = _immich.Add("open.mp4", "hevc open");
         _immich.Add("next1.mp4", "hevc next1");
@@ -279,11 +279,35 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         _immich.Add("next3.mp4", "hevc next3");
         await CreateJobAsync(open, JobStatus.Queued);
 
-        var result = await DiscoverAsync(limit: 3);
+        var result = await DiscoverAsync(limit: 2);
 
-        result.AlreadyQueued.Should().Be(1);
-        result.Queued.Should().HaveCount(2);
+        result.Queued.Select(job => Path.GetFileName(job.SourcePath)).Should().Equal("next1.mp4", "next2.mp4");
         _immich.Downloads.Should().HaveCount(2);
+    }
+
+    /// <summary>The counts <c>queue add</c> prints cover every open job, also those the search never returns or stops before.</summary>
+    [Fact]
+    public async Task CountsEveryOpenJobByWhatHappensToItNextWhetherOrNotTheSearchReachesIt()
+    {
+        var waiting = _immich.Add("waiting.mp4", "hevc waiting");
+        var converting = _immich.Add("converting.mp4", "hevc converting");
+        var held = _immich.Add("held.mp4", "hevc held");
+        var ready = _immich.Add("ready.mp4", "hevc ready");
+        var finalising = _immich.Add("finalising.mp4", "hevc finalising");
+        var notReturned = _immich.Add("not-returned.mp4", "hevc not returned");
+        _immich.Remove(notReturned.Id);
+        await CreateJobAsync(waiting, JobStatus.Queued);
+        await CreateJobAsync(converting, JobStatus.Encoding);
+        await CreateJobAsync(notReturned, JobStatus.Queued);
+        (await _repository.SetHeldAsync(_settings.Database.Path, await CreateJobAsync(held, JobStatus.Queued), held: true)).Should().BeTrue();
+        await CreateJobAsync(ready, JobStatus.ReadyToFinalize);
+        await CreateJobAsync(finalising, JobStatus.Finalizing);
+
+        var result = await DiscoverAsync(limit: 1);
+
+        (result.AlreadyQueued, result.Held, result.ReadyToFinalize).Should().Be((3, 1, 2));
+        result.Queued.Should().BeEmpty();
+        _immich.Downloads.Should().BeEmpty();
     }
 
     [Fact]
@@ -355,90 +379,6 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         Directory.Exists(Path.Combine(_settings.Immich.StagingDirectory, asset.Id)).Should().BeFalse();
     }
 
-    [Fact]
-    public async Task DownloadsAgainTheMissingStagedOriginalOfAnOpenJob()
-    {
-        var asset = _immich.Add("clip.mp4", "hevc video");
-        var job = await CreateJobAsync(asset, JobStatus.Queued, staged: false);
-        var events = new List<ImmichProgress>();
-
-        var result = await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
-
-        result.Restaged.Should().Be(1);
-        result.AlreadyQueued.Should().Be(1);
-        result.Queued.Should().BeEmpty();
-        _immich.Downloads.Should().Equal(asset.Id);
-        (await File.ReadAllTextAsync(job.SourcePath)).Should().Be("hevc video");
-        (await _repository.GetAsync(_settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.Queued);
-        // Discovery passes its progress on to restaging, which is how the user sees the download.
-        events.Should().Contain(new ImmichProgress.Restaging("clip.mp4", job.Id));
-    }
-
-    [Fact]
-    public async Task LeavesTheStagedOriginalOfAReadyJobAlone()
-    {
-        var asset = _immich.Add("clip.mp4", "hevc video");
-        await CreateJobAsync(asset, JobStatus.ReadyToFinalize, staged: false);
-
-        var result = await DiscoverAsync();
-
-        result.Restaged.Should().Be(0);
-        _immich.Downloads.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task FailsAnOpenJobWhoseMissingOriginalImmichNoLongerReturns()
-    {
-        var asset = _immich.Add("clip.mp4", "hevc video");
-        var job = await CreateJobAsync(asset, JobStatus.Queued, staged: false);
-        _immich.Remove(asset.Id);
-        _immich.Failures[asset.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.", 404);
-
-        var result = await DiscoverAsync();
-
-        result.Issues.Should().Be(1);
-        var stored = (await _repository.GetAsync(_settings.Database.Path, job.Id))!;
-        stored.Status.Should().Be(JobStatus.Failed);
-        stored.FailureCategory.Should().Be("SourceMissing");
-        Directory.Exists(Path.Combine(_settings.Immich.StagingDirectory, asset.Id)).Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task FailsAnOpenJobWhoseAssetChangedAndQueuesTheAssetAfresh()
-    {
-        var asset = _immich.Add("clip.mp4", "hevc video");
-        var job = await CreateJobAsync(asset with { Checksum = InMemoryImmich.Checksum("hevc earlier video") }, JobStatus.Queued, staged: false);
-
-        var result = await DiscoverAsync();
-
-        result.Restaged.Should().Be(0);
-        result.Issues.Should().Be(1);
-        (await _repository.GetAsync(_settings.Database.Path, job.Id))!.FailureCategory.Should().Be("SourceMissing");
-        var queued = result.Queued.Should().ContainSingle().Subject;
-        queued.ImmichChecksum.Should().Be(asset.Checksum);
-        (await File.ReadAllTextAsync(queued.SourcePath)).Should().Be("hevc video");
-    }
-
-    /// <summary>R7: <c>queue next</c> moves a video up the run's order, so the limit downloads again the ones the run will take.</summary>
-    [Fact]
-    public async Task ALimitDownloadsAgainOnlyTheOpenJobsTheRunTakesFirstInRunOrder()
-    {
-        var oldest = _immich.Add("oldest.mp4", "hevc oldest");
-        var middle = _immich.Add("middle.mp4", "hevc middle");
-        var newest = _immich.Add("newest.mp4", "hevc newest");
-        await CreateJobAsync(oldest, JobStatus.Queued, staged: false);
-        await Task.Delay(20);
-        await CreateJobAsync(middle, JobStatus.Queued, staged: false);
-        await Task.Delay(20);
-        var movedNext = await CreateJobAsync(newest, JobStatus.Queued, staged: false);
-        (await _repository.RunNextAsync(_settings.Database.Path, movedNext)).Should().BeTrue();
-
-        var result = await DiscoverAsync(limit: 2);
-
-        result.Restaged.Should().Be(2);
-        _immich.Downloads.Should().Equal(newest.Id, oldest.Id);
-    }
-
     /// <summary>
     /// R11: an asset queued from another terminal after discovery read the open jobs counts as queued, and keeps its staged
     /// copy, which that job reads at the same path.
@@ -457,44 +397,23 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().ContainSingle();
     }
 
-    /// <summary>
-    /// R7, R10: a held video is parked. It neither counts towards the limit nor is downloaded again or failed behind the
-    /// user's back, and its asset is not queued a second time.
-    /// </summary>
+    /// <summary>R7, R10: a held video is parked. It is not downloaded or failed behind the user's back, and its asset is not queued a second time.</summary>
     [Fact]
-    public async Task ALimitLeavesHeldVideosOutOfItsCountAndAlone()
+    public async Task AHeldVideoIsLeftAloneAndItsAssetIsNotQueuedAgain()
     {
         var held = _immich.Add("held.mp4", "hevc held");
-        var open = _immich.Add("open.mp4", "hevc open");
         _immich.Add("next1.mp4", "hevc next1");
-        _immich.Add("next2.mp4", "hevc next2");
         var heldJob = await CreateJobAsync(held, JobStatus.Queued, staged: false);
         (await _repository.SetHeldAsync(_settings.Database.Path, heldJob, held: true)).Should().BeTrue();
-        await CreateJobAsync(open, JobStatus.Queued);
 
-        var result = await DiscoverAsync(limit: 2);
+        var result = await DiscoverAsync(limit: 1);
 
-        result.AlreadyQueued.Should().Be(1);
+        result.Held.Should().Be(1);
         result.Queued.Should().ContainSingle().Which.SourcePath.Should().EndWith("next1.mp4");
         _immich.Downloads.Should().NotContain(held.Id);
         var stored = (await _repository.GetAsync(_settings.Database.Path, heldJob.Id))!;
         stored.Status.Should().Be(JobStatus.Queued);
         stored.Held.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task NeverDownloadsAgainToAPathOutsideTheAssetFolder()
-    {
-        var asset = _immich.Add("clip.mp4", "hevc video");
-        var job = await CreateJobAsync(asset, JobStatus.Queued, staged: false);
-        job.SourcePath = Path.Combine(_directory, "elsewhere", "clip.mp4");
-        await _repository.UpdateAsync(_settings.Database.Path, job);
-
-        var result = await DiscoverAsync();
-
-        result.Issues.Should().Be(1);
-        (await _repository.GetAsync(_settings.Database.Path, job.Id))!.FailureCategory.Should().Be("SourceMissing");
-        File.Exists(job.SourcePath).Should().BeFalse();
     }
 
     [Fact]
@@ -514,7 +433,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         // notes.txt needs no download, so it is counted and never listed.
         result.Ineligible.Should().Be(1);
         events.Should().Equal(
-            new ImmichDiscoveryProgress.Started(3, 0, 0, 1),
+            new ImmichDiscoveryProgress.Started(3, 0, 1),
             new ImmichDiscoveryProgress.CandidateDownloading(1, "a-h264.mp4", Old.DateTime),
             new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "no rule for h264", null, 0, new CandidateFacts("h264", 1920, 1080, 20_000_000, 10)),
             new ImmichDiscoveryProgress.CandidateDownloading(2, "b-bad-checksum.mp4", Old.DateTime),
@@ -561,10 +480,8 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartsByCountingOpenJobsAndSkipsRecordedUnderOtherRules()
+    public async Task StartsByCountingTheSkipsRecordedUnderOtherRules()
     {
-        var open = _immich.Add("open.mp4", "hevc open");
-        await CreateJobAsync(open, JobStatus.Queued);
         var stale = _immich.Add("stale.mp4", "h264 stale");
         var current = _immich.Add("current.mp4", "h264 current");
         await _repository.PutImmichSkipAsync(_settings.Database.Path, new ImmichSkipRecord(stale.Id, stale.Checksum, "an-older-rules-fingerprint", "codec h264", Now));
@@ -573,7 +490,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
         await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
 
-        events.First().Should().Be(new ImmichDiscoveryProgress.Started(null, 1, 1, 1));
+        events.First().Should().Be(new ImmichDiscoveryProgress.Started(null, 1, 1));
         events.OfType<ImmichDiscoveryProgress.CandidateDownloading>().Select(candidate => candidate.FileName).Should().Equal("stale.mp4");
     }
 
@@ -598,7 +515,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private Task<ImmichDiscoveryResult> DiscoverAsync(int? limit = null, IProgress<ImmichProgress>? progress = null, IJobRepository? repository = null) =>
-        new ImmichDiscoveryService(_immich, repository ?? _repository, _ => new ContentProbe(), new FileFingerprintService(), new ImmichRestaging(_immich, repository ?? _repository, () => Now), () => Now)
+        new ImmichDiscoveryService(_immich, repository ?? _repository, _ => new ContentProbe(), new FileFingerprintService(), () => Now)
             .DiscoverAsync(_settings.Database.Path, _settings, limit, progress);
 
     /// <summary>Reads open jobs as if there were none yet, as discovery would just before a retry from another terminal queued one.</summary>
@@ -632,19 +549,4 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     private static EligibilityRuleSettings HevcRule() => new() { Codecs = ["hevc"], Resolution = "1080p-1440p", MinimumVideoBitrate = "10Mbps", MinimumFileSize = "5B" };
-
-    /// <summary>
-    /// Reads the codec from the start of the staged file, so each fake asset's content decides its eligibility. "corrupt"
-    /// fails as ffprobe does on an unreadable file; "missing-ffprobe" fails as starting a missing executable does.
-    /// </summary>
-    private sealed class ContentProbe : IMediaProbe
-    {
-        public async Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
-        {
-            var codec = (await File.ReadAllTextAsync(path, cancellationToken)).Split(' ')[0];
-            if (codec == "corrupt") throw new MediaProbeException("ffprobe exited with 1: Invalid data found when processing input");
-            if (codec == "missing-ffprobe") throw new System.ComponentModel.Win32Exception(2, "The system cannot find the file specified.");
-            return new MediaInfo(codec, 1, 1, 0, 0, 60, new FileInfo(path).Length, 1920, 1080, 20_000_000);
-        }
-    }
 }

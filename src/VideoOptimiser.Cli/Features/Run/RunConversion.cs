@@ -3,15 +3,16 @@ using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using static CliOutput;
 
 namespace VideoOptimiser.Cli.Features.Run;
 
 /// <summary>
-/// The conversion <c>run</c> and <c>immich run</c> share once each has prepared its videos: the banner, the worker, each
-/// video in turn, and the lines after. It decides flow and prints lines at once (tangle T1 in the slice plan); lifting the
-/// flow out of the CLI waits for the TUI.
+/// What <c>run</c> and <c>immich run</c> share: the banner, then the whole queue converted, folder and Immich videos alike,
+/// the worker, each video in turn, and the lines after. <c>immich run</c> adds its videos to the queue first. It decides
+/// flow and prints lines at once (tangle T1 in the slice plan); lifting the flow out of the CLI waits for the TUI.
 /// </summary>
 internal sealed class RunConversion(IQueueService queue, IJobProcessor processor, IRemoteWorkerLifecycle lifecycle, IImmichRestaging restaging, RunWorkerState state, RunStop stop, RunWorkerEnd workerEnd)
 {
@@ -28,22 +29,36 @@ internal sealed class RunConversion(IQueueService queue, IJobProcessor processor
     }
 
     /// <summary>
-    /// Processes prepared jobs, creating a managed worker only when there is work for it. <paramref name="report"/> prints the
-    /// outcome before the worker's fate is decided, so the worker lines come last. With nothing to convert, the run command's
-    /// guard decides the fate (<see cref="RunWorkerEnd.GuardAsync"/>).
+    /// Everything <c>run</c> does after its banner: prepares the whole queue, readies its Immich videos, and converts it,
+    /// creating a managed worker only when there is work for it. The outcome is printed before the worker's fate is decided,
+    /// so the worker lines come last. With nothing to convert, the run command's guard decides the fate
+    /// (<see cref="RunWorkerEnd.GuardAsync"/>).
     /// </summary>
-    /// <param name="beforeWorker">Runs after the preparation's lines and before the worker check, and returns the preparation
-    /// to convert: <c>run</c> readies its Immich videos there (R8).</param>
-    public async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken, Func<QueuePreparationResult, Task<QueuePreparationResult>>? beforeWorker = null)
+    /// <param name="beforeNext">Printed between the failed jobs and the line that says what to finalise.</param>
+    public async Task<ExitCode> ConvertQueueAsync(LoadedConfiguration configuration, CliCommand command, Action? beforeNext, CancellationToken cancellationToken)
+    {
+        var preparation = await queue.PrepareAsync(configuration.Settings.Database.Path, configuration.Settings, sourceKind: null, modeOverridden: command.ModeOverride is not null, cancellationToken);
+        var (ready, _, failures, workerUnreachable, stopped, workerHandled) = await ProcessPreparedJobsAsync(configuration, command, preparation, (ready, skipped, failures) =>
+        {
+            Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
+            PrintFailedJobs(failures);
+            beforeNext?.Invoke();
+            // finalize --ready finalises every source, so one line serves a queue of folder and Immich videos.
+            if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser finalize --ready'.");
+        }, cancellationToken);
+        return stopped ? ExitCode.Cancelled : !workerHandled ? ExitCode.GeneralFailure : QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
+    }
+
+    private async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken)
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
         // F8 (VOPT-70): finalize checks whether anything moved and resumes, so the run leaves these jobs alone.
         foreach (var job in preparation.InterruptedFinalizations) Console.WriteLine($"{Path.GetFileName(job.SourcePath)} was interrupted while being finalised. Run 'video-optimiser finalize --ready' to finish it.");
-        if (command.Kind == CliCommandKind.Run && preparation.Held > 0)
+        if (preparation.Held > 0)
         {
             Console.WriteLine(preparation.Held == 1 ? "1 video is held; runs pass over it until it's released." : $"{preparation.Held} videos are held; runs pass over them until they're released.");
         }
-        if (beforeWorker is not null) preparation = await beforeWorker(preparation);
+        preparation = await ReadyImmichVideosAsync(configuration, preparation, cancellationToken);
         if (preparation.RunnableJobs.Count == 0)
         {
             report(0, 0, [.. preparation.FailedJobs]);
@@ -81,7 +96,7 @@ internal sealed class RunConversion(IQueueService queue, IJobProcessor processor
             Console.WriteLine(StoppedRunMessage.StoppedAfter(last.SourcePath, result.NotStarted));
         }
         report(result.ReadyToFinalize, result.SkippedJobs.Count, failures);
-        if (result.StoppedAfter is not null) Console.WriteLine(StoppedRunMessage.ConvertTheRest(command, await workerEnd.ImmichJobsLeftAsync(configuration, command)));
+        if (result.StoppedAfter is not null) Console.WriteLine(StoppedRunMessage.ConvertTheRest(command));
         var end = result.UnreachableWorkerJob is not null ? RunEnd.WorkerUnreachable : result.StoppedAfter is not null ? RunEnd.StoppedAfterVideo : RunEnd.Finished;
         var workerHandled = await workerEnd.ConcludeAsync(configuration, command, end, unreachableJob: result.UnreachableWorkerJob);
         if (result.UnreachableWorkerJob is not null)
@@ -93,6 +108,33 @@ internal sealed class RunConversion(IQueueService queue, IJobProcessor processor
             Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the server; powering it off still bills.");
         }
         return (result.ReadyToFinalize, result.SkippedJobs.Count, failures, result.UnreachableWorkerJob is not null, result.StoppedAfter is not null, workerHandled);
+    }
+
+    /// <summary>
+    /// R8: after preparation released the finalise lock and before the worker check, the Immich videos either get their
+    /// downloaded copies back or stay queued with a line saying why, so the worker is created only for work that can run.
+    /// Immich is asked only for a missing copy: converting needs nothing else from it. Folder videos convert either way.
+    /// </summary>
+    private async Task<QueuePreparationResult> ReadyImmichVideosAsync(LoadedConfiguration configuration, QueuePreparationResult preparation, CancellationToken cancellationToken)
+    {
+        var immichJobs = preparation.RunnableJobs.Where(job => job.SourceKind == JobSourceKind.Immich).ToArray();
+        var foldersOnly = preparation with { RunnableJobs = preparation.RunnableJobs.Where(job => job.SourceKind == JobSourceKind.File).ToArray(), SourceKind = JobSourceKind.File };
+        // Without Immich the run takes no Immich video, a joining one included.
+        if (!configuration.Settings.Immich.IsConfigured)
+        {
+            if (immichJobs.Length > 0) Console.WriteLine(ImmichStayQueued(immichJobs.Length, "immich.baseUrl isn't set"));
+            return foldersOnly;
+        }
+        if (immichJobs.Length == 0) return preparation;
+
+        var restage = await RestageAsync(configuration, immichJobs, cancellationToken);
+        var failed = restage.Failed.Select(job => job.Id).ToHashSet();
+        var ready = restage.Unusable is null ? preparation : foldersOnly;
+        return ready with
+        {
+            RunnableJobs = ready.RunnableJobs.Where(job => !failed.Contains(job.Id)).ToArray(),
+            FailedJobs = [.. preparation.FailedJobs, .. restage.Failed.Select(job => ToFailedQueueJob(job, job.FailureMessage!))]
+        };
     }
 
     /// <summary>
@@ -175,7 +217,7 @@ internal sealed class RunConversion(IQueueService queue, IJobProcessor processor
     {
         if (lifecycle.IsManaged(configuration.Settings)) return;
         Console.WriteLine();
-        foreach (var line in UnreachableWorkerMessage.Lines(unreachableWorkerJob, managed: false, command, await workerEnd.ImmichJobsLeftAsync(configuration, command))) Console.WriteLine(line);
+        foreach (var line in UnreachableWorkerMessage.Lines(unreachableWorkerJob, managed: false, command)) Console.WriteLine(line);
     }
 
     /// <summary>The managed server's name, or the SSH host of a manual one. Read without the run's token, which may be cancelled.</summary>

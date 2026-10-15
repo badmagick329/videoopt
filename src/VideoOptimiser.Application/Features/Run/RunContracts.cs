@@ -29,13 +29,11 @@ public sealed record SkippedQueueJob(Guid Id, string SourcePath, string Message)
 /// <see cref="JobCompatibility.IsBoundToOtherMode"/>. They are neither runnable nor failed.</param>
 /// <param name="InterruptedFinalizations">File jobs whose finalisation Ctrl+C or a crash interrupted. Left as they are: only
 /// <c>finalize</c> can tell whether anything moved (VOPT-70).</param>
-/// <param name="RunnableJobs">In run order: the run's first view of the queue.</param>
-/// <param name="FollowQueue">The run takes each next video from the queue as it is then, so a video added, released or moved
-/// next during the run joins it. False keeps the run to <paramref name="RunnableJobs"/>: <c>immich run</c>'s set, fixed by its
-/// <c>--limit</c> (until phase A step 7).</param>
+/// <param name="RunnableJobs">In run order: the run's first view of the queue. The run takes each next video from the queue as
+/// it is then, so a video added, released or moved next during the run joins it.</param>
 /// <param name="SourceKind">The source the run converts; null for every source (<c>run</c>).</param>
 /// <param name="Held">The held videos of that source that a run would otherwise take.</param>
-public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs, IReadOnlyList<JobRecord> InterruptedFinalizations, JobSourceKind? SourceKind = null, bool FollowQueue = true, int Held = 0);
+public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJobs, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<JobRecord> SkippedJobs, IReadOnlyList<JobRecord> InterruptedFinalizations, JobSourceKind? SourceKind = null, int Held = 0);
 
 /// <param name="UnreachableWorkerJob">The job the run stopped at because the worker could not be reached, or null. Every later
 /// job would fail the same way, so the run ends there (VOPT-69). The job is <see cref="JobStatus.Interrupted"/> and resumes from
@@ -59,8 +57,8 @@ public static class QueueExitCode
 public interface IQueueService
 {
     /// <summary>
-    /// Readies the open jobs of one source, or of every source, for processing: <c>run</c> takes every job, <c>immich run</c>
-    /// Immich jobs. Every source's Immich finalisation that a crash interrupted goes back to ready either way.
+    /// Readies the open jobs of one source, or of every source, for processing: <c>run</c> and <c>immich run</c> take every
+    /// job. Every source's Immich finalisation that a crash interrupted goes back to ready either way.
     /// </summary>
     /// <param name="sourceKind">The source to ready; null for every source.</param>
     /// <param name="modeOverridden">Whether <c>--local</c> or <c>--remote</c> set the mode in <paramref name="settings"/>. The settings

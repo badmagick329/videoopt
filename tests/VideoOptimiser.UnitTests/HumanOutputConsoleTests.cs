@@ -18,21 +18,35 @@ public sealed class HumanOutputConsoleTests
     private static readonly DateTime Taken = new(2022, 11, 30, 21, 37, 45);
 
     [Fact]
-    public void WithoutALimitTheIntroAsksForEveryFittingVideoNamesOpenJobsAndTheQueuedOutcomeHasNoCount()
+    public void WithoutALimitTheIntroAsksForEveryFittingVideoTheDownloadsAreExplainedOnceAndTheQueuedOutcomeHasNoCount()
     {
         var (console, output, _) = ImmichConsole();
 
-        console.Report(new ImmichDiscoveryProgress.Started(null, 2, 0, 2));
+        console.Report(new ImmichDiscoveryProgress.Started(null, 0, 2));
         console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken));
-        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 3, Facts("hevc", 1920, 1080, 8_100_000, 10), 2));
+        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, Facts("hevc", 1920, 1080, 8_100_000, 10), 2));
+        console.Report(new ImmichDiscoveryProgress.CandidateDownloading(2, "b.mp4", Taken));
+        console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 2, Facts("hevc", 1920, 1080, 8_100_000, 10), 1));
 
-        output.ToString().Should().StartWith(
-                "Searching Immich for every video that fits your rules.\n" +
-                "Each candidate is downloaded and checked with ffprobe.\n" +
-                "If it doesn't fit your rules, the download is deleted and the video is skipped in future runs.\n" +
-                "2 already queued from earlier runs.\n")
-            .And.NotContain("different eligibility rules")
-            .And.EndWith("[1] a.mp4  2022-11-30  hevc 1080p 8.1 Mbps  10 B  queued: fits rule 2\n");
+        output.ToString().Should().Be(
+            "Looking in Immich for every video that fits your rules.\n" +
+            "Each video below is downloaded and checked. If it doesn't fit your rules, the download is deleted and the video is not checked again until your rules change.\n" +
+            "\n" +
+            "  1. a.mp4  2022-11-30  hevc 1080p 8.1 Mbps  10 B  queued: fits rule 2\n" +
+            "  2. b.mp4  2022-11-30  hevc 1080p 8.1 Mbps  10 B  queued: fits rule 1\n");
+    }
+
+    /// <summary>The line reads for one video as well as many, and the stale count is of videos checked again, not of a rule change.</summary>
+    [Theory]
+    [InlineData(1, "1 video that didn't fit your earlier rules is checked again under the current ones when the search reaches it.")]
+    [InlineData(58, "58 videos that didn't fit your earlier rules are checked again under the current ones when the search reaches them.")]
+    public void TheStaleSkipsAreSaidRightAfterTheIntroAndBeforeAnyDownload(int stale, string line)
+    {
+        var (console, output, _) = ImmichConsole();
+
+        console.Report(new ImmichDiscoveryProgress.Started(3, stale, 1));
+
+        output.ToString().Should().Be("Looking in Immich for up to 3 new videos to convert.\n" + line + "\n");
     }
 
     [Fact]
@@ -40,15 +54,15 @@ public sealed class HumanOutputConsoleTests
     {
         var (console, output, _) = ImmichConsole();
 
-        console.Report(new ImmichDiscoveryProgress.Started(5, 0, 0, 1));
+        console.Report(new ImmichDiscoveryProgress.Started(5, 0, 1));
         console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken));
         console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, Facts("hevc", 1920, 1080, 20_000_000, 10), 1));
         console.Report(new ImmichDiscoveryProgress.CandidateDownloading(2, "b.mp4", Taken));
         console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "needs 10Mbps", null, 0, Facts("hevc", 1920, 1080, 6_000_000, 10)));
 
         output.ToString().Should().EndWith(
-            "[1] a.mp4  2022-11-30  hevc 1080p 20 Mbps  10 B  queued (1 of 5)\n" +
-            "[2] b.mp4  2022-11-30  hevc 1080p 6.0 Mbps  10 B  skip: needs 10Mbps\n");
+            "  1. a.mp4  2022-11-30  hevc 1080p 20 Mbps  10 B  queued (1 of 5)\n" +
+            "  2. b.mp4  2022-11-30  hevc 1080p 6.0 Mbps  10 B  doesn't fit: needs 10Mbps\n");
     }
 
     [Theory]
@@ -74,19 +88,19 @@ public sealed class HumanOutputConsoleTests
     public void ALineIsNotBrokenByOtherOutputAndItsOutcomeThenRepeatsTheFile()
     {
         var (console, output, _) = ImmichConsole();
-        console.Report(new ImmichDiscoveryProgress.Started(null, 0, 0, 1));
+        console.Report(new ImmichDiscoveryProgress.Started(null, 0, 1));
         console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", Taken));
 
         // The file and date are on screen while the download runs.
-        output.ToString().Should().EndWith("[1] a.mp4  2022-11-30  ");
+        output.ToString().Should().EndWith("  1. a.mp4  2022-11-30  ");
 
-        console.Report(new ImmichProgress.AssetIssue("b.txt", "asset 1 has an ID or file name that cannot be staged safely; it is left alone"));
+        console.Report(new ImmichProgress.AssetIssue("b.txt", "the name Immich gives it can't be saved safely on this PC; left alone"));
         console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, Facts("hevc", 1920, 1080, 20_000_000, 2048), 1));
 
         output.ToString().Should().EndWith(
-            "[1] a.mp4  2022-11-30  \n" +
-            "Issue: b.txt: asset 1 has an ID or file name that cannot be staged safely; it is left alone.\n" +
-            "[1] a.mp4  2022-11-30  hevc 1080p 20 Mbps  2.0 KiB  queued\n");
+            "  1. a.mp4  2022-11-30  \n" +
+            "Issue: b.txt: the name Immich gives it can't be saved safely on this PC; left alone.\n" +
+            "  1. a.mp4  2022-11-30  hevc 1080p 20 Mbps  2.0 KiB  queued\n");
     }
 
     [Fact]
@@ -98,42 +112,48 @@ public sealed class HumanOutputConsoleTests
         console.FinishLine();
         console.FinishLine();
 
-        output.ToString().Should().Be("[1] a.mp4  2022-11-30  stopped\n");
+        output.ToString().Should().EndWith("  1. a.mp4  2022-11-30  stopped\n");
     }
 
     [Fact]
     public void TheDiscoverySummaryNamesTheSkipReasonsWithTheirCountsAndGroupsWhatWasNotDownloaded()
     {
-        var result = Result(queued: 1, alreadyQueued: 0, skipped: 2, reasons: [new SkipReasonCount("rule 1 needs 2GiB", 2)],
+        var result = Result(queued: 1, skipped: 2, reasons: [new SkipReasonCount("rule 1 needs 2GiB", 2)],
             alreadyConverted: 5, previouslyFailed: 1, previouslySkipped: 48, ineligible: 193);
 
         ImmichDiscoveryConsole.Summary(result, 1).Should().Equal(
-            "Found 1 of 1 after checking 3. Skipped 2: rule 1 needs 2GiB.",
-            "Not downloaded: 54 handled in earlier runs, 193 too small or not a listed file type.");
+            "",
+            "Downloaded and checked 3 videos: 1 queued, 2 don't fit your rules (rule 1 needs 2GiB).",
+            "Not downloaded: 54 handled in earlier runs, 193 too small or not a file type your rules list.");
     }
 
     [Fact]
     public void WithSeveralReasonsTheSummaryNamesTheThreeMostCommonAndCountsTheRest()
     {
-        var result = Result(queued: 5, alreadyQueued: 0, skipped: 20, excluded: 1,
+        var result = Result(queued: 5, skipped: 20,
             reasons: [new SkipReasonCount("no rule for vp9", 9), new SkipReasonCount("rule 1 needs 2GiB", 5), new SkipReasonCount("rule 2 needs 10Mbps", 3), new SkipReasonCount("rule 2 needs 300MiB", 2), new SkipReasonCount("rule 3 needs 4k+", 1)]);
 
         ImmichDiscoveryConsole.Summary(result, 5).Should().Equal(
-            "Found 5 of 5 after checking 25. Skipped 20: 9 no rule for vp9, 5 rule 1 needs 2GiB, 3 rule 2 needs 10Mbps, 3 other.",
-            "Not downloaded: 1 excluded.");
+            "",
+            "Downloaded and checked 25 videos: 5 queued, 20 don't fit your rules (9 no rule for vp9, 5 rule 1 needs 2GiB, 3 rule 2 needs 10Mbps, 3 other).");
     }
 
+    /// <summary>
+    /// A search stops at its limit, so a count below it means Immich had no more. Without a limit nothing is said, and a
+    /// search that downloaded nothing prints no checked line and no blank line to set it apart.
+    /// </summary>
     [Fact]
-    public void TheDiscoverySummaryWithoutALimitCountsOpenJobsAndKeepsRestagedAndIssueCounts()
+    public void TheSummaryOfASearchThatRanOutSaysSoAndKeepsTheIssueCount()
     {
-        var result = Result(queued: 1, alreadyQueued: 2, skipped: 0, reasons: [], restaged: 2, issues: 1);
-
-        ImmichDiscoveryConsole.Summary(result, null).Should().Equal(
-            "Found 3 videos to convert after checking 1.",
-            "Also: 2 staged originals downloaded again, 1 issue (above).");
-        ImmichDiscoveryConsole.Summary(Result(queued: 0, alreadyQueued: 0, skipped: 0, reasons: [], restaged: 1), 3).Should().Equal(
-            "Found 0 of 3 after checking 0.",
-            "Also: 1 staged original downloaded again.");
+        ImmichDiscoveryConsole.Summary(Result(queued: 0, skipped: 1, reasons: [new SkipReasonCount("no rule for h264", 1)], issues: 1), 3).Should().Equal(
+            "",
+            "Downloaded and checked 1 video: 1 doesn't fit your rules (no rule for h264).",
+            "Immich has no more videos that fit your rules.",
+            "Also: 1 issue (above).");
+        ImmichDiscoveryConsole.Summary(Result(queued: 1, skipped: 0, reasons: []), null).Should().Equal(
+            "",
+            "Downloaded and checked 1 video: 1 queued.");
+        ImmichDiscoveryConsole.Summary(Result(queued: 0, skipped: 0, reasons: []), 3).Should().Equal("Immich has no more videos that fit your rules.");
     }
 
     [Fact]
@@ -207,8 +227,8 @@ public sealed class HumanOutputConsoleTests
         return (new ImmichDiscoveryConsole(output, TerminalStyle.Plain, error, TerminalStyle.Plain), output, error);
     }
 
-    private static ImmichDiscoveryResult Result(int queued, int alreadyQueued, int skipped, SkipReasonCount[] reasons, int restaged = 0, int alreadyConverted = 0, int previouslyFailed = 0, int previouslySkipped = 0, int excluded = 0, int ineligible = 0, int issues = 0) =>
-        new([.. Enumerable.Range(0, queued).Select(_ => new JobRecord())], restaged, alreadyQueued, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues, reasons);
+    private static ImmichDiscoveryResult Result(int queued, int skipped, SkipReasonCount[] reasons, int alreadyConverted = 0, int previouslyFailed = 0, int previouslySkipped = 0, int ineligible = 0, int issues = 0) =>
+        new([.. Enumerable.Range(0, queued).Select(_ => new JobRecord())], 0, 0, 0, alreadyConverted, previouslyFailed, previouslySkipped, 0, ineligible, skipped, issues, reasons);
 
     private static ScanProgress Checked(int files, int probed) => new("x.mp4", "Checked", string.Empty, files, probed);
 

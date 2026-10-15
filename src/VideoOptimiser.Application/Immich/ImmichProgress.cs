@@ -2,8 +2,8 @@ namespace VideoOptimiser.Application.Immich;
 
 /// <summary>
 /// What work on Immich originals tells its caller as it goes. The events carry facts, not text, so the CLI owns the wording.
-/// Restaging is here because <c>run</c> and <c>immich run</c> both do it, and it can find a problem with an asset as
-/// discovery can; Immich discovery adds its own events on top (<c>ImmichDiscoveryProgress</c>).
+/// Restaging is here because <c>run</c> does it and it can find a problem with an asset as discovery can; Immich discovery
+/// adds its own events on top (<c>ImmichDiscoveryProgress</c>).
 /// </summary>
 public abstract record ImmichProgress
 {

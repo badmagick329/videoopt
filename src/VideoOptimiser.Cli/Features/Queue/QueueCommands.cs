@@ -12,7 +12,7 @@ namespace VideoOptimiser.Cli.Features.Queue;
 /// <summary>
 /// The queue commands: the verbs <c>queue hold</c>, <c>release</c>, <c>next</c> and <c>drop</c> (VOPT-54 step 5); the
 /// commands that put videos in the queue, <c>queue add</c> (was <c>queue discover</c>), <c>queue add &lt;file&gt;</c> and
-/// <c>queue retry</c>, each ending with what to run next; and the job lists <c>queue list</c>, <c>status</c> and
+/// <c>queue retry</c> (<c>queue add immich</c> is the Immich slice's), each ending with what to run next; and the job lists <c>queue list</c>, <c>status</c> and
 /// <c>history</c>, as lines or <c>--json</c>. When a verb acts and when it refuses is decided by <see cref="IQueueVerbs"/>
 /// and the discovery and retry services; this holds the wording and the stream each line goes to. Changed wording goes
 /// through the humanizer gate (docs index).
@@ -206,7 +206,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         var settings = configuration.Settings;
         if (discovery.Refusal(settings) is QueueDiscoveryRefusal.NoWatchRoots)
         {
-            WriteError("queue add needs at least one watch.roots entry. For Immich videos, use 'immich run'.");
+            WriteError("queue add needs at least one watch.roots entry. For Immich videos, use 'queue add immich'.");
             return (int)ExitCode.InvalidConfiguration;
         }
 

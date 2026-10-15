@@ -73,19 +73,6 @@ public sealed class QueueServiceTests : IDisposable
         result.ReadyToFinalize.Should().Be(4);
     }
 
-    /// <summary><c>immich run</c> keeps the set its limit chose (until phase A step 7): a video queued meanwhile waits.</summary>
-    [Fact]
-    public async Task RunAsyncWithAFixedSetTakesOnlyThoseVideos()
-    {
-        var (databasePath, jobs) = await QueuedAsync("first.mp4", "second.mp4", "outside.mp4");
-        var processor = new ScriptedProcessor();
-        var queue = new QueueService(_repository, processor, new DatabaseLocks());
-
-        _ = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs[..2]) with { FollowQueue = false });
-
-        processor.Processed.Should().Equal("first.mp4", "second.mp4");
-    }
-
     /// <summary>
     /// R3: a video held or dropped from another terminal between the run's read and its first write is passed over, and
     /// counts as started, so a stop after this video pressed meanwhile stops there instead of starting another.

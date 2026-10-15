@@ -14,10 +14,9 @@ internal static class UnreachableWorkerMessage
         $"Stopped: the worker {worker} can't be reached, so {(notConverted == 1 ? "1 video was" : $"{notConverted} videos were")} not converted.";
 
     /// <summary>U3 for a managed worker. A manual host is neither billed nor deleted by this tool, so it gets only the rerun (U3m).</summary>
-    /// <param name="immichJobsLeft">See <see cref="StoppedRunMessage.RerunCommand"/>.</param>
-    public static IReadOnlyList<string> Lines(JobRecord job, bool managed, CliCommand command, int? immichJobsLeft)
+    public static IReadOnlyList<string> Lines(JobRecord job, bool managed, CliCommand command)
     {
-        var resume = $"To resume: video-optimiser {StoppedRunMessage.RerunCommand(command, immichJobsLeft)}";
+        var resume = $"To resume: video-optimiser {StoppedRunMessage.RerunCommand(command)}";
         if (!managed) return [resume];
         // As with Ctrl+C: deleting the worker loses a CRF search or encode that may still be running there, and a finished
         // encode not yet downloaded.

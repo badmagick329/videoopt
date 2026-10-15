@@ -4,8 +4,8 @@ using VideoOptimiser.Domain.Jobs;
 namespace VideoOptimiser.Application.Immich;
 
 /// <summary>
-/// Gives an open Immich job back the staged original it lost. Both <c>run</c> and <c>immich run</c> do it before they
-/// convert, so it belongs to neither.
+/// Gives an open Immich job back the staged original it lost. <c>run</c> does it for the Immich videos it is about to
+/// convert, whichever command started it.
 /// </summary>
 public interface IImmichRestaging
 {
@@ -16,11 +16,4 @@ public interface IImmichRestaging
     /// <see cref="ImmichRestageResult.Unusable"/> says why.
     /// </summary>
     Task<ImmichRestageResult> RestageMissingAsync(string databasePath, AppSettings settings, IReadOnlyCollection<JobRecord> jobs, IProgress<ImmichProgress>? progress = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// The restaging itself, with the caller's <paramref name="client"/>: Immich discovery has made one for its search and
-    /// restages through it, in the same pass. Unlike <see cref="RestageMissingAsync"/> it lets an Immich error that is not
-    /// about one asset end the caller's run, so <see cref="ImmichRestageResult.Unusable"/> stays null.
-    /// </summary>
-    Task<ImmichRestageResult> RestageAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, IProgress<ImmichProgress>? progress, CancellationToken cancellationToken);
 }

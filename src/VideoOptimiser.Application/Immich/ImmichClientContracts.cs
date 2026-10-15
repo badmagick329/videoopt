@@ -147,7 +147,7 @@ public interface IImmichClientFactory
 
 /// <param name="Failed">The jobs marked failed because their staged copy could not be brought back.</param>
 /// <param name="Unusable">Why Immich can't be used, when it stopped the restaging; null when every job was tried.</param>
-public sealed record ImmichRestageResult(int Restaged, IReadOnlyList<JobRecord> Failed, string? Unusable = null);
+public sealed record ImmichRestageResult(IReadOnlyList<JobRecord> Failed, string? Unusable = null);
 
 /// <summary>
 /// An Immich request that failed, with a message that says what to fix. <see cref="Code"/> is the diagnostic code doctor

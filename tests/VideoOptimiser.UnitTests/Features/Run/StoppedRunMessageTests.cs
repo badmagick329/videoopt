@@ -6,40 +6,15 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 
 public sealed class StoppedRunMessageTests
 {
+    /// <summary>An <c>immich run</c> is resumed by <c>run</c>: what it queued is in the queue, and <c>run</c> converts the queue.</summary>
     [Theory]
     [InlineData(new[] { "run", "--remote", "--config", @"C:\vo\my.yaml" }, @"run --remote --config ""C:\vo\my.yaml""")]
-    [InlineData(new[] { "--first", "immich", "run" }, "immich run --first")]
-    [InlineData(new[] { "immich", "run", "--limit", "3" }, "immich run --limit 3")]
-    public void TheRerunCommandKeepsEveryFlagTheUserTyped(string[] args, string expected)
+    [InlineData(new[] { "immich", "run" }, "run")]
+    [InlineData(new[] { "--first", "immich", "run", "--local", "--config", "my.yaml" }, @"run --local --config ""my.yaml""")]
+    [InlineData(new[] { "immich", "run", "--limit", "3" }, "run")]
+    public void TheRerunCommandIsRunWithTheModeAndConfigTheUserTyped(string[] args, string expected)
     {
         StoppedRunMessage.RerunCommand(CliCommand.Parse(args)).Should().Be(expected);
-    }
-
-    /// <summary>--limit tops the open jobs up to N, so the rerun limits to the jobs left; a typed N would download new videos on top (VOPT-69).</summary>
-    [Theory]
-    [InlineData(new[] { "--first", "immich", "run", "--remote" }, "immich run --limit 5 --remote")]
-    [InlineData(new[] { "immich", "run" }, "immich run")]
-    public void ALimitedImmichRerunLimitsItselfToTheJobsLeft(string[] args, string expected)
-    {
-        StoppedRunMessage.RerunCommand(CliCommand.Parse(args), immichJobsLeft: 5).Should().Be(expected);
-    }
-
-    [Fact]
-    public void TheJobsLeftAreTheImmichJobsARerunWouldPickUp()
-    {
-        JobRecord Job(JobStatus status, JobStatus? resume = null, JobSourceKind kind = JobSourceKind.Immich, bool held = false) => new() { Status = status, ResumeStatus = resume, SourceKind = kind, Held = held };
-
-        StoppedRunMessage.CountImmichJobsLeft(
-        [
-            Job(JobStatus.Queued),
-            Job(JobStatus.Interrupted, JobStatus.Encoding),
-            Job(JobStatus.Interrupted, JobStatus.Finalizing),
-            Job(JobStatus.ReadyToFinalize),
-            Job(JobStatus.Finalizing),
-            Job(JobStatus.Queued, kind: JobSourceKind.File),
-            // R7: a held video waits for its release, not for the rerun.
-            Job(JobStatus.Queued, held: true)
-        ]).Should().Be(2);
     }
 
     /// <summary>

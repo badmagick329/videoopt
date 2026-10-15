@@ -11,8 +11,8 @@ namespace VideoOptimiser.Cli.Features.Queue;
 internal static class QueueWords
 {
     /// <summary>
-    /// What to run once videos are queued. A run going now takes them at its next video; an <c>immich run</c> keeps the
-    /// videos it started with (until phase A step 7), as does a run from an older version, so they wait for it to end.
+    /// What to run once videos are queued. A run going now takes them at its next video; a run from an older version keeps
+    /// the videos it started with, so they wait for it to end.
     /// </summary>
     public static string NextRunLine(NextRun nextRun, CliCommand command) => nextRun switch
     {

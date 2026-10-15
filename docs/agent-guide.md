@@ -9,7 +9,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 | Class | Commands | What to do |
 | --- | --- | --- |
 | Read-only | `doctor`, `status`, `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run` | Run freely. Add `--json` where offered. `doctor` may create the job database and the Immich staging folder. |
-| Working | `config init`, `queue add`, `run`, `immich run`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry` | Run when the user's request covers it. They change only the job database and temporary files, and `config init` writes a new config that never replaces an existing one. The one exception: `immich run`'s re-upload guard moves converted originals the phone uploaded again back to Immich's trash, which is the intended outcome. |
+| Working | `config init`, `queue add`, `queue add immich`, `run`, `immich run`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry` | Run when the user's request covers it. They change only the job database and temporary files, and `config init` writes a new config that never replaces an existing one. The one exception: the re-upload guard of `immich run` and `queue add immich` moves converted originals the phone uploaded again back to Immich's trash, which is the intended outcome. |
 | Gated | `finalize`, `immich finalize`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Gate first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
 
 **Paid encoding.** When the config has `processing.mode: "remoteSsh"` and `remoteSsh.lifecycle: "hetzner"`, a `run`, `immich run` or `worker create` that needs a server asks before creating one, which bills by the hour:
@@ -55,10 +55,10 @@ A new server prints `Setting up the worker: ... takes several minutes.`, then `W
 
 ## Workflow: Immich
 
-Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A `doctor` failure `ImmichTrashDisabled`, or exit `3` with `Immich's trash is off` from `immich run` or `immich finalize`, means the user must turn Immich's trash back on; only they can. Read [immich.md](immich.md) once for the reasons behind the age rule.
+Prerequisites: `immich.baseUrl` is set and `doctor` passes its Immich checks. A `doctor` failure `ImmichTrashDisabled`, or exit `3` with `Immich's trash is off` from `immich run`, `queue add immich` or `immich finalize`, means the user must turn Immich's trash back on; only they can. Read [immich.md](immich.md) once for the reasons behind the age rule.
 
 1. **Phone.** Ask the user whether they have run the Immich app's "Free up space" since the last round, with a cutoff no older than `immich.minimumAgeDays`, and emptied the phone's trash. Only the user can do this. Wait for their answer.
-2. **Convert.** `immich run`, with `--first` on a user's first round and `--limit <n>` when the user names a round size. Before a paid remote round, ask the user for that size. Done when it exits. If it lists re-uploaded originals, pass that list to the user exactly as printed: they must delete those files from the phone. Exit `10` also covers guard or search issues; quote those lines.
+2. **Convert.** `immich run`, with `--first` on a user's first round and `--limit <n>` when the user names a round size; `--limit` counts new videos only, never the ones already queued. Before a paid remote round, ask the user for that size. `immich run` converts the whole queue, so videos queued from the watch folders convert too. To queue Immich videos without converting, use `queue add immich` with the same flags; it ends with the `Next:` line. Done when it exits. If it lists re-uploaded originals, pass that list to the user exactly as printed: they must delete those files from the phone. Exit `10` also covers guard or search issues; quote those lines.
    Discovery prints many lines before the first encode; *Immich discovery lines* under *Reading run output* says which are normal and which summary to report.
 3. **Report.** As in the folders workflow; filter `status --json` to `"source": "immich"`. Each `outputPath` is under `immich.stagingDirectory`.
 4. **Gate.** Each AV1 is uploaded as a new Immich asset and each original goes to Immich's trash.
@@ -76,7 +76,7 @@ Use this when the user asks why videos are not converted, or whether their rules
 
 ## Reading run output
 
-`run` and `immich run` print one block per job, then a tally of the non-zero outcomes (`Ready to finalise: 4. Not worth converting: 1.`, or `Nothing to finalise.`) and, when something is ready, a `Next:` line naming `finalize --ready` or `immich finalize`. A job block:
+`run` and `immich run` print one block per job, then a tally of the non-zero outcomes (`Ready to finalise: 4. Not worth converting: 1.`, or `Nothing to finalise.`) and, when something is ready, a `Next:` line naming `finalize --ready`, which finalises folder and Immich videos alike. A job block:
 
 ```text
 [2/5] PXL_20250531_041434717.mp4 (1002.4 MiB)
@@ -109,15 +109,15 @@ The upload and download lines appear only on a remote worker. When `savings.mini
 
 ### Immich discovery lines
 
-`immich run` downloads each candidate to check it, so before the first job block it prints one line per video checked:
+`immich run` and `queue add immich` download each candidate to check it, so before the first job block they print one line per video checked:
 
-- `[n] <file>  <date>  <codec> <resolution> <bitrate>  <size>  skip: <reason>` is normal. The rejected download is deleted from the staging folder, and the video is skipped in future runs.
-- `queued: fits rule N` and `skip: rule N needs ...` number the rules from 1 in `eligibility.rules` order; with a single rule, the number is left out.
-- `issue: ...` means a video failed its checksum or probe. It is tried again on the next run.
-- `N videos were skipped under different eligibility rules; ...` (or `1 video was ...`) is normal after a rules change, and returns on later runs until the search has reached each of them.
+- `  n. <file>  <date>  <codec> <resolution> <bitrate>  <size>  doesn't fit: <reason>` is normal. The rejected download is deleted from the staging folder, and the video is not checked again until the rules change.
+- `queued: fits rule N` and `doesn't fit: rule N needs ...` number the rules from 1 in `eligibility.rules` order; with a single rule, the number is left out. With a limit, `queued (2 of 3)` counts the new videos queued.
+- `issue: ...` means a video failed its checksum or probe. It is tried again on the next run. `Issue: <file>: the name Immich gives it can't be saved safely on this PC; left alone.` and `Left alone: <file> (Immich's search should not have returned it: ...)` name a video that was not downloaded.
+- `N videos that didn't fit your earlier rules are checked again ...` is normal after a rules change, and returns on later runs until the search has reached each of them.
 - The re-upload guard prints only when it finds a converted original in Immich again.
 
-Report the summary to the user: `Found X of N after checking M.` with `--first` or `--limit`, `Found N videos to convert after checking M.` without, followed by `Skipped K: <reasons>.` and, when present, `Not downloaded: ...`.
+Report the summary to the user: `Downloaded and checked X videos: Y queued, Z don't fit your rules (<reasons>).`, `Not downloaded: ...` when present, `Immich has no more videos that fit your rules.` when a limit was not reached, and the counts line that ends discovery (`Queued: 3. Already queued: 8. Held: 1. Ready to finalise: 2.`). Already queued, held and ready to finalise count every open Immich video, not only those the search reached.
 
 ## Recovery
 
@@ -127,7 +127,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | --- | --- | --- |
 | A `Skipped <file>: started on ...` line | The job started in the other mode, and `--local` or `--remote` chose this one | Nothing is lost. Run the command without the flag to resume it; a remote resume is gated as paid encoding. |
 | `Interrupted` | Stopped by `Ctrl+C`, a crash or a lost connection. A remote CRF search or encode keeps running on the worker | Run the same command again (`run` or `immich run`). It resumes, following a remote stage that is still running or using its result. |
-| `RemoteUnavailable` | The remote worker could not be reached. The run stopped at this job and left the rest `Queued`; `run` and `immich run` then print `Stopped: the worker <name> can't be reached, ...` | Run the `To resume:` command it printed. After a limited `immich run`, its `--limit` is the number of jobs left, not the number typed. A Hetzner worker stays up for the resume, billed hourly. Its `To delete it instead:` command is gated; the line names the work that deleting loses. |
+| `RemoteUnavailable` | The remote worker could not be reached. The run stopped at this job and left the rest `Queued`; `run` and `immich run` then print `Stopped: the worker <name> can't be reached, ...` | Run the `To resume:` command it printed (`run`, also after an `immich run`). A Hetzner worker stays up for the resume, billed hourly. Its `To delete it instead:` command is gated; the line names the work that deleting loses. |
 | `Skipped`, `NotWorthConverting` | No CRF met both `quality.minimumVmaf` and the video's size cap: the stricter of `quality.maxEncodedPercent` and `savings.minimumBytesSaved`. A video too small to save `savings.minimumBytesSaved` is skipped before its CRF search, with nothing uploaded. A normal outcome, not a failure | Report `failureMessage`. It names the setting that ruled the video out and the best CRF found, or, when even `quality.crfSearch.minCrf` missed the VMAF, that CRF's score. Discovery checks the video again once the file, those quality settings or `savings.minimumBytesSaved` change. |
 | `ValidationFailed` | The AV1 failed a check, such as saving less than `savings.minimumBytesSaved` when the encode came out larger than the search predicted | Report it. The original stays as it is, and discovery won't queue it again until the file changes. |
 | `StagingFailed`, `CrfSearchFailed`, `EncodeFailed`, `DownloadFailed`, `ProcessingFailed` | A processing step failed | Report `failureMessage`. Run `queue retry <id>` only if the user asks, once the cause is fixed. |
@@ -160,7 +160,7 @@ Match the job's `status` and `failureCategory` from `status --json` or `history 
 | `7` | The output failed validation, including an output ffprobe cannot read (`validate`, `run`), or `finalize <job-id>` named a job that is not ready |
 | `8` | `finalize <job-id>` failed, or `immich finalize` failed for every job |
 | `9` | Cancelled with `Ctrl+C` |
-| `10` | Partial success: some jobs failed (any failure in `finalize --ready`), or `queue add`, `immich run`, `cleanup` or `calibrate` hit issues (`queue add` counts each `Issue:` line it prints); read the output |
+| `10` | Partial success: some jobs failed (any failure in `finalize --ready`), or `queue add`, `queue add immich`, `immich run`, `cleanup` or `calibrate` hit issues (`queue add` counts each `Issue:` line it prints); read the output |
 
 ### Job statuses
 

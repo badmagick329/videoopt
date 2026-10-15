@@ -273,7 +273,8 @@ public sealed class QueueAddTests : QueueTestBase
     /// <summary>With no run going the line is the one the transcripts above print.</summary>
     [Theory]
     [InlineData("video-optimiser run", "The run going now picks them up.")]
-    [InlineData("video-optimiser immich run", "Next: run 'video-optimiser run{0}' once the run going now ends.")]
+    [InlineData("video-optimiser immich run", "The run going now picks them up.")]
+    [InlineData("video-optimiser queue process", "Next: run 'video-optimiser run{0}' once the run going now ends.")]
     public async Task TheNextLineDependsOnTheRunGoingNow(string runGoing, string line)
     {
         await QueuedAsync("waiting.mp4");
@@ -311,11 +312,11 @@ public sealed class QueueAddTests : QueueTestBase
     }
 
     [Fact]
-    public async Task QueueAddWithNoWatchRootsPointsImmichUsersAtImmichRun()
+    public async Task QueueAddWithNoWatchRootsPointsImmichUsersAtQueueAddImmich()
     {
         await WriteConfigAsync(Rules(roots: false));
 
-        (await RunAsync("queue", "add")).Should().Be((3, "", Transcript("queue add needs at least one watch.roots entry. For Immich videos, use 'immich run'.")));
+        (await RunAsync("queue", "add")).Should().Be((3, "", Transcript("queue add needs at least one watch.roots entry. For Immich videos, use 'queue add immich'.")));
     }
 
     [Fact]

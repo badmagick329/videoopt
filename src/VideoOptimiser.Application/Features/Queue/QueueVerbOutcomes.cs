@@ -19,7 +19,7 @@ public sealed record JobReleased(JobRecord Job) : QueueVerbOutcome(Job);
 public sealed record JobNotHeld(JobRecord Job) : QueueVerbOutcome(Job);
 
 /// <param name="WasHeld">The job was held, and moving it next released it.</param>
-/// <param name="RunTakesIt">A run going now takes each next video from the queue as it is, so this one comes after the video converting now. An <c>immich run</c> keeps the videos it started with, as does a run from an older version.</param>
+/// <param name="RunTakesIt">A run going now takes each next video from the queue as it is, so this one comes after the video converting now. A run from an older version keeps the videos it started with.</param>
 public sealed record JobMovedNext(JobRecord Job, bool WasHeld, bool RunTakesIt) : QueueVerbOutcome(Job);
 
 public enum VerbRefusal

@@ -106,6 +106,7 @@ internal static class CliApplication
             CliCommandKind.WorkerDelete => await services.GetRequiredService<WorkerCommands>().DeleteAsync(configuration, cancellationToken),
             CliCommandKind.RemoteSetup => await services.GetRequiredService<RemoteSetupCommand>().RunAsync(configuration, cancellationToken),
             CliCommandKind.QueueAdd => await services.GetRequiredService<QueueCommands>().AddAsync(configuration, command, cancellationToken),
+            CliCommandKind.QueueAddImmich => await services.GetRequiredService<ImmichRunCommand>().AddAsync(configuration, command, cancellationToken),
             CliCommandKind.QueueAddFile => await services.GetRequiredService<QueueCommands>().AddFileAsync(configuration, command, cancellationToken),
             CliCommandKind.Run => await services.GetRequiredService<RunCommand>().RunAsync(configuration, command, cancellationToken),
             CliCommandKind.QueueList => await services.GetRequiredService<QueueCommands>().ListAsync(configuration, command, terminal: false, cancellationToken),

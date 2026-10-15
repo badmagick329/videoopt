@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Immich;
+using VideoOptimiser.Application.Tools;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -28,6 +29,21 @@ internal class ImmichClientStub : IImmichClientFactory, IImmichClient
     public virtual Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public virtual Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public virtual Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+}
+
+/// <summary>
+/// Reads the codec from the start of the downloaded file, so each fake asset's content decides its eligibility. "corrupt"
+/// fails as ffprobe does on an unreadable file; "missing-ffprobe" fails as starting a missing executable does.
+/// </summary>
+internal sealed class ContentProbe : IMediaProbe
+{
+    public async Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
+    {
+        var codec = (await File.ReadAllTextAsync(path, cancellationToken)).Split(' ')[0];
+        if (codec == "corrupt") throw new MediaProbeException("ffprobe exited with 1: Invalid data found when processing input");
+        if (codec == "missing-ffprobe") throw new System.ComponentModel.Win32Exception(2, "The system cannot find the file specified.");
+        return new MediaInfo(codec, 1, 1, 0, 0, 60, new FileInfo(path).Length, 1920, 1080, 20_000_000);
+    }
 }
 
 /// <summary>

@@ -2,7 +2,7 @@
 
 VideoOptimiser can convert old videos in your [Immich](https://immich.app) library to AV1. Each round runs in two steps that you start by hand:
 
-1. `immich run` downloads matching videos and converts them. Immich keeps every original.
+1. `immich run` downloads matching videos, queues them and converts the whole queue. Immich keeps every original.
 2. `immich finalize` uploads each AV1 as a new asset and moves the original to Immich's trash, after you confirm.
 
 Requires Immich 3.
@@ -48,7 +48,7 @@ Phones usually record HEVC, so make sure your [eligibility rules](configuration.
 .\video-optimiser.exe doctor --config .\video-optimiser.yaml
 ```
 
-`doctor` confirms that the server runs Immich 3, that it accepts the key, and that the staging directory is writable. It can't test every permission without changing your library. If one is missing, the error names it: `immich run` stops with exit code 3, and `immich finalize` fails that video, leaves it ready to finalise, and exits 8 (or 10 when other videos succeeded).
+`doctor` confirms that the server runs Immich 3, that it accepts the key, and that the staging directory is writable. It can't test every permission without changing your library. If one is missing, the error names it: `immich run` and `queue add immich` stop with exit code 3, and `immich finalize` fails that video, leaves it ready to finalise, and exits 8 (or 10 when other videos succeeded).
 
 Using only Immich? You can leave `watch.roots` empty.
 
@@ -72,18 +72,20 @@ Start with one video, encoded on this PC whatever `processing.mode` says, so the
 .\video-optimiser.exe immich run --first --local --config .\video-optimiser.yaml
 ```
 
-Then use `--limit <n>` for a round of at most `n` videos, such as `--limit 5`, or drop the flag to convert everything that matches. A paid remote round is worth a few videos, since creating the server takes several minutes. Drop `--local` to encode where the config says; `--remote` does the opposite for one run. `immich run`:
+Then use `--limit <n>` to add at most `n` new videos, such as `--limit 5`, or drop the flag to add everything that matches. `--limit` counts new videos only: videos that already have a job (waiting, stopped, held or ready to finalise) are not counted, so running `immich run --limit 5` again adds five more. A paid remote round is worth a few videos, since creating the server takes several minutes. Drop `--local` to encode where the config says; `--remote` does the opposite for one run. `immich run`:
 
 1. Prints where encoding runs, such as `Encoding on this PC (--local).`, before downloading anything.
 2. Runs the [re-upload guard](#the-re-upload-guard), which prints something only when it acts.
-3. Downloads again the staged copy of any open job that is missing one, such as a job `queue retry` queued after `cleanup` deleted its copy. If Immich no longer has that video, the job fails as `SourceMissing`.
-4. Searches Immich, oldest first, for timeline and archived videos taken before the age cutoff. It leaves out the locked folder, the trash, external libraries, favourites if configured, and anything already converted, skipped or failed. Without a download it also passes over a video whose extension is not in `eligibility.extensions`, one smaller than every rule's `minimumFileSize`, and one no bigger than `savings.minimumBytesSaved` (default `100MiB`), which cannot save that much. A video whose conversion would not save enough (`quality.maxEncodedPercent`, default `80`, or `savings.minimumBytesSaved`) ends as `Not worth converting`, and later runs count it as `handled in earlier runs`.
-5. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it. A video that doesn't match is deleted at once, so most downloads you see go by without leaving a file. Each downloaded candidate gets one line with its capture date, codec, resolution, video bitrate, size and outcome, so the outcome reads against what was measured: `hevc 4K 33 Mbps  319.4 MiB  queued: fits rule 3 (1 of 1)`, `h264 4K 42 Mbps  495.1 MiB  skip: rule 1 needs 2GiB` (what the closest rule asks for, as written in your config) or `issue: ...`. The rule numbers count the entries of `eligibility.rules` from 1. The search ends with how many videos it found, why the others were skipped, and a count for everything it left alone without a download.
-6. Converts the queue on your PC or remote worker, exactly like `run`.
+3. Searches Immich, oldest first, for timeline and archived videos taken before the age cutoff. It leaves out the locked folder, the trash, external libraries, favourites if configured, and anything already converted, skipped or failed. Without a download it also passes over a video whose extension is not in `eligibility.extensions`, one smaller than every rule's `minimumFileSize`, and one no bigger than `savings.minimumBytesSaved` (default `100MiB`), which cannot save that much. A video whose conversion would not save enough (`quality.maxEncodedPercent`, default `80`, or `savings.minimumBytesSaved`) ends as `Not worth converting`, and later runs count it as `handled in earlier runs`.
+4. Downloads each candidate to the staging directory, checks it against your eligibility rules, and queues it. A video that doesn't match is deleted at once, so most downloads you see go by without leaving a file. Each downloaded candidate gets one line with its number, capture date, codec, resolution, video bitrate, size and outcome, so the outcome reads against what was measured: `  1. clip.mp4  2024-03-04  hevc 4K 33 Mbps  319.4 MiB  queued: fits rule 3 (1 of 1)`, `h264 4K 42 Mbps  495.1 MiB  doesn't fit: rule 1 needs 2GiB` (what the closest rule asks for, as written in your config) or `issue: ...`. The rule numbers count the entries of `eligibility.rules` from 1.
+5. Ends with what it did: `Downloaded and checked 12 videos: 3 queued, 9 don't fit your rules (...)`, a count for everything it left alone without a download (`Not downloaded: ...`), `Immich has no more videos that fit your rules.` when a limit was not reached, and the queue's counts, such as `Queued: 3. Already queued: 8. Held: 1. Ready to finalise: 2.`
+6. Converts the whole queue on your PC or remote worker, exactly like `run`: folder videos too, and the Immich videos queued by earlier rounds. It downloads again the copy of any Immich video that is missing one, such as a job `queue retry` queued after `cleanup` deleted its copy. If Immich no longer has that video, the job fails as `SourceMissing`.
 
-`run` converts Immich videos already queued, alongside folder videos, and downloads a missing copy again first; it doesn't search Immich for new ones. When `immich.baseUrl` isn't set, or Immich can't be reached for that download, it says how many Immich videos stay queued and converts the rest.
+`queue add immich [--first | --limit <n>]` does steps 2 to 5 and stops, ending with `Next: run 'video-optimiser run'.` Use it to queue Immich videos now and convert them later, together with the videos in your watch folders. A file in the current folder named `immich` is given to `queue add` as `.\immich`.
 
-Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes. If a `--first` or `--limit` run stops before converting, run it again with the same flag: videos already downloaded count toward the limit, so it converts those first and downloads only enough new ones to reach it.
+`run` converts the queue the same way without searching Immich for new videos. When `immich.baseUrl` isn't set, or Immich can't be reached for the download, it says how many Immich videos stay queued and converts the rest.
+
+Apart from the guard's work, it doesn't change Immich. `Ctrl+C` is safe; the next run resumes. If a run stops before converting everything, `run` converts the rest: it already holds the videos `immich run` queued, so repeating `immich run --limit 5` would add five more.
 
 ### 3. Review
 
@@ -113,14 +115,14 @@ A video that cannot be finalised yet stays ready, and the others carry on. The m
 
 ## What you should know
 
-- **Immich's trash must stay on.** VideoOptimiser never deletes from Immich; it moves originals to the trash, which is your undo. With the trash off, Immich would delete them for good, so `doctor` fails and `immich run` and `immich finalize` stop with exit code 3 until you turn it back on under **Administration → Settings → Trash Settings**. `doctor` warns when the trash keeps videos for fewer than 7 days.
+- **Immich's trash must stay on.** VideoOptimiser never deletes from Immich; it moves originals to the trash, which is your undo. With the trash off, Immich would delete them for good, so `doctor` fails and `immich run`, `queue add immich` and `immich finalize` stop with exit code 3 until you turn it back on under **Administration → Settings → Trash Settings**. `doctor` warns when the trash keeps videos for fewer than 7 days.
 - **Space comes back later.** Immich keeps trashed originals until it purges its trash (30 days by default, set in Immich's server settings). Offsite backups of Immich keep them until their own retention removes them.
 - **Not carried over:** face names, comments and likes in shared albums, and memories. Immich detects faces again on the new asset.
 - **Changing `eligibility.rules`** makes every earlier "ineligible" decision stale, so each of those videos is downloaded once more on the next run.
 - **Changing the quality bar checks skipped videos again.** A video that ended `Not worth converting` is left alone while `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat`, `crfSearch.minCrf`/`maxCrf` and `savings.minimumBytesSaved` stay the same; changing any of them, or the video's file, downloads it again on the next run. It is not a failure: it does not change the exit code, and `immich run` counts it in its closing tally as `Not worth converting: N.`
 - **`calibrate` includes Immich without downloading anything.** It searches the same videos `immich run` would. Immich reports no codec, so a video no run has downloaded is listed by resolution and by a bitrate worked out from its size and length, which includes the audio. `calibrate` can name one of those videos for you to test, but no command converts a single Immich video.
-- **Failed, dropped or skipped videos keep their download** in the staging directory until you run `cleanup`, which deletes the download with the job's temporary files and asset folder. A download an open job still needs is never deleted. After `queue retry`, the next `immich run` downloads the video again.
-- **Exit codes after `immich run`:** `6` means videos failed and none is ready to finalise. `10` means some failed while others are ready, or something else needs a look: a guard or search issue, or an asset Immich returned that its filter should have excluded. Videos not worth converting change neither. Read the output.
+- **Failed, dropped or skipped videos keep their download** in the staging directory until you run `cleanup`, which deletes the download with the job's temporary files and asset folder. A download an open job still needs is never deleted. After `queue retry`, the next `run` or `immich run` downloads the video again.
+- **Exit codes after `immich run`:** (`queue add immich` exits `10` for the same issues, and `0` otherwise) `6` means videos failed and none is ready to finalise. `10` means some failed while others are ready, or something else needs a look: a guard or search issue, or an asset Immich returned that its filter should have excluded. Videos not worth converting change neither. Read the output.
 
 ## The age rule
 
@@ -130,6 +132,6 @@ So convert only videos the phone no longer has. Keep the phone's "Free up space"
 
 ## The re-upload guard
 
-Every `immich run` starts by checking whether the phone has uploaded a converted original again. If it has, the guard moves that copy back to Immich's trash and lists the files, with their capture dates, for you to delete from the phone. It only touches assets whose checksum matches an original VideoOptimiser converted.
+Every `immich run` and `queue add immich` starts by checking whether the phone has uploaded a converted original again. If it has, the guard moves that copy back to Immich's trash and lists the files, with their capture dates, for you to delete from the phone. It only touches assets whose checksum matches an original VideoOptimiser converted.
 
 If you restore a converted original from Immich's trash yourself, the guard leaves it alone and reports it as restored.

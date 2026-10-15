@@ -84,7 +84,6 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
         var ready = 0;
         var failed = new List<FailedQueueJob>();
         var skipped = new List<SkippedQueueJob>();
-        var only = preparation.FollowQueue ? null : preparation.RunnableJobs.Select(job => job.Id).ToHashSet();
         // Tried at most once each: a video that failed, was passed over or left for a later run is not picked up again.
         // The jobs preparation skipped for the other mode have said so already.
         var tried = preparation.SkippedJobs.Select(job => job.Id).ToHashSet();
@@ -95,7 +94,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
         {
             cancellationToken.ThrowIfCancellationRequested();
             var waiting = JobRunOrder.Sort((await jobs.ListAsync(databasePath, terminal: false, cancellationToken))
-                    .Where(job => job.IsQueued && !job.Held && (preparation.SourceKind is null || job.SourceKind == preparation.SourceKind) && !tried.Contains(job.Id) && only?.Contains(job.Id) != false))
+                    .Where(job => job.IsQueued && !job.Held && (preparation.SourceKind is null || job.SourceKind == preparation.SourceKind) && !tried.Contains(job.Id)))
                 .ToArray();
             if (waiting.Length == 0) break;
             // A result, not an exception: the videos finished so far get their summary, and the rest stay queued.

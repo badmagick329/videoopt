@@ -8,19 +8,22 @@ namespace VideoOptimiser.Cli;
 
 /// <summary>
 /// Prints Immich discovery as it happens. A user once saw 15 downloads scroll past and concluded the tool downloads every
-/// video, when each rejected download was deleted at once; so the output opens by saying what discovery does, shows one line
-/// per downloaded candidate and ends with what was found. A candidate's line is written in two parts, the file and date
+/// video, when each rejected download was deleted at once; so the first download is preceded by what discovery does, each
+/// downloaded candidate gets one line and the output ends with what was found. A candidate's line is written in two parts, the file and date
 /// before its download starts and the rest when known, so a slow download shows which file it is on. The rest names the
 /// candidate's codec, resolution, bitrate and size before the verdict, because a verdict such as "rule 1 needs 2GiB" is
 /// only readable beside the facts it was reached from: one user could not see why a 319 MiB video was queued while two
 /// others were skipped for being under 2 GiB, when the difference was the codec. On a terminal the explanation is dim and each
-/// verdict has a colour (queued green, skip yellow, issue red), so the few lines that matter stand out of a long run.
+/// verdict has a colour (queued green, doesn't fit yellow, issue red), so the few lines that matter stand out of a long run.
+/// It also words the restaging <c>run</c> does, which reports through the same events.
 /// </summary>
 internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle outputStyle, TextWriter error, TerminalStyle errorStyle) : IProgress<ImmichProgress>
 {
     private readonly object _gate = new();
     private int? _limit;
     private int _ruleCount;
+    // The explanation comes with the first download, so a search that downloads nothing never shows it.
+    private bool _explained;
     // The open candidate's line so far; set while its download runs, null once its outcome is out.
     private string? _prefix;
     private bool _lineOpen;
@@ -43,18 +46,12 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
                     _limit = started.Limit;
                     _ruleCount = started.RuleCount;
                     output.WriteLine(outputStyle.Dim(started.Limit is { } limit
-                        ? $"Searching Immich for {OutputWords.Count(limit, "video", "videos")} to convert."
-                        : "Searching Immich for every video that fits your rules."));
-                    // "The download", not "it": a user read "deleted" as the video in Immich.
-                    output.WriteLine(outputStyle.Dim("Each candidate is downloaded and checked with ffprobe."));
-                    output.WriteLine(outputStyle.Dim("If it doesn't fit your rules, the download is deleted and the video is skipped in future runs."));
-                    if (started.AlreadyQueued > 0)
-                        output.WriteLine($"{started.AlreadyQueued} already queued from earlier runs.");
+                        ? $"Looking in Immich for up to {OutputWords.Count(limit, "new video", "new videos")} to convert."
+                        : "Looking in Immich for every video that fits your rules."));
                     if (started.StaleSkips > 0)
-                        // The count is of records, not of a change event: a run with a limit re-checks only the stale skips it
+                        // The count is of records, not of a change event: a search with a limit re-checks only the stale skips it
                         // reaches, so the rest stay stale and this line returns on later runs with the rules unchanged.
-                        output.WriteLine($"{OutputWords.Count(started.StaleSkips, "video was", "videos were")} skipped under different eligibility rules; each is checked again when the search reaches it.");
-                    output.WriteLine();
+                        output.WriteLine($"{OutputWords.Count(started.StaleSkips, "video that didn't", "videos that didn't")} fit your earlier rules {(started.StaleSkips == 1 ? "is" : "are")} checked again under the current ones when the search reaches {(started.StaleSkips == 1 ? "it" : "them")}.");
                     break;
                 case ImmichProgress.Restaging restaging:
                     output.WriteLine($"Downloading again: {restaging.FileName} (job {restaging.JobId:N} is open but its staged copy is missing)");
@@ -63,7 +60,14 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
                     output.WriteLine(restaged.Problem is null ? outputStyle.Green("  done: the staged copy is back") : outputStyle.Red($"  issue: {restaged.Problem}"));
                     break;
                 case ImmichDiscoveryProgress.CandidateDownloading candidate:
-                    _prefix = $"[{candidate.Number}] {candidate.FileName}  {candidate.Taken.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}  ";
+                    if (!_explained)
+                    {
+                        // "The download", not "it": a user read "deleted" as the video in Immich.
+                        output.WriteLine(outputStyle.Dim("Each video below is downloaded and checked. If it doesn't fit your rules, the download is deleted and the video is not checked again until your rules change."));
+                        output.WriteLine();
+                        _explained = true;
+                    }
+                    _prefix = $"  {candidate.Number}. {candidate.FileName}  {candidate.Taken.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}  ";
                     output.Write(_prefix);
                     _lineOpen = true;
                     break;
@@ -75,7 +79,7 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
                     _prefix = null;
                     break;
                 case ImmichDiscoveryProgress.AssetExcluded excluded:
-                    error.WriteLine(errorStyle.Red($"Excluded: {excluded.FileName} (asset {excluded.AssetId}) {excluded.Reason}; left alone."));
+                    error.WriteLine(errorStyle.Red($"Left alone: {excluded.FileName} (Immich's search should not have returned it: it {excluded.Reason})."));
                     break;
                 case ImmichProgress.AssetIssue issue:
                     output.WriteLine(outputStyle.Red($"Issue: {issue.FileName}: {issue.Message}."));
@@ -105,7 +109,7 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
 
         // The facts stay plain: only the verdict is coloured, because it is what the eye is looking for.
         var facts = judged.Facts is { } measured ? $"{Describe(measured)}  " : string.Empty;
-        return facts + (judged.Outcome == CandidateOutcome.Queued ? outputStyle.Green(Queued(judged)) : outputStyle.Yellow($"skip: {judged.Detail}"));
+        return facts + (judged.Outcome == CandidateOutcome.Queued ? outputStyle.Green(Queued(judged)) : outputStyle.Yellow($"doesn't fit: {judged.Detail}"));
     }
 
     // The rule's number is left out when it is the only rule: "fits rule 1" would say nothing.
@@ -148,43 +152,46 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
     }
 
     /// <summary>
-    /// The lines that close discovery: what was found, why videos were skipped, what was never downloaded and the rest.
-    /// Every count the result holds appears somewhere; zeros do not.
+    /// The lines that close discovery: what was downloaded and checked, why videos did not fit, what was never downloaded and
+    /// the issues. Zeros do not appear. The queue's counts follow, printed by the command.
     /// </summary>
     public static IReadOnlyList<string> Summary(ImmichDiscoveryResult result, int? limit)
     {
+        // Sets the lines apart from the candidates, and from what was said while downloading, when there was any.
         var lines = new List<string>();
-        var found = result.Queued.Count + result.AlreadyQueued;
-        var head = limit is { } wanted
-            ? $"Found {found} of {wanted} after checking {result.Checked}."
-            : $"Found {OutputWords.Count(found, "video", "videos")} to convert after checking {result.Checked}.";
-        lines.Add(result.Skipped > 0 ? $"{head} {SkippedPart(result)}" : head);
+        if (result.Checked + result.Issues + result.Excluded > 0) lines.Add(string.Empty);
+        if (result.Checked > 0) lines.Add(Checked(result));
 
         var notDownloaded = new List<string>();
         void Add(int count, string text) { if (count > 0) notDownloaded.Add($"{count} {text}"); }
         Add(result.AlreadyConverted + result.PreviouslyFailed + result.PreviouslySkipped, "handled in earlier runs");
-        Add(result.Ineligible, "too small or not a listed file type");
-        Add(result.Excluded, "excluded");
+        Add(result.Ineligible, "too small or not a file type your rules list");
         if (notDownloaded.Count > 0) lines.Add($"Not downloaded: {string.Join(", ", notDownloaded)}.");
 
-        var also = new List<string>();
-        if (result.Restaged > 0) also.Add($"{result.Restaged} {(result.Restaged == 1 ? "staged original" : "staged originals")} downloaded again");
-        if (result.Issues > 0) also.Add($"{OutputWords.Count(result.Issues, "issue", "issues")} (above)");
-        if (also.Count > 0) lines.Add($"Also: {string.Join(", ", also)}.");
+        // The search stops at the limit, so a count below it means Immich had nothing more to give.
+        if (limit is { } wanted && result.Queued.Count < wanted) lines.Add("Immich has no more videos that fit your rules.");
+        if (result.Issues > 0) lines.Add($"Also: {OutputWords.Count(result.Issues, "issue", "issues")} (above).");
         return lines;
     }
 
+    private static string Checked(ImmichDiscoveryResult result)
+    {
+        var parts = new List<string>();
+        if (result.Queued.Count > 0) parts.Add($"{result.Queued.Count} queued");
+        if (result.Skipped > 0) parts.Add($"{result.Skipped} {(result.Skipped == 1 ? "doesn't" : "don't")} fit your rules ({SkipReasons(result)})");
+        return $"Downloaded and checked {OutputWords.Count(result.Checked, "video", "videos")}: {string.Join(", ", parts)}.";
+    }
+
     // The reasons arrive most common first. Three is what fits a line; the rest are counted, not named.
-    private static string SkippedPart(ImmichDiscoveryResult result)
+    private static string SkipReasons(ImmichDiscoveryResult result)
     {
         var reasons = result.SkipReasons;
-        if (reasons.Count == 0) return $"Skipped {result.Skipped}.";
-        if (reasons.Count == 1) return $"Skipped {result.Skipped}: {reasons[0].Reason}.";
+        if (reasons.Count == 1) return reasons[0].Reason;
 
         var parts = reasons.Take(3).Select(reason => $"{reason.Count} {reason.Reason}").ToList();
         var other = reasons.Skip(3).Sum(reason => reason.Count);
         if (other > 0) parts.Add($"{other} other");
-        return $"Skipped {result.Skipped}: {string.Join(", ", parts)}.";
+        return string.Join(", ", parts);
     }
 }
 

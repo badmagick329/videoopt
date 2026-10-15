@@ -20,26 +20,25 @@ internal static class StoppedRunMessage
     public static string StoppedAfter(string sourcePath, int waiting) =>
         $"Stopped after {Path.GetFileName(sourcePath)}; {OutputWords.Count(waiting, "video is", "videos are")} still waiting.";
 
-    public static string ConvertTheRest(CliCommand command, int? immichJobsLeft) => $"To convert the rest: video-optimiser {RerunCommand(command, immichJobsLeft)}";
+    public static string ConvertTheRest(CliCommand command) => $"To convert the rest: video-optimiser {RerunCommand(command)}";
 
     /// <summary>
     /// A stop now that leaves nothing running on a worker: on this PC, between a manual host's remote stages, or before any
     /// worker existed. The video resumes from its last finished step: a saved CRF is kept, a local encode starts again.
     /// </summary>
     /// <param name="interrupted">The video Ctrl+C stopped, or null when none was converting (Immich discovery, a prompt).</param>
-    public static IReadOnlyList<string> StoppedNow(JobInterruptedException? interrupted, CliCommand command, int? immichJobsLeft = null) =>
+    public static IReadOnlyList<string> StoppedNow(JobInterruptedException? interrupted, CliCommand command) =>
     [
         interrupted is null ? "Stopped now." : $"Stopped now. {Path.GetFileName(interrupted.Job.SourcePath)} continues from its last finished step on the next run.",
-        $"To resume: video-optimiser {RerunCommand(command, immichJobsLeft)}"
+        $"To resume: video-optimiser {RerunCommand(command)}"
     ];
 
     /// <param name="interrupted">The job Ctrl+C stopped, or null when it came between jobs or before the first one.</param>
     /// <param name="worker">The managed server's name, or the SSH host of a manual one.</param>
     /// <param name="managed">A manual host is not billed or deleted by this tool, so it gets only the lines that hold for it.</param>
-    /// <param name="immichJobsLeft">See <see cref="RerunCommand"/>.</param>
-    public static IReadOnlyList<string> Lines(JobInterruptedException? interrupted, string worker, bool managed, CliCommand command, int? immichJobsLeft = null)
+    public static IReadOnlyList<string> Lines(JobInterruptedException? interrupted, string worker, bool managed, CliCommand command)
     {
-        var rerun = $"video-optimiser {RerunCommand(command, immichJobsLeft)}";
+        var rerun = $"video-optimiser {RerunCommand(command)}";
         var delete = DeleteCommand(command);
         var stillRunning = interrupted is { Remote: true, Stage: JobStatus.CrfSearching or JobStatus.Encoding }
             ? $"{(interrupted.Stage == JobStatus.Encoding ? "The encode" : "The CRF search")} of {Path.GetFileName(interrupted.Job.SourcePath)} is still running on the worker {worker}."
@@ -72,9 +71,9 @@ internal static class StoppedRunMessage
     /// question replaces. With nothing running there, the first line no longer says the worker stays "so the job can resume":
     /// a video resumes on a new worker too.
     /// </summary>
-    public static IReadOnlyList<string> LinesBeforeQuestion(JobInterruptedException? interrupted, string worker, CliCommand command, int? immichJobsLeft = null)
+    public static IReadOnlyList<string> LinesBeforeQuestion(JobInterruptedException? interrupted, string worker, CliCommand command)
     {
-        var lines = Lines(interrupted, worker, managed: true, command, immichJobsLeft).SkipLast(1).ToList();
+        var lines = Lines(interrupted, worker, managed: true, command).SkipLast(1).ToList();
         if (Lost(interrupted?.Remote == true ? interrupted.Stage : null) is null) lines[0] = $"Stopped. Nothing is running on the worker {worker}, but it stays up, billed hourly.";
         return lines;
     }
@@ -108,32 +107,13 @@ internal static class StoppedRunMessage
         _ => null
     };
 
-    /// <summary>The command the user ran, with the flags that change what it does; <c>--config</c> only when it was typed.</summary>
-    /// <param name="immichJobsLeft">
-    /// The Immich jobs a rerun would pick up (queued, or interrupted outside finalisation). <c>immich run --limit N</c> tops the
-    /// open jobs up to N, so rerunning with the N the user typed would download new videos on top of the ones left; a typed
-    /// <c>--limit</c> or <c>--first</c> becomes <c>--limit</c> with this count instead (VOPT-69). Null or 0 keeps the typed flag.
-    /// </param>
-    public static string RerunCommand(CliCommand command, int? immichJobsLeft = null)
-    {
-        var verb = command.Kind switch
-        {
-            CliCommandKind.Run => "run",
-            CliCommandKind.ImmichRun when command.Limit is not null && immichJobsLeft > 0 => $"immich run --limit {immichJobsLeft}",
-            // --first is parsed as --limit 1, so the flag the user typed is checked first.
-            CliCommandKind.ImmichRun => $"immich run{(command.First ? " --first" : command.Limit is { } limit ? $" --limit {limit}" : string.Empty)}",
-            _ => throw new ArgumentOutOfRangeException(nameof(command), command.Kind, "Only processing commands can be stopped mid-run.")
-        };
-        return $"{verb}{(command.ModeOverride is null ? string.Empty : $" {command.ModeOverride.Flag}")}{ConfigArgument(command)}";
-    }
-
     /// <summary>
-    /// The Immich jobs a rerun would pick up: queued, or interrupted outside finalisation, and not held, the set restaging
-    /// and the limit count. Not every open Immich job: ready, finalising and held ones would inflate the limit, and the rerun
-    /// would download that many new videos.
+    /// The command that converts what is left, with the flags that change what it does; <c>--config</c> only when it was
+    /// typed. It is <c>run</c> for <c>immich run</c> too: the videos it queued are in the queue, and <c>run</c> converts the
+    /// queue.
     /// </summary>
-    public static int CountImmichJobsLeft(IEnumerable<JobRecord> openJobs) =>
-        openJobs.Count(job => job.SourceKind == JobSourceKind.Immich && job.IsQueued && !job.Held);
+    public static string RerunCommand(CliCommand command) =>
+        $"run{(command.ModeOverride is null ? string.Empty : $" {command.ModeOverride.Flag}")}{ConfigArgument(command)}";
 
     public static string DeleteCommand(CliCommand command) => $"video-optimiser worker delete{ConfigArgument(command)}";
 

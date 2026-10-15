@@ -33,7 +33,7 @@ public enum NextRun
     NoRun,
     /// <summary>A <c>run</c> takes each next video from the queue as it is.</summary>
     RunTakesThem,
-    /// <summary>An <c>immich run</c> keeps the videos it started with, as does a run from an older version, so they wait for it to end.</summary>
+    /// <summary>A run from an older version keeps the videos it started with, so they wait for it to end.</summary>
     AfterRunEnds
 }
 
@@ -44,7 +44,7 @@ public static class NextRunRule
     public static NextRun Decide(string? liveRun) => liveRun switch
     {
         null => NextRun.NoRun,
-        Jobs.LockHolders.Run => NextRun.RunTakesThem,
+        Jobs.LockHolders.Run or Jobs.LockHolders.ImmichRun => NextRun.RunTakesThem,
         _ => NextRun.AfterRunEnds
     };
 }

@@ -9,8 +9,8 @@ namespace VideoOptimiser.Application.Immich;
 /// <c>cleanup</c> deleted the copy, or one whose copy was deleted by hand. Such a job could never run, and discovery
 /// skips an asset with an open job, so nothing else would bring the file back. The download must match the job's
 /// checksum, so the job converts the bytes it was created for. When Immich no longer returns them, the job fails as
-/// <c>SourceMissing</c>, which leaves the asset free for discovery. <c>immich run</c> passes the open jobs its limit takes;
-/// <c>run</c> passes the jobs it is about to convert. Only Immich's answer that the asset is gone (HTTP 400 or 404) or
+/// <c>SourceMissing</c>, which leaves the asset free for discovery. <c>run</c> (and so <c>immich run</c>) passes the jobs it
+/// is about to convert. Only Immich's answer that the asset is gone (HTTP 400 or 404) or
 /// holds other bytes fails a job; any other failure means Immich can't be used now, and the jobs left stay queued.
 /// </summary>
 public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository jobs, Func<DateTimeOffset>? utcNow = null) : IImmichRestaging
@@ -23,25 +23,19 @@ public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository
         var failed = new List<JobRecord>();
         try
         {
-            return new ImmichRestageResult(await RestageIntoAsync(clients.Create(settings.Immich), databasePath, settings, jobs, failed, progress, cancellationToken), failed);
+            await RestageIntoAsync(clients.Create(settings.Immich), databasePath, settings, jobs, failed, progress, cancellationToken);
+            return new ImmichRestageResult(failed);
         }
         catch (ImmichApiException exception)
         {
-            return new ImmichRestageResult(0, failed, exception.Message.TrimEnd('.'));
+            return new ImmichRestageResult(failed, exception.Message.TrimEnd('.'));
         }
-    }
-
-    public async Task<ImmichRestageResult> RestageAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, IProgress<ImmichProgress>? progress, CancellationToken cancellationToken)
-    {
-        var failed = new List<JobRecord>();
-        return new ImmichRestageResult(await RestageIntoAsync(client, databasePath, settings, candidates, failed, progress, cancellationToken), failed);
     }
 
     /// <param name="failed">Receives each job marked failed as it fails, so a caller that catches an error that ended the
     /// restaging still has the ones before it.</param>
-    private async Task<int> RestageIntoAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, List<JobRecord> failed, IProgress<ImmichProgress>? progress, CancellationToken cancellationToken)
+    private async Task RestageIntoAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, List<JobRecord> failed, IProgress<ImmichProgress>? progress, CancellationToken cancellationToken)
     {
-        var restaged = 0;
         foreach (var job in candidates)
         {
             if (File.Exists(job.SourcePath)) continue;
@@ -67,7 +61,6 @@ public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository
                 }
 
                 keep = true;
-                restaged++;
                 progress?.Report(new ImmichProgress.Restaged(Path.GetFileName(path), null));
             }
             // The asset is gone. A server error or a rate limit says nothing about the asset, so it ends the restaging instead.
@@ -81,8 +74,6 @@ public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository
                 if (!keep) ImmichStaging.DeleteStaged(path);
             }
         }
-
-        return restaged;
     }
 
     private async Task FailMissingAsync(string databasePath, JobRecord job, string message, List<JobRecord> failed, CancellationToken cancellationToken)

@@ -66,7 +66,7 @@ public sealed partial class ColourOutputTests
         var error = new StringWriter { NewLine = "\n" };
         var console = new ImmichDiscoveryConsole(output, TerminalStyle.Ansi, error, TerminalStyle.Ansi);
 
-        console.Report(new ImmichDiscoveryProgress.Started(1, 0, 418, 3));
+        console.Report(new ImmichDiscoveryProgress.Started(1, 418, 3));
         console.Report(new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", new DateTime(2025, 7, 18)));
         console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Skipped, "rule 1 needs 2GiB", null, 0, new CandidateFacts("h264", 3840, 2160, 41_700_000, 519_200_000)));
         console.Report(new ImmichDiscoveryProgress.CandidateDownloading(2, "b.mp4", new DateTime(2026, 2, 23)));
@@ -76,15 +76,14 @@ public sealed partial class ColourOutputTests
         console.Report(new ImmichDiscoveryProgress.AssetExcluded("fav.mp4", "0f1e", "is a favourite"));
 
         output.ToString().Should().Be(
-            $"{Esc}2mSearching Immich for 1 video to convert.{Reset}\n" +
-            $"{Esc}2mEach candidate is downloaded and checked with ffprobe.{Reset}\n" +
-            $"{Esc}2mIf it doesn't fit your rules, the download is deleted and the video is skipped in future runs.{Reset}\n" +
-            "418 videos were skipped under different eligibility rules; each is checked again when the search reaches it.\n" +
+            $"{Esc}2mLooking in Immich for up to 1 new video to convert.{Reset}\n" +
+            "418 videos that didn't fit your earlier rules are checked again under the current ones when the search reaches them.\n" +
+            $"{Esc}2mEach video below is downloaded and checked. If it doesn't fit your rules, the download is deleted and the video is not checked again until your rules change.{Reset}\n" +
             "\n" +
-            $"[1] a.mp4  2025-07-18  h264 4K 42 Mbps  495.1 MiB  {Esc}33mskip: rule 1 needs 2GiB{Reset}\n" +
-            $"[2] b.mp4  2026-02-23  hevc 4K 33 Mbps  319.4 MiB  {Esc}32mqueued: fits rule 3 (1 of 1){Reset}\n" +
-            $"[3] c.mp4  2023-01-02  {Esc}31missue: Immich answered 404; it will be tried again next run{Reset}\n");
-        error.ToString().Should().Be($"{Esc}31mExcluded: fav.mp4 (asset 0f1e) is a favourite; left alone.{Reset}\n");
+            $"  1. a.mp4  2025-07-18  h264 4K 42 Mbps  495.1 MiB  {Esc}33mdoesn't fit: rule 1 needs 2GiB{Reset}\n" +
+            $"  2. b.mp4  2026-02-23  hevc 4K 33 Mbps  319.4 MiB  {Esc}32mqueued: fits rule 3 (1 of 1){Reset}\n" +
+            $"  3. c.mp4  2023-01-02  {Esc}31missue: Immich answered 404; it will be tried again next run{Reset}\n");
+        error.ToString().Should().Be($"{Esc}31mLeft alone: fav.mp4 (Immich's search should not have returned it: it is a favourite).{Reset}\n");
     }
 
     [Fact]
@@ -92,7 +91,7 @@ public sealed partial class ColourOutputTests
     {
         ImmichProgress[] events =
         [
-            new ImmichDiscoveryProgress.Started(null, 2, 5, 1),
+            new ImmichDiscoveryProgress.Started(null, 5, 1),
             new ImmichProgress.Restaging("r.mp4", Guid.Empty),
             new ImmichProgress.Restaged("r.mp4", "gone"),
             new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", new DateTime(2025, 7, 18)),
