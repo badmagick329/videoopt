@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-10-15
 ### Breaking changes
 
 - `queue run` is now `run`, `queue discover` is now `queue add`, `queue cancel` is now `queue drop`, and `process` is removed (use `queue add <file>`, then `run`). `--force` moved to `queue add <file>`, and `--dry-run` is for `cleanup` only. The old names exit `2` and name their replacement.
