@@ -60,7 +60,7 @@ public sealed class ImmichRunTests : IDisposable
             manifests,
             new PassingValidator(),
             new AbAv1ProgressTranslator());
-        _queue = new QueueService(null!, _repository, fingerprints, processor, new DatabaseLocks());
+        _queue = new QueueService(_repository, processor, new DatabaseLocks());
         _run = new ImmichRunService(
             _immich,
             new ImmichReuploadGuard(_immich, _repository),

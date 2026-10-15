@@ -7,7 +7,7 @@ using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Queue;
 
 /// <summary>
 /// <c>queue add</c>, <c>queue add &lt;file&gt;</c> and <c>queue retry</c> through the real CLI (VOPT-54 step 5): every approved

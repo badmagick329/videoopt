@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -6,13 +5,13 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Processing;
-using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Cli.Features.Calibrate;
 using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
 using VideoOptimiser.Cli.Features.Finalize;
+using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.RemoteSetup;
 using VideoOptimiser.Cli.Features.Validate;
 using VideoOptimiser.Cli.Features.Worker;
@@ -108,17 +107,17 @@ internal static partial class CliApplication
             CliCommandKind.WorkerStatus => await services.GetRequiredService<WorkerCommands>().StatusAsync(configuration, cancellationToken),
             CliCommandKind.WorkerDelete => await services.GetRequiredService<WorkerCommands>().DeleteAsync(configuration, cancellationToken),
             CliCommandKind.RemoteSetup => await services.GetRequiredService<RemoteSetupCommand>().RunAsync(configuration, cancellationToken),
-            CliCommandKind.QueueAdd => await RunQueueAddAsync(services.GetRequiredService<IQueueService>(), configuration, command, cancellationToken),
-            CliCommandKind.QueueAddFile => await RunQueueAddFileAsync(services, configuration, command, cancellationToken),
+            CliCommandKind.QueueAdd => await services.GetRequiredService<QueueCommands>().AddAsync(configuration, command, cancellationToken),
+            CliCommandKind.QueueAddFile => await services.GetRequiredService<QueueCommands>().AddFileAsync(configuration, command, cancellationToken),
             CliCommandKind.Run => await RunGuardedAsync(services, configuration, command, () => RunRunAsync(services, configuration, command, cancellationToken)),
-            CliCommandKind.QueueList => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
-            CliCommandKind.QueueHold => await RunQueueHoldAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
-            CliCommandKind.QueueRelease => await RunQueueReleaseAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
-            CliCommandKind.QueueNext => await RunQueueNextAsync(services.GetRequiredService<IJobRepository>(), configuration, command, cancellationToken),
-            CliCommandKind.QueueDrop => await RunQueueDropAsync(services, configuration, command, cancellationToken),
-            CliCommandKind.QueueRetry => await RunQueueRetryAsync(services.GetRequiredService<IJobRetryService>(), configuration, command, cancellationToken),
-            CliCommandKind.Status => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: false, command.Json, cancellationToken),
-            CliCommandKind.History => await RunJobListAsync(services.GetRequiredService<IJobRepository>(), configuration, terminal: true, command.Json, cancellationToken),
+            CliCommandKind.QueueList => await services.GetRequiredService<QueueCommands>().ListAsync(configuration, terminal: false, command.Json, cancellationToken),
+            CliCommandKind.QueueHold => await services.GetRequiredService<QueueCommands>().HoldAsync(configuration, command, cancellationToken),
+            CliCommandKind.QueueRelease => await services.GetRequiredService<QueueCommands>().ReleaseAsync(configuration, command, cancellationToken),
+            CliCommandKind.QueueNext => await services.GetRequiredService<QueueCommands>().NextAsync(configuration, command, cancellationToken),
+            CliCommandKind.QueueDrop => await services.GetRequiredService<QueueCommands>().DropAsync(configuration, command, cancellationToken),
+            CliCommandKind.QueueRetry => await services.GetRequiredService<QueueCommands>().RetryAsync(configuration, command, cancellationToken),
+            CliCommandKind.Status => await services.GetRequiredService<QueueCommands>().ListAsync(configuration, terminal: false, command.Json, cancellationToken),
+            CliCommandKind.History => await services.GetRequiredService<QueueCommands>().ListAsync(configuration, terminal: true, command.Json, cancellationToken),
             CliCommandKind.Validate => await services.GetRequiredService<ValidateCommand>().RunAsync(configuration, command.JobId!, cancellationToken),
             CliCommandKind.Finalize => await services.GetRequiredService<FinalizeCommands>().FinalizeAsync(configuration, command, cancellationToken),
             CliCommandKind.Cleanup => await services.GetRequiredService<CleanupCommand>().RunAsync(configuration, command.DryRun, cancellationToken),
@@ -342,34 +341,6 @@ internal static partial class CliApplication
         {
             _ = ReportFailure(exception);
         }
-    }
-
-    private static async Task<int> RunJobListAsync(IJobRepository repository, LoadedConfiguration configuration, bool terminal, bool json, CancellationToken cancellationToken)
-    {
-        var jobs = await repository.ListAsync(configuration.Settings.Database.Path, terminal, cancellationToken);
-        if (json)
-        {
-            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.SourcePath, job.SourceKind == JobSourceKind.Immich ? "immich" : "file", job.ImmichAssetId, job.ImmichNewAssetId, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.UpdatedUtc)).ToArray();
-            Console.WriteLine(JsonSerializer.Serialize(output, CliJsonContext.Default.JobJsonOutputArray));
-        }
-        else if (jobs.Count == 0)
-        {
-            Console.WriteLine(terminal ? "No job history." : "No active jobs.");
-        }
-        else
-        {
-            foreach (var job in jobs)
-            {
-                var suffix = job.FailureMessage is null ? string.Empty : $" — {job.FailureCategory}: {job.FailureMessage}";
-                var savings = job.PercentageSaved is null ? string.Empty : $" {job.PercentageSaved:F1}% saved";
-                var resume = TemporaryOutputClassifier.DescribeResume(job) is { } behaviour ? $" ({behaviour})" : string.Empty;
-                // An Immich job's file name is the original's in Immich; the asset IDs find it there.
-                var immich = job.ImmichAssetId is { } asset ? $" Immich {asset}{(job.ImmichNewAssetId is { } av1 ? $" -> {av1}" : string.Empty)}" : string.Empty;
-                Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}{resume}");
-            }
-        }
-
-        return (int)ExitCode.Success;
     }
 
     private static string GetVersion() => typeof(CliApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0-dev";

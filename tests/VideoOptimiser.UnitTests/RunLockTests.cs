@@ -1,12 +1,10 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
-using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -149,7 +147,7 @@ public sealed class RunLockTests : IDisposable
     private Task<QueuePreparationResult> PrepareAsync(JobSourceKind source)
     {
         var settings = new AppSettings { Database = new DatabaseSettings { Path = DatabasePath } };
-        return new QueueService(new NoFiles(), _repository, new FileFingerprintService(), new NoProcessing(), new DatabaseLocks()).PrepareAsync(DatabasePath, settings, source);
+        return new QueueService(_repository, new NoProcessing(), new DatabaseLocks()).PrepareAsync(DatabasePath, settings, source);
     }
 
     /// <summary>Holds a lock as <see cref="DatabaseLock"/> does, with a start time and process ID fixed so the refusal reads the same on any clock.</summary>
@@ -217,13 +215,6 @@ public sealed class RunLockTests : IDisposable
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
-
-    private sealed class NoFiles : IFileScanner
-    {
-        public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool stopAfterFirstEligible = false, IReadOnlySet<string>? openSourcePaths = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("A run does not scan.");
-        public Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default) => throw new NotSupportedException("Not a queue add <file> test.");
-    }
 
     private sealed class NoProcessing : IJobProcessor
     {

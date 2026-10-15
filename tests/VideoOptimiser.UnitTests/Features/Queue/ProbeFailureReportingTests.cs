@@ -7,7 +7,7 @@ using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.TemporaryOutputs;
 using VideoOptimiser.Infrastructure.Tools;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Queue;
 
 /// <summary>
 /// A fake ffprobe stands in for the real one: it prints a valid H.264 probe for any path, and fails with

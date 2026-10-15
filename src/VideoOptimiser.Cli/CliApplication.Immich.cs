@@ -18,7 +18,7 @@ internal static partial class CliApplication
     {
         if (!RequireImmich(configuration) || ReportInvalidSettings(services.GetRequiredService<ISettingsValidator>(), configuration)) return (int)ExitCode.InvalidConfiguration;
         // Before discovery, which marks active jobs interrupted and queues new ones.
-        using var runLock = TakeRunLock(services, configuration, ImmichRunHolder);
+        using var runLock = TakeRunLock(services, configuration, LockHolders.ImmichRun);
         if (runLock is null) return (int)ExitCode.GeneralFailure;
         var (limit, modeOverride) = (command.Limit, command.ModeOverride);
         // Discovery downloads originals, so the banner comes first.

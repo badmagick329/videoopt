@@ -55,6 +55,15 @@ public sealed class JobRecord
 
     /// <summary>In the queue: a run may start it, now or once it is released. An interrupted finalisation belongs to finalize.</summary>
     public bool IsQueued => Status is JobStatus.Queued or JobStatus.Interrupted && ResumeStatus != JobStatus.Finalizing;
+
+    /// <summary>
+    /// In a status a run sets while it works on the job. It is converting only while a run holds the run lock; otherwise a
+    /// crash or a closed window left it so.
+    /// </summary>
+    public bool IsConverting => Status is JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Downloading or JobStatus.Validating;
+
+    /// <summary>Ready, or stopped while its AV1 was checked: the AV1 is whole, and cleanup would delete it once the job ends.</summary>
+    public bool HasFinishedAv1 => Status == JobStatus.ReadyToFinalize || this is { Status: JobStatus.Interrupted, ResumeStatus: JobStatus.Validating };
 }
 
 /// <summary>

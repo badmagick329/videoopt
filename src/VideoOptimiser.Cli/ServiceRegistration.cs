@@ -11,6 +11,7 @@ using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
 using VideoOptimiser.Cli.Features.Finalize;
+using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.RemoteSetup;
 using VideoOptimiser.Cli.Features.Validate;
 using VideoOptimiser.Cli.Features.Worker;
@@ -69,12 +70,9 @@ internal static class ServiceRegistration
         return services;
     }
 
-    // IQueueService also serves the run until VOPT-99 and VOPT-101 split it.
-    public static IServiceCollection AddQueue(this IServiceCollection services) => services
-        .AddSingleton<IQueueService, QueueService>()
-        .AddSingleton<IJobRetryService, JobRetryService>();
-
+    // IQueueService is the run half of the old queue service until VOPT-101 moves the run.
     public static IServiceCollection AddRun(this IServiceCollection services) => services
+        .AddSingleton<IQueueService, QueueService>()
         .AddSingleton<IProcessingSessionFactory, ProcessingSessionFactory>()
         .AddSingleton<IJobProcessor, JobProcessor>()
         .AddSingleton<RunStop>()

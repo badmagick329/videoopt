@@ -7,7 +7,7 @@ using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.Queue;
 
 /// <summary>
 /// <c>queue hold</c>, <c>release</c>, <c>next</c> and <c>drop</c> through the real CLI (VOPT-54 step 5): every approved line,

@@ -1,5 +1,4 @@
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 
@@ -20,33 +19,6 @@ public interface IJobProcessor
     Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default);
 }
 
-/// <param name="AlreadyQueued">Eligible files whose open job is waiting or stopped, so a run takes it.</param>
-/// <param name="Held">Eligible files whose open job is held.</param>
-/// <param name="ReadyToFinalize">Eligible files whose open job is ready to finalise, being finalised or stopped while it was.</param>
-public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0, int PreviouslySkipped = 0, int Held = 0, int ReadyToFinalize = 0);
-
-/// <summary>What <c>queue add &lt;file&gt;</c> found. Each outcome but <see cref="Queued"/> leaves the queue as it was.</summary>
-public enum QueueAddOutcome
-{
-    Queued,
-    Missing,
-    /// <summary>A temporary output or a staged Immich copy: queueing it would convert the tool's own file.</summary>
-    MadeByTool,
-    Archived,
-    OpenJob,
-    /// <summary>Its latest job settled it (completed, failed, dropped, not worth converting) and the file is unchanged.</summary>
-    Settled,
-    OutsideRoots,
-    Ineligible,
-    TooSmall,
-    Unreadable,
-    ProbeFailed
-}
-
-/// <param name="Job">The new job, the open job, or the job that settled the file.</param>
-/// <param name="Reason">Why the file is ineligible, too small, unreadable or unprobeable.</param>
-/// <param name="OutsideRules">Queued only because <c>--force</c> lifted the watch-root or rule checks.</param>
-public sealed record QueueAddResult(QueueAddOutcome Outcome, string Path, JobRecord? Job = null, string? Reason = null, bool OutsideRules = false);
 public sealed record FailedQueueJob(Guid Id, string SourcePath, string FailureCategory, string FailureMessage);
 
 /// <summary>A job that ended <see cref="JobStatus.Skipped"/>. Not a failure: it changes neither the exit code nor the managed worker's deletion.</summary>
@@ -83,21 +55,8 @@ public static class QueueExitCode
         : readyToFinalize > 0 ? ExitCode.PartialSuccess : ExitCode.ProcessingFailure;
 }
 
-public sealed record JobRetryResult(JobRecord? Replacement, string? Error)
-{
-    public bool Succeeded => Replacement is not null;
-}
-
 public interface IQueueService
 {
-    Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Queues one file after the checks a run makes: inside a watch root, eligible, worth converting. <paramref name="force"/>
-    /// skips the watch-root and rule checks and is stored on the job; nothing admits a file the tool made or archived.
-    /// </summary>
-    Task<QueueAddResult> AddFileAsync(string databasePath, AppSettings settings, string path, bool force, CancellationToken cancellationToken = default);
-
     /// <summary>
     /// Readies the open jobs of one source, or of every source, for processing: <c>run</c> takes every job, <c>immich run</c>
     /// Immich jobs. Every source's Immich finalisation that a crash interrupted goes back to ready either way.
@@ -113,9 +72,4 @@ public interface IQueueService
     /// <param name="passOver">Asked before each video starts; true leaves it queued for a later run, after the caller has said why.</param>
     /// <param name="stopAfterThisVideo">Checked before each job, never during one, so a stop after this video keeps the current job's work.</param>
     Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default);
-}
-
-public interface IJobRetryService
-{
-    Task<JobRetryResult> RetryAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default);
 }

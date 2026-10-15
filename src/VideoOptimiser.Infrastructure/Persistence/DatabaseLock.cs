@@ -8,6 +8,18 @@ public sealed class DatabaseLocks : IDatabaseLocks
 {
     public IDisposable? TryHoldFinalizeWhilePreparing(string databasePath) =>
         DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(databasePath), DatabaseLock.RunPreparing, out _);
+
+    public IDisposable? TryHoldRun(string databasePath, string command) =>
+        DatabaseLock.TryAcquire(DatabaseLock.RunPath(databasePath), command, out _);
+
+    public bool IsFinaliseGoing(string databasePath) =>
+        DatabaseLock.ReadLiveHolder(DatabaseLock.FinalizePath(databasePath)) is { } holder && holder.Command != DatabaseLock.RunPreparing;
+
+    public string? LiveRun(string databasePath) =>
+        DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath)) is { } holder && !LockHolders.QueueVerbs.Contains(holder.Command) ? holder.Command : null;
+
+    public async Task<IDisposable?> TakeFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken) =>
+        (await DatabaseLock.AcquireFinalizeAsync(databasePath, command, cancellationToken)).Lock;
 }
 
 /// <summary>
@@ -111,6 +123,23 @@ public sealed class DatabaseLock : IDisposable
             if (acquired is not null || DateTimeOffset.UtcNow >= deadline) return (acquired, holder);
             await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// The finalise lock for a command. A run holds it only while it prepares, which takes moments, so this waits for a run
+    /// however long it takes and gives up only on another finalise, whose holder it returns. One place for the loop, so the
+    /// CLI's finalize (which words the refusal from the holder) and the queue verbs wait alike.
+    /// </summary>
+    public static async Task<(DatabaseLock? Lock, Holder? Holder)> AcquireFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken)
+    {
+        DatabaseLock? taken;
+        Holder? holder;
+        do
+        {
+            (taken, holder) = await AcquireAsync(FinalizePath(databasePath), command, TimeSpan.FromSeconds(5), cancellationToken);
+        }
+        while (taken is null && holder?.Command == RunPreparing);
+        return (taken, holder);
     }
 
     private static Holder? Read(string path)

@@ -2,7 +2,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain.Jobs;
 
-namespace VideoOptimiser.Infrastructure.Jobs;
+namespace VideoOptimiser.Application.Features.Queue;
 
 /// <summary>
 /// The explicit opt-in that requeues a failed, cancelled or skipped original, which discovery otherwise leaves alone while the file is
@@ -54,6 +54,7 @@ public sealed class JobRetryService(IJobRepository jobs) : IJobRetryService
             if (raced is null) throw;
             return new JobRetryResult(null, $"An open job already exists for this original: {raced.Id:N} ({raced.Status}).");
         }
-        return new JobRetryResult(replacement, null);
+        // An Immich job's staged copy may have been cleaned up since it ended; the run downloads it again first.
+        return new JobRetryResult(replacement, null, DownloadedCopyGone: replacement.SourceKind == JobSourceKind.Immich && !File.Exists(replacement.SourcePath));
     }
 }
