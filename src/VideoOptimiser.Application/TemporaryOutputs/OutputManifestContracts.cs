@@ -27,6 +27,25 @@ public interface IOutputManifestStore
     Task<OutputManifest> LoadAsync(string outputPath, CancellationToken cancellationToken = default);
 }
 
+public static class OutputManifestStoreExtensions
+{
+    /// <summary>
+    /// The record, or null when it is missing, unreadable or corrupt. Finalize and validate treat all three alike: the record
+    /// is the only proof the original is unchanged, so neither rebuilds it from the job.
+    /// </summary>
+    public static async Task<OutputManifest?> TryLoadAsync(this IOutputManifestStore store, string outputPath, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await store.LoadAsync(outputPath, cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+}
+
 public interface IFileFingerprintService
 {
     Task<string> CreateAsync(string path, CancellationToken cancellationToken = default);

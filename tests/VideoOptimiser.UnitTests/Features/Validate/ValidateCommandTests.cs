@@ -27,6 +27,9 @@ public sealed class ValidateCommandTests : IDisposable
 
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
 
+    /// <summary>Where <c>RunCli.WriteConfigAsync</c> puts the config, which the hints in the refusals repeat.</summary>
+    private string ConfigPath => Path.Combine(_directory, "config.yaml");
+
     [Fact]
     public async Task AFinishedJobIsRefusedAndItsValidationRecordLeftAlone()
     {
@@ -95,6 +98,34 @@ public sealed class ValidateCommandTests : IDisposable
         stdout.Should().BeEmpty();
         stderr.ReplaceLineEndings("\n").Should().Be($"The AV1 is missing: {job.OutputPath}.\n");
         (await _repository.GetAsync(DatabasePath, job.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
+        _validation.Calls.Should().Be(0);
+    }
+
+    /// <summary>
+    /// VOPT-88: a missing, unreadable (a folder where the file should be) or corrupt record is refused like the other missing
+    /// pieces. Validate must not rebuild it from the job, which could hide an original that changed after encoding.
+    /// </summary>
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("corrupt")]
+    [InlineData("unreadable")]
+    public async Task ARecordThatCannotBeLoadedIsRefusedAndTheJobAndRecordLeftAsTheyAre(string damage)
+    {
+        var job = await CreateReadyJobAsync();
+        var manifestPath = new OutputManifestStore().GetPath(job.OutputPath!);
+        File.Delete(manifestPath);
+        if (damage == "corrupt") await File.WriteAllTextAsync(manifestPath, "{ not json");
+        if (damage == "unreadable") Directory.CreateDirectory(manifestPath);
+
+        var (code, stdout, stderr) = await RunAsync(job.Id.ToString("N"));
+
+        code.Should().Be((int)ExitCode.ProcessingFailure);
+        stdout.Should().BeEmpty();
+        stderr.ReplaceLineEndings("\n").Should().Be($"The AV1's validation record is missing or unreadable: {manifestPath}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue drop {job.Id:N} --config \"{ConfigPath}\"', then 'video-optimiser queue retry {job.Id:N} --config \"{ConfigPath}\"'.\n");
+        if (damage == "corrupt") (await File.ReadAllTextAsync(manifestPath)).Should().Be("{ not json");
+        if (damage == "missing") File.Exists(manifestPath).Should().BeFalse();
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        (stored.Status, stored.ValidationPassed).Should().Be((JobStatus.ReadyToFinalize, job.ValidationPassed));
         _validation.Calls.Should().Be(0);
     }
 

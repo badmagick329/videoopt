@@ -129,7 +129,7 @@ internal static class CliApplication
             CliCommandKind.QueueRetry => await services.GetRequiredService<QueueCommands>().RetryAsync(configuration, command, cancellationToken),
             CliCommandKind.Status => await services.GetRequiredService<StatusCommand>().RunAsync(configuration, command, cancellationToken),
             CliCommandKind.History => await services.GetRequiredService<QueueCommands>().ListAsync(configuration, command, terminal: true, cancellationToken),
-            CliCommandKind.Validate => await services.GetRequiredService<ValidateCommand>().RunAsync(configuration, command.JobId!, cancellationToken),
+            CliCommandKind.Validate => await services.GetRequiredService<ValidateCommand>().RunAsync(configuration, command, cancellationToken),
             CliCommandKind.Finalize => await services.GetRequiredService<FinalizeCommands>().FinalizeAsync(configuration, command, cancellationToken),
             CliCommandKind.Cleanup => await services.GetRequiredService<CleanupCommand>().RunAsync(configuration, command.DryRun, cancellationToken),
             CliCommandKind.ImmichRun => await services.GetRequiredService<ImmichRunCommand>().RunAsync(configuration, command, cancellationToken),

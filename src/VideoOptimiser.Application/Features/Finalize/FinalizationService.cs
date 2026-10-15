@@ -24,7 +24,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         // VOPT-60: a missing file stops only this job, which stays as it is, so a batch finalises the rest and prints its
         // summary. An interrupted file finalisation skips these: a missing file there means something moved, which it reviews.
         if (!resumingFile && MissingFile(job, fromImmich) is { } missing) return new FinalizationResult(job, ExitCode.FinalisationFailure, missing);
-        if (await TryLoadManifestAsync(job.OutputPath, cancellationToken) is not { } manifest)
+        if (await manifests.TryLoadAsync(job.OutputPath, cancellationToken) is not { } manifest)
         {
             // Without the record an interrupted file finalisation cannot show that nothing moved, and converting again (F2's
             // advice) would queue a path that may now hold the AV1 or nothing at all.
@@ -155,18 +155,6 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             return $"{FinalizationRules.Av1Missing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue drop {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.";
         }
         return null;
-    }
-
-    private async Task<OutputManifest?> TryLoadManifestAsync(string outputPath, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await manifests.LoadAsync(outputPath, cancellationToken);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
-        {
-            return null;
-        }
     }
 
     private async Task ReturnToReadyAsync(string databasePath, JobRecord job, string message)
