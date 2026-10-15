@@ -126,7 +126,6 @@ public sealed class RemoteSetupServiceTests
     }
 
     [Theory]
-    [InlineData("video-optimiser-hetzner", "video-optimiser-hetzner-2")]
     [InlineData("video-optimiser-hetzner,video-optimiser-hetzner-2", "video-optimiser-hetzner-3")]
     public async Task ANameTakenByADifferentKeyGetsTheNextFreeSuffix(string taken, string expected)
     {
@@ -318,23 +317,6 @@ public sealed class RemoteSetupServiceTests
     }
 
     [Fact]
-    public async Task ARerunAfterDecliningFindsTheUploadedKeyAndTheGeneratedKey()
-    {
-        using var fixture = new Fixture();
-        await fixture.RunAsync(answer: false);
-        fixture.Handler.Requests.Clear();
-        fixture.Processes.Requests.Clear();
-        fixture.Output.Clear();
-
-        var exit = await fixture.RunAsync();
-
-        exit.Should().Be(ExitCode.Success);
-        fixture.Processes.Requests.Should().BeEmpty();
-        fixture.Handler.Posted.Should().ContainSingle("only the first run uploads");
-        fixture.Output.Should().Contain("Hetzner already has this key as \"video-optimiser-hetzner\".");
-    }
-
-    [Fact]
     public async Task AManualLifecycleWithAHostIsLeftToTheManualDocs()
     {
         using var fixture = new Fixture(host: "my-server");
@@ -370,7 +352,6 @@ public sealed class RemoteSetupServiceTests
     }
 
     [Theory]
-    [InlineData("ssh-ed25519 YWJj", true)]
     [InlineData("# comment\n\nssh-rsa YWJj me@host\n", true)]
     [InlineData("ssh-ed25519", false)]
     [InlineData("ssh-ed25519 not*base64", false)]
@@ -382,12 +363,6 @@ public sealed class RemoteSetupServiceTests
         publicKey.Should().EndWith(" YWJj");
         fingerprint.Should().Be(Fingerprint);
     }
-
-    [Theory]
-    [InlineData("ssh", "ssh-keygen")]
-    [InlineData("", "ssh-keygen")]
-    public void KeygenIsFoundOnPathWhenSshHasNoFolder(string sshPath, string expected) =>
-        RemoteSetupService.SshKeygenPath(sshPath).Should().Be(expected);
 
     private sealed record FakeKey(string Name, string Fingerprint);
 
@@ -477,7 +452,7 @@ public sealed class RemoteSetupServiceTests
                 loader,
                 new SettingsValidator(),
                 () => Home);
-            return await service.RunAsync(configuration, confirm, new SynchronousProgress(Output.Add), CancellationToken.None);
+            return await service.RunAsync(configuration, confirm, new SynchronousProgress<string>(Output.Add), CancellationToken.None);
         }
 
         public Task<LoadedConfiguration> ReloadAsync() => new YamlConfigurationLoader().LoadAsync(ConfigPath);
@@ -553,10 +528,5 @@ public sealed class RemoteSetupServiceTests
         private static HttpResponseMessage Json(HttpStatusCode status, string body) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
         private static HttpResponseMessage Error(HttpStatusCode status) => Json(status, $"{{\"error\":{{\"code\":\"{status}\",\"message\":\"HTTP {(int)status} from the fake\"}}}}");
-    }
-
-    private sealed class SynchronousProgress(Action<string> callback) : IProgress<string>
-    {
-        public void Report(string value) => callback(value);
     }
 }

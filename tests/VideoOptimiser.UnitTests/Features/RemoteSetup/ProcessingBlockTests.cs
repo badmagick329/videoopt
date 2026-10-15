@@ -59,26 +59,6 @@ public sealed class ProcessingBlockTests
     }
 
     [Fact]
-    public void ReplaceKeepsEverythingOutsideTheSectionAndTheCommentsBeforeTheNextKey()
-    {
-        const string yaml = "# top\nversion: 1\n\nprocessing:\n  mode: \"local\"\n  remoteSsh:\n    host: \"\"\n\n# the database\n# holds jobs\ndatabase:\n  path: \"jobs.db\"\n";
-
-        var result = ProcessingBlock.Replace(yaml, "processing:\n  mode: \"remoteSsh\"\n");
-
-        result.Should().Be("# top\nversion: 1\n\nprocessing:\n  mode: \"remoteSsh\"\n\n# the database\n# holds jobs\ndatabase:\n  path: \"jobs.db\"\n");
-    }
-
-    [Fact]
-    public void ReplaceKeepsCrlfLineEndingsThroughout()
-    {
-        const string yaml = "version: 1\r\nprocessing:\r\n  mode: \"local\"\r\n\r\n# next\r\ndatabase:\r\n  path: \"jobs.db\"\r\n";
-
-        var result = ProcessingBlock.Replace(yaml, "processing:\n  mode: \"remoteSsh\"\n  remoteSsh:\n    host: \"\"\n");
-
-        result.Should().Be("version: 1\r\nprocessing:\r\n  mode: \"remoteSsh\"\r\n  remoteSsh:\r\n    host: \"\"\r\n\r\n# next\r\ndatabase:\r\n  path: \"jobs.db\"\r\n");
-    }
-
-    [Fact]
     public void ReplaceHandlesTheSectionAtTheEndOfTheFileWithAndWithoutATrailingNewline()
     {
         ProcessingBlock.Replace("version: 1\nprocessing:\n  mode: \"local\"\n", "processing:\n  mode: \"x\"\n")

@@ -7,9 +7,10 @@ using VideoOptimiser.Domain;
 namespace VideoOptimiser.UnitTests.Features.RemoteSetup;
 
 /// <summary>
-/// What <c>remote setup</c> prints and returns. A fake service stands in for Hetzner, so the test pins the CLI's part: how the
-/// confirmation prompt is asked, how an answer or its absence reads, and that the service's lines and exit code pass through.
-/// </summary>
+/// What <c>remote setup</c> prints and returns. A fake service stands in for Hetzner, so the test pins the CLI's part: that the
+/// confirmation prompt is asked and a typed answer reaches the service, and that its lines and exit code pass through. The
+/// prompt is the shared <c>ConsolePrompts.ConfirmAsync</c>, whose end-of-input path <c>WorkerCommandsTests</c> pins.
+///</summary>
 [Collection(ConsoleCapture.Collection)]
 public sealed class RemoteSetupCommandTests : IDisposable
 {
@@ -24,32 +25,17 @@ public sealed class RemoteSetupCommandTests : IDisposable
 
         var (code, stdout, stderr) = await RunAsync(setup, "y\n");
 
-        code.Should().Be((int)ExitCode.Success);
+        code.Should().Be((int)ExitCode.PartialSuccess);
         stderr.Should().BeEmpty();
         setup.Answer.Should().BeTrue();
         stdout.ReplaceLineEndings("\n").Should().Be("Upload this key? [y/N] Setup step finished.\n");
-    }
-
-    [Fact]
-    public async Task NoInputEndsThePromptLineAndDeclines()
-    {
-        var setup = new FakeSetup();
-
-        var (code, stdout, stderr) = await RunAsync(setup, null);
-
-        code.Should().Be((int)ExitCode.GeneralFailure);
-        stderr.Should().BeEmpty();
-        setup.Answer.Should().BeFalse();
-        // The prompt has no newline, so the console adds one when input ends.
-        stdout.ReplaceLineEndings("\n").Should().Be("Upload this key? [y/N] \nSetup step finished.\n");
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(FakeSetup setup, string? input)
     {
-        var config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(config, $"database:\n  path: '{Path.Combine(_directory, "jobs.db")}'\n");
+        var config = await RunCli.WriteConfigAsync(Path.Combine(_directory, "jobs.db"));
         return await ConsoleCapture.RunCliWithInputAsync(input, services =>
         {
             CliFakes.AcceptAnySettings(services);
@@ -65,7 +51,7 @@ public sealed class RemoteSetupCommandTests : IDisposable
         {
             Answer = await confirm("Upload this key? [y/N] ", cancellationToken);
             output.Report("Setup step finished.");
-            return Answer.Value ? ExitCode.Success : ExitCode.GeneralFailure;
+            return ExitCode.PartialSuccess;
         }
     }
 }
