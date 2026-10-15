@@ -1,6 +1,5 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
-using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
 
@@ -79,7 +78,9 @@ public sealed class ConfigCommandsTests : IDisposable
     {
         await File.WriteAllTextAsync(ConfigPath, "database:\n  path: 'jobs.db'\n");
 
-        var (code, stdout, stderr) = await ConsoleCapture.RunCliAsync(TwoProblems, "config", "validate", "--config", ConfigPath);
+        var (code, stdout, stderr) = await ConsoleCapture.RunCliAsync(CliFakes.Diagnostics(
+            new Diagnostic(DiagnosticCategory.Configuration, DiagnosticStatus.Fail, "NoRoots", "Add a watch root."),
+            new Diagnostic(DiagnosticCategory.Configuration, DiagnosticStatus.Fail, "NoTools", "Set tools.ffprobe.")), "config", "validate", "--config", ConfigPath);
 
         code.Should().Be((int)ExitCode.InvalidConfiguration);
         stdout.Should().BeEmpty();
@@ -87,15 +88,4 @@ public sealed class ConfigCommandsTests : IDisposable
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
-
-    private static void TwoProblems(IServiceCollection services) => services.AddSingleton<ISettingsValidator>(new FixedValidator());
-
-    private sealed class FixedValidator : ISettingsValidator
-    {
-        public IReadOnlyList<Diagnostic> Validate(AppSettings settings) =>
-        [
-            new(DiagnosticCategory.Configuration, DiagnosticStatus.Fail, "NoRoots", "Add a watch root."),
-            new(DiagnosticCategory.Configuration, DiagnosticStatus.Fail, "NoTools", "Set tools.ffprobe.")
-        ];
-    }
 }

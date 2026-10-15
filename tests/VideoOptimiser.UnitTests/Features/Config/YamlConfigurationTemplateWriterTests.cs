@@ -12,20 +12,6 @@ public sealed class YamlConfigurationTemplateWriterTests : IDisposable
     public YamlConfigurationTemplateWriterTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
-    public async Task LoadAsyncAcceptsTheConfigInitTemplate()
-    {
-        var configPath = Path.Combine(_directory, "template.yaml");
-        await new YamlConfigurationTemplateWriter(new YamlConfigurationLoader()).WriteAsync(configPath, QualityLevel.Standard);
-
-        var loaded = await new YamlConfigurationLoader().LoadAsync(configPath);
-
-        loaded.Settings.Processing.RemoteSsh.Hetzner.Locations.Should().Equal("hel1", "fsn1", "nbg1");
-        loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().Equal("cx43", "cx53", "cpx42", "ccx33");
-        loaded.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice.Should().Be(0.30m);
-        loaded.Settings.Quality.MaxEncodedPercent.Should().Be(80);
-    }
-
-    [Fact]
     public async Task WriteAsyncCreatesEditableTemplateAndNeverOverwrites()
     {
         var destination = Path.Combine(_directory, "config.yaml");
@@ -53,6 +39,10 @@ public sealed class YamlConfigurationTemplateWriterTests : IDisposable
         var loaded = await new YamlConfigurationLoader().LoadAsync(destination);
 
         loaded.Settings.Quality.MinimumVmaf.Should().Be(vmaf);
+        loaded.Settings.Processing.RemoteSsh.Hetzner.Locations.Should().Equal("hel1", "fsn1", "nbg1");
+        loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().Equal("cx43", "cx53", "cpx42", "ccx33");
+        loaded.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice.Should().Be(0.30m);
+        loaded.Settings.Quality.MaxEncodedPercent.Should().Be(80);
         lines.Should().ContainInConsecutiveOrder("quality:", comment, "  # Minimum visual quality target used by CRF search.", $"  minimumVmaf: {vmaf}");
     }
 

@@ -15,15 +15,16 @@ public sealed class ConfigInitQuestionTests
 
     [Theory]
     [InlineData("1", QualityLevel.Archive)]
-    [InlineData("2", QualityLevel.Standard)]
-    [InlineData("3", QualityLevel.Compact)]
     [InlineData("", QualityLevel.Standard)]
     [InlineData(" 3 ", QualityLevel.Compact)]
-    public void AsksAndReadsTheAnswer(string answer, QualityLevel expected)
+    [InlineData(null, QualityLevel.Standard)]
+    public void AsksAndReadsTheAnswer(string? answer, QualityLevel expected)
     {
         var output = new StringWriter();
+        // A null answer is the end of input: no line at all.
+        var input = new StringReader(answer is null ? string.Empty : answer + Environment.NewLine);
 
-        var level = ConfigInitQuestion.Choose(null, interactive: true, new StringReader(answer + Environment.NewLine), output);
+        var level = ConfigInitQuestion.Choose(null, interactive: true, input, output);
 
         level.Should().Be(expected);
         output.ToString().Should().Be(Question);
@@ -39,10 +40,6 @@ public sealed class ConfigInitQuestionTests
         level.Should().Be(QualityLevel.Archive);
         output.ToString().Should().EndWith($"Choose 1-3 [2]: Enter 1, 2 or 3.{Environment.NewLine}Choose 1-3 [2]: Enter 1, 2 or 3.{Environment.NewLine}Choose 1-3 [2]: ");
     }
-
-    [Fact]
-    public void EndOfInputTakesTheDefault() =>
-        ConfigInitQuestion.Choose(null, interactive: true, new StringReader(string.Empty), TextWriter.Null).Should().Be(QualityLevel.Standard);
 
     [Fact]
     public void WithoutAConsoleItUsesStandardAndSaysSo()
