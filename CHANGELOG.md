@@ -63,6 +63,7 @@
 - `calibrate` says why it has no suggestions, one line per case (no videos, all already AV1, nothing converted yet, too few results, results that call for no change). Before, it always said no group had 3 or more results, which was often false. `calibrate --json` gains `noSuggestions` (`{ reason, text }`, `null` when there are suggestions).
 - `calibrate` keeps the folder report when Immich can't be searched: it prints the report, then `Immich couldn't be searched, so its videos are not in this report: <reason>.` on stderr, and exits with the Immich failure code. Before, the folder report was lost.
 - `calibrate` says "not worth converting" where it said "not worth it". The JSON keys are unchanged.
+- `remote setup` no longer says it is complete, or suggests a command, while the config still fails validation. It lists the remaining problems on stderr, ends with `The configuration still has the problems above. Fix them, then run 'video-optimiser config validate'.` and exits `3`. Its failures now go to stderr. The Next line is `Next: run 'video-optimiser run'.`, without the extra `--remote`, and repeats `--config` only when it was typed.
 
 ## [0.7.1] - 2026-10-13
 ### Changed

@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.RemoteSetup;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Features.RemoteSetup;
@@ -27,9 +28,9 @@ public sealed class RemoteSetupServiceTests
         var exit = await fixture.RunAsync();
 
         exit.Should().Be(ExitCode.InvalidConfiguration);
-        fixture.Output.Should().Contain($"{fixture.Variable}=<your token>");
-        fixture.Output.Should().Contain(line => line.Contains("Security > API Tokens > Generate API token") && line.Contains("Read & Write"));
-        fixture.Output.Should().Contain(line => line.Contains(Path.Combine(fixture.Directory, ".env")));
+        fixture.Errors.Should().Contain($"{fixture.Variable}=<your token>");
+        fixture.Errors.Should().Contain(line => line.Contains("Security > API Tokens > Generate API token") && line.Contains("Read & Write"));
+        fixture.Errors.Should().Contain(line => line.Contains(Path.Combine(fixture.Directory, ".env")));
         fixture.Handler.Requests.Should().BeEmpty();
         fixture.Processes.Requests.Should().BeEmpty();
         fixture.ConfigShouldBeUntouched();
@@ -44,7 +45,7 @@ public sealed class RemoteSetupServiceTests
         var exit = await fixture.RunAsync();
 
         exit.Should().Be(ExitCode.InvalidConfiguration);
-        fixture.Output.Should().Contain(line => line.Contains("rejected the API token") && line.Contains(fixture.Variable));
+        fixture.Errors.Should().Contain(line => line.Contains("rejected the API token") && line.Contains(fixture.Variable));
         fixture.Handler.Requests.Should().ContainSingle();
         fixture.ConfigShouldBeUntouched();
         fixture.TokenShouldNotBePrinted();
@@ -59,7 +60,7 @@ public sealed class RemoteSetupServiceTests
         var exit = await fixture.RunAsync();
 
         exit.Should().Be(ExitCode.MissingDependency);
-        fixture.Output.Should().Contain(line => line.Contains("500"));
+        fixture.Errors.Should().Contain(line => line.Contains("500"));
         fixture.ConfigShouldBeUntouched();
     }
 
@@ -79,7 +80,9 @@ public sealed class RemoteSetupServiceTests
         fixture.Output.Should().Contain("Hetzner already has this key as \"video-optimiser-hetzner-cx43\".");
         fixture.Output.Should().Contain($"Updated {fixture.ConfigPath}; the previous version is in {fixture.ConfigPath}.bak.");
         fixture.Output.Should().Contain("Remote setup is complete. Nothing was created on Hetzner.");
-        fixture.Output.Last().Should().Be($"Next: video-optimiser run --remote --config \"{fixture.ConfigPath}\"");
+        fixture.Output.Last().Should().Be("Remote setup is complete. Nothing was created on Hetzner.");
+        fixture.Result.NextVerb.Should().Be("run");
+        fixture.Errors.Should().BeEmpty();
         var text = fixture.ReadConfig();
         text.Should().Contain("mode: \"remoteSsh\"").And.Contain("lifecycle: \"hetzner\"")
             .And.Contain("identityFile: \"keys/id_test\"")
@@ -148,7 +151,7 @@ public sealed class RemoteSetupServiceTests
         var exit = await fixture.RunAsync();
 
         exit.Should().Be(ExitCode.InvalidConfiguration);
-        fixture.Output.Should().Contain(line => line.Contains("read-only") && line.Contains(Path.Combine(fixture.Directory, ".env")));
+        fixture.Errors.Should().Contain(line => line.Contains("read-only") && line.Contains(Path.Combine(fixture.Directory, ".env")));
         fixture.ConfigShouldBeUntouched();
         fixture.TokenShouldNotBePrinted();
     }
@@ -218,7 +221,7 @@ public sealed class RemoteSetupServiceTests
         var exit = await fixture.RunAsync();
 
         exit.Should().Be(ExitCode.MissingDependency);
-        fixture.Output.Should().Contain(line => line.Contains("boom: cannot write"));
+        fixture.Errors.Should().Contain(line => line.Contains("boom: cannot write"));
         fixture.Handler.Posted.Should().BeEmpty();
         fixture.ConfigShouldBeUntouched();
     }
@@ -232,7 +235,7 @@ public sealed class RemoteSetupServiceTests
         var exit = await fixture.RunAsync();
 
         exit.Should().Be(ExitCode.InvalidConfiguration);
-        fixture.Output.Should().Contain(line => line.Contains("id_test.pub") && line.Contains("missing") && line.Contains("identityFile"));
+        fixture.Errors.Should().Contain(line => line.Contains("id_test.pub") && line.Contains("missing") && line.Contains("identityFile"));
         fixture.Handler.Posted.Should().BeEmpty();
         fixture.ConfigShouldBeUntouched();
     }
@@ -282,24 +285,32 @@ public sealed class RemoteSetupServiceTests
         var exit = await fixture.RunAsync();
 
         exit.Should().Be(ExitCode.InvalidConfiguration);
-        fixture.Output.Should().Contain(line => line.StartsWith("[HetznerBootstrapMissing]"));
-        fixture.Output.Should().Contain($"Restored {fixture.ConfigPath} from {fixture.ConfigPath}.bak.");
+        fixture.Errors.Should().Contain(line => line.StartsWith("[HetznerBootstrapMissing]"));
+        fixture.Errors.Should().Contain($"Restored {fixture.ConfigPath} from {fixture.ConfigPath}.bak.");
+        fixture.Result.NextVerb.Should().BeNull();
         File.ReadAllBytes(fixture.ConfigPath).Should().Equal(fixture.OriginalBytes);
         File.ReadAllBytes(fixture.ConfigPath + ".bak").Should().Equal(fixture.OriginalBytes);
         fixture.Output.Should().NotContain(line => line.StartsWith("Updated "));
     }
 
     [Fact]
-    public async Task ProblemsThatWereAlreadyThereDoNotBlockTheEdit()
+    public async Task ProblemsThatWereAlreadyThereAreListedAndSetupIsNotComplete()
     {
         using var fixture = new Fixture(identityFile: "keys/id_test", complete: false);
         fixture.Handler.Keys.Add(new FakeKey("existing", Fingerprint));
-        (await fixture.ReloadAndValidateAsync()).Should().NotBeEmpty();
+        var remaining = await fixture.ReloadAndValidateAsync();
+        remaining.Should().NotBeEmpty();
 
         var exit = await fixture.RunAsync();
 
-        exit.Should().Be(ExitCode.Success);
+        exit.Should().Be(ExitCode.InvalidConfiguration);
+        // Its own edit is valid on its own, so it stays and the backup is kept beside it.
         fixture.ReadConfig().Should().Contain("lifecycle: \"hetzner\"");
+        File.ReadAllBytes(fixture.ConfigPath + ".bak").Should().Equal(fixture.OriginalBytes);
+        fixture.Output.Should().Contain($"Updated {fixture.ConfigPath}; the previous version is in {fixture.ConfigPath}.bak.");
+        fixture.Errors.Should().Equal(await fixture.ReloadAndValidateAsync());
+        fixture.Output.Should().NotContain(line => line.Contains("complete"));
+        fixture.Result.Should().Be(new RemoteSetupResult(ExitCode.InvalidConfiguration, NextVerb: null, ConfigStillInvalid: true));
     }
 
     [Fact]
@@ -324,7 +335,7 @@ public sealed class RemoteSetupServiceTests
         var exit = await fixture.RunAsync();
 
         exit.Should().Be(ExitCode.InvalidConfiguration);
-        fixture.Output.Should().Equal("remote setup configures managed Hetzner workers only. For your own SSH host, see \"Manual SSH lifecycle\" in docs/remote-ssh.md.");
+        fixture.Errors.Should().Equal("remote setup configures managed Hetzner workers only. For your own SSH host, see \"Manual SSH lifecycle\" in docs/remote-ssh.md.");
         fixture.Handler.Requests.Should().BeEmpty();
         fixture.ConfigShouldBeUntouched();
     }
@@ -337,7 +348,7 @@ public sealed class RemoteSetupServiceTests
         var exit = await fixture.RunAsync();
 
         exit.Should().Be(ExitCode.Success);
-        fixture.Output.Last().Should().Be($"Next: video-optimiser immich run --first --remote --config \"{fixture.ConfigPath}\"");
+        fixture.Result.NextVerb.Should().Be("immich run --first");
     }
 
     [Fact]
@@ -424,6 +435,8 @@ public sealed class RemoteSetupServiceTests
         public FakeHetzner Handler { get; } = new();
         public FakeKeygen Processes { get; } = new();
         public List<string> Output { get; } = [];
+        public List<string> Errors { get; } = [];
+        public RemoteSetupResult Result { get; private set; } = new(ExitCode.Success);
         public List<string> Prompts { get; } = [];
 
         public string ReadConfig() => File.ReadAllText(ConfigPath);
@@ -452,7 +465,8 @@ public sealed class RemoteSetupServiceTests
                 loader,
                 new SettingsValidator(),
                 () => Home);
-            return await service.RunAsync(configuration, confirm, new SynchronousProgress<string>(Output.Add), CancellationToken.None);
+            Result = await service.RunAsync(configuration, confirm, new SynchronousProgress<string>(Output.Add), new SynchronousProgress<string>(Errors.Add), CancellationToken.None);
+            return Result.ExitCode;
         }
 
         public Task<LoadedConfiguration> ReloadAsync() => new YamlConfigurationLoader().LoadAsync(ConfigPath);
@@ -466,7 +480,7 @@ public sealed class RemoteSetupServiceTests
             File.Exists(ConfigPath + ".bak").Should().BeFalse();
         }
 
-        public void TokenShouldNotBePrinted() => Output.Should().NotContain(line => line.Contains(Token));
+        public void TokenShouldNotBePrinted() => Output.Concat(Errors).Should().NotContain(line => line.Contains(Token));
 
         public void Dispose() => System.IO.Directory.Delete(_root, recursive: true);
     }

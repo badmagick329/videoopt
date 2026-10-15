@@ -42,10 +42,11 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
         _homeDirectory = homeDirectory;
     }
 
-    public async Task<ExitCode> RunAsync(
+    public async Task<RemoteSetupResult> RunAsync(
         LoadedConfiguration configuration,
         Func<string, CancellationToken, Task<bool>> confirm,
         IProgress<string> output,
+        IProgress<string> errors,
         CancellationToken cancellationToken)
     {
         var settings = configuration.Settings;
@@ -54,21 +55,21 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
 
         if (remote.Lifecycle.Equals(RemoteLifecycleModes.Manual, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(remote.Host))
         {
-            output.Report("remote setup configures managed Hetzner workers only. For your own SSH host, see \"Manual SSH lifecycle\" in docs/remote-ssh.md.");
-            return ExitCode.InvalidConfiguration;
+            errors.Report("remote setup configures managed Hetzner workers only. For your own SSH host, see \"Manual SSH lifecycle\" in docs/remote-ssh.md.");
+            return new(ExitCode.InvalidConfiguration);
         }
 
         // Step 1: the token, proved by the first real call.
         if (string.IsNullOrWhiteSpace(hetzner.ApiTokenEnvironmentVariable))
         {
-            output.Report("processing.remoteSsh.hetzner.apiTokenEnvironmentVariable is empty. Set it to a variable name, such as VIDEO_OPTIMISER_HETZNER_TOKEN.");
-            return ExitCode.InvalidConfiguration;
+            errors.Report("processing.remoteSsh.hetzner.apiTokenEnvironmentVariable is empty. Set it to a variable name, such as VIDEO_OPTIMISER_HETZNER_TOKEN.");
+            return new(ExitCode.InvalidConfiguration);
         }
         var token = SecretLoader.Load(hetzner.ApiTokenEnvironmentVariable, hetzner.ApiTokenFile);
         if (token is null)
         {
-            ReportMissingToken(hetzner, output);
-            return ExitCode.InvalidConfiguration;
+            ReportMissingToken(hetzner, errors);
+            return new(ExitCode.InvalidConfiguration);
         }
 
         IReadOnlyList<HetznerSshKey> listed;
@@ -78,13 +79,13 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
         }
         catch (HetznerSshKeyException exception) when (exception.StatusCode == HttpStatusCode.Unauthorized)
         {
-            output.Report($"Hetzner rejected the API token ({TokenSource(hetzner)}). Create a new Read & Write token.");
-            return ExitCode.InvalidConfiguration;
+            errors.Report($"Hetzner rejected the API token ({TokenSource(hetzner)}). Create a new Read & Write token.");
+            return new(ExitCode.InvalidConfiguration);
         }
         catch (Exception exception) when (IsHetznerFailure(exception, cancellationToken))
         {
-            output.Report($"Could not list SSH keys on Hetzner: {exception.Message}");
-            return ExitCode.MissingDependency;
+            errors.Report($"Could not list SSH keys on Hetzner: {exception.Message}");
+            return new(ExitCode.MissingDependency);
         }
         output.Report("Hetzner API token accepted.");
 
@@ -105,8 +106,8 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
             var home = _homeDirectory();
             if (string.IsNullOrWhiteSpace(home))
             {
-                output.Report("Could not find your home directory. Set processing.remoteSsh.identityFile to an existing SSH key.");
-                return ExitCode.InvalidConfiguration;
+                errors.Report("Could not find your home directory. Set processing.remoteSsh.identityFile to an existing SSH key.");
+                return new(ExitCode.InvalidConfiguration);
             }
             keyPath = Path.Combine(home, ".ssh", DefaultKeyFile);
             identityValue = keyPath;
@@ -115,11 +116,11 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
                 // Never overwrite: ssh-keygen would replace a lone .pub without asking.
                 if (File.Exists(keyPath + ".pub"))
                 {
-                    output.Report($"{keyPath}.pub exists without its private key {keyPath}. Move it away or set processing.remoteSsh.identityFile to a key you have.");
-                    return ExitCode.InvalidConfiguration;
+                    errors.Report($"{keyPath}.pub exists without its private key {keyPath}. Move it away or set processing.remoteSsh.identityFile to a key you have.");
+                    return new(ExitCode.InvalidConfiguration);
                 }
-                var failure = await GenerateKeyAsync(settings.Tools.SshPath, keyPath, output, cancellationToken);
-                if (failure is not null) return failure.Value;
+                var failure = await GenerateKeyAsync(settings.Tools.SshPath, keyPath, errors, cancellationToken);
+                if (failure is not null) return new(failure.Value);
                 created = true;
             }
         }
@@ -127,16 +128,16 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
         var publicKeyPath = keyPath + ".pub";
         if (!File.Exists(publicKeyPath))
         {
-            output.Report($"The public key {publicKeyPath} is missing. Set processing.remoteSsh.identityFile to a key that has a .pub file beside it.");
-            return ExitCode.InvalidConfiguration;
+            errors.Report($"The public key {publicKeyPath} is missing. Set processing.remoteSsh.identityFile to a key that has a .pub file beside it.");
+            return new(ExitCode.InvalidConfiguration);
         }
         output.Report(created ? $"Created SSH key {keyPath}." : $"Using SSH key {keyPath}.");
 
         // Step 3: the key in the Hetzner project.
         if (!TryParsePublicKey(await File.ReadAllTextAsync(publicKeyPath, cancellationToken), out var publicKey, out var fingerprint))
         {
-            output.Report($"{publicKeyPath} is not an OpenSSH public key: expected \"<type> <base64> [comment]\".");
-            return ExitCode.InvalidConfiguration;
+            errors.Report($"{publicKeyPath} is not an OpenSSH public key: expected \"<type> <base64> [comment]\".");
+            return new(ExitCode.InvalidConfiguration);
         }
         var existing = listed.FirstOrDefault(key => string.Equals(key.Fingerprint, fingerprint, StringComparison.OrdinalIgnoreCase));
         string keyName;
@@ -154,18 +155,18 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
             }
             catch (HetznerSshKeyException exception) when (exception.StatusCode == HttpStatusCode.Forbidden)
             {
-                output.Report($"The Hetzner API token is read-only. Create a Read & Write token and replace it in {TokenSource(hetzner)}.");
-                return ExitCode.InvalidConfiguration;
+                errors.Report($"The Hetzner API token is read-only. Create a Read & Write token and replace it in {TokenSource(hetzner)}.");
+                return new(ExitCode.InvalidConfiguration);
             }
             catch (HetznerSshKeyException exception) when (exception.StatusCode == HttpStatusCode.Unauthorized)
             {
-                output.Report($"Hetzner rejected the API token ({TokenSource(hetzner)}). Create a new Read & Write token.");
-                return ExitCode.InvalidConfiguration;
+                errors.Report($"Hetzner rejected the API token ({TokenSource(hetzner)}). Create a new Read & Write token.");
+                return new(ExitCode.InvalidConfiguration);
             }
             catch (Exception exception) when (IsHetznerFailure(exception, cancellationToken))
             {
-                output.Report($"Could not upload the SSH key to Hetzner: {exception.Message}");
-                return ExitCode.MissingDependency;
+                errors.Report($"Could not upload the SSH key to Hetzner: {exception.Message}");
+                return new(ExitCode.MissingDependency);
             }
             output.Report($"Uploaded the key to Hetzner as \"{keyName}\".");
         }
@@ -182,9 +183,10 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
         if (!await confirm($"Write this to {path}? A backup goes to {backupPath}. [y/N] ", cancellationToken))
         {
             output.Report($"Config not changed. To use it, paste the block above over the processing: section of {path}.");
-            return ExitCode.Success;
+            return new(ExitCode.Success);
         }
 
+        // What was already wrong before this edit is not the edit's fault, so it never rolls the edit back (see below).
         var before = _validator.Validate(settings).Select(Key).ToHashSet(StringComparer.Ordinal);
         File.Copy(path, backupPath, overwrite: true);
         var hasBom = (await File.ReadAllBytesAsync(path, cancellationToken)).AsSpan().StartsWith(Encoding.UTF8.Preamble);
@@ -192,37 +194,45 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
         await File.WriteAllTextAsync(path, edited, new UTF8Encoding(hasBom), cancellationToken);
 
         // The reload is the real check: it sees the file as every other command will.
-        var problems = new List<string>();
+        var introduced = new List<string>();
+        IReadOnlyList<Diagnostic> remaining = [];
         LoadedConfiguration? reloaded = null;
         try
         {
             reloaded = await _loader.LoadAsync(path, cancellationToken);
-            problems.AddRange(_validator.Validate(reloaded.Settings).Where(diagnostic => !before.Contains(Key(diagnostic))).Select(diagnostic => $"[{diagnostic.Code}] {diagnostic.Message}"));
+            remaining = _validator.Validate(reloaded.Settings);
+            introduced.AddRange(remaining.Where(diagnostic => !before.Contains(Key(diagnostic))).Select(Describe));
         }
         catch (InvalidDataException exception)
         {
-            problems.Add(exception.Message);
+            introduced.Add(exception.Message);
         }
-        if (problems.Count > 0)
+        if (introduced.Count > 0)
         {
+            // Only a problem the edit caused rolls it back: the edit is valid on its own, so one that was already there stays.
             File.Copy(backupPath, path, overwrite: true);
-            foreach (var problem in problems) output.Report(problem);
-            output.Report($"Restored {path} from {backupPath}.");
-            return ExitCode.InvalidConfiguration;
+            foreach (var problem in introduced) errors.Report(problem);
+            errors.Report($"Restored {path} from {backupPath}.");
+            return new(ExitCode.InvalidConfiguration);
         }
         output.Report($"Updated {path}; the previous version is in {backupPath}.");
+
+        // Setup is not complete while the file still fails validation: the command it would suggest would fail the same way.
+        if (remaining.Count > 0)
+        {
+            foreach (var diagnostic in remaining) errors.Report(Describe(diagnostic));
+            return new(ExitCode.InvalidConfiguration, ConfigStillInvalid: true);
+        }
 
         // Step 5: the token, key and bootstrap script were all checked above, so nothing is left to verify.
         output.Report(existing is null
             ? "Remote setup is complete. Nothing was created on Hetzner except the SSH key."
             : "Remote setup is complete. Nothing was created on Hetzner.");
-        output.Report(reloaded!.Settings.Immich.IsConfigured
-            ? $"Next: video-optimiser immich run --first --remote --config \"{path}\""
-            : $"Next: video-optimiser run --remote --config \"{path}\"");
-        return ExitCode.Success;
+        // The edit set processing.mode to remoteSsh, so the suggested command needs no --remote.
+        return new(ExitCode.Success, NextVerb: reloaded!.Settings.Immich.IsConfigured ? "immich run --first" : "run");
     }
 
-    private async Task<ExitCode?> GenerateKeyAsync(string sshPath, string keyPath, IProgress<string> output, CancellationToken cancellationToken)
+    private async Task<ExitCode?> GenerateKeyAsync(string sshPath, string keyPath, IProgress<string> errors, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(keyPath)!);
         // The empty passphrase is deliberate: OpenSshConnectionArguments runs ssh with BatchMode=yes, which cannot prompt for one.
@@ -234,12 +244,12 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
         }
         catch (Win32Exception exception)
         {
-            output.Report($"Could not run {request.FileName}: {exception.Message}");
+            errors.Report($"Could not run {request.FileName}: {exception.Message}");
             return ExitCode.MissingDependency;
         }
         if (result.ExitCode == 0) return null;
         var detail = string.IsNullOrWhiteSpace(result.StandardError) ? result.StandardOutput : result.StandardError;
-        output.Report($"ssh-keygen failed with exit code {result.ExitCode}: {detail.Trim()}");
+        errors.Report($"ssh-keygen failed with exit code {result.ExitCode}: {detail.Trim()}");
         return ExitCode.MissingDependency;
     }
 
@@ -276,6 +286,8 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
 
     private static string Key(Diagnostic diagnostic) => $"{diagnostic.Code}\n{diagnostic.Message}";
 
+    private static string Describe(Diagnostic diagnostic) => $"[{diagnostic.Code}] {diagnostic.Message}";
+
     // A cancelled token is the user's Ctrl+C; any other cancellation is HttpClient's own timeout.
     private static bool IsHetznerFailure(Exception exception, CancellationToken cancellationToken) =>
         exception is HetznerSshKeyException or HttpRequestException or JsonException ||
@@ -284,17 +296,17 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
     private static string TokenSource(HetznerSettings hetzner) =>
         string.IsNullOrWhiteSpace(hetzner.ApiTokenFile) ? hetzner.ApiTokenEnvironmentVariable : $"{hetzner.ApiTokenEnvironmentVariable} or {hetzner.ApiTokenFile}";
 
-    private static void ReportMissingToken(HetznerSettings hetzner, IProgress<string> output)
+    private static void ReportMissingToken(HetznerSettings hetzner, IProgress<string> errors)
     {
-        output.Report("No Hetzner API token was found.");
-        output.Report("Create one in Hetzner Console: open your project, then Security > API Tokens > Generate API token, with permission Read & Write.");
+        errors.Report("No Hetzner API token was found.");
+        errors.Report("Create one in Hetzner Console: open your project, then Security > API Tokens > Generate API token, with permission Read & Write.");
         if (string.IsNullOrWhiteSpace(hetzner.ApiTokenFile))
         {
-            output.Report($"Then set the environment variable {hetzner.ApiTokenEnvironmentVariable} to the token.");
+            errors.Report($"Then set the environment variable {hetzner.ApiTokenEnvironmentVariable} to the token.");
             return;
         }
-        output.Report($"Then add this line to {hetzner.ApiTokenFile}:");
-        output.Report($"{hetzner.ApiTokenEnvironmentVariable}=<your token>");
+        errors.Report($"Then add this line to {hetzner.ApiTokenFile}:");
+        errors.Report($"{hetzner.ApiTokenEnvironmentVariable}=<your token>");
     }
 
     public void Dispose() => _hetzner.Dispose();
