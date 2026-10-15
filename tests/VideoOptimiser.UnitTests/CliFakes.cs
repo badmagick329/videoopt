@@ -239,12 +239,27 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
         settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(settings.Processing.RemoteSsh.Lifecycle, RemoteLifecycleModes.Hetzner, StringComparison.OrdinalIgnoreCase);
 
-    public Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// The price quote the real lifecycle asks the user to approve before it creates a server. With none, a create goes ahead
+    /// unasked, as when a worker already exists; with one, a decline throws as the real lifecycle does and creates nothing.
+    /// </summary>
+    public RemoteWorkerCreationQuote? Quote { get; init; }
+
+    /// <summary>The answer to <see cref="Quote"/>, or null while it was never asked.</summary>
+    public bool? Approved { get; private set; }
+
+    public async Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null, CancellationToken cancellationToken = default)
     {
         EnsureCalls++;
         DatabasePaths.Add(databasePath);
+        if (confirmCreation is not null && Quote is not null)
+        {
+            Approved = await confirmCreation(Quote, cancellationToken);
+            if (!Approved.Value) throw new RemoteWorkerCreationDeclinedException();
+            progress?.Report("Creating Hetzner cx43 in hel1.");
+        }
         Exists = true;
-        return Task.FromResult(CliFakes.Worker);
+        return CliFakes.Worker;
     }
 
     public Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)

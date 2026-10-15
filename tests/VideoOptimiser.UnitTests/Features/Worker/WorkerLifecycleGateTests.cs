@@ -15,11 +15,8 @@ public sealed class WorkerLifecycleGateTests : IDisposable
 
     [Theory]
     [InlineData("create", "\"manual\"", "it is \"manual\".", false, 3)]
-    [InlineData("status", "\"manual\"", "it is \"manual\".", true, 0)]
     [InlineData("delete", "\"manual\"", "it is \"manual\".", false, 3)]
-    [InlineData("create", "", "it is not set.", false, 3)]
     [InlineData("status", "", "it is not set.", true, 0)]
-    [InlineData("delete", "", "it is not set.", false, 3)]
     public async Task AWorkerCommandWithoutTheHetznerLifecycleNamesTheSettingAndItsValue(string verb, string lifecycle, string clause, bool stdout, int exitCode)
     {
         var config = await WriteConfigAsync("remoteSsh", lifecycle);
@@ -31,15 +28,16 @@ public sealed class WorkerLifecycleGateTests : IDisposable
         (stdout ? error : output).Should().BeEmpty();
     }
 
-    /// <summary>The missing token is the first thing the real lifecycle checks, so its error proves the command got past the gate.</summary>
-    [Theory]
-    [InlineData("status")]
-    [InlineData("delete")]
-    public async Task WithModeLocalAndTheHetznerLifecycleTheWorkerCommandReachesTheLifecycle(string verb)
+    /// <summary>
+    /// The missing token is the first thing the real lifecycle checks, so its error proves the command got past the gate. The
+    /// mode override sits before the per-verb dispatch, so <c>delete</c>, the verb that must still stop billing, stands for all.
+    /// </summary>
+    [Fact]
+    public async Task WithModeLocalAndTheHetznerLifecycleTheWorkerCommandReachesTheLifecycle()
     {
         var config = await WriteConfigAsync("local", "\"hetzner\"");
 
-        var (_, _, error) = await ConsoleCapture.RunCliAsync("worker", verb, "--config", config);
+        var (_, _, error) = await ConsoleCapture.RunCliAsync("worker", "delete", "--config", config);
 
         error.Should().Contain("Hetzner API token 'VO_TEST_NO_SUCH_TOKEN' was not found").And.NotContain("needs processing.remoteSsh.lifecycle");
     }

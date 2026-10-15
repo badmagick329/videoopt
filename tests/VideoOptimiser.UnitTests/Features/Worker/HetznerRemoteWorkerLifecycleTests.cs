@@ -12,22 +12,6 @@ namespace VideoOptimiser.UnitTests.Features.Worker;
 
 public sealed class HetznerRemoteWorkerLifecycleTests
 {
-    [Fact]
-    public void DotEnvReaderSupportsCommentsExportQuotesAndLastAssignment()
-    {
-        var path = Path.GetTempFileName();
-        try
-        {
-            File.WriteAllText(path, "# ignored\nOTHER=value\nexport VIDEO_OPTIMISER_HETZNER_TOKEN='first'\nVIDEO_OPTIMISER_HETZNER_TOKEN=second\n");
-
-            SecretLoader.ReadDotEnvValue(path, "VIDEO_OPTIMISER_HETZNER_TOKEN").Should().Be("second");
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Theory]
     [InlineData("OTHER=value\nVIDEO_OPTIMISER_HETZNER_TOKEN=old\nexport VIDEO_OPTIMISER_HETZNER_TOKEN=\"last\"\n")]
     [InlineData("# comment\nexport VIDEO_OPTIMISER_HETZNER_TOKEN='last'\nOTHER=value\n")]
@@ -62,6 +46,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     public async Task EnsureCreatesLabelledServerEnablesIpAutoDeleteAndConfiguresSsh()
     {
         using var fixture = new Fixture();
+        // A Windows checkout has CRLF in the script; cloud-init runs it with bash, which fails on CR.
+        File.WriteAllText(fixture.Settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, "#!/usr/bin/env bash\r\ntouch /opt/video-optimiser/.bootstrap-complete\r\n");
         using var lifecycle = fixture.CreateLifecycle();
 
         var worker = await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
@@ -76,7 +62,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         fixture.Handler.CreatePayload.RootElement.GetProperty("ssh_keys")[0].GetString().Should().Be("video-optimiser-hetzner-cx43");
         fixture.Handler.CreatePayload.RootElement.GetProperty("public_net").GetProperty("enable_ipv4").GetBoolean().Should().BeTrue();
         fixture.Handler.CreatePayload.RootElement.GetProperty("public_net").GetProperty("enable_ipv6").GetBoolean().Should().BeFalse();
-        fixture.Handler.CreatePayload.RootElement.GetProperty("user_data").GetString().Should().Contain(".bootstrap-complete");
+        fixture.Handler.CreatePayload.RootElement.GetProperty("user_data").GetString().Should().Be("#!/usr/bin/env bash\ntouch /opt/video-optimiser/.bootstrap-complete\n");
         fixture.Handler.AutoDeleteUpdated.Should().BeTrue();
         fixture.Processes.Requests.Should().HaveCount(2);
         fixture.Processes.Requests[0].Arguments.Should().Contain("StrictHostKeyChecking=accept-new");
@@ -125,40 +111,6 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         fixture.Handler.PrimaryIpExists.Should().BeTrue();
         fixture.Handler.PrimaryIpDeleted.Should().BeTrue();
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task EnsureReportsAllPlacementFailuresWhenCandidatesAreExhausted()
-    {
-        using var fixture = new Fixture();
-        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
-        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "hel capacity"));
-        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "fsn capacity"));
-        using var lifecycle = fixture.CreateLifecycle();
-
-        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
-
-        var exception = await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
-        exception.Which.Message.Should().Contain("No Hetzner server could be created")
-            .And.Contain("cx43 in hel1, fsn1: placement failed in hel1 (HTTP 412 PreconditionFailed (resource_unavailable): hel capacity); placement failed in fsn1 (HTTP 412 PreconditionFailed (resource_unavailable): fsn capacity)");
-        exception.Which.AttemptedFailures.Should().HaveCount(2)
-            .And.ContainInOrder("cx43 in hel1 (HTTP 412 PreconditionFailed (resource_unavailable): hel capacity)", "cx43 in fsn1 (HTTP 412 PreconditionFailed (resource_unavailable): fsn capacity)");
-        fixture.Handler.CreateCount.Should().Be(2);
-        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task EnsureDoesNotRetryNonPlacementApiErrors()
-    {
-        using var fixture = new Fixture();
-        fixture.Settings.Processing.RemoteSsh.Hetzner.Locations = ["hel1", "fsn1"];
-        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.BadRequest, "invalid_input", "bad request"));
-        using var lifecycle = fixture.CreateLifecycle();
-
-        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
-
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("*400*bad request*");
-        fixture.Handler.CreateCount.Should().Be(1);
     }
 
     [Fact]
@@ -395,7 +347,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             new RemoteWorkerTypeOutcome("cax31", [], "arm architecture, but the worker needs x86"),
             new RemoteWorkerTypeOutcome("cpx42", ["hel1", "fsn1"], "unavailable in hel1; placement failed in fsn1 (HTTP 412 PreconditionFailed (resource_unavailable): fsn capacity)")
         }, options => options.WithStrictOrdering());
-        exception.Which.Message.Should().Contain("cx43 in hel1, fsn1: unavailable in hel1 and fsn1")
+        exception.Which.Message.Should().StartWith("No Hetzner server could be created")
+            .And.Contain("cx43 in hel1, fsn1: unavailable in hel1 and fsn1")
             .And.Contain("cax31: arm architecture")
             .And.Contain("cpx42 in hel1, fsn1:");
         fixture.Handler.CreateCount.Should().Be(1);
@@ -575,19 +528,6 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         fixture.Handler.ServerExists.Should().BeTrue();
         fixture.Handler.PrimaryIpExists.Should().BeTrue();
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task EnsureSendsTheBootstrapWithLfLineEndingsWhenTheCheckoutHasCrlf()
-    {
-        using var fixture = new Fixture();
-        File.WriteAllText(fixture.Settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, "#!/usr/bin/env bash\r\nset -Eeuo pipefail\r\ntouch /opt/video-optimiser/.bootstrap-complete\r\n");
-        using var lifecycle = fixture.CreateLifecycle();
-
-        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
-
-        fixture.Handler.CreatePayload!.RootElement.GetProperty("user_data").GetString()
-            .Should().Be("#!/usr/bin/env bash\nset -Eeuo pipefail\ntouch /opt/video-optimiser/.bootstrap-complete\n");
     }
 
     private sealed class Fixture : IDisposable

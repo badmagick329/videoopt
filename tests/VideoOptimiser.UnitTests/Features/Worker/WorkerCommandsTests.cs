@@ -20,32 +20,37 @@ public sealed class WorkerCommandsTests : IDisposable
     [Fact]
     public async Task CreateWithInvalidSettingsReportsEachDiagnosticAndNeverCallsTheLifecycle()
     {
-        var lifecycle = new CreatingLifecycle(CliFakes.Worker, quote: null);
+        var lifecycle = new FakeWorkerLifecycle();
+        var failures = CliFakes.Diagnostics(
+            new(DiagnosticCategory.FileSystem, DiagnosticStatus.Fail, "WatchRootMissing", "Watch root clip-a is missing"),
+            new(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "ToolMissing", "ffprobe was not found"));
 
-        var (code, stdout, stderr) = await RunAsync(lifecycle, null, services => services.AddSingleton<ISettingsValidator>(new FailingValidator()), "worker", "create");
+        var (code, stdout, stderr) = await RunAsync(lifecycle, null, failures, "worker", "create");
 
         code.Should().Be((int)ExitCode.InvalidConfiguration);
         stdout.Should().BeEmpty();
         stderr.ReplaceLineEndings("\n").Should().Be("[WatchRootMissing] Watch root clip-a is missing\n[ToolMissing] ffprobe was not found\n");
-        lifecycle.Calls.Should().Be(0);
+        lifecycle.EnsureCalls.Should().Be(0);
     }
 
     [Fact]
     public async Task CreateAsksTheQuoteThenPrintsTheProgressAndTheReadyWorker()
     {
-        var quote = new RemoteWorkerCreationQuote(new("cx43", "hel1", 0.0123m), new("cx43", "hel1", 0.0123m));
-        var lifecycle = new CreatingLifecycle(CliFakes.Worker, quote);
+        var lifecycle = new FakeWorkerLifecycle { Quote = new RemoteWorkerCreationQuote(new("cx43", "hel1", 0.031m), new("ccx33", "hel1", 0.266m)) };
 
         var (code, stdout, stderr) = await RunAsync(lifecycle, "y\n", CliFakes.AcceptAnySettings, "worker", "create");
 
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
-        lifecycle.Calls.Should().Be(1);
-        lifecycle.DatabasePath.Should().Be(DatabasePath);
+        lifecycle.EnsureCalls.Should().Be(1);
+        lifecycle.DatabasePaths.Should().Equal(DatabasePath);
         lifecycle.Approved.Should().BeTrue();
         // The prompt is written with no newline, and the typed answer is not echoed, so the progress line follows it directly.
+        // Literal on purpose: building it from FormatPrompt() would pass whatever the prompt said. A costlier fallback is quoted on its own line.
         stdout.ReplaceLineEndings("\n").Should().Be(
-            quote.FormatPrompt().ReplaceLineEndings("\n") +
+            "Will create cx43 in hel1 at EUR 0.031/h incl. VAT.\n" +
+            "If that placement fails, a fallback may cost up to EUR 0.266/h (ccx33 in hel1).\n" +
+            "Create the server? [y/N] " +
             "Creating Hetzner cx43 in hel1.\n" +
             "Worker ready: video-optimiser-1 (42) 203.0.113.10  cx43 in hel1\n");
     }
@@ -53,15 +58,16 @@ public sealed class WorkerCommandsTests : IDisposable
     [Fact]
     public async Task CreateWithNoAnswerDeclinesTheQuoteAndSaysNothingWasCreated()
     {
-        var quote = new RemoteWorkerCreationQuote(new("cx43", "hel1", 0.0123m), new("cx43", "hel1", 0.0123m));
-        var lifecycle = new CreatingLifecycle(CliFakes.Worker, quote);
+        // The first candidate is also the dearest, so the quote has no fallback line.
+        var only = new RemoteWorkerCreationOption("cpx42", "fsn1", 0.134m);
+        var lifecycle = new FakeWorkerLifecycle { Quote = new RemoteWorkerCreationQuote(only, only) };
 
         var (code, stdout, stderr) = await RunAsync(lifecycle, null, CliFakes.AcceptAnySettings, "worker", "create");
 
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
         lifecycle.Approved.Should().BeFalse();
-        stdout.ReplaceLineEndings("\n").Should().Be(quote.FormatPrompt().ReplaceLineEndings("\n") + "\nNo server was created.\n");
+        stdout.ReplaceLineEndings("\n").Should().Be("Will create cpx42 in fsn1 at EUR 0.134/h incl. VAT.\nCreate the server? [y/N] \nNo server was created.\n");
     }
 
     [Theory]
@@ -101,55 +107,11 @@ public sealed class WorkerCommandsTests : IDisposable
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(IRemoteWorkerLifecycle lifecycle, string? input, Action<IServiceCollection> settings, params string[] args)
     {
-        var config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(config, string.Join('\n',
-            "database:",
-            $"  path: '{DatabasePath}'",
-            "processing:",
-            "  mode: \"local\"",
-            "  remoteSsh:",
-            "    lifecycle: \"hetzner\"",
-            ""));
+        var config = await RunCli.WriteConfigAsync(DatabasePath, "processing:", "  mode: \"local\"", "  remoteSsh:", "    lifecycle: \"hetzner\"");
         return await ConsoleCapture.RunCliWithInputAsync(input, services =>
         {
             settings(services);
             services.AddSingleton(lifecycle);
         }, [.. args, "--config", config]);
-    }
-
-    private sealed class FailingValidator : ISettingsValidator
-    {
-        public IReadOnlyList<Diagnostic> Validate(AppSettings settings) =>
-        [
-            new(DiagnosticCategory.FileSystem, DiagnosticStatus.Fail, "WatchRootMissing", "Watch root clip-a is missing"),
-            new(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "ToolMissing", "ffprobe was not found")
-        ];
-    }
-
-    /// <summary>Asks the creation question like the real lifecycle, reports one progress line, and creates nothing.</summary>
-    private sealed class CreatingLifecycle(RemoteWorkerInfo worker, RemoteWorkerCreationQuote? quote) : IRemoteWorkerLifecycle
-    {
-        public int Calls { get; private set; }
-        public string? DatabasePath { get; private set; }
-        public bool? Approved { get; private set; }
-
-        public bool IsManaged(AppSettings settings) => true;
-
-        public async Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null, CancellationToken cancellationToken = default)
-        {
-            Calls++;
-            DatabasePath = databasePath;
-            if (confirmCreation is not null && quote is not null)
-            {
-                Approved = await confirmCreation(quote, cancellationToken);
-                if (!Approved.Value) throw new RemoteWorkerCreationDeclinedException();
-            }
-            progress?.Report("Creating Hetzner cx43 in hel1.");
-            return worker;
-        }
-
-        public Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }
