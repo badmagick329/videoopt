@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Run;
@@ -79,7 +80,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         if (cpus < _settings.Processing.RemoteSsh.MinimumCpuCount) throw new InvalidOperationException($"Remote host has {cpus} CPUs; {_settings.Processing.RemoteSsh.MinimumCpuCount} are required.");
         if (memory < minimumMemory) throw new InvalidOperationException($"Remote host has {memory} available bytes; {minimumMemory} are required.");
 
-        var localHash = await HashFileAsync(sourcePath, progress, cancellationToken);
+        var localHash = await HashFileAsync(sourcePath, "Checking the original's checksum before upload.", progress, cancellationToken);
         var existing = await SshAsync($"if test -f {Quote(RemoteSourcePath)}; then stat -c '%s' {Quote(RemoteSourcePath)}; sha256sum {Quote(RemoteSourcePath)} | cut -d' ' -f1; fi", cancellationToken: cancellationToken);
         var existingParts = existing.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (existingParts.Length == 2 && existingParts[0] == source.Length.ToString(CultureInfo.InvariantCulture) && string.Equals(existingParts[1], localHash, StringComparison.OrdinalIgnoreCase))
@@ -144,7 +145,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var parts = state.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length == 0) return 0;
         if (parts.Length == 2 && long.TryParse(parts[0], CultureInfo.InvariantCulture, out var length) && length > 0 && length <= sourceLength
-            && string.Equals(await HashFilePrefixAsync(sourcePath, length, progress, cancellationToken), parts[1], StringComparison.OrdinalIgnoreCase))
+            && string.Equals(await HashFilePrefixAsync(sourcePath, length, "Checking the part of the original already uploaded.", progress, cancellationToken), parts[1], StringComparison.OrdinalIgnoreCase))
             return length;
         _ = await SshAsync($"rm -f -- {Quote(partial)}", cancellationToken: cancellationToken);
         return 0;
@@ -154,10 +155,11 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     {
         var arguments = new AbAv1CrfSearchClient("ab-av1").BuildArguments(RemoteSourcePath, settings);
         var elapsed = Stopwatch.StartNew();
-        var log = await RunStageAsync(CrfDirectory, "CRF search", arguments, sourcePath, progress, cancellationToken, failedLog => AbAv1Output.NoWorthwhileCrf(failedLog, settings));
+        var run = await RunStageAsync(CrfDirectory, "CRF search", arguments, sourcePath, progress, cancellationToken, failedLog => AbAv1Output.NoWorthwhileCrf(failedLog, settings));
         elapsed.Stop();
-        var crf = CrfSearchOutputParser.Parse(log);
-        return new CrfSearchResult(crf, log, string.Empty, elapsed.Elapsed, CrfSearchOutputParser.TryParsePrediction(log, crf, out var prediction) ? prediction : null);
+        var crf = CrfSearchOutputParser.Parse(run.Log);
+        // A search that began under an earlier command has run for longer than this one watched it.
+        return new CrfSearchResult(crf, run.Log, string.Empty, run.Reattached ? null : elapsed.Elapsed, CrfSearchOutputParser.TryParsePrediction(run.Log, crf, out var prediction) ? prediction : null);
     }
 
     public async Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
@@ -166,11 +168,22 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var remoteOutput = $"{directory}/output{Path.GetExtension(outputPath).ToLowerInvariant()}";
         var arguments = new AbAv1VideoEncoder("ab-av1").BuildArguments(RemoteSourcePath, remoteOutput, crf, settings, flacAudioStreams);
         var elapsed = Stopwatch.StartNew();
-        _ = await RunStageAsync(directory, "Encode", arguments, sourcePath, progress, cancellationToken);
+        _ = await RunStageAsync(directory, "encode", arguments, sourcePath, progress, cancellationToken);
         elapsed.Stop();
         var check = await SshAsync($"test -s {Quote(remoteOutput)}", cancellationToken: cancellationToken);
         EnsureSuccess(check, "Remote encoded output verification");
         return new ProcessingStageResult(outputPath, elapsed.Elapsed);
+    }
+
+    public async Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default)
+    {
+        var directory = EncodeDirectory(attempt);
+        var remoteOutput = $"{directory}/output{Path.GetExtension(outputPath).ToLowerInvariant()}";
+        // Exit 1 is the answer no. The exit code file is written only once ab-av1 has ended, so a stage still running has none.
+        var result = await SshAsync($"test \"$(cat {Quote(directory + "/exit-code")} 2>/dev/null)\" = 0 && test -s {Quote(remoteOutput)}", cancellationToken: cancellationToken);
+        if (result.ExitCode == 1) return false;
+        EnsureSuccess(result, "Remote encode check");
+        return true;
     }
 
     public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) =>
@@ -189,7 +202,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
 
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         var partial = outputPath + ".partial";
-        if (File.Exists(outputPath) && string.Equals(await HashFileAsync(outputPath, progress, cancellationToken), expectedHash, StringComparison.OrdinalIgnoreCase))
+        if (File.Exists(outputPath) && string.Equals(await HashFileAsync(outputPath, "Checking the output already downloaded.", progress, cancellationToken), expectedHash, StringComparison.OrdinalIgnoreCase))
         {
             progress?.Report(JobProgress.Step("Already downloaded, checksum verified."));
             return;
@@ -206,13 +219,14 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             : $"Downloading {size} from the worker..."));
         var started = _clock();
         await DownloadAsync(remoteOutput, partial, outputLength, partialStart, progress, cancellationToken);
-        var actualHash = await HashFileAsync(partial, progress, cancellationToken);
+        const string checkingDownload = "Checking the downloaded output's checksum.";
+        var actualHash = await HashFileAsync(partial, checkingDownload, progress, cancellationToken);
         if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
         {
             progress?.Report(JobProgress.Detail("Checksum mismatch; downloading again."));
             File.Delete(partial);
             await DownloadAsync(remoteOutput, partial, outputLength, 0, progress, cancellationToken);
-            actualHash = await HashFileAsync(partial, progress, cancellationToken);
+            actualHash = await HashFileAsync(partial, checkingDownload, progress, cancellationToken);
             if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
             {
                 File.Delete(partial);
@@ -238,27 +252,37 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
+    /// <param name="Log">The stage's whole log, read once it ended.</param>
+    /// <param name="Reattached">The stage was already running, or had ended, when this command reached it.</param>
+    private sealed record StageRun(string Log, bool Reattached);
+
     /// <summary>
     /// Launches the stage, or reattaches to one an earlier command left behind: Ctrl+C and a dropped connection both leave
     /// a launched stage running on the worker.
+    /// <para>The log is followed by byte offset, each poll fetching only what was added since the last. A reattach starts at
+    /// the log's current end, so what an earlier command already showed is not shown again, and the progress and times the
+    /// translator derives start at the reattach. The whole log is read once, when the stage has ended.</para>
     /// </summary>
-    /// <param name="name">The stage as the reattach lines name it, such as <c>Encode</c>.</param>
+    /// <param name="name">The stage as the reattach lines name it: <c>encode</c> or <c>CRF search</c>.</param>
     /// <param name="interpretFailure">Turns the log of a stage that exited non-zero into a more specific exception than the generic one,
     /// or returns null to keep the generic one.</param>
-    private async Task<string> RunStageAsync(string stageDirectory, string name, IReadOnlyList<string> arguments, string sourcePath, IProgress<JobProgress>? progress, CancellationToken cancellationToken, Func<string, Exception?>? interpretFailure = null)
+    private async Task<StageRun> RunStageAsync(string stageDirectory, string name, IReadOnlyList<string> arguments, string sourcePath, IProgress<JobProgress>? progress, CancellationToken cancellationToken, Func<string, Exception?>? interpretFailure = null)
     {
-        var state = await GetStageStateAsync(stageDirectory, cancellationToken);
+        var state = await GetStageStateAsync(stageDirectory, FromTheEnd, cancellationToken);
         var useCurrentState = true;
+        var reattached = state.Running || state.ExitCode is not null;
         if (state.Running)
         {
-            progress?.Report(JobProgress.Step($"{name} still running on the worker; following it..."));
+            (progress as IReattachableProgress)?.StageWasAlreadyRunning();
+            progress?.Report(JobProgress.Step($"Picked up the {name} running on the worker."));
         }
         // A stage whose log is already kept locally finished under an earlier command, which saw it end: a rerun after a
         // stopped download reaches here too, and has nothing new to say about the encode.
         else if (state.ExitCode is not null && !File.Exists(RetainedLogPath(stageDirectory, sourcePath)))
         {
-            progress?.Report(JobProgress.Step($"{name} finished on the worker while this command was stopped."));
+            progress?.Report(JobProgress.Step($"The {name} on the worker had already finished."));
         }
+        var offset = state.Offset;
         var startingPolls = 0;
         if (state.ExitCode is null && !state.Running)
         {
@@ -273,31 +297,27 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             EnsureSuccess(launch, "Remote stage launch");
             useCurrentState = false;
             startingPolls = StartingPolls;
+            // The script's log starts empty.
+            offset = 0;
         }
 
-        var reportedLength = 0;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!useCurrentState) state = await GetStageStateAsync(stageDirectory, cancellationToken);
+            if (!useCurrentState) state = await GetStageStateAsync(stageDirectory, offset, cancellationToken);
             useCurrentState = false;
-            if (state.Log.Length > reportedLength)
-            {
-                var added = state.Log[reportedLength..];
-                foreach (var line in added.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)) progress?.Report(JobProgress.Tool(line));
-                reportedLength = state.Log.Length;
-            }
+            offset = ReportNewLines(state, progress);
             if (state.ExitCode is { } exitCode)
             {
-                var logPath = await RetainLogAsync(stageDirectory, sourcePath, cancellationToken);
+                var (logPath, log) = await RetainLogAsync(stageDirectory, sourcePath, cancellationToken);
                 if (exitCode != 0)
                 {
                     await CleanupAsync(CancellationToken.None);
-                    if (interpretFailure?.Invoke(state.Log) is { } specific) throw specific;
-                    var reason = AbAv1Output.LastErrorLine(state.Log);
+                    if (interpretFailure?.Invoke(log) is { } specific) throw specific;
+                    var reason = AbAv1Output.LastErrorLine(log);
                     throw new AbAv1StageException($"Remote processing stage failed with exit code {exitCode}{(reason is null ? "." : $": {reason}")}", logPath);
                 }
-                return state.Log;
+                return new StageRun(log, reattached);
             }
             if (state.Running) startingPolls = 0;
             // The launch returns before the script writes its pid, so a stage this call launched can read as missing at first.
@@ -306,8 +326,25 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         }
     }
 
+    /// <summary>
+    /// Reports the lines <paramref name="state"/> brought and returns the offset to poll from next. While the stage runs, a
+    /// last line without its line break is left for the next poll rather than reported in two halves; once it has ended
+    /// nothing more will come, so everything is reported.
+    /// </summary>
+    private static long ReportNewLines(StageState state, IProgress<JobProgress>? progress)
+    {
+        if (state.Chunk.Length == 0) return state.Offset;
+        var complete = state.ExitCode is null ? state.Chunk.LastIndexOfAny(['\r', '\n']) + 1 : state.Chunk.Length;
+        var text = state.Chunk[..complete];
+        foreach (var line in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)) progress?.Report(JobProgress.Tool(line));
+        return state.Offset + Encoding.UTF8.GetByteCount(text);
+    }
+
     /// <summary>How many polls a stage this call launched may read as missing before it counts as dead.</summary>
     private const int StartingPolls = 3;
+
+    /// <summary>The offset that asks for no log, only where it ends now.</summary>
+    private const long FromTheEnd = -1;
 
     /// <summary>
     /// The braces put only the stage script in the background. Without them, <c>&amp;</c> backgrounds the whole
@@ -321,28 +358,47 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     internal static string BuildLaunchCommand(string stageDirectory, string scriptPath, string marker) =>
         $"cd -- {Quote(stageDirectory)} && if mkdir -- {Quote(marker)}; then {{ nohup setsid bash {Quote(scriptPath)} </dev/null >/dev/null 2>&1 & }}; elif ! test -d {Quote(marker)}; then exit 1; fi";
 
-    private async Task<(bool Running, int? ExitCode, string Log)> GetStageStateAsync(string stageDirectory, CancellationToken cancellationToken)
+    /// <param name="Offset">Where <paramref name="Chunk"/> starts in the log, in bytes.</param>
+    /// <param name="Chunk">The log from <paramref name="Offset"/> to its end as it was read.</param>
+    private sealed record StageState(bool Running, int? ExitCode, long Offset, string Chunk);
+
+    /// <summary>
+    /// The stage's state and the part of its log from <paramref name="offset"/>, in one SSH call. The state is read before the
+    /// log, so a stage that reads as ended has its final lines in the chunk. An offset past the log's end means ab-av1 started the
+    /// log again, and it is read from the start.
+    /// </summary>
+    private async Task<StageState> GetStageStateAsync(string stageDirectory, long offset, CancellationToken cancellationToken)
     {
-        var command = $"if test -s {Quote(stageDirectory + "/exit-code")}; then printf 'completed '; cat {Quote(stageDirectory + "/exit-code")}; elif test -s {Quote(stageDirectory + "/pid")} && kill -0 \"$(cat {Quote(stageDirectory + "/pid")})\" 2>/dev/null; then printf 'running\\n'; else printf 'missing\\n'; fi; printf '\\036'; test ! -f {Quote(stageDirectory + "/log")} || cat {Quote(stageDirectory + "/log")}";
+        var exitCode = Quote(stageDirectory + "/exit-code");
+        var pid = Quote(stageDirectory + "/pid");
+        var log = Quote(stageDirectory + "/log");
+        var command = $"if test -s {exitCode}; then printf 'completed '; cat {exitCode}; elif test -s {pid} && kill -0 \"$(cat {pid})\" 2>/dev/null; then printf 'running\\n'; else printf 'missing\\n'; fi; printf '\\036'; "
+            + $"n=0; test ! -f {log} || n=$(stat -c '%s' {log}); off={offset.ToString(CultureInfo.InvariantCulture)}; if test \"$off\" -lt 0; then off=$n; elif test \"$off\" -gt \"$n\"; then off=0; fi; "
+            + $"printf '%s\\036%s\\036' \"$off\" \"$n\"; if test \"$n\" -gt \"$off\"; then tail -c +$((off+1)) {log} | head -c $((n-off)); fi";
         var result = await SshAsync(command, cancellationToken: cancellationToken);
-        var separator = result.StandardOutput.IndexOf('\x1e');
-        if (separator < 0) throw new InvalidDataException("Remote stage state was invalid.");
-        var header = result.StandardOutput[..separator].Trim();
-        var log = result.StandardOutput[(separator + 1)..];
-        if (header.StartsWith("completed ", StringComparison.Ordinal) && int.TryParse(header[10..].Trim(), CultureInfo.InvariantCulture, out var code)) return (false, code, log);
-        return (string.Equals(header, "running", StringComparison.Ordinal), null, log);
+        var output = result.StandardOutput;
+        var first = output.IndexOf('\x1e');
+        var second = first < 0 ? -1 : output.IndexOf('\x1e', first + 1);
+        var third = second < 0 ? -1 : output.IndexOf('\x1e', second + 1);
+        if (third < 0 || !long.TryParse(output[(first + 1)..second], NumberStyles.None, CultureInfo.InvariantCulture, out var start))
+            throw new InvalidDataException("Remote stage state was invalid.");
+        var header = output[..first].Trim();
+        var chunk = output[(third + 1)..];
+        if (header.StartsWith("completed ", StringComparison.Ordinal) && int.TryParse(header[10..].Trim(), CultureInfo.InvariantCulture, out var code)) return new StageState(false, code, start, chunk);
+        return new StageState(string.Equals(header, "running", StringComparison.Ordinal), null, start, chunk);
     }
 
     private string RetainedLogPath(string stageDirectory, string sourcePath) =>
         Path.Combine(Path.GetDirectoryName(sourcePath)!, TemporaryOutputClassifier.FolderName, $"{_job.Id:N}.{Path.GetFileName(stageDirectory)}.remote.log");
 
-    private async Task<string> RetainLogAsync(string stageDirectory, string sourcePath, CancellationToken cancellationToken)
+    /// <summary>Keeps the stage's whole log beside the original and returns it with its path.</summary>
+    private async Task<(string Path, string Text)> RetainLogAsync(string stageDirectory, string sourcePath, CancellationToken cancellationToken)
     {
         var destination = RetainedLogPath(stageDirectory, sourcePath);
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         var result = await SshAsync($"test ! -f {Quote(stageDirectory + "/log")} || cat {Quote(stageDirectory + "/log")}", cancellationToken: cancellationToken);
         await File.WriteAllTextAsync(destination, result.StandardOutput, cancellationToken);
-        return destination;
+        return (destination, result.StandardOutput);
     }
 
     private async Task<ExternalProcessResult> SshAsync(string command, string? standardInput = null, CancellationToken cancellationToken = default)
@@ -453,30 +509,30 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         return long.TryParse(result.StandardOutput.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var length) && length >= 0 ? length : 0;
     }
 
-    private async Task<string> HashFileAsync(string path, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    private async Task<string> HashFileAsync(string path, string step, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
-        return await HashAsync(stream, stream.Length, progress, cancellationToken);
+        return await HashAsync(stream, stream.Length, step, progress, cancellationToken);
     }
 
-    private async Task<string> HashFilePrefixAsync(string path, long length, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    private async Task<string> HashFilePrefixAsync(string path, long length, string step, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
-        return await HashAsync(stream, length, progress, cancellationToken);
+        return await HashAsync(stream, length, step, progress, cancellationToken);
     }
 
     /// <summary>
     /// Hashes the first <paramref name="length"/> bytes of <paramref name="stream"/>. Most hashes of a phone video take a
     /// second or two and print nothing; only one that outlasts <see cref="ProgressDelay"/> reports, so a multi-gigabyte
-    /// original does not look hung.
+    /// original does not look hung. Its first report is <paramref name="step"/>, so the percentages have a step to sit under.
     /// </summary>
-    private async Task<string> HashAsync(FileStream stream, long length, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    private async Task<string> HashAsync(FileStream stream, long length, string step, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var buffer = new byte[1024 * 1024];
         var remaining = length;
         var processed = 0L;
-        var reporter = new ThrottledProgress(progress, _clock, length, 0, showRate: false);
+        var reporter = new ThrottledProgress(progress, _clock, length, 0, showRate: false, step);
         while (remaining > 0)
         {
             var read = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)), cancellationToken);
@@ -521,10 +577,12 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     /// A step that runs quickly prints nothing; one that outlasts <see cref="ProgressDelay"/> prints a line, then at most one
     /// every <see cref="ProgressDelay"/>. Transfers show rate and time left, which need some elapsed time and progress to compute.
     /// </summary>
-    private sealed class ThrottledProgress(IProgress<JobProgress>? progress, Func<TimeSpan> clock, long totalBytes, long initialBytes, bool showRate)
+    /// <param name="introduction">A step line printed before the first percentage, for work that has no step of its own.</param>
+    private sealed class ThrottledProgress(IProgress<JobProgress>? progress, Func<TimeSpan> clock, long totalBytes, long initialBytes, bool showRate, string? introduction = null)
     {
         private readonly TimeSpan _start = clock();
         private TimeSpan _lastReport = clock();
+        private bool _introduced;
 
         public bool IsDue => progress is not null && clock() - _lastReport >= ProgressDelay;
 
@@ -537,6 +595,8 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             var percent = totalBytes > 0 ? (int)Math.Min(100, bytes * 100L / totalBytes) : 100;
             if (!showRate)
             {
+                if (introduction is not null && !_introduced) progress!.Report(JobProgress.Step(introduction));
+                _introduced = true;
                 progress!.Report(JobProgress.Detail($"Checking the checksum: {percent}% of {HumanReadableValues.FormatSize(totalBytes)}"));
                 return;
             }

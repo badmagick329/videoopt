@@ -77,6 +77,18 @@ public sealed class AbAv1OutputTranslatorTests
         Progress(translator, 60, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps, about 17m 00s left") with { TimeLeft = TimeSpan.FromMinutes(17) });
     }
 
+    /// <summary>A stage that began before this command has run for longer than this translator has existed, so the time it measures is not the stage's.</summary>
+    [Fact]
+    public void AStageAlreadyRunningWhenTheCommandReachedItReportsNoDuration()
+    {
+        var translator = Create(AbAv1Stage.Encode);
+        _now = TimeSpan.FromMinutes(3);
+
+        translator.Translate("Encoded 99.8 MiB (29%)").Should().Equal(JobProgress.Step("Encoded 99.8 MiB (29% of the original) in 3m 00s."));
+        translator.StageWasAlreadyRunning();
+        translator.Translate("Encoded 99.8 MiB (29%)").Should().Equal(JobProgress.Step("Encoded 99.8 MiB (29% of the original)."));
+    }
+
     private IReadOnlyList<JobProgress> Progress(AbAv1OutputTranslator translator, int seconds, int percent)
     {
         _now = TimeSpan.FromSeconds(seconds);

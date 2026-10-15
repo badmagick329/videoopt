@@ -417,6 +417,129 @@ public sealed class JobProcessorTests : IDisposable
         reported.Last().Tone.Should().Be(JobTone.Failure);
     }
 
+    /// <summary>
+    /// Staging hashes the original and needs the worker, and neither is wanted to fetch an encode that is already finished
+    /// (VOPT-72 B10). The download resumes from the status it stopped in, and an encode the worker still holds is not run again.
+    /// </summary>
+    [Theory]
+    [InlineData(JobStatus.Downloading, false)]
+    [InlineData(JobStatus.Encoding, true)]
+    public async Task AResumeWhoseEncodeFinishedOnTheWorkerGoesStraightToTheDownload(JobStatus stoppedIn, bool saysItFinished)
+    {
+        var source = await SourceAsync();
+        var settings = Settings(remote: true);
+        await StopRemoteJobAsync(source, settings, stoppedIn);
+        var session = new ResumedWorkerSession { EncodeFinished = true };
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false, new ListProgress(reported));
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
+        session.Calls.Should().Equal("HasFinishedEncode 1", "Retrieve 1", "Cleanup");
+        result.Job.Attempt.Should().Be(1, "the finished encode is the one fetched, not a new attempt");
+        Steps(reported).Should().Equal(saysItFinished
+            ? ["The encode on the worker had already finished.", "Checking the output: streams, duration, savings and decode test...", "Ready to finalise: 100 B -> 50 B, 50.0% saved."]
+            : ["Checking the output: streams, duration, savings and decode test...", "Ready to finalise: 100 B -> 50 B, 50.0% saved."]);
+    }
+
+    /// <summary>
+    /// The worker answers no for an encode still running, so the encode stage follows it as before. A stop in the window of
+    /// that question keeps the status it had: nothing was learned yet.
+    /// </summary>
+    [Fact]
+    public async Task AResumeWhoseEncodeIsStillRunningFollowsItWithoutStagingAgainOrCountingANewAttempt()
+    {
+        var source = await SourceAsync();
+        var settings = Settings(remote: true);
+        await StopRemoteJobAsync(source, settings, JobStatus.Encoding);
+        var session = new ResumedWorkerSession { EncodeFinished = false };
+
+        var result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false);
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
+        session.Calls.Should().Equal("HasFinishedEncode 1", "Stage", "Encode 1", "Retrieve 1", "Cleanup");
+        result.Job.Attempt.Should().Be(1);
+    }
+
+    /// <summary>
+    /// A rerun that finds the encode finished records Downloading before anything can stop it, so Ctrl+C or a worker that stops
+    /// answering during the download says the finished encode waits on the worker, not that an encode is still running (VOPT-86).
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AStopWhileFetchingAnEncodeThatFinishedWhileStoppedKeepsTheDownloadAsItsResumePoint(bool unreachable)
+    {
+        var source = await SourceAsync();
+        var settings = Settings(remote: true);
+        await StopRemoteJobAsync(source, settings, JobStatus.Encoding);
+        var session = new ResumedWorkerSession { EncodeFinished = true, RetrieveFailure = unreachable ? new RemoteConnectionException("SSH connection failed: timed out.") : new OperationCanceledException() };
+
+        JobProcessingResult? result = null;
+        var action = async () => result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false);
+
+        if (unreachable)
+        {
+            await action.Should().NotThrowAsync();
+            result!.Job.FailureCategory.Should().Be(FailureCategories.RemoteUnavailable);
+        }
+        else (await action.Should().ThrowAsync<JobInterruptedException>()).Which.Stage.Should().Be(JobStatus.Downloading);
+        var stored = (await _repository.ListAsync(DatabasePath, terminal: false)).Should().ContainSingle().Subject;
+        (stored.Status, stored.ResumeStatus).Should().Be((JobStatus.Interrupted, JobStatus.Downloading));
+    }
+
+    /// <summary>
+    /// The AV1 is already on this PC, so checking it needs no worker: nothing is asked of the session, and the run is not made to
+    /// create a server for it (VOPT-89). Its workspace is left for the sweep of jobs that are no longer open.
+    /// </summary>
+    [Fact]
+    public async Task AResumeFromValidatingWithTheAv1OnThisPcNeedsNoWorker()
+    {
+        var source = await SourceAsync();
+        var settings = Settings(remote: true);
+        var job = await StopRemoteJobAsync(source, settings, JobStatus.Validating);
+        var output = Path.Combine(_directory, ".video-optimiser", $"movie.{job.Id:N}.1.encoding.mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        await File.WriteAllTextAsync(output, "av1");
+        var manifests = new OutputManifestStore();
+        await manifests.SaveAsync(new OutputManifest { SourcePath = source, SourceFingerprint = "fp", OutputPath = output, Crf = 42, CreatedUtc = DateTimeOffset.UtcNow });
+        job.OutputPath = output;
+        job.ManifestPath = manifests.GetPath(output);
+        await _repository.UpdateAsync(DatabasePath, job);
+        var session = new ResumedWorkerSession();
+        var processor = Processor(session: session);
+
+        (await processor.NeedsWorkerAsync(DatabasePath, source, settings, force: false)).Should().BeFalse();
+        var result = await processor.ProcessAsync(DatabasePath, source, settings, force: false);
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
+        session.Calls.Should().BeEmpty();
+    }
+
+    /// <summary>A search this command joined midway has no start to time it from, so its line gives no duration.</summary>
+    [Fact]
+    public async Task ASearchTheCommandJoinedMidwayNamesNoDuration()
+    {
+        var source = await SourceAsync();
+        var reported = new List<JobProgress>();
+        var session = new ResumedWorkerSession { SearchDuration = null };
+
+        await Processor(session: session).ProcessAsync(DatabasePath, source, Settings(remote: true), force: false, new ListProgress(reported));
+
+        Steps(reported).Should().Contain("Chose CRF 42.");
+    }
+
+    /// <summary>Stops a job on a worker in <paramref name="stoppedIn"/> with its CRF chosen and one attempt made, as an earlier run left it.</summary>
+    private async Task<JobRecord> StopRemoteJobAsync(string source, AppSettings settings, JobStatus stoppedIn)
+    {
+        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = "fp", Status = JobStatus.Queued };
+        JobCompatibility.Apply(job, JobCompatibility.ExpectedBinding(job.Id, settings));
+        job = await _repository.CreateAsync(DatabasePath, job);
+        (job.Status, job.ResumeStatus, job.Crf, job.Attempt) = (JobStatus.Interrupted, stoppedIn, 42, 1);
+        await _repository.UpdateAsync(DatabasePath, job);
+        return job;
+    }
+
     /// <summary>An original of 19 B at <paramref name="name"/>, a path under the test's directory.</summary>
     private async Task<string> SourceAsync(string name = "movie.mp4")
     {
@@ -519,6 +642,7 @@ public sealed class JobProcessorTests : IDisposable
         public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default) => throw new RemoteConnectionException("Remote unavailable.");
         public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -548,6 +672,8 @@ public sealed class JobProcessorTests : IDisposable
             if (cancellationStage == CancellationStage.Encoding) throw new OperationCanceledException();
             return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));
         }
+
+        public Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.FromResult(false);
 
         public async Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default)
         {
@@ -599,6 +725,8 @@ public sealed class JobProcessorTests : IDisposable
             server.EncodedAttempts.Add(attempt);
             return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));
         }
+
+        public Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.FromResult(server.EncodedAttempts.Contains(attempt));
 
         public async Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default)
         {

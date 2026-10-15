@@ -1,5 +1,7 @@
 using FluentAssertions;
+using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Run;
@@ -280,6 +282,9 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
 
         await CreateSession(Guid.NewGuid(), runner, clock: clock).StageAsync(source, "fingerprint", progress);
 
+        // The percentages are details, so without a step before them they hang under the job's header (VOPT-72, B19).
+        progress.Lines[0].Should().Be(JobProgress.Step("Checking the original's checksum before upload."));
+        progress.Lines.Count(line => line.Kind == JobProgressKind.Step && line.Text.StartsWith("Checking", StringComparison.Ordinal)).Should().Be(1);
         var checks = progress.Lines.Where(line => line.Kind == JobProgressKind.Detail).ToArray();
         checks.Length.Should().BeGreaterThanOrEqualTo(3);
         checks.Should().OnlyContain(line => line.Text.StartsWith("Checking the checksum: ", StringComparison.Ordinal) && line.Text.EndsWith("% of 3.0 MiB", StringComparison.Ordinal));
@@ -305,7 +310,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     {
         var source = await SourceAsync();
         var log = AbAv1OutputTests.Fixture("remote-crf-search.log");
-        var runner = new QueueRunner([Ok($"completed 0\n\u001e{log}"), Ok(log)]);
+        var runner = new QueueRunner([Ok(AtEnd("completed 0", log)), Ok(log)]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
         var progress = new ListProgress();
 
@@ -316,7 +321,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Requests.Should().HaveCount(2);
         runner.Requests.Should().OnlyContain(request => request.StandardInput == null);
         File.Exists(Path.Combine(_directory, ".video-optimiser", $"{session.RemoteWorkspace!.Split('/').Last()}.crf.remote.log")).Should().BeTrue();
-        Steps(progress).Should().Equal("CRF search finished on the worker while this command was stopped.");
+        Steps(progress).Should().Equal("The CRF search on the worker had already finished.");
     }
 
     /// <summary>A launch that ran on the worker but lost its reply is resent by the SSH retry; the resend must not start a
@@ -357,7 +362,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task FreshStageUsesWritableCacheInsideItsGuidWorkspace()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok("missing\n\u001e"), Ok(), Ok(), Ok("completed 0\n\u001ecrf 42 successful\n"), Ok("crf 42 successful\n")]);
+        var runner = new QueueRunner([Ok(AtEnd("missing", "")), Ok(), Ok(), Ok(Sent("completed 0", "crf 42 successful\n")), Ok("crf 42 successful\n")]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
         _ = await session.SearchCrfAsync(source, new QualitySettings());
@@ -382,7 +387,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task ReattachesToCompletedEncodingAndVerifiesItsOutput()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok("completed 0\n\u001eencode complete\n"), Ok("encode complete\n"), Ok()]);
+        var runner = new QueueRunner([Ok(AtEnd("completed 0", "encode complete\n")), Ok("encode complete\n"), Ok()]);
 
         var result = await CreateSession(Guid.NewGuid(), runner, source).EncodeAsync(source, Output, 42, new QualitySettings(), 3, []);
 
@@ -490,7 +495,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task FailedRemoteStageRetainsLogThenCleansItsGuidWorkspace()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok("completed 9\n\u001efatal encode error\n"), Ok("fatal encode error\n"), Ok()]);
+        var runner = new QueueRunner([Ok(AtEnd("completed 9", "fatal encode error\n")), Ok("fatal encode error\n"), Ok()]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
         var action = async () => await session.SearchCrfAsync(source, new QualitySettings());
@@ -506,7 +511,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task ACrfStageThatFoundNoWorthwhileCrfThrowsTheSkipExceptionAndStillCleansTheWorkspace()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok($"completed 1\n\u001e{NoWorthwhileCrfLog.Text}"), Ok(NoWorthwhileCrfLog.Text), Ok()]);
+        var runner = new QueueRunner([Ok(AtEnd("completed 1", NoWorthwhileCrfLog.Text)), Ok(NoWorthwhileCrfLog.Text), Ok()]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
         var action = async () => await session.SearchCrfAsync(source, new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 });
@@ -522,7 +527,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     {
         var source = await SourceAsync();
         const string log = "[2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] starting\nError: ffmpeg exited with status 1\nCommand exited with non-zero status 1\n\tExit status: 1\n";
-        var runner = new QueueRunner([Ok($"completed 1\n\u001e{log}"), Ok(log), Ok()]);
+        var runner = new QueueRunner([Ok(AtEnd("completed 1", log)), Ok(log), Ok()]);
 
         var action = async () => await CreateSession(Guid.NewGuid(), runner, source).SearchCrfAsync(source, new QualitySettings());
 
@@ -545,7 +550,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task CtrlCDuringAStageLeavesItRunningOnTheWorker()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok("running\n\u001e")]);
+        var runner = new QueueRunner([Ok(AtEnd("running", ""))]);
         using var cancellation = new CancellationTokenSource();
         var session = new RemoteSshProcessingSession(new JobRecord { Id = Guid.NewGuid(), SourcePath = source }, CreateSettings(), runner, _ =>
         {
@@ -565,12 +570,13 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     /// download. Either way it reads the result without launching another script.
     /// </summary>
     [Theory]
-    [InlineData("running\n\u001ecrf 42 successful\n", false, "CRF search still running on the worker; following it...", 3)]
-    [InlineData("completed 0\n\u001ecrf 42 successful\n", true, null, 2)]
-    public async Task AReattachedStageSaysWhetherItIsStillRunningOrFinishedUnwatched(string state, bool logAlreadyKept, string? expected, int requests)
+    [InlineData("running", false, "Picked up the CRF search running on the worker.")]
+    [InlineData("completed 0", false, "The CRF search on the worker had already finished.")]
+    [InlineData("completed 0", true, null)]
+    public async Task AReattachedStageSaysWhetherItIsStillRunningOrFinishedUnwatched(string state, bool logAlreadyKept, string? expected)
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok(state), Ok("completed 0\n\u001ecrf 42 successful\n"), Ok("crf 42 successful\n")]);
+        var worker = new StageWorker(state == "running" ? [state, "completed 0"] : [state]);
         var id = Guid.NewGuid();
         if (logAlreadyKept)
         {
@@ -579,12 +585,104 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         }
         var progress = new ListProgress();
 
-        var result = await CreateSession(id, runner, source).SearchCrfAsync(source, new QualitySettings(), progress);
+        var result = await CreateSession(id, worker, source).SearchCrfAsync(source, new QualitySettings(), progress);
 
         Steps(progress).Should().Equal(expected is null ? [] : [expected]);
         result.Crf.Should().Be(42);
-        runner.Requests.Should().HaveCount(requests);
-        runner.Requests.Should().OnlyContain(request => request.StandardInput == null);
+        worker.ScriptsStarted.Should().Be(0);
+    }
+
+    /// <summary>
+    /// The worker's log already holds what an earlier command showed. Replaying it printed a finished encode's first progress
+    /// line again, measured the time left from it, and reported a duration of the reattach alone (VOPT-72). Each poll also read
+    /// the whole log, so a long encode cost more with every line.
+    /// </summary>
+    [Fact]
+    public async Task AReattachedEncodeShowsOnlyWhatIsNewAndNamesNoDurationItCannotKnow()
+    {
+        var source = await SourceAsync();
+        const string before = "[2026-10-13T10:06:43Z INFO  ab_av1::command::encode] encoding movie.mkv\n[2026-10-13T10:06:59Z INFO  ab_av1::command::encode] 20%, 54 fps, eta 3 minutes\n[2026-10-13T10:07:15Z INFO  ab_av1::command::encode] 42%, 57 fps, eta 2 minutes\n";
+        const string progressLine = "[2026-10-13T10:07:31Z INFO  ab_av1::command::encode] 60%, 58 fps, eta 1 minute\n";
+        const string encoded = "Encoded 99.8 MiB (29%)\n";
+        var worker = new StageWorker([new("running"), new("running", progressLine), new("completed 0", encoded)], before);
+        var progress = new ListProgress();
+        var translator = new AbAv1OutputTranslator(AbAv1Stage.Encode, 95, 80, () => TimeSpan.Zero).Wrap(progress);
+
+        await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, [], translator);
+
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Picked up the encode running on the worker."),
+            JobProgress.Detail("60%, 58 fps"),
+            JobProgress.Step("Encoded 99.8 MiB (29% of the original)."));
+        var beforeBytes = Encoding.UTF8.GetByteCount(before);
+        worker.Polls.Should().Equal([(-1, 0), (beforeBytes, Encoding.UTF8.GetByteCount(progressLine)), (beforeBytes + Encoding.UTF8.GetByteCount(progressLine), Encoding.UTF8.GetByteCount(encoded))],
+            "after joining at the end of the log each poll asks only for the bytes past the last one it read");
+        worker.WholeLogReads.Should().Be(1, "the whole log is read once, when the stage has ended");
+    }
+
+    [Fact]
+    public async Task AFreshlyLaunchedStageHasNoPickUpLineAndAKnownDuration()
+    {
+        var source = await SourceAsync();
+        var worker = new StageWorker(["missing", "missing", "running", new("completed 0", "crf 42 successful\n")], log: string.Empty);
+        var progress = new ListProgress();
+
+        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings(), progress);
+
+        Steps(progress).Should().BeEmpty();
+        result.Duration.Should().NotBeNull();
+        worker.ScriptsStarted.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AReattachedCrfSearchHasNoDuration()
+    {
+        var source = await SourceAsync();
+        var worker = new StageWorker(["running", "completed 0"]);
+
+        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
+
+        result.Duration.Should().BeNull();
+    }
+
+    /// <summary>A poll can land in the middle of a line ab-av1 is writing; the half is kept for the next poll, not printed as a line.</summary>
+    [Fact]
+    public async Task ALineStillBeingWrittenIsReportedWholeOnTheNextPoll()
+    {
+        var source = await SourceAsync();
+        const string start = "[2026-10-13T10:06:59Z INFO  ab_av1::command::encode] 20%, 54 fps, e";
+        const string rest = "ta 2 minutes\n";
+        var worker = new StageWorker([new("running"), new("running", start), new("running", rest), new("completed 0")], log: string.Empty);
+        var progress = new ListProgress();
+
+        await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, [], progress);
+
+        progress.Lines.Where(line => line.Kind == JobProgressKind.ToolOutput).Select(line => line.Text).Should().Equal(start + rest.TrimEnd('\n'));
+    }
+
+    /// <summary>Exit 1 is the worker's answer no; any other failure is not an answer.</summary>
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    public async Task TheWorkerSaysWhetherAnAttemptsEncodeFinished(int exitCode, bool finished)
+    {
+        var runner = new QueueRunner([new ExternalProcessResult(exitCode, string.Empty, string.Empty)]);
+        var session = CreateSession(Guid.NewGuid(), runner);
+
+        (await session.HasFinishedEncodeAsync(Output, 3)).Should().Be(finished);
+
+        var command = runner.Requests.Single().Arguments[^1];
+        command.Should().Contain($"{session.EncodeDirectory(3)}/exit-code").And.Contain($"{session.EncodeDirectory(3)}/output.mkv");
+    }
+
+    [Fact]
+    public async Task AFailedEncodeCheckIsNotTakenForNo()
+    {
+        var runner = new QueueRunner([new ExternalProcessResult(2, string.Empty, "bash: broken")]);
+
+        var action = async () => await CreateSession(Guid.NewGuid(), runner).HasFinishedEncodeAsync(Output, 3);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote encode check failed: bash: broken");
     }
 
     private static RemoteSshProcessingSession CreateSession(Guid id, IExternalProcessRunner runner, string sourcePath = "C:\\Videos\\movie.mkv", FakeClock? clock = null)
@@ -613,6 +711,17 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     private static string Sha256(ReadOnlySpan<byte> bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
     private static ExternalProcessResult Ok(string output = "") => new(0, output, string.Empty);
+
+    /// <summary>The state check's answer to a poll that asked for the end of the log: the state, no log, and where the log ends.</summary>
+    private static string AtEnd(string header, string log)
+    {
+        var size = Encoding.UTF8.GetByteCount(log);
+        return $"{header}\n\u001e{size}\u001e{size}\u001e";
+    }
+
+    /// <summary>The state check's answer carrying <paramref name="chunk"/> of the log, which starts at byte <paramref name="start"/>.</summary>
+    private static string Sent(string header, string chunk, long start = 0) =>
+        $"{header}\n\u001e{start}\u001e{start + Encoding.UTF8.GetByteCount(chunk)}\u001e{chunk}";
 
     private static Task<ExternalProcessResult> OkAsync(string output = "") => Task.FromResult(Ok(output));
 
@@ -690,20 +799,35 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         }
     }
 
+    /// <summary>What the stage's state check finds at one poll: its state, and what ab-av1 had written to the log by then.</summary>
+    private sealed record WorkerStep(string Header, string Appended = "")
+    {
+        public static implicit operator WorkerStep(string header) => new(header);
+    }
+
     /// <summary>
-    /// A worker for one CRF stage that keeps the launch markers it was asked to create, as <c>mkdir</c> would. A launch
-    /// command without a marker starts a script every time it arrives.
+    /// A worker for one stage that keeps the launch markers it was asked to create, as <c>mkdir</c> would, and answers the state
+    /// check as the remote command does: the log from the byte offset it was asked for, or from the end for -1, or from the
+    /// start when the offset is past the end. A launch command without a marker starts a script every time it arrives.
     /// </summary>
-    private sealed class StageWorker(IEnumerable<string> states) : IExternalProcessRunner
+    /// <param name="log">The log already on the worker before the first poll.</param>
+    private sealed class StageWorker(IEnumerable<WorkerStep> steps, string log = "crf 42 successful\n") : IExternalProcessRunner
     {
         // The marker as it appears once the command is quoted for `bash -lc`.
         private static readonly Regex MarkerPattern = new(@"mkdir -- '""'""'([^']+)'""'""'", RegexOptions.CultureInvariant);
-        private readonly Queue<string> _states = new(states);
+        private static readonly Regex OffsetPattern = new(@"off=(-?\d+);", RegexOptions.CultureInvariant);
+        private readonly Queue<WorkerStep> _steps = new(steps);
         private readonly HashSet<string> _markers = [];
+        private string _log = log;
 
         public bool DropFirstLaunchReply { get; set; }
         public List<string> Launches { get; } = [];
         public int ScriptsStarted { get; private set; }
+
+        /// <summary>For each state check, the offset it asked for and how many bytes of log it was sent.</summary>
+        public List<(long Asked, int Sent)> Polls { get; } = [];
+
+        public int WholeLogReads { get; private set; }
 
         public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
         {
@@ -717,8 +841,24 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
                 DropFirstLaunchReply = false;
                 return Task.FromResult(new ExternalProcessResult(255, string.Empty, "Connection reset by peer"));
             }
-            if (command.Contains("kill -0", StringComparison.Ordinal)) return OkAsync($"{_states.Dequeue()}\n\u001ecrf 42 successful\n");
-            return OkAsync(command.Contains("/log", StringComparison.Ordinal) ? "crf 42 successful\n" : string.Empty);
+            if (command.Contains("kill -0", StringComparison.Ordinal)) return OkAsync(Poll(command));
+            if (command.Contains("cat '", StringComparison.Ordinal) && command.Contains("/log", StringComparison.Ordinal))
+            {
+                WholeLogReads++;
+                return OkAsync(_log);
+            }
+            return OkAsync();
+        }
+
+        private string Poll(string command)
+        {
+            var step = _steps.Dequeue();
+            _log += step.Appended;
+            var bytes = Encoding.UTF8.GetBytes(_log);
+            var asked = long.Parse(OffsetPattern.Match(command).Groups[1].Value, CultureInfo.InvariantCulture);
+            var start = asked < 0 ? bytes.Length : asked > bytes.Length ? 0 : (int)asked;
+            Polls.Add((asked, bytes.Length - start));
+            return $"{step.Header}\n\u001e{start}\u001e{bytes.Length}\u001e{Encoding.UTF8.GetString(bytes[start..])}";
         }
     }
 

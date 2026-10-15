@@ -182,6 +182,7 @@ public sealed class JobConsoleOutputTests : IDisposable
             return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));
         }
 
+        public Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public async Task RetrieveOutputAsync(string outputPath, int attempt, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)

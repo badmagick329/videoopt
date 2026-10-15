@@ -10,7 +10,7 @@ namespace VideoOptimiser.Infrastructure.Tools;
 
 public sealed class AbAv1ProgressTranslator : IAbAv1ProgressTranslator
 {
-    public IProgress<JobProgress> Wrap(IProgress<JobProgress> progress, AbAv1Stage stage, QualitySettings quality) =>
+    public IReattachableProgress Wrap(IProgress<JobProgress> progress, AbAv1Stage stage, QualitySettings quality) =>
         new AbAv1OutputTranslator(stage, quality.MinimumVmaf, quality.MaxEncodedPercent).Wrap(progress);
 }
 
@@ -41,6 +41,7 @@ public sealed partial class AbAv1OutputTranslator
     private TimeSpan? _lastProgress;
     private (int Percent, TimeSpan At)? _firstProgress;
     private bool _inTimeReport;
+    private bool _reattached;
 
     public AbAv1OutputTranslator(AbAv1Stage stage, double minimumVmaf, int maxEncodedPercent)
         : this(stage, minimumVmaf, maxEncodedPercent, StartClock())
@@ -56,7 +57,14 @@ public sealed partial class AbAv1OutputTranslator
     }
 
     /// <summary>Wraps <paramref name="progress"/> so raw ab-av1 lines arrive translated; every other line passes unchanged.</summary>
-    public IProgress<JobProgress> Wrap(IProgress<JobProgress> progress) => new TranslatingProgress(this, progress);
+    public IReattachableProgress Wrap(IProgress<JobProgress> progress) => new TranslatingProgress(this, progress);
+
+    /// <summary>
+    /// The stage was already running when this command reached it, and only the lines after that point arrive. The time left is
+    /// then measured over progress seen since, which it already is, and the time <c>Encoded</c> reports would be only the
+    /// time since, so that line leaves it out.
+    /// </summary>
+    public void StageWasAlreadyRunning() => _reattached = true;
 
     public IReadOnlyList<JobProgress> Translate(string line)
     {
@@ -136,7 +144,10 @@ public sealed partial class AbAv1OutputTranslator
     private IReadOnlyList<JobProgress> TranslatePlain(string line)
     {
         if (EncodedLine().Match(line) is { Success: true } encoded)
-            return [JobProgress.Step($"Encoded {HumanReadableValues.FormatSizeText(encoded.Groups["size"].Value)} ({encoded.Groups["percent"].Value}% of the original) in {HumanReadableValues.FormatDuration(_elapsed())}.")];
+        {
+            var size = $"Encoded {HumanReadableValues.FormatSizeText(encoded.Groups["size"].Value)} ({encoded.Groups["percent"].Value}% of the original)";
+            return [JobProgress.Step(_reattached ? $"{size}." : $"{size} in {HumanReadableValues.FormatDuration(_elapsed())}.")];
+        }
         // The crf-search result line repeats the chosen attempt, which is already on screen.
         if (_stage == AbAv1Stage.CrfSearch && PredictionLine().IsMatch(line)) return [];
         // The job's outcome explains this one: the video is not worth converting at the configured limits.
@@ -156,11 +167,16 @@ public sealed partial class AbAv1OutputTranslator
         return () => clock.Elapsed;
     }
 
-    private sealed class TranslatingProgress(AbAv1OutputTranslator translator, IProgress<JobProgress> inner) : IProgress<JobProgress>
+    private sealed class TranslatingProgress(AbAv1OutputTranslator translator, IProgress<JobProgress> inner) : IReattachableProgress
     {
         // A local ab-av1's stdout and stderr are read on separate tasks, and the translator's state (time-report mode,
         // progress throttle) is not safe to touch from both at once.
         private readonly object _gate = new();
+
+        public void StageWasAlreadyRunning()
+        {
+            lock (_gate) translator.StageWasAlreadyRunning();
+        }
 
         public void Report(JobProgress value)
         {

@@ -66,6 +66,10 @@
 - `remote setup` no longer says it is complete, or suggests a command, while the config still fails validation. It lists the remaining problems on stderr, ends with `The configuration still has the problems above. Fix them, then run 'video-optimiser config validate'.` and exits `3`. Its failures now go to stderr. The Next line is `Next: run 'video-optimiser run'.`, without the extra `--remote`, and repeats `--config` only when it was typed.
 - `cleanup` finds downloaded Immich copies in `immich.stagingDirectory` even after `immich.baseUrl` is emptied. A dry run ends with `Dry run: nothing was deleted.`, and a file it leaves alone is listed as `Kept`, where it said `Skipped`.
 - `cleanup` keeps an AV1, or an Immich video's downloaded copy, that may be the only copy of a video: a folder video whose original is missing, or an Immich video whose original Immich no longer has, or can't be asked about (not configured, or not answering). Each is listed as `Kept  <path> (<reason>)`, in a dry run too. Before, `cleanup` deleted them by job status alone. Finalised videos are unaffected.
+- A rerun of a remote video picks up its running encode or CRF search without replaying the old log, and says so: `Picked up the encode running on the worker.`, or `The encode on the worker had already finished.` Before, it replayed the whole log, printed `Encoded ... in 0s.` and a stale first progress line and time left. Each poll now reads only the new part of the log. A reattached stage no longer reports a duration it can't know.
+- A rerun whose encode already finished on the worker goes straight to the download, without staging or hashing the original again. A video stopped while its AV1 was being checked on this PC is checked again without a worker, so `run` no longer creates one for it (VOPT-89).
+- A slow checksum prints a step line, such as `Checking the original's checksum before upload.`, before its percentage line.
+- A stop while a rerun fetches an encode that already finished says the finished encode is waiting on the worker, not that it is still running (VOPT-86).
 
 ## [0.7.1] - 2026-10-13
 ### Changed

@@ -13,7 +13,8 @@ public static class JobStateTransitions
     {
         // A resumed local job skips the stages it already finished: encoding when its CRF is known, validation when its output is.
         // Skipped from Queued: the video's size cap rules out every CRF before anything is staged or searched.
-        (JobStatus.Queued, JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Validating or JobStatus.Skipped or JobStatus.Failed or JobStatus.Interrupted or JobStatus.Cancelled) => true,
+        // Downloading from Queued: a resumed remote job whose encode the worker already finished has nothing to stage or encode.
+        (JobStatus.Queued, JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Downloading or JobStatus.Validating or JobStatus.Skipped or JobStatus.Failed or JobStatus.Interrupted or JobStatus.Cancelled) => true,
         (JobStatus.Staging, JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         // Skipped from CrfSearching: no CRF both met the VMAF and stayed within the size cap.
         (JobStatus.CrfSearching, JobStatus.Encoding or JobStatus.Skipped or JobStatus.Failed or JobStatus.Interrupted) => true,

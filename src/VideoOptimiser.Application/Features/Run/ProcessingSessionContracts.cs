@@ -19,6 +19,12 @@ public interface IProcessingSession : IAsyncDisposable
         => StageAsync(sourcePath, sourceFingerprint, cancellationToken);
     Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default);
     Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Whether the worker holds the finished encode of <paramref name="attempt"/>: the stage ended with exit code 0 and its output
+    /// is there. A run that finds one goes straight to the download, without staging the original again. Always false on this PC
+    /// and on a worker that lost the workspace, such as a deleted managed server.
+    /// </summary>
+    Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default);
     Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default);
     Task RetrieveOutputAsync(string outputPath, int attempt, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)
         => RetrieveOutputAsync(outputPath, attempt, cancellationToken);

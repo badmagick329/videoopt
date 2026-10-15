@@ -87,6 +87,64 @@ internal sealed class FixedSessionFactory(IProcessingSession session) : IProcess
     public IProcessingSession Create(JobRecord job, AppSettings settings) => session;
 }
 
+/// <summary>
+/// A worker that records what the processor asked of it, in order. <see cref="EncodeFinished"/> is what it answers when asked
+/// whether the encode already finished; a stage it is not asked to run costs nothing.
+/// </summary>
+internal sealed class ResumedWorkerSession : IProcessingSession
+{
+    public List<string> Calls { get; } = [];
+    public bool EncodeFinished { get; init; }
+    public Exception? RetrieveFailure { get; init; }
+    public TimeSpan? SearchDuration { get; init; } = TimeSpan.FromSeconds(5);
+
+    public bool IsRemote => true;
+    public string ExecutionMode => "remoteSsh";
+    public string? RemoteHost => "video-worker";
+    public string? RemoteWorkspace => null;
+
+    public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default)
+    {
+        Calls.Add("Stage");
+        return Task.CompletedTask;
+    }
+
+    public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        Calls.Add("Search");
+        return Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, SearchDuration));
+    }
+
+    public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"Encode {attempt}");
+        return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));
+    }
+
+    public Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"HasFinishedEncode {attempt}");
+        return Task.FromResult(EncodeFinished);
+    }
+
+    public async Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default)
+    {
+        Calls.Add($"Retrieve {attempt}");
+        if (RetrieveFailure is not null) throw RetrieveFailure;
+        // As the real session does: a resume that skips the encode has not made the folder.
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
+    }
+
+    public Task CleanupAsync(CancellationToken cancellationToken = default)
+    {
+        Calls.Add("Cleanup");
+        return Task.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
 /// <summary>Hands each report to the callback on the reporting thread; <see cref="Progress{T}"/> would post it later.</summary>
 internal sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
 {

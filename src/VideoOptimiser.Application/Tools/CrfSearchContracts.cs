@@ -13,7 +13,8 @@ namespace VideoOptimiser.Application.Tools;
 /// </summary>
 public sealed record CrfPrediction(string Size, int Percent, string Taking);
 
-public sealed record CrfSearchResult(int Crf, string StandardOutput, string StandardError, TimeSpan Duration, CrfPrediction? Prediction = null);
+/// <param name="Duration">How long the search took, or null when this command joined it midway and cannot know.</param>
+public sealed record CrfSearchResult(int Crf, string StandardOutput, string StandardError, TimeSpan? Duration, CrfPrediction? Prediction = null);
 
 /// <summary>
 /// An ab-av1 stage failed for a reason other than "not worth converting". <see cref="LogPath"/> is the kept copy of its full
