@@ -283,6 +283,9 @@ public sealed class QueueVerbTests : IDisposable
         (await StoredAsync(waiting)).Status.Should().Be(JobStatus.Cancelled);
         (await StoredAsync(held)).Status.Should().Be(JobStatus.Cancelled);
         (await StoredAsync(checking)).Status.Should().Be(JobStatus.Interrupted);
+        // A finalisation that moved files is left exactly as it was, so `finalize` can check what moved (VOPT-70).
+        var stoppedFinalising = await StoredAsync(finalising);
+        (stoppedFinalising.Status, stoppedFinalising.ResumeStatus).Should().Be((JobStatus.Interrupted, JobStatus.Finalizing));
         (await StoredAsync(ready)).Status.Should().Be(JobStatus.ReadyToFinalize);
         (await StoredAsync(crashed)).Status.Should().Be(JobStatus.Cancelled);
     }

@@ -210,6 +210,24 @@ public sealed class RunCommandTests : IDisposable
         _processor.Processed.Should().Equal("clip.mp4", "IMG_0001.MOV");
     }
 
+    /// <summary>A finalisation Ctrl+C or a crash stopped belongs to <c>finalize</c>, which checks whether anything moved (VOPT-70): the run leaves it alone and says so.</summary>
+    [Fact]
+    public async Task ARunSaysToFinishAStoppedFinalisationWithFinalizeAndLeavesItAlone()
+    {
+        await WriteConfigAsync(immich: false);
+        var job = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "movie.mp4"), Status = JobStatus.ReadyToFinalize, OutputPath = Path.Combine(_directory, "movie.encoding.mp4") });
+        job.Status = JobStatus.Finalizing;
+        await _repository.UpdateAsync(DatabasePath, job);
+        await _repository.MarkActiveJobsInterruptedAsync(DatabasePath, includeFinalizing: true);
+
+        var (_, output, _) = await RunAsync("run");
+
+        output.Should().Contain("movie.mp4 was interrupted while being finalised. Run 'video-optimiser finalize --ready' to finish it.").And.NotContain("Failed jobs:");
+        var stored = await StoredAsync(job);
+        (stored.Status, stored.ResumeStatus).Should().Be((JobStatus.Interrupted, JobStatus.Finalizing));
+        _processor.Processed.Should().BeEmpty();
+    }
+
     [Theory]
     [InlineData("'queue run' is now 'run'.", "queue", "run")]
     [InlineData("'queue discover' is now 'queue add'.", "queue", "discover", "--first")]

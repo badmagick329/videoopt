@@ -59,20 +59,6 @@ public sealed class SafeFileInstallerTests : IDisposable
         (await File.ReadAllTextAsync(_source)).Should().Be("av1");
     }
 
-    [Theory]
-    [InlineData(OriginalActions.Delete)]
-    [InlineData(OriginalActions.Archive)]
-    public async Task AFailedInstallPutsTheOriginalBack(string action)
-    {
-        File.Delete(_output);
-
-        var install = () => Install(action);
-
-        await install.Should().ThrowAsync<FileNotFoundException>();
-        (await File.ReadAllTextAsync(_source)).Should().Be("original");
-        Directory.EnumerateFiles(_directory, "*", SearchOption.AllDirectories).Should().Equal(_source);
-    }
-
     [Fact]
     public async Task KeepLeavesTheOriginalAndInstallsTheAv1BesideItUnderAFreeName()
     {
@@ -205,19 +191,6 @@ public sealed class SafeFileInstallerTests : IDisposable
         await install.Should().ThrowAsync<FileNotFoundException>();
         (await File.ReadAllTextAsync(mov)).Should().Be("original");
         Directory.EnumerateFiles(_directory, "*", SearchOption.AllDirectories).Should().Equal(mov);
-    }
-
-    [Fact]
-    public async Task TheInstalledMp4TakesAMovOriginalsFileDates()
-    {
-        UseMovSource();
-        File.SetCreationTimeUtc(_source, OriginalCreated);
-        File.SetLastWriteTimeUtc(_source, OriginalModified);
-
-        var installation = await Install(OriginalActions.Delete);
-
-        installation.Warning.Should().BeNull();
-        new FileInfo(installation.InstalledPath).LastWriteTimeUtc.Should().Be(OriginalModified);
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);

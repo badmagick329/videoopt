@@ -26,12 +26,10 @@ public sealed class FinalizationMessageTests
     }
 
     [Fact]
-    public void DescribeSaysKeepWhateverTheExtension()
-    {
-        var kept = new FileInstallation(@"D:\v\clip.av1.mp4", null);
-        FinalizationService.Describe(@"D:\v\clip.mp4", Action(OriginalActions.Keep), kept).Should().Be(@"Original kept; AV1 installed as D:\v\clip.av1.mp4.");
-        FinalizationService.Describe(@"D:\v\clip.mov", Action(OriginalActions.Keep), kept).Should().Be(@"Original kept; AV1 installed as D:\v\clip.av1.mp4.");
-    }
+    public void DescribeSaysKeepWhateverTheExtension() =>
+        // A .mov original: the path differs from the install, yet Keep never adds the "the AV1 is" tail.
+        FinalizationService.Describe(@"D:\v\clip.mov", Action(OriginalActions.Keep), new FileInstallation(@"D:\v\clip.av1.mp4", null))
+            .Should().Be(@"Original kept; AV1 installed as D:\v\clip.av1.mp4.");
 
     private static OriginalSettings Action(string action) => new() { Action = action };
 }

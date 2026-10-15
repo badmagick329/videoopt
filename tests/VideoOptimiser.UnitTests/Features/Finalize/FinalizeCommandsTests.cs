@@ -68,7 +68,11 @@ public sealed class FinalizeCommandsTests : IDisposable
     public async Task ReadyListsEachJobTheOriginalActionAndThePromptThenCancelsWithoutFinalizing()
     {
         _jobs.Add(FileJob("clip-a.mp4", 1024 * 1024 * 1024, 400 * 1024 * 1024, 60m));
-        _jobs.Add(FileJob("clip-b.mp4", null, null, null));
+        // A file job whose finalisation Ctrl+C or a crash stopped is listed too, so `finalize` can check what moved (VOPT-70).
+        var stopped = FileJob("clip-b.mp4", null, null, null);
+        stopped.Status = JobStatus.Interrupted;
+        stopped.ResumeStatus = JobStatus.Finalizing;
+        _jobs.Add(stopped);
 
         var (code, stdout, stderr) = await RunAsync(null, "finalize", "--ready");
 
@@ -85,37 +89,17 @@ public sealed class FinalizeCommandsTests : IDisposable
     [Theory]
     [InlineData("archive", "Archive", "Each original moves to an Archive folder beside it and its AV1 takes its place.")]
     [InlineData("keep", "Archive", "Each original stays; its AV1 is installed beside it as <name>.av1<extension>.")]
+    [InlineData("archive", "<absolute>", "Each original moves to <absolute> and its AV1 takes its place.")]
     public async Task ReadyDescribesWhatHappensToAFileJobsOriginalPerTheConfiguredAction(string action, string archive, string line)
     {
         _jobs.Add(FileJob("clip-a.mp4", null, null, null));
+        // An archive in an absolute folder is named by its path.
+        if (archive == "<absolute>") archive = Path.Combine(_directory, "archived");
+        line = line.Replace("<absolute>", archive, StringComparison.Ordinal);
 
         var (_, stdout, _) = await RunAsync(null, "finalize", "--ready", extraConfig: $"original:\n  action: {action}\n  archiveDirectory: '{archive}'\n");
 
         stdout.ReplaceLineEndings("\n").Should().Be($"clip-a.mp4  sizes unknown\n{line}\nFinalise these jobs? [y/N] Finalisation cancelled.\n");
-    }
-
-    [Fact]
-    public async Task ReadyDescribesAnArchiveInAnAbsoluteFolderByItsPath()
-    {
-        _jobs.Add(FileJob("clip-a.mp4", null, null, null));
-        var archive = Path.Combine(_directory, "archived");
-
-        var (_, stdout, _) = await RunAsync(null, "finalize", "--ready", extraConfig: $"original:\n  action: archive\n  archiveDirectory: '{archive}'\n");
-
-        stdout.ReplaceLineEndings("\n").Should().Contain($"Each original moves to {archive} and its AV1 takes its place.\n");
-    }
-
-    [Fact]
-    public async Task ReadyNamesTheImmichTrashRuleOnlyForImmichJobsAndSkipsTheOriginalActionLineWithoutFileJobs()
-    {
-        _jobs.Add(ImmichJob("clip-a.mp4", "asset-a"));
-
-        var (_, stdout, _) = await RunAsync(null, "finalize", "--ready");
-
-        stdout.ReplaceLineEndings("\n").Should().Be(
-            "clip-a.mp4  sizes unknown\n" +
-            "Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.\n" +
-            "Finalise these jobs? [y/N] Finalisation cancelled.\n");
     }
 
     [Fact]
@@ -225,9 +209,16 @@ public sealed class FinalizeCommandsTests : IDisposable
         var gone = ImmichJob("clip-c.mp4", "asset-c");
         gone.FailureCategory = FailureCategories.FinalizationIncomplete;
         gone.FailureMessage = "The upload finished.";
-        _jobs.AddRange([live, trashed, gone]);
+        // A job stopped while being finalised is listed; one that is still queued is neither listed nor read from Immich.
+        var stopped = ImmichJob("clip-d.mp4", "asset-d");
+        stopped.Status = JobStatus.Interrupted;
+        stopped.ResumeStatus = JobStatus.Finalizing;
+        var queued = ImmichJob("clip-e.mp4", "asset-e");
+        queued.Status = JobStatus.Queued;
+        _jobs.AddRange([live, trashed, gone, stopped, queued]);
         _immich.Assets["asset-a"] = Asset("asset-a", trashed: false);
         _immich.Assets["asset-b"] = Asset("asset-b", trashed: true);
+        _immich.Assets["asset-d"] = Asset("asset-d", trashed: false);
 
         var (code, stdout, stderr) = await RunAsync(null, "immich", "finalize");
 
@@ -238,32 +229,13 @@ public sealed class FinalizeCommandsTests : IDisposable
             $"{trashed.Id:N}  clip-b.mp4  taken 2025-05-01 14:30, in Immich's trash  sizes unknown\n" +
             $"{gone.Id:N}  clip-c.mp4  not readable in Immich  sizes unknown\n" +
             "    Resumes after: The upload finished.\n" +
-            "3 videos: 1.0 GiB -> 400.0 MiB, saving 624.0 MiB.\n" +
+            $"{stopped.Id:N}  clip-d.mp4  taken 2025-05-01 14:30  sizes unknown\n" +
+            "4 videos: 1.0 GiB -> 400.0 MiB, saving 624.0 MiB.\n" +
             "Each AV1 is uploaded as a new asset with the original's albums, tags, favourite and other relations; then the original goes to Immich's trash.\n" +
             "Finalise these jobs? [y/N] Finalisation cancelled.\n");
         _finalizer.Calls.Should().BeEmpty();
         _immich.Trashed.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task ImmichFinalizeListsAJobStoppedWhileBeingFinalisedAndLeavesOutOneThatIsNotReady()
-    {
-        var queued = ImmichJob("clip-a.mp4", "asset-a");
-        queued.Status = JobStatus.Queued;
-        var stopped = ImmichJob("clip-b.mp4", "asset-b");
-        stopped.Status = JobStatus.Interrupted;
-        stopped.ResumeStatus = JobStatus.Finalizing;
-        _jobs.AddRange([queued, stopped]);
-        _immich.Assets["asset-b"] = Asset("asset-b", trashed: false);
-
-        var (code, stdout, stderr) = await RunAsync(null, "immich", "finalize");
-
-        code.Should().Be((int)ExitCode.Success);
-        stderr.Should().BeEmpty();
-        var lines = stdout.ReplaceLineEndings("\n").Split('\n');
-        lines[0].Should().Be($"{stopped.Id:N}  clip-b.mp4  taken 2025-05-01 14:30  sizes unknown");
-        stdout.Should().NotContain("clip-a.mp4");
-        _immich.Calls.Should().NotContain("get asset-a");
+        _immich.Calls.Should().NotContain("get asset-e");
     }
 
     [Fact]
@@ -417,47 +389,34 @@ public sealed class FinalizeCommandsTests : IDisposable
     }
 
     /// <summary>Immich as far as these commands reach it: the trash setting, one asset read per listed job, and the trash call, which they never make themselves.</summary>
-    private sealed class FakeImmich : IImmichClientFactory, IImmichClient
+    private sealed class FakeImmich : ImmichClientStub
     {
         private int _trashReads;
 
         public Dictionary<string, ImmichAsset> Assets { get; } = [];
-        public ImmichTrashSettings Trash { get; set; } = new(true, 30);
         public List<string> Calls { get; } = [];
         public List<string> Trashed { get; } = [];
 
         /// <summary>Reads of the trash setting that answer before the next one fails as an unreachable Immich would.</summary>
         public int? FailTrashSettingsAfter { get; set; }
 
-        public IImmichClient Create(ImmichSettings settings) => this;
-
-        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default)
+        public override Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default)
         {
             Calls.Add("trash-settings");
             if (FailTrashSettingsAfter is { } allowed && _trashReads++ >= allowed) throw new ImmichApiException("ImmichRequestFailed", "Immich did not answer.");
-            return Task.FromResult(Trash);
+            return base.GetTrashSettingsAsync(cancellationToken);
         }
 
-        public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default)
+        public override Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default)
         {
             Calls.Add($"get {assetId}");
             return Assets.TryGetValue(assetId, out var asset) ? Task.FromResult(asset) : throw new ImmichApiException("ImmichRequestFailed", "Not found.", 404);
         }
 
-        public Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default)
+        public override Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default)
         {
             Trashed.AddRange(assetIds);
             return Task.CompletedTask;
         }
-
-        public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task UpdateMetadataAsync(string assetId, ImmichMetadataUpdate update, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

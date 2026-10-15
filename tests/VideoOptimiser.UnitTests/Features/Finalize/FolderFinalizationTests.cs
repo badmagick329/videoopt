@@ -10,7 +10,6 @@ using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests.Features.Finalize;
 
-[Collection(ConsoleCapture.Collection)]
 public sealed class FolderFinalizationTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
@@ -163,8 +162,8 @@ public sealed class FolderFinalizationTests : IDisposable
     }
 
     /// <summary>
-    /// F2: a missing validation record used to end the whole batch with exit 3 and no summary. Now only its job stops, and the
-    /// rest finalise.
+    /// F2: a missing validation record used to end the whole batch with exit 3 and no summary. Now it is this job's result, so
+    /// the batch goes on to the rest (the batch itself is in <c>FinalizeCommandsTests</c>).
     /// </summary>
     [Theory]
     [InlineData(true)]
@@ -175,17 +174,11 @@ public sealed class FolderFinalizationTests : IDisposable
         var manifestPath = _manifests.GetPath(brokenOutput);
         if (deleted) File.Delete(manifestPath);
         else await File.WriteAllTextAsync(manifestPath, "{ not json");
-        var (_, good, goodSource, _) = await ReadyJobAsync("second.mp4");
-        var config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(config, $"database:\n  path: '{settings.Database.Path}'\n");
 
-        var (code, output, error) = await ConsoleCapture.RunCliWithInputAsync("y", null, "finalize", "--ready", "--config", config);
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, broken.Id, settings);
 
-        code.Should().Be((int)ExitCode.PartialSuccess);
-        error.Should().Contain($"The AV1's validation record is missing or unreadable: {manifestPath}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue drop {broken.Id:N}', then 'video-optimiser queue retry {broken.Id:N}'.");
-        output.Should().Contain("Finalised: 1.");
-        (await _repository.GetAsync(settings.Database.Path, good.Id))!.Status.Should().Be(JobStatus.Completed);
-        (await File.ReadAllTextAsync(goodSource)).Should().Be("av1");
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Be($"The AV1's validation record is missing or unreadable: {manifestPath}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue drop {broken.Id:N}', then 'video-optimiser queue retry {broken.Id:N}'.");
         (await _repository.GetAsync(settings.Database.Path, broken.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 

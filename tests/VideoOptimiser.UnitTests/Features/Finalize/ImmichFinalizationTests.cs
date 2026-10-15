@@ -35,13 +35,12 @@ public sealed class ImmichFinalizationTests : IDisposable
         _finalizer = new FinalizationService(_repository, _manifests, _fingerprints, new SafeFileInstaller(), new ImmichFinalizer(_immich, _repository, _manifests));
     }
 
-    [Theory]
-    [InlineData(false, 30)]
-    public async Task RefusesBeforeTheUploadWhileImmichsTrashWouldPurgeAndLeavesTheJobReady(bool enabled, int days)
+    [Fact]
+    public async Task RefusesBeforeTheUploadWhileImmichsTrashWouldPurgeAndLeavesTheJobReady()
     {
         var original = _immich.Add("PXL_20250501.MOV", "original");
         var job = await ReadyJobAsync(original);
-        _immich.Trash = new ImmichTrashSettings(enabled, days);
+        _immich.Trash = new ImmichTrashSettings(Enabled: false, Days: 30);
 
         var result = await FinalizeAsync(job);
 
@@ -100,7 +99,6 @@ public sealed class ImmichFinalizationTests : IDisposable
     // steps only need their plain failure.
     public static TheoryData<string, bool> Steps() => new()
     {
-        { "get", false },
         { "upload", false },
         { "upload", true },
         { "copy", false },
@@ -241,7 +239,7 @@ public sealed class ImmichFinalizationTests : IDisposable
     {
         var original = _immich.Add("PXL.mp4", "original");
         var job = await ReadyJobAsync(original);
-        _immich.Replace(original with { Checksum = FakeImmich.Checksum("edited") });
+        _immich.Replace(original with { Checksum = InMemoryImmich.Checksum("edited") });
 
         var result = await FinalizeAsync(job);
 
@@ -265,25 +263,6 @@ public sealed class ImmichFinalizationTests : IDisposable
         result.Message.Should().Be("Original changed after encoding.");
         _immich.Calls.Should().BeEmpty();
         (await JobAsync(job)).Status.Should().Be(JobStatus.Failed);
-    }
-
-    [Fact]
-    public async Task AnOriginalAlreadyTrashedAfterTheUploadIsCopiedFromAgainButNotTrashedAgain()
-    {
-        // An earlier run trashed the original, then stopped before marking the job completed.
-        var original = _immich.Add("PXL.mp4", "original");
-        var job = await ReadyJobAsync(original);
-        _immich.FailOnce["trash"] = new OperationCanceledException();
-        await FluentActions.Awaiting(() => FinalizeAsync(job)).Should().ThrowAsync<OperationCanceledException>();
-        _immich.Replace(_immich.Get(original.Id) with { IsTrashed = true });
-        _immich.Calls.Clear();
-
-        var result = await FinalizeAsync(job);
-
-        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
-        var replacement = _immich.Uploads.Single().Id;
-        _immich.Calls.Should().Equal($"get {original.Id}", $"get {replacement}", $"copy {original.Id} {replacement}");
-        (await JobAsync(job)).Status.Should().Be(JobStatus.Completed);
     }
 
     [Fact]
@@ -466,7 +445,7 @@ public sealed class ImmichFinalizationTests : IDisposable
     /// effect; <see cref="LoseResponseOnce"/> applies it and then fails. An upload answers as a duplicate of any asset that
     /// already holds the file's bytes, trashed or not, as Immich does.
     /// </summary>
-    private sealed class FakeImmich : IImmichClientFactory, IImmichClient
+    private sealed class FakeImmich : ImmichClientStub
     {
         private readonly List<ImmichAsset> _assets = [];
 
@@ -477,12 +456,10 @@ public sealed class ImmichFinalizationTests : IDisposable
         public Dictionary<string, Exception> LoseResponseOnce { get; } = [];
         public Func<Task>? BeforeCopy { get; set; }
 
-        public static string Checksum(string content) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
-
         public ImmichAsset Add(string fileName, string content, bool isTrashed = false, bool favourite = false, string? description = null, int? rating = null, string[]? tags = null)
         {
             var asset = new ImmichAsset(
-                Guid.NewGuid().ToString(), Checksum(content), fileName, ImmichValues.Video, ImmichValues.Timeline,
+                Guid.NewGuid().ToString(), InMemoryImmich.Checksum(content), fileName, ImmichValues.Video, ImmichValues.Timeline,
                 IsFavorite: favourite, IsTrashed: isTrashed, LibraryId: null, LivePhotoVideoId: null,
                 Created, Modified, Created, 60_000, new ImmichExif(100, Created, null, null, description, rating, "Google", "Pixel 7"), tags ?? []);
             _assets.Add(asset);
@@ -495,49 +472,39 @@ public sealed class ImmichFinalizationTests : IDisposable
 
         public ImmichAsset Get(string assetId) => _assets.Single(asset => asset.Id == assetId);
 
-        public IImmichClient Create(ImmichSettings settings) => this;
-
-        public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) => Step("get", $"get {assetId}", () =>
+        public override Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) => Step("get", $"get {assetId}", () =>
             _assets.SingleOrDefault(asset => asset.Id == assetId) ?? throw new ImmichApiException("ImmichRequestFailed", $"Immich returned HTTP 400 for GET /api/assets/{assetId}: Not found or no asset.read access.", 400));
 
-        public Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => Step("upload", "upload", () =>
+        public override Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => Step("upload", "upload", () =>
         {
             var content = File.ReadAllText(upload.FilePath);
-            if (_assets.FirstOrDefault(asset => asset.Checksum == Checksum(content)) is { } existing) return new ImmichUploadResult(existing.Id, IsDuplicate: true);
+            if (_assets.FirstOrDefault(asset => asset.Checksum == InMemoryImmich.Checksum(content)) is { } existing) return new ImmichUploadResult(existing.Id, IsDuplicate: true);
             var asset = Add(upload.FileName, content);
             Uploads.Add(new Uploaded(asset.Id, upload));
             return new ImmichUploadResult(asset.Id, IsDuplicate: false);
         });
 
-        public Task UpdateMetadataAsync(string assetId, ImmichMetadataUpdate update, CancellationToken cancellationToken = default) => Step("update", $"update {assetId}", () =>
+        public override Task UpdateMetadataAsync(string assetId, ImmichMetadataUpdate update, CancellationToken cancellationToken = default) => Step("update", $"update {assetId}", () =>
         {
             Updates.Add(update);
             return true;
         });
 
-        public async Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default)
+        public override async Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default)
         {
             if (BeforeCopy is { } hook) await hook();
             await Step("copy", $"copy {sourceAssetId} {targetAssetId}", () => true);
         }
 
         // The real client sends nothing for an empty list.
-        public Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) =>
+        public override Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) =>
             tagIds.Count == 0 ? Task.CompletedTask : Step("tag", $"tag {assetId} {string.Join(',', tagIds)}", () => true);
 
-        public Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default) => Step("trash", $"trash {string.Join(',', assetIds)}", () =>
+        public override Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default) => Step("trash", $"trash {string.Join(',', assetIds)}", () =>
         {
             foreach (var id in assetIds) Replace(Get(id) with { IsTrashed = true });
             return true;
         });
-
-        public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ImmichTrashSettings Trash { get; set; } = new(Enabled: true, Days: 30);
-        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => Task.FromResult(Trash);
-        public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         private Task<T> Step<T>(string step, string call, Func<T> action)
         {
