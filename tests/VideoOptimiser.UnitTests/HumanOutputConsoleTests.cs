@@ -1,6 +1,7 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Features.Finalize;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Cli;
@@ -112,7 +113,7 @@ public sealed class HumanOutputConsoleTests
         // The file and date are on screen while the download runs.
         output.ToString().Should().EndWith("[1] a.mp4  2022-11-30  ");
 
-        console.Report(new ImmichDiscoveryProgress.AssetIssue("b.txt", "asset 1 has an ID or file name that cannot be staged safely; it is left alone"));
+        console.Report(new ImmichProgress.AssetIssue("b.txt", "asset 1 has an ID or file name that cannot be staged safely; it is left alone"));
         console.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 1, Facts("hevc", 1920, 1080, 20_000_000, 2048), 1));
 
         output.ToString().Should().EndWith(
@@ -139,10 +140,10 @@ public sealed class HumanOutputConsoleTests
         var (console, output, _) = ImmichConsole();
         var job = Guid.Parse("11111111-2222-3333-4444-555555555555");
 
-        console.Report(new ImmichDiscoveryProgress.Restaging("a.mp4", job));
-        console.Report(new ImmichDiscoveryProgress.Restaged("a.mp4", null));
-        console.Report(new ImmichDiscoveryProgress.Restaging("b.mp4", job));
-        console.Report(new ImmichDiscoveryProgress.Restaged("b.mp4", "Immich did not return the video again; the job is marked failed"));
+        console.Report(new ImmichProgress.Restaging("a.mp4", job));
+        console.Report(new ImmichProgress.Restaged("a.mp4", null));
+        console.Report(new ImmichProgress.Restaging("b.mp4", job));
+        console.Report(new ImmichProgress.Restaged("b.mp4", "Immich did not return the video again; the job is marked failed"));
 
         output.ToString().Should().Be(
             "Downloading again: a.mp4 (job 11111111222233334444555555555555 is open but its staged copy is missing)\n" +

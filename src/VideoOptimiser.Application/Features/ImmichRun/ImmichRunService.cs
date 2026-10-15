@@ -4,7 +4,7 @@ using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain.Jobs;
 
-namespace VideoOptimiser.Infrastructure.Immich;
+namespace VideoOptimiser.Application.Features.ImmichRun;
 
 /// <summary>
 /// The steps of <c>immich run</c> before processing. The guard comes first, so a re-uploaded original is back in the trash
@@ -13,7 +13,7 @@ namespace VideoOptimiser.Infrastructure.Immich;
 /// </summary>
 public sealed class ImmichRunService(IImmichClientFactory clients, IImmichReuploadGuard guard, IImmichDiscoveryService discovery, IQueueService queue) : IImmichRunService
 {
-    public async Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichDiscoveryProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
+    public async Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
     {
         await ImmichTrash.RequireOnAsync(clients.Create(settings.Immich), cancellationToken);
         var guarded = await guard.CheckAsync(databasePath, settings, guardProgress, cancellationToken);

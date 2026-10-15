@@ -1,28 +1,30 @@
-using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
-using VideoOptimiser.Application.Immich;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
 using static CliLocks;
 using static CliOutput;
 
+namespace VideoOptimiser.Cli.Features.ImmichRun;
+
 /// <summary>
-/// The <c>immich</c> commands. Each round runs by hand: <c>immich run</c> converts, the user reviews, <c>immich finalize</c>
+/// <c>immich run</c>. Each round runs by hand: <c>immich run</c> converts, the user reviews, <c>immich finalize</c>
 /// replaces the originals in Immich.
 /// </summary>
-internal static partial class CliApplication
+internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IImmichRunService run)
 {
-    private static async Task<int> RunImmichRunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
+    /// <param name="services">For the run code <c>run</c> shares until it moves to its own slice (VOPT-101): the run lock
+    /// in <c>CliLocks</c>, and the banner and the conversion in <c>CliApplication</c>.</param>
+    public async Task<int> RunAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
-        if (!RequireImmich(configuration) || ReportInvalidSettings(services.GetRequiredService<ISettingsValidator>(), configuration)) return (int)ExitCode.InvalidConfiguration;
+        if (!RequireImmich(configuration) || ReportInvalidSettings(settingsValidator, configuration)) return (int)ExitCode.InvalidConfiguration;
         // Before discovery, which marks active jobs interrupted and queues new ones.
         using var runLock = TakeRunLock(services, configuration, LockHolders.ImmichRun);
         if (runLock is null) return (int)ExitCode.GeneralFailure;
         var (limit, modeOverride) = (command.Limit, command.ModeOverride);
         // Discovery downloads originals, so the banner comes first.
-        await PrintRunBannerAsync(services, configuration, modeOverride, cancellationToken);
+        await CliApplication.PrintRunBannerAsync(services, configuration, modeOverride, cancellationToken);
         var settings = configuration.Settings;
         // Guard reports are printed as they arrive and kept: when a later error ends the run, the next run sees the trashed
         // re-uploads as trashed and stays silent, so this run is the only one that can tell the user to delete them.
@@ -37,7 +39,7 @@ internal static partial class CliApplication
         ImmichRunPreparation preparation;
         try
         {
-            preparation = await services.GetRequiredService<IImmichRunService>().PrepareAsync(settings.Database.Path, settings, limit, guardProgress, discoveryProgress, modeOverridden: modeOverride is not null, cancellationToken);
+            preparation = await run.PrepareAsync(settings.Database.Path, settings, limit, guardProgress, discoveryProgress, modeOverridden: modeOverride is not null, cancellationToken);
         }
         catch
         {
@@ -63,10 +65,10 @@ internal static partial class CliApplication
         bool workerHandled;
         try
         {
-            (ready, _, failures, workerUnreachable, stopped, workerHandled) = await ProcessPreparedJobsAsync(services, configuration, command, preparation.Queue, (ready, skipped, failures) =>
+            (ready, _, failures, workerUnreachable, stopped, workerHandled) = await CliApplication.ProcessPreparedJobsAsync(services, configuration, command, preparation.Queue, (ready, skipped, failures) =>
             {
                 Console.WriteLine(OutcomeSummary.Run(ready, skipped, failures.Length, OutputStyle));
-                PrintFailedJobs(failures);
+                CliApplication.PrintFailedJobs(failures);
                 PrintGuardSummary(guard);
                 if (ready > 0) Console.WriteLine("Next: review the outputs, then run 'video-optimiser immich finalize'.");
             }, cancellationToken);

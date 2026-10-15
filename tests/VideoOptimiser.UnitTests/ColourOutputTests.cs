@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using VideoOptimiser.Application.Features.Finalize;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli;
@@ -94,14 +95,14 @@ public sealed partial class ColourOutputTests
     [Fact]
     public void DiscoveryReadsTheSameWithAndWithoutColour()
     {
-        ImmichDiscoveryProgress[] events =
+        ImmichProgress[] events =
         [
             new ImmichDiscoveryProgress.Started(null, 2, 5, 1),
-            new ImmichDiscoveryProgress.Restaging("r.mp4", Guid.Empty),
-            new ImmichDiscoveryProgress.Restaged("r.mp4", "gone"),
+            new ImmichProgress.Restaging("r.mp4", Guid.Empty),
+            new ImmichProgress.Restaged("r.mp4", "gone"),
             new ImmichDiscoveryProgress.CandidateDownloading(1, "a.mp4", new DateTime(2025, 7, 18)),
             new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Queued, null, null, 3, new CandidateFacts("hevc", 1920, 1080, 8_100_000, 10), 1),
-            new ImmichDiscoveryProgress.AssetIssue("b.txt", "cannot be staged"),
+            new ImmichProgress.AssetIssue("b.txt", "cannot be staged"),
             new ImmichDiscoveryProgress.AssetExcluded("fav.mp4", "0f1e", "is a favourite")
         ];
 
@@ -149,7 +150,7 @@ public sealed partial class ColourOutputTests
         OutcomeSummary.Run(1, 2, 3, TerminalStyle.Plain).Should().Be("Ready to finalise: 1. Not worth converting: 2. Failed: 3.");
     }
 
-    private static (string Output, string Error) RenderDiscovery(ImmichDiscoveryProgress[] events, TerminalStyle style)
+    private static (string Output, string Error) RenderDiscovery(ImmichProgress[] events, TerminalStyle style)
     {
         var output = new StringWriter { NewLine = "\n" };
         var error = new StringWriter { NewLine = "\n" };

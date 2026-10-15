@@ -5,6 +5,7 @@ using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Features.Finalize;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Features.Validate;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
@@ -13,14 +14,13 @@ using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Features.Finalize;
-using VideoOptimiser.Infrastructure.Immich;
 using VideoOptimiser.Infrastructure.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.Processing;
 using VideoOptimiser.Infrastructure.TemporaryOutputs;
 using VideoOptimiser.Infrastructure.Tools;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.ImmichRun;
 
 /// <summary>
 /// <c>immich run</c> then <c>immich finalize</c> through the real services, with Immich and the encoder faked: what the CLI
@@ -64,7 +64,7 @@ public sealed class ImmichRunTests : IDisposable
         _run = new ImmichRunService(
             _immich,
             new ImmichReuploadGuard(_immich, _repository),
-            new ImmichDiscoveryService(_immich, _repository, _ => new HevcProbe(), fingerprints, () => Now),
+            new ImmichDiscoveryService(_immich, _repository, _ => new HevcProbe(), fingerprints, new ImmichRestaging(_immich, _repository, () => Now), () => Now),
             _queue);
         _finalizer = new FinalizationService(_repository, manifests, fingerprints, new SafeFileInstaller(), new ImmichFinalizer(_immich, _repository, manifests));
     }

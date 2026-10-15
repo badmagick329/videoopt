@@ -4,6 +4,7 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain;
@@ -390,7 +391,7 @@ public sealed class RunCommandTests : IDisposable
     /// <summary>An <c>immich run</c> whose guard and search found nothing, with <paramref name="queue"/> to convert.</summary>
     private sealed class FixedImmichPreparation(QueuePreparationResult queue) : IImmichRunService
     {
-        public Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichDiscoveryProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default) =>
+        public Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default) =>
             Task.FromResult(new ImmichRunPreparation(new ImmichReuploadGuardResult(0, [], [], []), new ImmichDiscoveryResult([], 0, 0, 0, 0, 0, 0, 0, 0, 0, []), queue));
     }
 
@@ -399,7 +400,7 @@ public sealed class RunCommandTests : IDisposable
     {
         public string? Holder { get; private set; }
 
-        public Task<ImmichRunPreparation> PrepareAsync(string ignored, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichDiscoveryProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
+        public Task<ImmichRunPreparation> PrepareAsync(string ignored, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
         {
             Holder = DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath))?.Command;
             throw new OperationCanceledException();

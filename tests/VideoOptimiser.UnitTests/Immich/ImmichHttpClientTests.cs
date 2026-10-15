@@ -8,7 +8,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Infrastructure.Immich;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Immich;
 
 public sealed class ImmichHttpClientTests : IDisposable
 {

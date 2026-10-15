@@ -4,7 +4,7 @@ using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 
-namespace VideoOptimiser.Infrastructure.Immich;
+namespace VideoOptimiser.Application.Features.ImmichRun;
 
 /// <summary>
 /// Catches originals the phone uploaded again after conversion. The phone decides "already backed up" by SHA-1, so once

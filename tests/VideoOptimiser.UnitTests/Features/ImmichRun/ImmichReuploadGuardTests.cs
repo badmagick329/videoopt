@@ -1,12 +1,12 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Immich;
 using VideoOptimiser.Infrastructure.Persistence;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.ImmichRun;
 
 public sealed class ImmichReuploadGuardTests : IDisposable
 {

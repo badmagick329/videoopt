@@ -4,15 +4,15 @@ using System.Text;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain.Jobs;
-using VideoOptimiser.Infrastructure.Immich;
 using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
-namespace VideoOptimiser.UnitTests;
+namespace VideoOptimiser.UnitTests.Features.ImmichRun;
 
 public sealed class ImmichDiscoveryServiceTests : IDisposable
 {
@@ -79,9 +79,9 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
             _ => asset with { LibraryId = Guid.NewGuid().ToString() }
         });
 
-        var events = new List<ImmichDiscoveryProgress>();
+        var events = new List<ImmichProgress>();
 
-        var result = await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+        var result = await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
 
         result.Excluded.Should().Be(1);
         result.Queued.Should().BeEmpty();
@@ -613,9 +613,9 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         var gone = _immich.Add("c-gone.mp4", "hevc gone");
         _immich.Failures[gone.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.");
         _immich.Add("d-good.mp4", "hevc good");
-        var events = new List<ImmichDiscoveryProgress>();
+        var events = new List<ImmichProgress>();
 
-        var result = await DiscoverAsync(limit: 3, new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+        var result = await DiscoverAsync(limit: 3, new SynchronousProgress<ImmichProgress>(events.Add));
 
         // notes.txt needs no download, so it is counted and never listed.
         result.Ineligible.Should().Be(1);
@@ -656,9 +656,9 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         _settings.Eligibility = new EligibilitySettings { Rules = [new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "10Mbps", MinimumFileSize = "20B" }, HevcRule()] };
         _immich.Add("a-h264.mp4", "h264 tiny");
         _immich.Add("b-hevc.mp4", "hevc small");
-        var events = new List<ImmichDiscoveryProgress>();
+        var events = new List<ImmichProgress>();
 
-        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+        await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
 
         events.OfType<ImmichDiscoveryProgress.Started>().Single().RuleCount.Should().Be(2);
         var judged = events.OfType<ImmichDiscoveryProgress.CandidateJudged>().ToArray();
@@ -675,9 +675,9 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         var current = _immich.Add("current.mp4", "h264 current");
         await _repository.PutImmichSkipAsync(_settings.Database.Path, new ImmichSkipRecord(stale.Id, stale.Checksum, "an-older-rules-fingerprint", "codec h264", Now));
         await _repository.PutImmichSkipAsync(_settings.Database.Path, new ImmichSkipRecord(current.Id, current.Checksum, EligibilityEvaluator.RulesFingerprint(_settings.Eligibility), "codec h264", Now));
-        var events = new List<ImmichDiscoveryProgress>();
+        var events = new List<ImmichProgress>();
 
-        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+        await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
 
         events.First().Should().Be(new ImmichDiscoveryProgress.Started(null, 1, 1, 1));
         events.OfType<ImmichDiscoveryProgress.CandidateDownloading>().Select(candidate => candidate.FileName).Should().Equal("stale.mp4");
@@ -689,10 +689,10 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         var small = _immich.Add("small.mp4", "h264 small");
         _immich.Replace(small with { Exif = small.Exif with { FileSizeInBytes = 3 } });
         await _repository.PutImmichSkipAsync(_settings.Database.Path, new ImmichSkipRecord(small.Id, small.Checksum, "an-older-rules-fingerprint", "codec h264", Now));
-        var events = new List<ImmichDiscoveryProgress>();
+        var events = new List<ImmichProgress>();
 
         await DiscoverAsync();
-        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+        await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
 
         events.OfType<ImmichDiscoveryProgress.Started>().Single().StaleSkips.Should().Be(0);
         events.OfType<ImmichDiscoveryProgress.CandidateDownloading>().Should().BeEmpty();
@@ -721,15 +721,15 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         var first = await CreateJobAsync(restored, JobStatus.Queued, staged: false);
         var second = await CreateJobAsync(vanished, JobStatus.Queued, staged: false);
         _immich.Failures[vanished.Id] = new ImmichApiException("ImmichRequestFailed", "Immich answered 404.", 404);
-        var events = new List<ImmichDiscoveryProgress>();
+        var events = new List<ImmichProgress>();
 
-        await DiscoverAsync(progress: new SynchronousProgress<ImmichDiscoveryProgress>(events.Add));
+        await DiscoverAsync(progress: new SynchronousProgress<ImmichProgress>(events.Add));
 
         events.Take(4).Should().Equal(
-            new ImmichDiscoveryProgress.Restaging("restored.mp4", first.Id),
-            new ImmichDiscoveryProgress.Restaged("restored.mp4", null),
-            new ImmichDiscoveryProgress.Restaging("vanished.mp4", second.Id),
-            new ImmichDiscoveryProgress.Restaged("vanished.mp4", "Immich did not return the video again (Immich answered 404); the job is marked failed"));
+            new ImmichProgress.Restaging("restored.mp4", first.Id),
+            new ImmichProgress.Restaged("restored.mp4", null),
+            new ImmichProgress.Restaging("vanished.mp4", second.Id),
+            new ImmichProgress.Restaged("vanished.mp4", "Immich did not return the video again (Immich answered 404); the job is marked failed"));
     }
 
     private sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
@@ -739,8 +739,8 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private Task<ImmichDiscoveryResult> DiscoverAsync(int? limit = null, IProgress<ImmichDiscoveryProgress>? progress = null, IJobRepository? repository = null) =>
-        new ImmichDiscoveryService(_immich, repository ?? _repository, _ => new ContentProbe(), new FileFingerprintService(), () => Now)
+    private Task<ImmichDiscoveryResult> DiscoverAsync(int? limit = null, IProgress<ImmichProgress>? progress = null, IJobRepository? repository = null) =>
+        new ImmichDiscoveryService(_immich, repository ?? _repository, _ => new ContentProbe(), new FileFingerprintService(), new ImmichRestaging(_immich, repository ?? _repository, () => Now), () => Now)
             .DiscoverAsync(_settings.Database.Path, _settings, limit, progress);
 
     /// <summary>Reads open jobs as if there were none yet, as discovery would just before a retry from another terminal queued one.</summary>

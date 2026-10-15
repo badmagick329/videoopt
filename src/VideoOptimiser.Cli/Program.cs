@@ -11,6 +11,7 @@ using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
 using VideoOptimiser.Cli.Features.Finalize;
+using VideoOptimiser.Cli.Features.ImmichRun;
 using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.RemoteSetup;
 using VideoOptimiser.Cli.Features.Validate;
@@ -121,7 +122,7 @@ internal static partial class CliApplication
             CliCommandKind.Validate => await services.GetRequiredService<ValidateCommand>().RunAsync(configuration, command.JobId!, cancellationToken),
             CliCommandKind.Finalize => await services.GetRequiredService<FinalizeCommands>().FinalizeAsync(configuration, command, cancellationToken),
             CliCommandKind.Cleanup => await services.GetRequiredService<CleanupCommand>().RunAsync(configuration, command.DryRun, cancellationToken),
-            CliCommandKind.ImmichRun => await RunGuardedAsync(services, configuration, command, () => RunImmichRunAsync(services, configuration, command, cancellationToken)),
+            CliCommandKind.ImmichRun => await RunGuardedAsync(services, configuration, command, () => services.GetRequiredService<ImmichRunCommand>().RunAsync(services, configuration, command, cancellationToken)),
             CliCommandKind.ImmichFinalize => await services.GetRequiredService<FinalizeCommands>().ImmichFinalizeAsync(configuration, cancellationToken),
             CliCommandKind.Calibrate => await services.GetRequiredService<CalibrateCommand>().RunAsync(configuration, command.Json, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
@@ -132,7 +133,7 @@ internal static partial class CliApplication
     /// Prints <see cref="RunBanner"/> before any download or encoding, so a config still set to <c>remoteSsh</c> is noticed
     /// before it costs anything. A retained managed worker comes from the local state file, with no Hetzner API call.
     /// </summary>
-    private static async Task PrintRunBannerAsync(IServiceProvider services, LoadedConfiguration configuration, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
+    internal static async Task PrintRunBannerAsync(IServiceProvider services, LoadedConfiguration configuration, ProcessingModeOverride? modeOverride, CancellationToken cancellationToken)
     {
         var lifecycle = services.GetRequiredService<IRemoteWorkerLifecycle>();
         var worker = lifecycle.IsManaged(configuration.Settings)
@@ -148,7 +149,7 @@ internal static partial class CliApplication
     /// </summary>
     /// <param name="beforeWorker">Runs after the preparation's lines and before the worker check, and returns the preparation
     /// to convert: <c>run</c> readies its Immich videos there (R8).</param>
-    private static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken, Func<QueuePreparationResult, Task<QueuePreparationResult>>? beforeWorker = null)
+    internal static async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(IServiceProvider services, LoadedConfiguration configuration, CliCommand command, QueuePreparationResult preparation, Action<int, int, FailedQueueJob[]> report, CancellationToken cancellationToken, Func<QueuePreparationResult, Task<QueuePreparationResult>>? beforeWorker = null)
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(JobCompatibility.SkippedMessage(job));
         // F8 (VOPT-70): finalize checks whether anything moved and resumes, so the run leaves these jobs alone.
@@ -281,7 +282,7 @@ internal static partial class CliApplication
 
     private static FailedQueueJob ToFailedQueueJob(JobRecord job, string message) => new(job.Id, job.SourcePath, job.FailureCategory ?? "ProcessingFailed", job.FailureMessage ?? message);
 
-    private static void PrintFailedJobs(FailedQueueJob[] failedJobs)
+    internal static void PrintFailedJobs(FailedQueueJob[] failedJobs)
     {
         if (failedJobs.Length == 0) return;
         Console.WriteLine();

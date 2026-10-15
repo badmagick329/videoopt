@@ -64,7 +64,7 @@ internal static partial class CliApplication
     private static async Task<ImmichRestageResult> RestageAsync(IServiceProvider services, LoadedConfiguration configuration, JobRecord[] jobs, CancellationToken cancellationToken)
     {
         var progress = new ImmichDiscoveryConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
-        var restage = await services.GetRequiredService<IImmichDiscoveryService>().RestageMissingAsync(configuration.Settings.Database.Path, configuration.Settings, jobs, progress, cancellationToken);
+        var restage = await services.GetRequiredService<IImmichRestaging>().RestageMissingAsync(configuration.Settings.Database.Path, configuration.Settings, jobs, progress, cancellationToken);
         if (restage.Unusable is { } reason)
         {
             progress.FinishLine();

@@ -1,12 +1,15 @@
-namespace VideoOptimiser.Application.Immich;
+using VideoOptimiser.Application.Immich;
+
+namespace VideoOptimiser.Application.Features.ImmichRun;
 
 /// <summary>
 /// What Immich discovery tells its caller as it works. The events carry facts, not text, so the CLI owns the layout and
 /// every wording the user reads sits in one place. A candidate is a video downloaded so ffprobe can judge it: it is
 /// announced with <see cref="CandidateDownloading"/> before the download starts, which can take minutes, and settled with
-/// <see cref="CandidateJudged"/>.
+/// <see cref="CandidateJudged"/>. Discovery restages first, so its events include <see cref="ImmichProgress.Restaging"/>
+/// and <see cref="ImmichProgress.Restaged"/>, which <c>run</c> shares.
 /// </summary>
-public abstract record ImmichDiscoveryProgress
+public abstract record ImmichDiscoveryProgress : ImmichProgress
 {
     private ImmichDiscoveryProgress() { }
 
@@ -15,12 +18,6 @@ public abstract record ImmichDiscoveryProgress
     /// <param name="StaleSkips">Recorded skips made under other eligibility rules; each is downloaded and judged again.</param>
     /// <param name="RuleCount">Configured eligibility rules; with one, a rule's number says nothing and is left out.</param>
     public sealed record Started(int? Limit, int AlreadyQueued, int StaleSkips, int RuleCount) : ImmichDiscoveryProgress;
-
-    /// <summary>An open job lost its staged copy and it is being downloaded again.</summary>
-    public sealed record Restaging(string FileName, Guid JobId) : ImmichDiscoveryProgress;
-
-    /// <param name="Problem">Null when the copy is back; otherwise why the job was failed instead.</param>
-    public sealed record Restaged(string FileName, string? Problem) : ImmichDiscoveryProgress;
 
     public sealed record CandidateDownloading(int Number, string FileName, DateTime Taken) : ImmichDiscoveryProgress;
 
@@ -33,9 +30,6 @@ public abstract record ImmichDiscoveryProgress
 
     /// <summary>A search result the re-check refused: Immich's filter let through an asset it should not have.</summary>
     public sealed record AssetExcluded(string FileName, string AssetId, string Reason) : ImmichDiscoveryProgress;
-
-    /// <summary>A problem with an asset that needed no download to see, such as a name that cannot be staged safely.</summary>
-    public sealed record AssetIssue(string FileName, string Message) : ImmichDiscoveryProgress;
 }
 
 /// <summary>

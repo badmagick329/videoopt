@@ -1,5 +1,6 @@
 using System.Globalization;
 using VideoOptimiser.Application.Eligibility;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Domain;
 
@@ -15,7 +16,7 @@ namespace VideoOptimiser.Cli;
 /// others were skipped for being under 2 GiB, when the difference was the codec. On a terminal the explanation is dim and each
 /// verdict has a colour (queued green, skip yellow, issue red), so the few lines that matter stand out of a long run.
 /// </summary>
-internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle outputStyle, TextWriter error, TerminalStyle errorStyle) : IProgress<ImmichDiscoveryProgress>
+internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle outputStyle, TextWriter error, TerminalStyle errorStyle) : IProgress<ImmichProgress>
 {
     private readonly object _gate = new();
     private int? _limit;
@@ -24,7 +25,7 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
     private string? _prefix;
     private bool _lineOpen;
 
-    public void Report(ImmichDiscoveryProgress value)
+    public void Report(ImmichProgress value)
     {
         lock (_gate)
         {
@@ -55,10 +56,10 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
                         output.WriteLine($"{OutputWords.Count(started.StaleSkips, "video was", "videos were")} skipped under different eligibility rules; each is checked again when the search reaches it.");
                     output.WriteLine();
                     break;
-                case ImmichDiscoveryProgress.Restaging restaging:
+                case ImmichProgress.Restaging restaging:
                     output.WriteLine($"Downloading again: {restaging.FileName} (job {restaging.JobId:N} is open but its staged copy is missing)");
                     break;
-                case ImmichDiscoveryProgress.Restaged restaged:
+                case ImmichProgress.Restaged restaged:
                     output.WriteLine(restaged.Problem is null ? outputStyle.Green("  done: the staged copy is back") : outputStyle.Red($"  issue: {restaged.Problem}"));
                     break;
                 case ImmichDiscoveryProgress.CandidateDownloading candidate:
@@ -76,7 +77,7 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
                 case ImmichDiscoveryProgress.AssetExcluded excluded:
                     error.WriteLine(errorStyle.Red($"Excluded: {excluded.FileName} (asset {excluded.AssetId}) {excluded.Reason}; left alone."));
                     break;
-                case ImmichDiscoveryProgress.AssetIssue issue:
+                case ImmichProgress.AssetIssue issue:
                     output.WriteLine(outputStyle.Red($"Issue: {issue.FileName}: {issue.Message}."));
                     break;
             }

@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli;
@@ -255,7 +256,7 @@ public sealed class CtrlCRunTests : IDisposable
     /// <summary>Ctrl+C during Immich discovery, which observes the run's token as the real service does.</summary>
     private sealed class PressingDiscovery(RunStop stop) : IImmichRunService
     {
-        public Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichDiscoveryProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
+        public Task<ImmichRunPreparation> PrepareAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? guardProgress = null, IProgress<ImmichProgress>? discoveryProgress = null, bool modeOverridden = false, CancellationToken cancellationToken = default)
         {
             stop.Press();
             cancellationToken.ThrowIfCancellationRequested();

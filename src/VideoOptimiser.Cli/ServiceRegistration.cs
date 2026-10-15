@@ -11,6 +11,7 @@ using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
 using VideoOptimiser.Cli.Features.Doctor;
 using VideoOptimiser.Cli.Features.Finalize;
+using VideoOptimiser.Cli.Features.ImmichRun;
 using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.RemoteSetup;
 using VideoOptimiser.Cli.Features.Validate;
@@ -54,6 +55,9 @@ internal static class ServiceRegistration
         services.AddSingleton<IDatabaseLocks, DatabaseLocks>();
         services.AddSingleton<IJobRepository, SqliteJobRepository>();
         services.AddSingleton<IImmichClientFactory, ImmichClientFactory>();
+        // Shared: `run` and `immich run` both restage a job's lost original before converting it. A lambda, so the
+        // optional clock keeps its default.
+        services.AddSingleton<IImmichRestaging>(provider => new ImmichRestaging(provider.GetRequiredService<IImmichClientFactory>(), provider.GetRequiredService<IJobRepository>()));
         services.AddSingleton<IFileReadinessService, FileReadinessService>();
         services.AddSingleton<Func<string, IMediaProbe>>(_ => ffprobePath => new FfprobeMediaProbe(ffprobePath));
         services.AddSingleton<Func<string, IMediaTimelineProbe>>(_ => ffprobePath => new FfprobeMediaTimelineProbe(ffprobePath));
@@ -77,9 +81,4 @@ internal static class ServiceRegistration
         .AddSingleton<IJobProcessor, JobProcessor>()
         .AddSingleton<RunStop>()
         .AddSingleton<RunWorkerState>();
-
-    public static IServiceCollection AddImmichRun(this IServiceCollection services) => services
-        .AddSingleton<IImmichDiscoveryService>(provider => new ImmichDiscoveryService(provider.GetRequiredService<IImmichClientFactory>(), provider.GetRequiredService<IJobRepository>(), provider.GetRequiredService<Func<string, IMediaProbe>>(), provider.GetRequiredService<IFileFingerprintService>()))
-        .AddSingleton<IImmichReuploadGuard>(provider => new ImmichReuploadGuard(provider.GetRequiredService<IImmichClientFactory>(), provider.GetRequiredService<IJobRepository>()))
-        .AddSingleton<IImmichRunService, ImmichRunService>();
 }

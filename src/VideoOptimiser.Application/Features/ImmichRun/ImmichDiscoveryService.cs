@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Immich;
@@ -7,7 +6,7 @@ using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain.Jobs;
 
-namespace VideoOptimiser.Infrastructure.Immich;
+namespace VideoOptimiser.Application.Features.ImmichRun;
 
 /// <summary>
 /// Finds old Immich videos worth converting, stages each one locally and queues it as an Immich job. Eligibility needs a
@@ -19,11 +18,12 @@ public sealed class ImmichDiscoveryService(
     IJobRepository jobs,
     Func<string, IMediaProbe> mediaProbeFactory,
     IFileFingerprintService fingerprints,
+    IImmichRestaging restaging,
     Func<DateTimeOffset>? utcNow = null) : IImmichDiscoveryService
 {
     private readonly Func<DateTimeOffset> _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
 
-    public async Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ImmichDiscoveryProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<ImmichDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ImmichProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var client = clients.Create(settings.Immich);
         var cutoff = _utcNow().AddDays(-settings.Immich.MinimumAgeDays);
@@ -42,7 +42,7 @@ public sealed class ImmichDiscoveryService(
                 .Where(job => job.SourceKind == JobSourceKind.Immich && job.Status is not (JobStatus.ReadyToFinalize or JobStatus.Finalizing) && job.ResumeStatus != JobStatus.Finalizing && !job.Held))
             .Take(limit ?? int.MaxValue);
         var restageFailed = new List<JobRecord>();
-        var restaged = await RestageAsync(client, databasePath, settings, restageCandidates, restageFailed, progress, cancellationToken);
+        var restaged = await restaging.RestageAsync(client, databasePath, settings, restageCandidates, restageFailed, progress, cancellationToken);
         var issues = restageFailed.Count;
         var history = await ImmichHistory.LoadAsync(jobs, databasePath, cancellationToken);
         var skips = await jobs.ListImmichSkipsAsync(databasePath, cancellationToken);
@@ -94,7 +94,7 @@ public sealed class ImmichDiscoveryService(
             if (StagedPath(settings.Immich.StagingDirectory, asset) is not { } stagedPath)
             {
                 issues++;
-                progress?.Report(new ImmichDiscoveryProgress.AssetIssue(asset.OriginalFileName, $"asset {asset.Id} has an ID or file name that cannot be staged safely; it is left alone"));
+                progress?.Report(new ImmichProgress.AssetIssue(asset.OriginalFileName, $"asset {asset.Id} has an ID or file name that cannot be staged safely; it is left alone"));
                 continue;
             }
 
@@ -108,7 +108,7 @@ public sealed class ImmichDiscoveryService(
                 await client.DownloadOriginalAsync(asset.Id, stagedPath, cancellationToken: cancellationToken);
 
                 // The checksum is the job's identity and what the re-upload guard matches on, so it must describe these bytes.
-                if (!string.Equals(await Sha1Base64Async(stagedPath, cancellationToken), asset.Checksum, StringComparison.Ordinal))
+                if (!string.Equals(await ImmichStaging.Sha1Base64Async(stagedPath, cancellationToken), asset.Checksum, StringComparison.Ordinal))
                 {
                     issues++;
                     progress?.Report(new ImmichDiscoveryProgress.CandidateJudged(CandidateOutcome.Issue, "the download does not match Immich's checksum", RetryNextRun, 0));
@@ -165,7 +165,7 @@ public sealed class ImmichDiscoveryService(
             }
             finally
             {
-                if (!keepStaged) DeleteStaged(stagedPath);
+                if (!keepStaged) ImmichStaging.DeleteStaged(stagedPath);
             }
         }
 
@@ -175,94 +175,6 @@ public sealed class ImmichDiscoveryService(
 
     // An issue is not recorded as a skip, so the next run downloads the video again.
     private const string RetryNextRun = "it will be tried again next run";
-
-    /// <summary>
-    /// Downloads again the staged original of each open job that lost it: a job <c>queue retry</c> created after
-    /// <c>cleanup</c> deleted the copy, or one whose copy was deleted by hand. Such a job could never run, and discovery
-    /// skips an asset with an open job, so nothing else would bring the file back. The download must match the job's
-    /// checksum, so the job converts the bytes it was created for. When Immich no longer returns them, the job fails as
-    /// <c>SourceMissing</c>, which leaves the asset free for discovery. <c>immich run</c> passes the open jobs its limit takes;
-    /// <c>run</c> passes the jobs it is about to convert. Only Immich's answer that the asset is gone (HTTP 400 or 404) or
-    /// holds other bytes fails a job; any other failure means Immich can't be used now, and the jobs left stay queued.
-    /// </summary>
-    public async Task<ImmichRestageResult> RestageMissingAsync(string databasePath, AppSettings settings, IReadOnlyCollection<JobRecord> jobs, IProgress<ImmichDiscoveryProgress>? progress = null, CancellationToken cancellationToken = default)
-    {
-        // Owned here, so the jobs failed before Immich stopped answering are still reported.
-        var failed = new List<JobRecord>();
-        try
-        {
-            return new ImmichRestageResult(await RestageAsync(clients.Create(settings.Immich), databasePath, settings, jobs, failed, progress, cancellationToken), failed);
-        }
-        catch (ImmichApiException exception)
-        {
-            return new ImmichRestageResult(0, failed, exception.Message.TrimEnd('.'));
-        }
-    }
-
-    /// <param name="failed">Receives each job marked failed, as it is.</param>
-    private async Task<int> RestageAsync(IImmichClient client, string databasePath, AppSettings settings, IEnumerable<JobRecord> candidates, List<JobRecord> failed, IProgress<ImmichDiscoveryProgress>? progress, CancellationToken cancellationToken)
-    {
-        var restaged = 0;
-        foreach (var job in candidates)
-        {
-            if (File.Exists(job.SourcePath)) continue;
-            if (job.ImmichChecksum is null || !ImmichStaging.IsStagedOriginal(settings.Immich.StagingDirectory, job.ImmichAssetId, job.SourcePath))
-            {
-                await FailMissingAsync(databasePath, job, "The staged original is missing, and its path is not in the asset's folder under immich.stagingDirectory, so it is not downloaded again.", failed, cancellationToken);
-                progress?.Report(new ImmichDiscoveryProgress.AssetIssue(Path.GetFileName(job.SourcePath), $"job {job.Id:N} is open but its staged copy is missing and cannot be downloaded again; the job is marked failed"));
-                continue;
-            }
-
-            var path = Path.GetFullPath(job.SourcePath);
-            var keep = false;
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                progress?.Report(new ImmichDiscoveryProgress.Restaging(Path.GetFileName(path), job.Id));
-                await client.DownloadOriginalAsync(job.ImmichAssetId!, path, cancellationToken: cancellationToken);
-                if (!string.Equals(await Sha1Base64Async(path, cancellationToken), job.ImmichChecksum, StringComparison.Ordinal))
-                {
-                    await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich asset {job.ImmichAssetId} no longer matches the checksum this job was created for.", failed, cancellationToken);
-                    progress?.Report(new ImmichDiscoveryProgress.Restaged(Path.GetFileName(path), "the download no longer matches the checksum this job was created for; the job is marked failed"));
-                    continue;
-                }
-
-                keep = true;
-                restaged++;
-                progress?.Report(new ImmichDiscoveryProgress.Restaged(Path.GetFileName(path), null));
-            }
-            // The asset is gone. A server error or a rate limit says nothing about the asset, so it ends the restaging instead.
-            catch (ImmichApiException exception) when (exception.StatusCode is 400 or 404)
-            {
-                await FailMissingAsync(databasePath, job, $"The staged original is missing, and Immich did not return asset {job.ImmichAssetId} again: {exception.Message}", failed, cancellationToken);
-                progress?.Report(new ImmichDiscoveryProgress.Restaged(Path.GetFileName(path), $"Immich did not return the video again ({exception.Message.TrimEnd('.')}); the job is marked failed"));
-            }
-            finally
-            {
-                if (!keep) DeleteStaged(path);
-            }
-        }
-
-        return restaged;
-    }
-
-    private async Task FailMissingAsync(string databasePath, JobRecord job, string message, List<JobRecord> failed, CancellationToken cancellationToken)
-    {
-        job.Status = JobStatus.Failed;
-        job.ResumeStatus = null;
-        job.FailureCategory = FailureCategories.SourceMissing;
-        job.FailureMessage = message;
-        job.CompletedUtc = _utcNow();
-        try
-        {
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            failed.Add(job);
-        }
-        catch (JobChangedException)
-        {
-            // Held or dropped from another terminal since it was read; that change stands, and the run passes over it.
-        }
-    }
 
     // Rules with an unreadable size are rejected by validation; treating them as zero only means downloading more.
     private static long SmallestMinimumFileSize(EligibilitySettings settings) => settings.Rules.Count == 0
@@ -290,34 +202,5 @@ public sealed class ImmichDiscoveryService(
         var folder = Path.GetFullPath(Path.Combine(stagingDirectory, asset.Id));
         var path = Path.Combine(folder, fileName);
         return string.Equals(Path.GetFullPath(path), path, StringComparison.Ordinal) ? path : null;
-    }
-
-    // SHA-1 because that is Immich's checksum; it identifies the file, it does not protect anything.
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5350", Justification = "Matches Immich's SHA-1 asset checksum; not used for security.")]
-    private static async Task<string> Sha1Base64Async(string path, CancellationToken cancellationToken)
-    {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, useAsync: true);
-        return Convert.ToBase64String(await SHA1.HashDataAsync(stream, cancellationToken));
-    }
-
-    private static void DeleteStaged(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            // Still open elsewhere; the next download of this asset overwrites it.
-        }
-
-        try
-        {
-            Directory.Delete(Path.GetDirectoryName(path)!);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            // The folder still holds other files, or was never created.
-        }
     }
 }
