@@ -145,7 +145,7 @@ public sealed class CalibrationServiceTests : IDisposable
         Directory.Delete(_directory, recursive: true);
     }
 
-    private CalibrationService Service(IMediaProbe probe) => ReadOnlyCalibration.Create(new ReadyFiles(), _ => probe, _immich, () => Now);
+    private CalibrationService Service(IMediaProbe probe) => ReadOnlyCalibration.Create(new ReadableFiles(), _ => probe, _immich, () => Now);
 
     /// <summary>A file whose content names its codec and Mbps, which <see cref="CountingProbe"/> reads back.</summary>
     private async Task<string> WriteVideoAsync(string name, string content)
@@ -180,11 +180,6 @@ public sealed class CalibrationServiceTests : IDisposable
 
     private static string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
 
-    private sealed class ReadyFiles : IFileReadinessService
-    {
-        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, string.Empty));
-    }
-
     private sealed class CountingProbe : IMediaProbe
     {
         public List<string> Probed { get; } = [];
@@ -196,12 +191,7 @@ public sealed class CalibrationServiceTests : IDisposable
         }
     }
 
-    private sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
-    {
-        public void Report(T value) => report(value);
-    }
-
-    private sealed class FakeImmich : IImmichClientFactory, IImmichClient
+    private sealed class FakeImmich : ImmichClientStub
     {
         private readonly List<ImmichAsset> _assets = [];
 
@@ -216,9 +206,7 @@ public sealed class CalibrationServiceTests : IDisposable
             return asset;
         }
 
-        public IImmichClient Create(ImmichSettings settings) => this;
-
-        public async IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public override async IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             SearchedBefore = takenBefore;
             SearchedWithFavorites = includeFavorites;
@@ -228,17 +216,5 @@ public sealed class CalibrationServiceTests : IDisposable
                 yield return asset;
             }
         }
-
-        public Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException("calibrate downloads nothing");
-        public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task UpdateMetadataAsync(string assetId, ImmichMetadataUpdate update, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

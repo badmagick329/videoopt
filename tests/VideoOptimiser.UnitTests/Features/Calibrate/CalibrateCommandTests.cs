@@ -28,7 +28,9 @@ public sealed class CalibrateCommandTests : IDisposable
     {
         var service = new FakeCalibration(Run(scanIssues: 0));
 
-        var (code, stdout, stderr) = await RunAsync(service, services => services.AddSingleton<ISettingsValidator>(new FailingValidator()), "calibrate");
+        var (code, stdout, stderr) = await RunAsync(service, CliFakes.Diagnostics(
+            new Diagnostic(DiagnosticCategory.FileSystem, DiagnosticStatus.Fail, "WatchRootMissing", "Watch root clip-a is missing"),
+            new Diagnostic(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "ToolMissing", "ffprobe was not found")), "calibrate");
 
         code.Should().Be((int)ExitCode.InvalidConfiguration);
         stdout.Should().BeEmpty();
@@ -183,14 +185,5 @@ public sealed class CalibrateCommandTests : IDisposable
             if (_run?.ScanIssues > 0) scanProgress?.Report(new ScanProgress(string.Empty, "Issue", "Cannot read the watch root"));
             return _failure is null ? Task.FromResult(_run!) : Task.FromException<CalibrationRun>(_failure);
         }
-    }
-
-    private sealed class FailingValidator : ISettingsValidator
-    {
-        public IReadOnlyList<Diagnostic> Validate(AppSettings settings) =>
-        [
-            new(DiagnosticCategory.FileSystem, DiagnosticStatus.Fail, "WatchRootMissing", "Watch root clip-a is missing"),
-            new(DiagnosticCategory.Dependency, DiagnosticStatus.Fail, "ToolMissing", "ffprobe was not found")
-        ];
     }
 }

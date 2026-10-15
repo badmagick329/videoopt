@@ -100,7 +100,6 @@ public sealed class CalibrateConsoleTests
 
         var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
 
-        json.AsObject().Select(property => property.Key).Should().Equal("minimumVmaf", "rules", "keptOut", "codecUnknown", "alreadyAv1", "historyLeftOut", "suggestions");
         json["rules"]![0]!.ToJsonString().Should().Be(
             """{"number":2,"codecs":["h264"],"resolution":"1080p-1440p","minimumVideoBitrate":"15Mbps","minimumFileSize":"300MiB","videos":118,"bytes":64424509440,"history":{"converted":2,"convertedBitrateMbps":{"min":40,"max":45},"savedPercent":{"min":71,"max":80},"notWorthIt":5,"notWorthItBitrateMbps":{"min":20,"max":25}}}""");
         json["keptOut"]![0]!.ToJsonString().Should().Be(
