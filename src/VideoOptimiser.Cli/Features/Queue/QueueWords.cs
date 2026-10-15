@@ -1,3 +1,4 @@
+using System.Globalization;
 using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Domain.Jobs;
 
@@ -58,6 +59,81 @@ internal static class QueueWords
         OpenJobState.Stopped => "stopped",
         _ => StatusWord(job.Status)
     };
+
+    private static readonly (OpenJobGroup Group, string Header)[] OpenJobGroups =
+    [
+        (OpenJobGroup.ConvertingNow, "Converting now"),
+        (OpenJobGroup.Queue, "Queue, in run order"),
+        (OpenJobGroup.Held, "Held"),
+        (OpenJobGroup.ReadyToFinalise, "Ready to finalise")
+    ];
+
+    /// <summary>
+    /// <c>queue list</c> and <c>status</c>: a header per group that has jobs, then one indented line each. The queue is
+    /// numbered, and the first two groups carry a status column padded to the widest in the group.
+    /// </summary>
+    public static IEnumerable<string> OpenJobLines(IReadOnlyList<OpenJobEntry> entries, CliCommand command)
+    {
+        foreach (var (group, header) in OpenJobGroups)
+        {
+            var inGroup = entries.Where(entry => entry.Group == group).ToArray();
+            if (inGroup.Length == 0) continue;
+            yield return header;
+            var statusWidth = group is OpenJobGroup.ConvertingNow or OpenJobGroup.Queue ? inGroup.Max(entry => StatusColumn(entry).Length) : 0;
+            var numberWidth = inGroup.Length.ToString(CultureInfo.InvariantCulture).Length + 1;
+            for (var index = 0; index < inGroup.Length; index++)
+            {
+                var entry = inGroup[index];
+                var number = group == OpenJobGroup.Queue ? $"{$"{index + 1}.".PadLeft(numberWidth)} " : string.Empty;
+                var status = statusWidth > 0 ? $"{StatusColumn(entry).PadRight(statusWidth)}  " : string.Empty;
+                yield return $"  {number}{entry.Job.Id:N}  {status}{OpenJobDetail(entry, command)}";
+            }
+        }
+    }
+
+    private static string StatusColumn(OpenJobEntry entry)
+    {
+        var word = entry.Stopped is null ? StatusWord(entry.Job.Status) : "stopped";
+        return char.ToUpperInvariant(word[0]) + word[1..];
+    }
+
+    /// <summary>What is known of the job, then what comes next for it.</summary>
+    private static string OpenJobDetail(OpenJobEntry entry, CliCommand command)
+    {
+        var job = entry.Job;
+        // An Immich job's file name is the original's in Immich.
+        var facts = new List<string> { Path.GetFileName(job.SourcePath) + (job.SourceKind == JobSourceKind.Immich ? " (Immich)" : string.Empty) };
+        if (job.Crf is { } crf) facts.Add($"CRF {crf}");
+        if (job.PercentageSaved is { } saved) facts.Add($"{saved:F1}% saved");
+        if (entry.Group == OpenJobGroup.Held && entry.Stopped is not null) facts.Add("stopped");
+        if (entry.State == OpenJobState.StoppedWhileFinalising) facts.Add("stopped while being finalised");
+        var line = string.Join(", ", facts);
+        return entry.State switch
+        {
+            OpenJobState.LastFinaliseFailed => $"{line}; the last finalise stopped: {job.FailureMessage}",
+            OpenJobState.StoppedWhileFinalising => $"{line}; '{command.Hint($"finalize {job.Id:N}")}' checks and resumes it",
+            OpenJobState.Finalising => $"{line}, being finalised now",
+            _ when entry is { Group: OpenJobGroup.Queue, Stopped: { } stopped } => $"{line}: {(stopped.WorkerUnreachable ? "the worker couldn't be reached; " : string.Empty)}{StoppedEnding(stopped)}",
+            _ => line
+        };
+    }
+
+    /// <summary>What the next run does with a stopped job, by the step it stopped in and whether its work can still be on a worker.</summary>
+    private static string StoppedEnding(StoppedJob stopped)
+    {
+        if (stopped.Step == ResumeStep.Beginning) return "starts from the beginning";
+        if (stopped.Step == ResumeStep.Check) return "checks the AV1 again";
+        if (stopped.Where == ResumeWhere.Local) return stopped.Step == ResumeStep.Encode ? "starts the encode again" : "searches for the CRF again";
+        var (pickUp, again) = stopped.Step switch
+        {
+            ResumeStep.Upload => ("picks up the upload", "uploads again to a new worker"),
+            ResumeStep.CrfSearch => ("picks up the CRF search on the worker", "searches again on a new one"),
+            ResumeStep.Encode => ("picks up the encode on the worker", "encodes again on a new one"),
+            _ => ("downloads the AV1 from the worker", "encodes again on a new one")
+        };
+        // A managed worker may be gone by the next run, which then starts the step again on a new one; a manual one is the same host.
+        return stopped.Where == ResumeWhere.ManagedWorker ? $"{pickUp}, or {again}" : pickUp;
+    }
 
     /// <summary>A scanner reason ("Extension is not allowed.") as the end of a sentence.</summary>
     public static string Fragment(string reason) => reason.Length == 0 ? reason : char.ToLowerInvariant(reason[0]) + reason[1..].TrimEnd('.');

@@ -158,17 +158,21 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
 
     public NextRun NextRun(string databasePath) => NextRunRule.Decide(locks.LiveRun(databasePath));
 
-    private QueueAddResult OpenJob(string databasePath, string path, JobRecord open) => new(QueueAddOutcome.OpenJob, path, open, OpenState: OpenStateOf(open, databasePath));
+    public async Task<IReadOnlyList<OpenJobEntry>> OpenJobsAsync(string databasePath, CancellationToken cancellationToken = default) =>
+        OpenJobList.Group(await jobs.ListAsync(databasePath, terminal: false, cancellationToken), locks.LiveRun(databasePath) is not null, locks.IsFinaliseGoing(databasePath));
+
+    private QueueAddResult OpenJob(string databasePath, string path, JobRecord open) =>
+        new(QueueAddOutcome.OpenJob, path, open, OpenState: OpenStateOf(open, locks.LiveRun(databasePath) is not null, locks.IsFinaliseGoing(databasePath)));
 
     /// <summary>The open status in the glossary's terms; a converting status with no run going is a stop a crash left.</summary>
-    private OpenJobState OpenStateOf(JobRecord job, string databasePath) => job switch
+    internal static OpenJobState OpenStateOf(JobRecord job, bool runGoing, bool finaliseGoing) => job switch
     {
         { Status: JobStatus.ReadyToFinalize, FailureMessage: not null } => OpenJobState.LastFinaliseFailed,
         { Held: true } => OpenJobState.Held,
         { Status: JobStatus.ReadyToFinalize } => OpenJobState.ReadyToFinalize,
         { Status: JobStatus.Interrupted, ResumeStatus: JobStatus.Finalizing } => OpenJobState.StoppedWhileFinalising,
-        { Status: JobStatus.Finalizing } => locks.IsFinaliseGoing(databasePath) ? OpenJobState.Finalising : OpenJobState.StoppedWhileFinalising,
-        _ when job.IsConverting && locks.LiveRun(databasePath) is null => OpenJobState.Stopped,
+        { Status: JobStatus.Finalizing } => finaliseGoing ? OpenJobState.Finalising : OpenJobState.StoppedWhileFinalising,
+        _ when job.IsConverting && !runGoing => OpenJobState.Stopped,
         _ => OpenJobState.Other
     };
 

@@ -53,19 +53,6 @@ public static partial class TemporaryOutputClassifier
         job.ResumeStatus == JobStatus.Encoding &&
         !string.Equals(job.ExecutionMode, "remoteSsh", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Describes what resuming an interrupted job does with its temporary output, for status output.</summary>
-    public static string? DescribeResume(JobRecord job)
-    {
-        if (job.Status != JobStatus.Interrupted) return null;
-        if (RestartsEncode(job)) return $"resume starts attempt {job.Attempt + 1} and deletes the partial output of attempt {job.Attempt}";
-        return job.ResumeStatus switch
-        {
-            JobStatus.Encoding or JobStatus.Downloading when job.Attempt > 0 => $"resume reattaches to remote attempt {job.Attempt}",
-            JobStatus.Validating => "resume revalidates the existing output",
-            _ => null
-        };
-    }
-
     [GeneratedRegex(@"\.(?<id>[0-9a-f]{32})\.(?<attempt>[0-9]{1,9})\.encoding(\.[^.]+)*$", RegexOptions.CultureInvariant)]
     private static partial Regex FileNamePattern();
 }

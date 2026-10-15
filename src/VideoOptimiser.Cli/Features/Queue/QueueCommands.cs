@@ -2,7 +2,6 @@ using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using static CliOutput;
@@ -294,17 +293,26 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         return (int)ExitCode.Success;
     }
 
-    public async Task<int> ListAsync(LoadedConfiguration configuration, bool terminal, bool json, CancellationToken cancellationToken)
+    /// <param name="terminal">The ended jobs (<c>history</c>) rather than the open ones (<c>queue list</c>, <c>status</c>).</param>
+    public async Task<int> ListAsync(LoadedConfiguration configuration, CliCommand command, bool terminal, CancellationToken cancellationToken)
     {
-        var jobs = await repository.ListAsync(configuration.Settings.Database.Path, terminal, cancellationToken);
-        if (json)
+        var databasePath = configuration.Settings.Database.Path;
+        if (!terminal && !command.Json)
         {
-            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.SourcePath, job.SourceKind == JobSourceKind.Immich ? "immich" : "file", job.ImmichAssetId, job.ImmichNewAssetId, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.UpdatedUtc)).ToArray();
+            var open = await discovery.OpenJobsAsync(databasePath, cancellationToken);
+            foreach (var line in open.Count == 0 ? ["Nothing is queued or ready to finalise."] : OpenJobLines(open, command)) Console.WriteLine(line);
+            return (int)ExitCode.Success;
+        }
+
+        var jobs = await repository.ListAsync(databasePath, terminal, cancellationToken);
+        if (command.Json)
+        {
+            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.Held, job.SourcePath, job.SourceKind == JobSourceKind.Immich ? "immich" : "file", job.ImmichAssetId, job.ImmichNewAssetId, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.UpdatedUtc)).ToArray();
             Console.WriteLine(JsonSerializer.Serialize(output, QueueJsonContext.Default.JobJsonOutputArray));
         }
         else if (jobs.Count == 0)
         {
-            Console.WriteLine(terminal ? "No job history." : "No active jobs.");
+            Console.WriteLine("No job history.");
         }
         else
         {
@@ -312,10 +320,9 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             {
                 var suffix = job.FailureMessage is null ? string.Empty : $" — {job.FailureCategory}: {job.FailureMessage}";
                 var savings = job.PercentageSaved is null ? string.Empty : $" {job.PercentageSaved:F1}% saved";
-                var resume = TemporaryOutputClassifier.DescribeResume(job) is { } behaviour ? $" ({behaviour})" : string.Empty;
                 // An Immich job's file name is the original's in Immich; the asset IDs find it there.
                 var immich = job.ImmichAssetId is { } asset ? $" Immich {asset}{(job.ImmichNewAssetId is { } av1 ? $" -> {av1}" : string.Empty)}" : string.Empty;
-                Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}{resume}");
+                Console.WriteLine($"{job.Id:N}  {job.Status,-16} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}");
             }
         }
 

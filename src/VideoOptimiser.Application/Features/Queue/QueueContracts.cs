@@ -98,6 +98,9 @@ public interface IQueueDiscovery
     NextRun NextRun(string databasePath);
 
     Task<int> AheadOfAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
+
+    /// <summary>Every open job in run order with the group <c>queue list</c> and <c>status</c> show it under.</summary>
+    Task<IReadOnlyList<OpenJobEntry>> OpenJobsAsync(string databasePath, CancellationToken cancellationToken = default);
 }
 
 /// <param name="DownloadedCopyGone">An Immich replacement whose staged copy is no longer on disk, so the run downloads it again first.</param>

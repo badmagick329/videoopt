@@ -171,12 +171,13 @@ A held job (`queue hold`) keeps its status, `Queued` or `Interrupted`; runs pass
 
 ### JSON output
 
-`status --json`, `history --json` and `queue list --json` print an array of jobs:
+`status --json`, `history --json` and `queue list --json` print a flat array of jobs; the human `status` and `queue list` group them instead (converting now, the queue in run order, held, ready to finalise) and leave out asset IDs and failure categories:
 
 | Field | Value |
 | --- | --- |
 | `id` | Job ID, 32 hex characters; commands take it as `<job-id>` |
 | `status` | A job status above |
+| `held` | `true` while `queue hold` keeps runs from taking the job |
 | `sourcePath` | The original; for Immich jobs, its staged copy |
 | `source` | `file` or `immich` |
 | `immichAssetId`, `immichNewAssetId` | The original's and the AV1's Immich asset IDs, or `null` |

@@ -131,7 +131,7 @@ All commands take `--config <path>`.
 | `queue add [--first]` | Queue the videos in the watch folders that match your rules. |
 | `queue add <file> [--force]` | Queue one file. `--force` skips the watch folders and the rules. |
 | `run [--local \| --remote]` | Convert every queued video, folder and Immich alike. Stops before replacing anything. |
-| `status`, `history`, `queue list` | Open jobs, finished jobs, or open jobs only. Add `--json` for scripts. |
+| `status`, `queue list`, `history` | `status` and `queue list` show the open videos in groups: converting now, the queue in run order, held, and ready to finalise. `history` shows the finished ones. Add `--json` for scripts. |
 | `calibrate [--json]` | Show how your rules fit your library. Changes nothing. |
 | `queue hold <job-id>`, `queue release <job-id>` | Make runs pass over a waiting or stopped video, or take it again. |
 | `queue next <job-id>` | Convert a waiting or stopped video next. A `run` that is going takes it after the current video. |
