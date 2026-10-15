@@ -67,12 +67,7 @@ public sealed class DoctorCommandTests : IDisposable
 
     private static void UseReport(IServiceCollection services) => services.AddSingleton<IDoctorService>(new FixedDoctor());
 
-    private async Task<string> WriteConfigAsync()
-    {
-        var config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(config, $"database:\n  path: '{Path.Combine(_directory, "jobs.db")}'\n");
-        return config;
-    }
+    private Task<string> WriteConfigAsync() => RunCli.WriteConfigAsync(Path.Combine(_directory, "jobs.db"));
 
     private sealed class FixedDoctor : IDoctorService
     {

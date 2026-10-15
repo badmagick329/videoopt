@@ -14,7 +14,7 @@ internal class ImmichClientStub : IImmichClientFactory, IImmichClient
 {
     public ImmichTrashSettings Trash { get; set; } = new(Enabled: true, Days: 30);
 
-    public IImmichClient Create(ImmichSettings settings) => this;
+    public virtual IImmichClient Create(ImmichSettings settings) => this;
 
     public virtual Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public virtual Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();

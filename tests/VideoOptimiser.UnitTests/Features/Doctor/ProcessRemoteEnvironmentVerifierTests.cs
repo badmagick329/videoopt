@@ -8,6 +8,8 @@ namespace VideoOptimiser.UnitTests.Features.Doctor;
 
 public sealed class ProcessRemoteEnvironmentVerifierTests
 {
+    private static readonly RemoteSshSettings Requirements = new() { Host = "video-worker", MinimumCpuCount = 8, MinimumAvailableMemory = "16GiB" };
+
     [Fact]
     public void BuildArgumentsUsesBatchModeWithoutDisablingHostKeyVerification()
     {
@@ -27,9 +29,8 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
             .Replace("video-optimiser-doctor:ffmpeg_libvmaf=1", "video-optimiser-doctor:ffmpeg_libvmaf=0", StringComparison.Ordinal)
             .Replace("video-optimiser-doctor:cpu_count=16", "video-optimiser-doctor:cpu_count=4", StringComparison.Ordinal)
             .Replace("video-optimiser-doctor:available_memory_bytes=34359738368", "video-optimiser-doctor:available_memory_bytes=1073741824", StringComparison.Ordinal);
-        var settings = new RemoteSshSettings { Host = "video-worker", MinimumCpuCount = 8, MinimumAvailableMemory = "16GiB" };
 
-        var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(output, settings, 16L * 1024 * 1024 * 1024);
+        var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(output, Requirements, 16L * 1024 * 1024 * 1024);
 
         diagnostics.Should().Contain(diagnostic => diagnostic.Code == "RemoteFfmpegFeatureUnavailable" && diagnostic.Status == DiagnosticStatus.Fail && diagnostic.Message.Contains("libvmaf", StringComparison.Ordinal));
         diagnostics.Should().Contain(diagnostic => diagnostic.Code == "RemoteCpuInsufficient" && diagnostic.Status == DiagnosticStatus.Fail);
@@ -39,9 +40,7 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
     [Fact]
     public void ParseProbeOutputReportsHealthyRemoteEnvironment()
     {
-        var settings = new RemoteSshSettings { Host = "video-worker", MinimumCpuCount = 8, MinimumAvailableMemory = "16GiB" };
-
-        var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(HealthyProbeOutput(), settings, 16L * 1024 * 1024 * 1024);
+        var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(HealthyProbeOutput(), Requirements, 16L * 1024 * 1024 * 1024);
 
         diagnostics.Should().OnlyContain(diagnostic => diagnostic.Status == DiagnosticStatus.Pass);
         diagnostics.Should().Contain(diagnostic => diagnostic.Code == "RemoteWorkspaceWritable");
@@ -56,9 +55,8 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
     {
         var key = probeLine[..(probeLine.IndexOf('=', StringComparison.Ordinal) + 1)];
         var output = Regex.Replace(HealthyProbeOutput(), "^" + Regex.Escape(key) + ".*$", probeLine, RegexOptions.Multiline);
-        var settings = new RemoteSshSettings { Host = "video-worker", MinimumCpuCount = 8, MinimumAvailableMemory = "16GiB" };
 
-        var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(output, settings, 16L * 1024 * 1024 * 1024);
+        var diagnostics = ProcessRemoteEnvironmentVerifier.ParseProbeOutput(output, Requirements, 16L * 1024 * 1024 * 1024);
 
         diagnostics.Should().ContainSingle(diagnostic =>
             diagnostic.Code == expectedCode &&

@@ -262,10 +262,13 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
         return CliFakes.Worker;
     }
 
-    public Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
+    public async Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
     {
         DatabasePaths.Add(databasePath);
-        return ReadRecordedAsync(databasePath, cancellationToken);
+        var worker = await ReadRecordedAsync(databasePath, cancellationToken);
+        // As the real lifecycle does, so a host check goes to the worker it found.
+        if (worker is not null) settings.Processing.RemoteSsh.Host = worker.Address;
+        return worker;
     }
 
     /// <summary>Thrown when the state file is read, as an unreadable one would be.</summary>

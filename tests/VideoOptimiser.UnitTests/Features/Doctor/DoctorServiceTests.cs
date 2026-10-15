@@ -52,7 +52,7 @@ public sealed class DoctorServiceTests : IDisposable
         var settings = CreateHetznerSettings();
         var remote = new FakeRemoteEnvironmentVerifier();
 
-        var report = await CreateDoctor(new FakeToolVerifier(true), remote, new FakeRemoteWorkerLifecycle(worker: null)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+        var report = await CreateDoctor(new FakeToolVerifier(true), remote, new FakeWorkerLifecycle { Exists = false }).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
         report.ExitCode.Should().Be(ExitCode.Success);
         report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Status == DiagnosticStatus.Fail);
@@ -65,9 +65,9 @@ public sealed class DoctorServiceTests : IDisposable
     public async Task RunAsyncReportsWhereEncodingRunsAsTheFirstProcessingDiagnosticBeforeAnyDependency()
     {
         var settings = CreateHetznerSettings();
-        var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "running", new DateTimeOffset(2026, 10, 12, 18, 4, 0, TimeSpan.Zero), "cx43", "hel1");
+        var worker = CliFakes.Worker;
 
-        var report = await CreateDoctor(new FakeToolVerifier(true), new FakeRemoteEnvironmentVerifier(), new FakeRemoteWorkerLifecycle(worker)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+        var report = await CreateDoctor(new FakeToolVerifier(true), new FakeRemoteEnvironmentVerifier(), new FakeWorkerLifecycle()).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
         var location = report.Diagnostics.First(diagnostic => diagnostic.Category == DiagnosticCategory.Processing);
         location.Code.Should().Be("EncodingLocation");
@@ -80,7 +80,7 @@ public sealed class DoctorServiceTests : IDisposable
     public async Task RunAsyncStillDescribesTheEncodingLocationWhenTheWorkerStateCannotBeRead()
     {
         var settings = CreateHetznerSettings();
-        var lifecycle = new FakeRemoteWorkerLifecycle(worker: null, failure: new InvalidDataException("bad state"));
+        var lifecycle = new FakeWorkerLifecycle { ReadFailure = new InvalidDataException("bad state") };
 
         var report = await CreateDoctor(new FakeToolVerifier(true), new FakeRemoteEnvironmentVerifier(), lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
@@ -93,12 +93,11 @@ public sealed class DoctorServiceTests : IDisposable
     {
         var settings = CreateHetznerSettings();
         var remote = new FakeRemoteEnvironmentVerifier();
-        var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "running", null, "cx43", "hel1");
 
-        var report = await CreateDoctor(new FakeToolVerifier(true), remote, new FakeRemoteWorkerLifecycle(worker)).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
+        var report = await CreateDoctor(new FakeToolVerifier(true), remote, new FakeWorkerLifecycle()).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
         report.ExitCode.Should().Be(ExitCode.Success);
-        remote.CheckedHost.Should().Be("203.0.113.7");
+        remote.CheckedHost.Should().Be(CliFakes.Worker.Address);
         report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Code == "RemoteHostChecksSkipped");
     }
 
@@ -107,7 +106,7 @@ public sealed class DoctorServiceTests : IDisposable
     {
         var settings = CreateHetznerSettings();
         var remote = new FakeRemoteEnvironmentVerifier();
-        var lifecycle = new FakeRemoteWorkerLifecycle(worker: null, failure: new InvalidOperationException("Hetzner API token 'VIDEO_OPTIMISER_HETZNER_TOKEN' was not found."));
+        var lifecycle = new FakeWorkerLifecycle { ReadFailure = new InvalidOperationException("Hetzner API token 'VIDEO_OPTIMISER_HETZNER_TOKEN' was not found.") };
 
         var report = await CreateDoctor(new FakeToolVerifier(true), remote, lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
@@ -181,48 +180,30 @@ public sealed class DoctorServiceTests : IDisposable
         if (status == DiagnosticStatus.Fail) report.ExitCode.Should().Be(ExitCode.MissingDependency);
     }
 
-    [Theory]
-    [InlineData("ImmichApiKeyRejected")]
-    public async Task RunAsyncFailsWithTheImmichClientsDiagnosisOfAKeyFailure(string code)
+    [Fact]
+    public async Task RunAsyncFailsWithTheImmichClientsDiagnosisOfAKeyFailure()
     {
-        var immich = new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2), new ImmichApiException(code, "what to fix"));
+        var immich = new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2), new ImmichApiException("ImmichApiKeyRejected", "what to fix"));
 
         var report = await CreateDoctor(new FakeToolVerifier(true), immich: immich).RunAsync(new LoadedConfiguration(CreateImmichSettings(), Path.Combine(_directory, "config.yaml")));
 
         report.ExitCode.Should().Be(ExitCode.MissingDependency);
-        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == code && diagnostic.Status == DiagnosticStatus.Fail && diagnostic.Message == "what to fix");
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "ImmichApiKeyRejected" && diagnostic.Status == DiagnosticStatus.Fail && diagnostic.Message == "what to fix");
     }
 
+    // The minimum is 0.11.7: one row each side of it, and one for a version that cannot be read.
     [Theory]
-    [InlineData("ab-av1 0.9.3")]
-    [InlineData("ab-av1 0.11.6")]
-    public async Task RunAsyncInLocalModeFailsAnAbAv1OlderThanTheMinimum(string versionLine)
+    [InlineData("ab-av1 0.11.6", ExitCode.MissingDependency, "AbAv1VersionInsufficient", DiagnosticStatus.Fail, "is too old; minimum required version is 0.11.7. Update it with 'cargo install ab-av1 --version 0.11.7 --locked'")]
+    [InlineData("ab-av1 0.11.7", ExitCode.Success, "AbAv1VersionSufficient", DiagnosticStatus.Pass, null)]
+    [InlineData("something unexpected", ExitCode.MissingDependency, "AbAv1VersionUnavailable", DiagnosticStatus.Fail, null)]
+    public async Task AbAv1VersionIsJudgedAgainstTheMinimum(string versionLine, ExitCode exitCode, string code, DiagnosticStatus status, string? message)
     {
         var report = await CreateDoctor(new FakeToolVerifier(true) { AbAv1VersionLine = versionLine }).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
 
-        report.ExitCode.Should().Be(ExitCode.MissingDependency);
-        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "AbAv1VersionInsufficient" && diagnostic.Status == DiagnosticStatus.Fail
-            && diagnostic.Message.Contains("is too old") && diagnostic.Message.Contains("cargo install ab-av1 --version 0.11.7 --locked"));
-    }
-
-    [Theory]
-    [InlineData("ab-av1 0.11.7")]
-    [InlineData("ab-av1 0.12.0")]
-    public async Task RunAsyncInLocalModePassesAnAbAv1AtOrAboveTheMinimum(string versionLine)
-    {
-        var report = await CreateDoctor(new FakeToolVerifier(true) { AbAv1VersionLine = versionLine }).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
-
-        report.ExitCode.Should().Be(ExitCode.Success);
-        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "AbAv1VersionSufficient" && diagnostic.Status == DiagnosticStatus.Pass);
-    }
-
-    [Fact]
-    public async Task RunAsyncInLocalModeFailsWhenTheAbAv1VersionCannotBeParsed()
-    {
-        var report = await CreateDoctor(new FakeToolVerifier(true) { AbAv1VersionLine = "something unexpected" }).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
-
-        report.ExitCode.Should().Be(ExitCode.MissingDependency);
-        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "AbAv1VersionUnavailable" && diagnostic.Status == DiagnosticStatus.Fail);
+        report.ExitCode.Should().Be(exitCode);
+        var diagnostic = report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code.StartsWith("AbAv1Version", StringComparison.Ordinal)).Subject;
+        (diagnostic.Code, diagnostic.Status).Should().Be((code, status));
+        if (message is not null) diagnostic.Message.Should().Contain(message);
     }
 
     [Fact]
@@ -258,17 +239,6 @@ public sealed class DoctorServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsyncInLocalModeFailsWithoutTheLibdav1dDecoder()
-    {
-        var tools = new FakeToolVerifier(true) { Decoders = " V....D av1                  Alliance for Open Media AV1" };
-
-        var report = await CreateDoctor(tools).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
-
-        report.ExitCode.Should().Be(ExitCode.MissingDependency);
-        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "Av1DecoderUnavailable" && diagnostic.Message.Contains("gyan.dev"));
-    }
-
-    [Fact]
     public async Task RunAsyncSkipsTheLibdav1dCheckWhenTheDecodeTestIsOff()
     {
         var settings = CreateSettings();
@@ -299,7 +269,8 @@ public sealed class DoctorServiceTests : IDisposable
 
         var report = await CreateDoctor(tools).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
-        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "Av1DecoderUnavailable");
+        report.ExitCode.Should().Be(ExitCode.MissingDependency);
+        report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "Av1DecoderUnavailable" && diagnostic.Message.Contains("gyan.dev"));
         report.Diagnostics.Should().NotContain(diagnostic => diagnostic.Code.StartsWith("FfmpegFeature", StringComparison.Ordinal) || diagnostic.Code.StartsWith("AbAv1Version", StringComparison.Ordinal));
         tools.ListingsRequested.Should().BeEquivalentTo(["-decoders"]);
     }
@@ -316,7 +287,7 @@ public sealed class DoctorServiceTests : IDisposable
     }
 
     private static DoctorService CreateDoctor(IToolVerifier verifier, IRemoteEnvironmentVerifier? remote = null, IRemoteWorkerLifecycle? lifecycle = null, IImmichClientFactory? immich = null) =>
-        new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier(), lifecycle ?? new FakeRemoteWorkerLifecycle(worker: null), immich ?? new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2)));
+        new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier(), lifecycle ?? new FakeWorkerLifecycle { Exists = false }, immich ?? new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2)));
 
     private AppSettings CreateImmichSettings()
     {
@@ -420,59 +391,33 @@ public sealed class DoctorServiceTests : IDisposable
         }
     }
 
-    private sealed class FakeImmichClientFactory(ImmichServerVersion version, ImmichApiException? userFailure = null, ImmichTrashSettings? trash = null) : IImmichClientFactory, IImmichClient
+    private sealed class FakeImmichClientFactory : ImmichClientStub
     {
+        private readonly ImmichServerVersion _version;
+        private readonly ImmichApiException? _userFailure;
+
+        // doctor only checks the version, the key and the trash.
+        public FakeImmichClientFactory(ImmichServerVersion version, ImmichApiException? userFailure = null, ImmichTrashSettings? trash = null)
+        {
+            (_version, _userFailure) = (version, userFailure);
+            if (trash is not null) Trash = trash;
+        }
+
         public bool Created { get; private set; }
         public bool UserRequested { get; private set; }
 
-        public IImmichClient Create(ImmichSettings settings)
+        public override IImmichClient Create(ImmichSettings settings)
         {
             Created = true;
             return this;
         }
 
-        public Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => Task.FromResult(version);
+        public override Task<ImmichServerVersion> GetServerVersionAsync(CancellationToken cancellationToken = default) => Task.FromResult(_version);
 
-        public Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default)
+        public override Task<ImmichUser> GetCurrentUserAsync(CancellationToken cancellationToken = default)
         {
             UserRequested = true;
-            return userFailure is null ? Task.FromResult(new ImmichUser("user-1", "Pat")) : Task.FromException<ImmichUser>(userFailure);
+            return _userFailure is null ? Task.FromResult(new ImmichUser("user-1", "Pat")) : Task.FromException<ImmichUser>(_userFailure);
         }
-
-        public Task<ImmichTrashSettings> GetTrashSettingsAsync(CancellationToken cancellationToken = default) => Task.FromResult(trash ?? new ImmichTrashSettings(Enabled: true, Days: 30));
-
-        // doctor only checks the version, the key and the trash.
-        public IAsyncEnumerable<ImmichAsset> SearchVideosAsync(DateTimeOffset takenBefore, bool includeFavorites, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task DownloadOriginalAsync(string assetId, string destinationPath, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task UpdateMetadataAsync(string assetId, ImmichMetadataUpdate update, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task CopyRelationsAsync(string sourceAssetId, string targetAssetId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TagAssetAsync(string assetId, IReadOnlyList<string> tagIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task TrashAsync(IReadOnlyList<string> assetIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<ImmichUploadCheck>> CheckUploadsAsync(IReadOnlyList<string> checksums, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    }
-
-    private sealed class FakeRemoteWorkerLifecycle(RemoteWorkerInfo? worker, Exception? failure = null) : IRemoteWorkerLifecycle
-    {
-        public bool IsManaged(AppSettings settings) =>
-            settings.Processing.Mode == ProcessingModes.RemoteSsh && settings.Processing.RemoteSsh.Lifecycle == RemoteLifecycleModes.Hetzner;
-
-        public Task<RemoteWorkerInfo?> GetAsync(AppSettings settings, string databasePath, CancellationToken cancellationToken = default)
-        {
-            if (failure is not null) throw failure;
-            // Mirrors the real lifecycle, which points the settings at a live worker.
-            if (worker is not null) settings.Processing.RemoteSsh.Host = worker.Address;
-            return Task.FromResult(worker);
-        }
-
-        public Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default) =>
-            failure is not null ? throw failure : Task.FromResult(worker);
-
-        public Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
     }
 }
