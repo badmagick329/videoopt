@@ -7,36 +7,16 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 
 public sealed class RunBannerTests
 {
-    [Fact]
-    public void LocalModeSaysThisPc()
-    {
-        RunBanner.Describe(Settings(ProcessingModes.Local)).Should().Be("Encoding on this PC.");
-    }
-
-    [Fact]
-    public void ManualRemoteNamesTheSshTarget()
+    [Theory]
+    [InlineData("videoopt", "encoder.lan", "Encoding on videoopt@encoder.lan over SSH.")]
+    [InlineData("", "encoder", "Encoding on encoder over SSH.")]
+    public void ManualRemoteNamesTheSshTarget(string user, string host, string expected)
     {
         var settings = Settings(ProcessingModes.RemoteSsh);
-        settings.Processing.RemoteSsh.Host = "encoder.lan";
-        settings.Processing.RemoteSsh.User = "videoopt";
+        settings.Processing.RemoteSsh.Host = host;
+        settings.Processing.RemoteSsh.User = user;
 
-        RunBanner.Describe(settings).Should().Be("Encoding on videoopt@encoder.lan over SSH.");
-    }
-
-    [Fact]
-    public void ManualRemoteWithoutAUserNamesTheSshAliasAlone()
-    {
-        var settings = Settings(ProcessingModes.RemoteSsh);
-        settings.Processing.RemoteSsh.Host = "encoder";
-
-        RunBanner.Describe(settings).Should().Be("Encoding on encoder over SSH.");
-    }
-
-    [Fact]
-    public void ManagedHetznerWithoutAWorkerNamesTheTypesAndTheCap()
-    {
-        RunBanner.Describe(Settings(ProcessingModes.RemoteSsh, RemoteLifecycleModes.Hetzner)).Should().Be(
-            "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.");
+        RunBanner.Describe(settings).Should().Be(expected);
     }
 
     [Fact]
@@ -74,13 +54,6 @@ public sealed class RunBannerTests
         var worker = new RemoteWorkerInfo(42, "video-optimiser-1", "203.0.113.7", "recorded", null, "cx43", "hel1");
 
         RunBanner.Describe(Settings(ProcessingModes.Local), worker).Should().Be("Encoding on this PC.");
-    }
-
-    [Theory]
-    [InlineData(ProcessingModes.RemoteSsh, "--remote", "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h (--remote).")]
-    public void AnOverrideFlagIsNamed(string mode, string flag, string expected)
-    {
-        RunBanner.Describe(Settings(mode, RemoteLifecycleModes.Hetzner), overrideFlag: flag).Should().Be(expected);
     }
 
     private static AppSettings Settings(string mode, string lifecycle = RemoteLifecycleModes.Manual) => new()

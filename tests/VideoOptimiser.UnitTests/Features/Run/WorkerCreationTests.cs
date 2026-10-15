@@ -3,10 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
-using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
+using static VideoOptimiser.UnitTests.RunCli;
 
 namespace VideoOptimiser.UnitTests.Features.Run;
 
@@ -61,13 +60,13 @@ public sealed class WorkerCreationTests : IDisposable
         var released = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "eligible.mp4"), Status = JobStatus.Queued });
         (await _repository.SetHeldAsync(DatabasePath, released, held: true)).Should().BeTrue();
         _lifecycle.Exists = false;
-        var processor = new IneligibleByNameProcessor { During = async () => (await _repository.SetHeldAsync(DatabasePath, (await _repository.GetAsync(DatabasePath, released.Id))!, held: false)).Should().BeTrue() };
+        var processor = IneligibleByName();
+        processor.During[0] = async _ => (await _repository.SetHeldAsync(DatabasePath, (await _repository.GetAsync(DatabasePath, released.Id))!, held: false)).Should().BeTrue();
 
         var (_, output, _) = await RunAsync(processor, "run", "--config", config);
 
         _lifecycle.EnsureCalls.Should().Be(0);
-        output.Should().Be(string.Concat(new[]
-        {
+        output.Should().Be(Transcript(
             "Encoding on a Hetzner server created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.",
             "1 video is held; runs pass over it until it's released.",
             "Converting 1 video.",
@@ -78,8 +77,7 @@ public sealed class WorkerCreationTests : IDisposable
             "",
             "Failed jobs:",
             $"{local.Id:N}  ineligible.mp4",
-            "Ineligible: Codec av1 is not in any rule."
-        }.Select(line => line + Environment.NewLine)));
+            "Ineligible: Codec av1 is not in any rule."));
         processor.Processed.Should().Equal("ineligible.mp4");
         (await _repository.GetAsync(DatabasePath, released.Id))!.Status.Should().Be(JobStatus.Queued);
     }
@@ -92,16 +90,8 @@ public sealed class WorkerCreationTests : IDisposable
         await Task.Delay(5);
         var released = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "joining.mp4"), Status = JobStatus.Queued });
         (await _repository.SetHeldAsync(DatabasePath, released, held: true)).Should().BeTrue();
-        var releasedOnce = false;
-        var processor = new IneligibleByNameProcessor
-        {
-            During = async () =>
-            {
-                if (releasedOnce) return;
-                releasedOnce = true;
-                (await _repository.SetHeldAsync(DatabasePath, (await _repository.GetAsync(DatabasePath, released.Id))!, held: false)).Should().BeTrue();
-            }
-        };
+        var processor = IneligibleByName();
+        processor.During[0] = async _ => (await _repository.SetHeldAsync(DatabasePath, (await _repository.GetAsync(DatabasePath, released.Id))!, held: false)).Should().BeTrue();
 
         _ = await RunAsync(processor, "run", "--config", config);
 
@@ -131,12 +121,12 @@ public sealed class WorkerCreationTests : IDisposable
         }
         (await _repository.SetHeldAsync(DatabasePath, remote, held: true)).Should().BeTrue();
         _lifecycle.Exists = false;
-        var processor = new IneligibleByNameProcessor { During = async () => (await _repository.SetHeldAsync(DatabasePath, (await _repository.GetAsync(DatabasePath, remote.Id))!, held: false)).Should().BeTrue() };
+        var processor = IneligibleByName();
+        processor.During[0] = async _ => (await _repository.SetHeldAsync(DatabasePath, (await _repository.GetAsync(DatabasePath, remote.Id))!, held: false)).Should().BeTrue();
 
         var (_, output, _) = await RunAsync(processor, "run", "--local", "--config", config);
 
-        output.Should().Be(string.Concat(new[]
-        {
+        output.Should().Be(Transcript(
             "Encoding on this PC (--local).",
             "1 video is held; runs pass over it until it's released.",
             "Converting 1 video.",
@@ -147,15 +137,14 @@ public sealed class WorkerCreationTests : IDisposable
             "",
             "Failed jobs:",
             $"{local.Id:N}  ineligible.mp4",
-            "Ineligible: Codec av1 is not in any rule."
-        }.Select(line => line + Environment.NewLine)));
+            "Ineligible: Codec av1 is not in any rule."));
         processor.Processed.Should().Equal("ineligible.mp4");
         (await _repository.GetAsync(DatabasePath, remote.Id))!.Status.Should().Be(JobStatus.Interrupted);
     }
 
-    private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(params string[] args) => RunAsync(new IneligibleByNameProcessor(), args);
+    private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(params string[] args) => RunAsync(IneligibleByName(), args);
 
-    private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(IneligibleByNameProcessor processor, params string[] args) =>
+    private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(ScriptedRunProcessor processor, params string[] args) =>
         ConsoleCapture.RunCliAsync(services =>
         {
             CliFakes.AcceptAnySettings(services);
@@ -164,50 +153,14 @@ public sealed class WorkerCreationTests : IDisposable
             services.AddSingleton<IJobProcessor>(processor);
         }, args);
 
-    private async Task<string> WriteConfigAsync()
+    /// <summary>A file named "ineligible…" fails the eligibility check locally, as <see cref="JobProcessor"/> would; any other is made ready.</summary>
+    private static ScriptedRunProcessor IneligibleByName() => new(remote: true)
     {
-        var config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(config, string.Join('\n',
-            "database:",
-            $"  path: '{DatabasePath}'",
-            "processing:",
-            "  mode: \"remoteSsh\"",
-            "  remoteSsh:",
-            "    lifecycle: \"hetzner\"",
-            ""));
-        return config;
-    }
+        ReportsEncoding = false,
+        Ineligible = job => Path.GetFileName(job.SourcePath).StartsWith("ineligible", StringComparison.Ordinal)
+    };
+
+    private Task<string> WriteConfigAsync() => RunCli.WriteConfigAsync(DatabasePath, RunCli.ManagedHetzner);
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
-
-    /// <summary>A file named "ineligible…" fails the eligibility check locally, as <see cref="JobProcessor"/> would; any other is made ready.</summary>
-    private sealed class IneligibleByNameProcessor : IJobProcessor
-    {
-        private static bool Ineligible(string path) => Path.GetFileName(path).StartsWith("ineligible", StringComparison.Ordinal);
-
-        public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) =>
-            Task.FromResult(!Ineligible(job.SourcePath));
-
-        /// <summary>Runs partway through each video, as another terminal would.</summary>
-        public Func<Task>? During { get; init; }
-        public List<string> Processed { get; } = [];
-
-        public async Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
-        {
-            Processed.Add(Path.GetFileName(job.SourcePath));
-            if (During is not null) await During();
-            var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
-            if (Ineligible(job.SourcePath))
-            {
-                job.Status = JobStatus.Failed;
-                job.FailureCategory = "Ineligible";
-                job.FailureMessage = "Codec av1 is not in any rule.";
-                job.CompletedUtc = DateTimeOffset.UtcNow;
-                await repository.UpdateAsync(databasePath, job, cancellationToken);
-                return new JobProcessingResult(job, ExitCode.NoEligibleFiles, job.FailureMessage);
-            }
-            foreach (var step in new[] { JobStatus.Validating, JobStatus.ReadyToFinalize }) { job.Status = step; await repository.UpdateAsync(databasePath, job, cancellationToken); }
-            return new JobProcessingResult(job, ExitCode.Success, "ready");
-        }
-    }
 }

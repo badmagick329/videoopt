@@ -160,17 +160,7 @@ public sealed class RunLockTests : IDisposable
         return stream;
     }
 
-    private async Task<string> WriteConfigAsync()
-    {
-        var config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(config, string.Join('\n',
-            "database:",
-            $"  path: '{DatabasePath}'",
-            "immich:",
-            "  baseUrl: 'http://immich.invalid'",
-            ""));
-        return config;
-    }
+    private Task<string> WriteConfigAsync() => RunCli.WriteConfigAsync(DatabasePath, "immich:", "  baseUrl: 'http://immich.invalid'");
 
     /// <summary>
     /// W5, W13: whether a run is going is read from the lock file without taking the lock, so asking never refuses a run that

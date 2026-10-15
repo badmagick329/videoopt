@@ -1,6 +1,5 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
-using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
@@ -9,6 +8,7 @@ using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
+using static VideoOptimiser.UnitTests.RunCli;
 
 namespace VideoOptimiser.UnitTests.Features.Run;
 
@@ -27,14 +27,13 @@ public sealed class WorkerEndRunTests : IDisposable
     private ScriptedInput _input = new();
     private RunStop _stop = new();
     private RunWorkerState _state;
-    private readonly RemoteProcessor _processor;
+    private readonly ScriptedRunProcessor _processor = new(remote: true);
     private string _config = "";
 
     public WorkerEndRunTests()
     {
         Directory.CreateDirectory(_directory);
         _state = new RunWorkerState(_input);
-        _processor = new RemoteProcessor(_repository, this);
     }
 
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
@@ -73,7 +72,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped."));
         code.Should().Be((int)ExitCode.Cancelled);
         _lifecycle.DeleteCalls.Should().Be(1);
-        (await StatusesAsync(jobs)).Should().Equal(JobStatus.ReadyToFinalize, JobStatus.Queued, JobStatus.Queued);
+        (await StatusesAsync(_repository, DatabasePath, jobs)).Should().Equal(JobStatus.ReadyToFinalize, JobStatus.Queued, JobStatus.Queued);
 
         NextRun();
         var (morningCode, morning, _) = await RunAsync();
@@ -82,7 +81,7 @@ public sealed class WorkerEndRunTests : IDisposable
         _lifecycle.EnsureCalls.Should().Be(2);
         Lines(morning).Should().ContainInOrder("Converting 2 videos.", "[1/2] 2.mp4", "[2/2] 3.mp4", "Ready to finalise: 2.", "Managed Hetzner worker deleted; billing for its server and Primary IPv4 has stopped.");
         _lifecycle.DeleteCalls.Should().Be(2);
-        (await StatusesAsync(jobs)).Should().OnlyContain(status => status == JobStatus.ReadyToFinalize);
+        (await StatusesAsync(_repository, DatabasePath, jobs)).Should().OnlyContain(status => status == JobStatus.ReadyToFinalize);
     }
 
     /// <summary>
@@ -311,24 +310,6 @@ public sealed class WorkerEndRunTests : IDisposable
         _input.Reads.Should().Be(0);
     }
 
-    [Fact]
-    public async Task ARedirectedRunThatStopsAfterAVideoKeepsTheWorker()
-    {
-        await WriteConfigAsync();
-        await QueueJobsAsync(2);
-        _input = new ScriptedInput(interactive: false);
-        _state = new RunWorkerState(_input);
-        _processor.During[0] = _ => { _stop.Press(); return Task.CompletedTask; };
-
-        var (_, output, _) = await RunAsync();
-
-        output.Should().EndWith(Transcript(
-            $"To convert the rest: video-optimiser run {Config}",
-            $"The worker {Worker} stays up, billed hourly, until it is deleted.",
-            $"To delete it: video-optimiser worker delete {Config}"));
-        _input.Reads.Should().Be(0);
-    }
-
     /// <summary>Failed videos no longer prompt or keep the worker: deleteAfterRun alone decides.</summary>
     [Theory]
     [InlineData(true)]
@@ -336,7 +317,7 @@ public sealed class WorkerEndRunTests : IDisposable
     public async Task AFinishedRunWithAFailureFollowsDeleteAfterRun(bool deleteAfterRun)
     {
         await WriteConfigAsync(deleteAfterRun);
-        await QueueJobsAsync(2);
+        var jobs = await QueueJobsAsync(2);
         _processor.Fail[1] = true;
 
         var (code, output, _) = await RunAsync();
@@ -360,7 +341,7 @@ public sealed class WorkerEndRunTests : IDisposable
             "Ready to finalise: 1. Failed: 1.",
             "",
             "Failed jobs:",
-            $"{_processor.Ids[1]:N}  2.mp4",
+            $"{jobs[1].Id:N}  2.mp4",
             "EncodeFailed: the encode broke.",
             "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
             .. worker]));
@@ -512,118 +493,14 @@ public sealed class WorkerEndRunTests : IDisposable
         _input.Type(line);
     }
 
-    private async Task<JobRecord[]> QueueJobsAsync(int count)
-    {
-        var jobs = new List<JobRecord>();
-        for (var index = 1; index <= count; index++)
-        {
-            jobs.Add(await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, $"{index}.mp4"), Status = JobStatus.Queued }));
-            // Run order is by creation time.
-            await Task.Delay(5);
-        }
-        _processor.Ids = [.. jobs.Select(job => job.Id)];
-        return [.. jobs];
-    }
+    private Task<JobRecord[]> QueueJobsAsync(int count) => RunCli.QueueJobsAsync(_repository, DatabasePath, count);
 
-    private async Task<JobStatus[]> StatusesAsync(IEnumerable<JobRecord> jobs)
-    {
-        var statuses = new List<JobStatus>();
-        foreach (var job in jobs) statuses.Add((await _repository.GetAsync(DatabasePath, job.Id))!.Status);
-        return [.. statuses];
-    }
-
-    private async Task WriteConfigAsync(bool deleteAfterRun = true)
-    {
-        _config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(_config, string.Join('\n',
-            "database:",
-            $"  path: '{DatabasePath}'",
-            "processing:",
-            "  mode: \"remoteSsh\"",
-            "  remoteSsh:",
-            "    lifecycle: \"hetzner\"",
-            "    hetzner:",
-            $"      deleteAfterRun: {(deleteAfterRun ? "true" : "false")}",
-            ""));
-    }
-
-    private static string Transcript(params string[] lines) => string.Join(Environment.NewLine, lines) + Environment.NewLine;
-
-    private static string[] Lines(string output) => output.Split(Environment.NewLine);
-
+    private async Task WriteConfigAsync(bool deleteAfterRun = true) =>
+        _config = await RunCli.WriteConfigAsync(DatabasePath, [.. RunCli.ManagedHetzner, "    hetzner:", $"      deleteAfterRun: {(deleteAfterRun ? "true" : "false")}"]);
 
     public void Dispose()
     {
         _stop.Dispose();
         Directory.Delete(_directory, recursive: true);
-    }
-
-    /// <summary>
-    /// A remote video through the statuses <see cref="JobProcessor"/> writes. <see cref="During"/> runs partway, as a user
-    /// pressing Ctrl+C; a cancelled token then stops the video in <see cref="StopStage"/> on the worker, as the real one does.
-    /// </summary>
-    private sealed class RemoteProcessor(SqliteJobRepository repository, WorkerEndRunTests test) : IJobProcessor
-    {
-        public Dictionary<int, Func<IProgress<JobProgress>?, Task>> During { get; } = [];
-        public Dictionary<int, Func<Task>> AfterVideo { get; } = [];
-        public Dictionary<int, bool> Fail { get; } = [];
-        public Dictionary<int, bool> Unreachable { get; } = [];
-        public Dictionary<int, Exception> Throw { get; } = [];
-        public JobStatus StopStage { get; set; } = JobStatus.Encoding;
-        public Guid[] Ids { get; set; } = [];
-        public int Calls { get; set; }
-
-        public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(true);
-
-        public async Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
-        {
-            var index = Calls++;
-            job.Status = JobStatus.Encoding;
-            await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-            progress?.Report(JobProgress.Step("Encoding..."));
-            progress?.Report(JobProgress.Detail("41%, 63 fps, about 7m 36s left") with { TimeLeft = new TimeSpan(0, 7, 36) });
-            if (During.TryGetValue(index, out var during)) await during(progress);
-            if (Throw.TryGetValue(index, out var error)) throw error;
-            if (cancellationToken.IsCancellationRequested)
-            {
-                job.Status = JobStatus.Interrupted;
-                job.ResumeStatus = StopStage;
-                await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-                throw new JobInterruptedException(job, StopStage, remote: true, cancellationToken);
-            }
-
-            JobProcessingResult result;
-            if (Unreachable.GetValueOrDefault(index))
-            {
-                job.Status = JobStatus.Interrupted;
-                job.ResumeStatus = JobStatus.Encoding;
-                job.FailureCategory = FailureCategories.RemoteUnavailable;
-                job.FailureMessage = "SSH connection failed: timed out.";
-                await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-                progress?.Report(JobProgress.Outcome(JobTone.Failure, "Worker unreachable: SSH connection failed: timed out."));
-                result = new JobProcessingResult(job, ExitCode.ProcessingFailure, job.FailureMessage);
-            }
-            else if (Fail.GetValueOrDefault(index))
-            {
-                job.Status = JobStatus.Failed;
-                job.FailureCategory = "EncodeFailed";
-                job.FailureMessage = "the encode broke.";
-                await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-                progress?.Report(JobProgress.Outcome(JobTone.Failure, "Failed: the encode broke."));
-                result = new JobProcessingResult(job, ExitCode.ProcessingFailure, job.FailureMessage);
-            }
-            else
-            {
-                job.Status = JobStatus.Validating;
-                await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-                job.Status = JobStatus.ReadyToFinalize;
-                await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-                progress?.Report(JobProgress.Outcome(JobTone.Success, "Ready to finalise."));
-                result = new JobProcessingResult(job, ExitCode.Success, "Ready to finalise.");
-            }
-            if (AfterVideo.TryGetValue(index, out var after)) await after();
-            _ = test;
-            return result;
-        }
     }
 }

@@ -8,9 +8,9 @@ using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
+using static VideoOptimiser.UnitTests.RunCli;
 
 namespace VideoOptimiser.UnitTests.Features.Run;
 
@@ -26,14 +26,10 @@ public sealed class RunCommandTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
     private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
     private readonly FakeImmich _immich = new();
-    private readonly ReadyProcessor _processor;
+    private readonly ScriptedRunProcessor _processor = new() { ReportsEncoding = false };
     private string _config = string.Empty;
 
-    public RunCommandTests()
-    {
-        Directory.CreateDirectory(_directory);
-        _processor = new ReadyProcessor(_repository);
-    }
+    public RunCommandTests() => Directory.CreateDirectory(_directory);
 
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
     private string StagingDirectory => Path.Combine(_directory, "staging");
@@ -57,14 +53,16 @@ public sealed class RunCommandTests : IDisposable
     public async Task WithoutImmichSetUpItsVideosStayQueuedAndFolderVideosConvert()
     {
         await WriteConfigAsync(immich: false);
+        foreach (var name in new[] { "a.mp4", "b.mp4" }) (await _repository.SetHeldAsync(DatabasePath, await FolderJobAsync(name), held: true)).Should().BeTrue();
         var folder = await FolderJobAsync("clip.mp4");
-        var immich = new[] { await ImmichJobAsync(), await ImmichJobAsync("IMG_0002.MOV") };
+        var immich = await ImmichJobAsync();
 
         var (code, output, _) = await RunAsync("run");
 
-        (code, output).Should().Be((0, Lines(
+        (code, output).Should().Be((0, Transcript(
             "Encoding on this PC.",
-            "2 Immich videos stay queued: immich.baseUrl isn't set.",
+            "2 videos are held; runs pass over them until they're released.",
+            "1 Immich video stays queued: immich.baseUrl isn't set.",
             "Converting 1 video.",
             "",
             "[1/1] clip.mp4 (8 B)",
@@ -72,7 +70,7 @@ public sealed class RunCommandTests : IDisposable
             "Ready to finalise: 1.",
             "Next: review the outputs, then run 'video-optimiser finalize --ready'.")));
         _processor.Processed.Should().Equal("clip.mp4");
-        foreach (var job in immich) (await StoredAsync(job)).Status.Should().Be(JobStatus.Queued);
+        (await StoredAsync(immich)).Status.Should().Be(JobStatus.Queued);
         (await StoredAsync(folder)).Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 
@@ -84,7 +82,7 @@ public sealed class RunCommandTests : IDisposable
 
         var (code, output, _) = await RunAsync("run");
 
-        (code, output).Should().Be((0, Lines(
+        (code, output).Should().Be((0, Transcript(
             "Encoding on this PC.",
             $"Downloading again: IMG_0001.MOV (job {job.Id:N} is open but its staged copy is missing)",
             "  done: the staged copy is back",
@@ -97,58 +95,15 @@ public sealed class RunCommandTests : IDisposable
         (await File.ReadAllTextAsync(job.SourcePath)).Should().Be(Content);
     }
 
-    [Fact]
-    public async Task ACopyImmichNoLongerHasFailsItsVideoAndTheRunListsIt()
-    {
-        await WriteConfigAsync(immich: true);
-        var job = await ImmichJobAsync(staged: false);
-        _immich.Gone = true;
-
-        var (code, output, _) = await RunAsync("run");
-
-        (code, output).Should().Be((6, Lines(
-            "Encoding on this PC.",
-            $"Downloading again: IMG_0001.MOV (job {job.Id:N} is open but its staged copy is missing)",
-            "  issue: Immich did not return the video again (Immich returned HTTP 404 for GET /api/assets); the job is marked failed",
-            "Failed: 1.",
-            "",
-            "Failed jobs:",
-            $"{job.Id:N}  IMG_0001.MOV",
-            $"SourceMissing: The staged original is missing, and Immich did not return asset {job.ImmichAssetId} again: Immich returned HTTP 404 for GET /api/assets.")));
-        _processor.Processed.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task WhenImmichCannotBeUsedItsVideosStayQueuedAndFolderVideosConvert()
-    {
-        await WriteConfigAsync(immich: true);
-        await FolderJobAsync("clip.mp4");
-        var immich = await ImmichJobAsync(staged: false);
-        _immich.Failure = new ImmichApiException("ImmichUnavailable", "Immich is unreachable at http://immich.test: No such host is known.");
-
-        var (code, output, _) = await RunAsync("run");
-
-        (code, output).Should().Be((0, Lines(
-            "Encoding on this PC.",
-            $"Downloading again: IMG_0001.MOV (job {immich.Id:N} is open but its staged copy is missing)",
-            "1 Immich video stays queued: Immich can't be used (Immich is unreachable at http://immich.test: No such host is known).",
-            "Converting 1 video.",
-            "",
-            "[1/1] clip.mp4 (8 B)",
-            "      Ready to finalise.",
-            "Ready to finalise: 1.",
-            "Next: review the outputs, then run 'video-optimiser finalize --ready'.")));
-        (await StoredAsync(immich)).Status.Should().Be(JobStatus.Queued);
-    }
-
     /// <summary>
     /// Only a gone asset fails its video. A server error says nothing about the asset, so Immich counts as unusable and the
-    /// videos it did not fail stay queued; the one failed before it is still listed.
+    /// videos it did not fail stay queued; the one failed before it is still listed, and folder videos still convert.
     /// </summary>
     [Fact]
     public async Task AServerErrorAfterAGoneAssetFailsOnlyThatOneAndLeavesTheRestQueued()
     {
         await WriteConfigAsync(immich: true);
+        var folder = await FolderJobAsync("clip.mp4");
         var gone = await ImmichJobAsync(staged: false);
         var erroring = await ImmichJobAsync("IMG_0002.MOV", staged: false);
         var later = await ImmichJobAsync("IMG_0003.MOV", staged: false);
@@ -157,19 +112,25 @@ public sealed class RunCommandTests : IDisposable
 
         var (code, output, _) = await RunAsync("run");
 
-        (code, output).Should().Be((6, Lines(
+        (code, output).Should().Be((10, Transcript(
             "Encoding on this PC.",
             $"Downloading again: IMG_0001.MOV (job {gone.Id:N} is open but its staged copy is missing)",
             "  issue: Immich did not return the video again (Immich returned HTTP 404 for GET /api/assets); the job is marked failed",
             $"Downloading again: IMG_0002.MOV (job {erroring.Id:N} is open but its staged copy is missing)",
             "2 Immich videos stay queued: Immich can't be used (Immich returned HTTP 502 for GET /api/assets).",
-            "Failed: 1.",
+            "Converting 1 video.",
+            "",
+            "[1/1] clip.mp4 (8 B)",
+            "      Ready to finalise.",
+            "Ready to finalise: 1. Failed: 1.",
             "",
             "Failed jobs:",
             $"{gone.Id:N}  IMG_0001.MOV",
-            $"SourceMissing: The staged original is missing, and Immich did not return asset {gone.ImmichAssetId} again: Immich returned HTTP 404 for GET /api/assets.")));
+            $"SourceMissing: The staged original is missing, and Immich did not return asset {gone.ImmichAssetId} again: Immich returned HTTP 404 for GET /api/assets.",
+            "Next: review the outputs, then run 'video-optimiser finalize --ready'.")));
         (await StoredAsync(erroring)).Status.Should().Be(JobStatus.Queued);
         (await StoredAsync(later)).Status.Should().Be(JobStatus.Queued);
+        (await StoredAsync(folder)).Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 
     /// <summary>A joining video whose copy Immich no longer has is failed and listed, as one the run prepared would be.</summary>
@@ -181,12 +142,12 @@ public sealed class RunCommandTests : IDisposable
         var joining = await ImmichJobAsync(staged: false);
         (await _repository.SetHeldAsync(DatabasePath, joining, held: true)).Should().BeTrue();
         _immich.Gone = true;
-        _processor.During = async () => (await _repository.SetHeldAsync(DatabasePath, await StoredAsync(joining), held: false)).Should().BeTrue();
+        _processor.During[0] = async _ => (await _repository.SetHeldAsync(DatabasePath, await StoredAsync(joining), held: false)).Should().BeTrue();
 
         var (code, output, _) = await RunAsync("run");
 
         code.Should().Be(10);
-        output.Should().EndWith(Lines(
+        output.Should().EndWith(Transcript(
             "Ready to finalise: 1. Failed: 1.",
             "",
             "Failed jobs:",
@@ -204,7 +165,7 @@ public sealed class RunCommandTests : IDisposable
         await FolderJobAsync("clip.mp4");
         var joining = await ImmichJobAsync();
         (await _repository.SetHeldAsync(DatabasePath, joining, held: true)).Should().BeTrue();
-        _processor.During = async () => (await _repository.SetHeldAsync(DatabasePath, await StoredAsync(joining), held: false)).Should().BeTrue();
+        _processor.During[0] = async _ => (await _repository.SetHeldAsync(DatabasePath, await StoredAsync(joining), held: false)).Should().BeTrue();
 
         _ = await RunAsync("run");
 
@@ -236,31 +197,18 @@ public sealed class RunCommandTests : IDisposable
         await FolderJobAsync("clip.mp4");
         var joining = await ImmichJobAsync(staged: false);
         (await _repository.SetHeldAsync(DatabasePath, joining, held: true)).Should().BeTrue();
-        _processor.During = async () => (await _repository.SetHeldAsync(DatabasePath, await StoredAsync(joining), held: false)).Should().BeTrue();
+        _processor.During[0] = async _ => (await _repository.SetHeldAsync(DatabasePath, await StoredAsync(joining), held: false)).Should().BeTrue();
 
         var (code, output, _) = await RunAsync("run");
 
         code.Should().Be(0);
-        output.Should().Contain(Lines(
+        output.Should().Contain(Transcript(
             "      Ready to finalise.",
             $"Downloading again: IMG_0001.MOV (job {joining.Id:N} is open but its staged copy is missing)",
             "  done: the staged copy is back",
             "",
             "[2/2] IMG_0001.MOV (15 B)"));
         _processor.Processed.Should().Equal("clip.mp4", "IMG_0001.MOV");
-    }
-
-    [Fact]
-    public async Task HeldVideosAreCountedBeforeTheRunConverts()
-    {
-        await WriteConfigAsync(immich: false);
-        foreach (var name in new[] { "a.mp4", "b.mp4" }) (await _repository.SetHeldAsync(DatabasePath, await FolderJobAsync(name), held: true)).Should().BeTrue();
-        await FolderJobAsync("clip.mp4");
-
-        var (_, output, _) = await RunAsync("run");
-
-        output.Should().StartWith(Lines("Encoding on this PC.", "2 videos are held; runs pass over them until they're released.", "Converting 1 video."));
-        _processor.Processed.Should().Equal("clip.mp4");
     }
 
     /// <summary>The held line is <c>run</c>'s: <c>immich run</c>'s limit already leaves held videos out, and says nothing of them.</summary>
@@ -295,12 +243,10 @@ public sealed class RunCommandTests : IDisposable
         var (code, output, error) = await ConsoleCapture.RunCliAsync(args);
 
         (code, output).Should().Be((2, ""));
-        error.Should().StartWith(Lines(line));
+        error.Should().StartWith(Transcript(line));
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
-
-    private static string Lines(params string[] lines) => string.Concat(lines.Select(line => line + Environment.NewLine));
 
     private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(params string[] args) => RunAsync(_ => { }, args);
 
@@ -313,17 +259,8 @@ public sealed class RunCommandTests : IDisposable
             configure(services);
         }, [.. args, "--config", _config]);
 
-    private async Task WriteConfigAsync(bool immich)
-    {
-        _config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(_config, string.Join('\n',
-            "database:",
-            $"  path: '{DatabasePath}'",
-            "immich:",
-            immich ? "  baseUrl: 'http://immich.test'" : "",
-            $"  stagingDirectory: '{StagingDirectory}'",
-            ""));
-    }
+    private async Task WriteConfigAsync(bool immich) =>
+        _config = await RunCli.WriteConfigAsync(DatabasePath, "immich:", immich ? "  baseUrl: 'http://immich.test'" : "", $"  stagingDirectory: '{StagingDirectory}'");
 
     private async Task<JobRecord> FolderJobAsync(string name)
     {
@@ -351,33 +288,6 @@ public sealed class RunCommandTests : IDisposable
     }
 
     private async Task<JobRecord> StoredAsync(JobRecord job) => (await _repository.GetAsync(DatabasePath, job.Id))!;
-
-    /// <summary>Makes each video ready to finalise, noting who holds the run lock while it converts.</summary>
-    private sealed class ReadyProcessor(SqliteJobRepository repository) : IJobProcessor
-    {
-        public List<string> Processed { get; } = [];
-        public List<string?> RunLockHolders { get; } = [];
-        public Func<Task>? During { get; set; }
-
-        public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(false);
-
-        public async Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
-        {
-            Processed.Add(Path.GetFileName(job.SourcePath));
-            RunLockHolders.Add(DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath))?.Command);
-            job.Status = JobStatus.Validating;
-            await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-            job.Status = JobStatus.ReadyToFinalize;
-            await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-            progress?.Report(JobProgress.Outcome(JobTone.Success, "Ready to finalise."));
-            if (During is { } during)
-            {
-                During = null;
-                await during();
-            }
-            return new JobProcessingResult(job, ExitCode.Success, "Ready to finalise.");
-        }
-    }
 
     /// <summary>Holds the job from "another terminal" just before restaging writes it as failed.</summary>
     private sealed class HoldingBeforeFailRepository(IJobRepository inner) : DelegatingJobRepository(inner)

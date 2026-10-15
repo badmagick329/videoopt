@@ -1,6 +1,5 @@
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
-using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Validate;
 using VideoOptimiser.Application.Jobs;
@@ -31,7 +30,7 @@ public sealed class JobConsoleOutputTests : IDisposable
     {
         var source = await CreateSourceAsync("PXL_20250531_041434717.mp4");
         var settings = Settings(remote: false, minimumVmaf: 93);
-        var processor = Processor(new ProcessingSessionFactory(_ => new ReplayedCrfSearch(), _ => new ReplayedEncoder(), new NoProcesses()));
+        var processor = Processor(new ProcessingSessionFactory(_ => new ReplayedCrfSearch(), _ => new ReplayedEncoder(), new UnexpectedExternalProcessRunner()));
 
         var text = await RunAsync(processor, source, settings);
 
@@ -113,8 +112,8 @@ public sealed class JobConsoleOutputTests : IDisposable
 
     private static JobProcessor Processor(IProcessingSessionFactory sessions) => new(
         new SqliteJobRepository(new SqliteDatabaseInitializer()),
-        new Readable(),
-        _ => new Probe(),
+        new ReadableFiles(),
+        _ => new H264Probe(),
         sessions,
         new FileFingerprintService(),
         new OutputManifestStore(),
@@ -196,30 +195,9 @@ public sealed class JobConsoleOutputTests : IDisposable
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private sealed class FixedSessionFactory(IProcessingSession session) : IProcessingSessionFactory
-    {
-        public IProcessingSession Create(JobRecord job, AppSettings settings) => session;
-    }
-
-    private sealed class NoProcesses : IExternalProcessRunner
-    {
-        public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default) => throw new InvalidOperationException("No external process is expected.");
-    }
-
     private sealed class SizedValidator : IOutputValidationService
     {
         public Task<ValidationReport> ValidateAsync(OutputManifest manifest, AppSettings settings, CancellationToken cancellationToken = default) =>
             Task.FromResult(new ValidationReport { Passed = true, SourceSizeBytes = 1_051_100_000, OutputSizeBytes = 301_300_000, PercentageSaved = 71.3m, ValidatedUtc = DateTimeOffset.UtcNow });
-    }
-
-    private sealed class Readable : IFileReadinessService
-    {
-        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
-    }
-
-    private sealed class Probe : IMediaProbe
-    {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, 10_000_000));
     }
 }

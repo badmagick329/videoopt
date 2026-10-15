@@ -29,45 +29,25 @@ public sealed class QueueServiceTests : IDisposable
         result.ExitCode.Should().Be(ExitCode.Success);
     }
 
-    [Fact]
-    public async Task RunAsyncOpensEachJobWithAHeaderNumberedOutOfTheTotalWithItsSize()
-    {
-        await File.WriteAllBytesAsync(Path.Combine(_directory, "first.mp4"), new byte[2048]);
-        var (databasePath, jobs) = await QueuedAsync("first.mp4", "gone.mp4");
-        var reported = new List<JobProgress>();
-        var queue = new QueueService(_repository, new ScriptedProcessor(), new DatabaseLocks());
-
-        _ = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs), progress: new ListProgress(reported));
-
-        // Each header precedes its own job's lines, and a missing original gets no size rather than a made-up one.
-        reported.Should().Equal(
-            new JobProgress(JobProgressKind.Header, "[1/2] first.mp4 (2.0 KiB)"),
-            JobProgress.Step("processed first.mp4"),
-            new JobProgress(JobProgressKind.Header, "[2/2] gone.mp4"),
-            JobProgress.Step("processed gone.mp4"));
-    }
-
     /// <summary>
     /// Every later job would retry the dead worker and fail the same way, so the run stops at the first unreachable result.
     /// That job resumes, so it is not a failure, but the exit code counts it as one, as before (VOPT-69).
     /// </summary>
-    [Theory]
-    [InlineData(0, 2, ExitCode.ProcessingFailure)]
-    [InlineData(1, 1, ExitCode.PartialSuccess)]
-    public async Task RunAsyncStopsAtTheFirstJobWhoseWorkerCannotBeReached(int readyBefore, int notStarted, ExitCode exitCode)
+    [Fact]
+    public async Task RunAsyncStopsAtTheFirstJobWhoseWorkerCannotBeReached()
     {
         var (databasePath, jobs) = await QueuedAsync("1.mp4", "2.mp4", "3.mp4");
-        var processor = new UnreachableAfterProcessor(readyBefore);
+        var processor = new UnreachableAfterProcessor(readyBefore: 1);
         var queue = new QueueService(_repository, processor, new DatabaseLocks());
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
 
-        processor.Calls.Should().Be(readyBefore + 1);
-        result.UnreachableWorkerJob!.SourcePath.Should().Be(jobs[readyBefore].SourcePath);
-        result.NotStarted.Should().Be(notStarted);
+        processor.Calls.Should().Be(2);
+        result.UnreachableWorkerJob!.SourcePath.Should().Be(jobs[1].SourcePath);
+        result.NotStarted.Should().Be(1);
         result.FailedJobs.Should().BeEmpty();
-        result.ReadyToFinalize.Should().Be(readyBefore);
-        result.ExitCode.Should().Be(exitCode);
+        result.ReadyToFinalize.Should().Be(1);
+        result.ExitCode.Should().Be(ExitCode.PartialSuccess);
     }
 
     /// <summary>
@@ -78,8 +58,6 @@ public sealed class QueueServiceTests : IDisposable
     public async Task RunAsyncTakesTheQueueAsItIsBeforeEachVideo()
     {
         var (databasePath, jobs) = await QueuedAsync("first.mp4", "held.mp4", "later.mp4", "moved-next.mp4");
-        // A run kept to folder videos (Immich can't be used) leaves this one queued.
-        await _repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "immich.mp4"), SourceFingerprint = "immich", Status = JobStatus.Queued, SourceKind = JobSourceKind.Immich, ImmichAssetId = "asset" });
         var processor = new ScriptedProcessor();
         processor.During["first.mp4"] = async () =>
         {
@@ -89,26 +67,10 @@ public sealed class QueueServiceTests : IDisposable
         };
         var queue = new QueueService(_repository, processor, new DatabaseLocks());
 
-        var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs) with { SourceKind = JobSourceKind.File });
+        var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
 
         processor.Processed.Should().Equal("first.mp4", "moved-next.mp4", "later.mp4", "added.mp4");
         result.ReadyToFinalize.Should().Be(4);
-    }
-
-    /// <summary><c>run</c> converts every source: an Immich video takes its place in run order beside folder videos.</summary>
-    [Fact]
-    public async Task RunAsyncWithNoSourceTakesEverySourceInRunOrder()
-    {
-        var (databasePath, jobs) = await QueuedAsync("first.mp4");
-        var immich = await _repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "IMG_0001.MOV"), SourceFingerprint = "immich", Status = JobStatus.Queued, SourceKind = JobSourceKind.Immich, ImmichAssetId = "asset" });
-        await Task.Delay(5);
-        var (_, later) = await QueuedAsync("later.mp4");
-        var processor = new ScriptedProcessor();
-        var queue = new QueueService(_repository, processor, new DatabaseLocks());
-
-        _ = await queue.RunAsync(databasePath, new AppSettings(), Prepared([.. jobs, immich, .. later]));
-
-        processor.Processed.Should().Equal("first.mp4", "IMG_0001.MOV", "later.mp4");
     }
 
     /// <summary><c>immich run</c> keeps the set its limit chose (until phase A step 7): a video queued meanwhile waits.</summary>
@@ -253,15 +215,21 @@ public sealed class QueueServiceTests : IDisposable
 
     private static QueuePreparationResult Prepared(IReadOnlyList<JobRecord> jobs) => new(jobs, [], [], []);
 
-    /// <summary>Makes the first <paramref name="readyBefore"/> jobs ready, then reports every job after as interrupted by an unreachable worker.</summary>
+    /// <summary>
+    /// Makes the first <paramref name="readyBefore"/> jobs ready, then reports every job after as interrupted by an unreachable
+    /// worker. It writes nothing, so a video given twice fails the test rather than loop.
+    /// </summary>
     private sealed class UnreachableAfterProcessor(int readyBefore) : IJobProcessor
     {
+        private readonly HashSet<Guid> _seen = [];
+
         public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(true);
 
         public int Calls { get; private set; }
 
         public Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
+            if (!_seen.Add(job.Id)) throw new InvalidOperationException($"{job.SourcePath} was given to the processor twice.");
             var outcome = new JobRecord { Id = job.Id, SourcePath = job.SourcePath };
             if (Calls++ < readyBefore)
             {
@@ -284,11 +252,6 @@ public sealed class QueueServiceTests : IDisposable
         // It writes nothing, so a run that forgot which videos it tried would loop on the same one forever.
         public Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
             _seen.Add(job.Id) ? Task.FromResult(result) : throw new InvalidOperationException($"{job.SourcePath} was given to the processor twice.");
-    }
-
-    private sealed class ListProgress(List<JobProgress> lines) : IProgress<JobProgress>
-    {
-        public void Report(JobProgress value) => lines.Add(value);
     }
 
     /// <summary>

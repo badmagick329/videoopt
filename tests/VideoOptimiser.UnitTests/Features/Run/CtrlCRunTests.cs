@@ -10,6 +10,7 @@ using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
+using static VideoOptimiser.UnitTests.RunCli;
 
 namespace VideoOptimiser.UnitTests.Features.Run;
 
@@ -23,69 +24,57 @@ public sealed class CtrlCRunTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
     private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
     private readonly RunStop _stop = new();
-    private readonly PressingProcessor _processor;
+    private readonly ScriptedRunProcessor _processor = new();
 
-    public CtrlCRunTests()
-    {
-        Directory.CreateDirectory(_directory);
-        _processor = new PressingProcessor(_repository, _stop);
-    }
+    public CtrlCRunTests() => Directory.CreateDirectory(_directory);
 
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
 
+    /// <summary>
+    /// The estimate is the encode's: once a later step starts, the line says nothing about time. A stop after a video on this
+    /// PC ends with how to convert the rest, and nothing about a worker.
+    /// </summary>
     [Fact]
-    public async Task TheFirstCtrlCStopsAfterThisVideoWithTheEncodesTimeLeftAndLeavesTheRestWaiting()
+    public async Task AFirstCtrlCAfterTheEncodeGivesNoTimeLeft()
     {
-        var config = await WriteConfigAsync();
-        var jobs = await QueueJobsAsync(3);
-        _processor.PressDuring[0] = 1;
+        var config = await WriteConfigAsync(DatabasePath);
+        var jobs = await QueueJobsAsync(_repository, DatabasePath, 2);
+        _processor.During[0] = progress =>
+        {
+            progress!.Report(JobProgress.Step("Checking the AV1..."));
+            _stop.Press();
+            return Task.CompletedTask;
+        };
 
         var (code, output, _) = await RunAsync("run", "--config", config);
 
         output.Should().Be(Transcript(
             "Encoding on this PC.",
-            "Converting 3 videos.",
+            "Converting 2 videos.",
             "",
-            "[1/3] 1.mp4",
+            "[1/2] 1.mp4",
             "      Encoding...",
             "        41%, 63 fps, about 7m 36s left",
-            "Stopping after this video (the encode has about 7m 36s left). Press Ctrl+C again to stop now.",
+            "      Checking the AV1...",
+            "Stopping after this video. Press Ctrl+C again to stop now.",
             "      Ready to finalise.",
             "",
-            "Stopped after 1.mp4; 2 videos are still waiting.",
+            "Stopped after 1.mp4; 1 video is still waiting.",
             "Ready to finalise: 1.",
             "Next: review the outputs, then run 'video-optimiser finalize --ready'.",
             $"To convert the rest: video-optimiser run --config \"{config}\""));
         code.Should().Be((int)ExitCode.Cancelled);
         _processor.Calls.Should().Be(1);
-        (await StatusesAsync(jobs)).Should().Equal(JobStatus.ReadyToFinalize, JobStatus.Queued, JobStatus.Queued);
-    }
-
-    /// <summary>The estimate is the encode's: once a later step starts, the line says nothing about time.</summary>
-    [Fact]
-    public async Task AFirstCtrlCAfterTheEncodeGivesNoTimeLeft()
-    {
-        var config = await WriteConfigAsync();
-        await QueueJobsAsync(2);
-        _processor.PressDuring[0] = 1;
-        _processor.StepBeforePress = "Checking the AV1...";
-
-        var (_, output, _) = await RunAsync("run", "--config", config);
-
-        Lines(output).Should().ContainInOrder(
-            "      Checking the AV1...",
-            "Stopping after this video. Press Ctrl+C again to stop now.",
-            "      Ready to finalise.");
-        output.Should().NotContain("left)");
+        (await StatusesAsync(_repository, DatabasePath, jobs)).Should().Equal(JobStatus.ReadyToFinalize, JobStatus.Queued);
     }
 
     /// <summary>A first press on the last video changes nothing about how the run ends: there is nothing left to stop before.</summary>
     [Fact]
     public async Task AFirstCtrlCOnTheLastVideoEndsTheRunAsFinished()
     {
-        var config = await WriteConfigAsync();
-        await QueueJobsAsync(1);
-        _processor.PressDuring[0] = 1;
+        var config = await WriteConfigAsync(DatabasePath);
+        await QueueJobsAsync(_repository, DatabasePath, 1);
+        PressDuringTheFirstVideo(1);
 
         var (code, output, _) = await RunAsync("run", "--config", config);
 
@@ -106,9 +95,9 @@ public sealed class CtrlCRunTests : IDisposable
     [Fact]
     public async Task ASecondCtrlCStopsNowAndSaysTheVideoContinuesOnTheNextRun()
     {
-        var config = await WriteConfigAsync();
-        var jobs = await QueueJobsAsync(3);
-        _processor.PressDuring[0] = 2;
+        var config = await WriteConfigAsync(DatabasePath);
+        var jobs = await QueueJobsAsync(_repository, DatabasePath, 3);
+        PressDuringTheFirstVideo(2);
 
         var (code, output, _) = await RunAsync("run", "--config", config);
 
@@ -127,14 +116,14 @@ public sealed class CtrlCRunTests : IDisposable
         var stored = await _repository.GetAsync(DatabasePath, jobs[0].Id);
         stored!.Status.Should().Be(JobStatus.Interrupted);
         stored.ResumeStatus.Should().Be(JobStatus.Encoding);
-        (await StatusesAsync(jobs)).Skip(1).Should().OnlyContain(status => status == JobStatus.Queued);
+        (await StatusesAsync(_repository, DatabasePath, jobs)).Skip(1).Should().OnlyContain(status => status == JobStatus.Queued);
     }
 
     /// <summary>With no video converting there is nothing to finish first, so the first press stops now.</summary>
     [Fact]
     public async Task ACtrlCDuringImmichDiscoveryStopsNow()
     {
-        var config = await WriteConfigAsync(immich: true);
+        var config = await WriteConfigAsync(DatabasePath, "immich:", "  baseUrl: 'http://immich.invalid'");
 
         var (code, output, _) = await ConsoleCapture.RunCliAsync(services =>
         {
@@ -151,21 +140,11 @@ public sealed class CtrlCRunTests : IDisposable
         code.Should().Be((int)ExitCode.Cancelled);
     }
 
-    [Fact]
-    public void ACtrlCWhileDeletingTheWorkerStopsNothing()
+    private void PressDuringTheFirstVideo(int presses) => _processor.During[0] = _ =>
     {
-        var presses = 0;
-        using (_stop.WhileDeleting(() => presses++))
-        {
-            _stop.Press();
-            _stop.Press();
-        }
-
-        presses.Should().Be(2);
-        _stop.Now.IsCancellationRequested.Should().BeFalse();
-        _stop.Press();
-        _stop.Now.IsCancellationRequested.Should().BeTrue();
-    }
+        for (var press = 0; press < presses; press++) _stop.Press();
+        return Task.CompletedTask;
+    };
 
     private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(params string[] args) =>
         ConsoleCapture.RunCliAsync(services =>
@@ -175,82 +154,10 @@ public sealed class CtrlCRunTests : IDisposable
             services.AddSingleton<IJobProcessor>(_processor);
         }, args);
 
-    private async Task<JobRecord[]> QueueJobsAsync(int count)
-    {
-        var jobs = new List<JobRecord>();
-        for (var index = 1; index <= count; index++)
-        {
-            jobs.Add(await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, $"{index}.mp4"), Status = JobStatus.Queued }));
-            // Run order is by creation time.
-            await Task.Delay(5);
-        }
-        return [.. jobs];
-    }
-
-    private async Task<JobStatus[]> StatusesAsync(IEnumerable<JobRecord> jobs)
-    {
-        var statuses = new List<JobStatus>();
-        foreach (var job in jobs) statuses.Add((await _repository.GetAsync(DatabasePath, job.Id))!.Status);
-        return [.. statuses];
-    }
-
-    private async Task<string> WriteConfigAsync(bool immich = false)
-    {
-        var config = Path.Combine(_directory, "config.yaml");
-        await File.WriteAllTextAsync(config, string.Join('\n',
-            "database:",
-            $"  path: '{DatabasePath}'",
-            immich ? "immich:\n  baseUrl: 'http://immich.invalid'" : "",
-            ""));
-        return config;
-    }
-
-    private static string Transcript(params string[] lines) => string.Join(Environment.NewLine, lines) + Environment.NewLine;
-
-    private static string[] Lines(string output) => output.Split(Environment.NewLine);
-
     public void Dispose()
     {
         _stop.Dispose();
         Directory.Delete(_directory, recursive: true);
-    }
-
-    /// <summary>
-    /// Converts each video through the statuses <see cref="JobProcessor"/> writes, pressing Ctrl+C partway as many times as
-    /// <see cref="PressDuring"/> says, and stops as <see cref="JobProcessor"/> does when the run's token is cancelled.
-    /// </summary>
-    private sealed class PressingProcessor(SqliteJobRepository repository, RunStop stop) : IJobProcessor
-    {
-        public Dictionary<int, int> PressDuring { get; } = [];
-        public string? StepBeforePress { get; set; }
-        public int Calls { get; private set; }
-
-        public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(false);
-
-        public async Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
-        {
-            var index = Calls++;
-            job.Status = JobStatus.Encoding;
-            await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-            progress?.Report(JobProgress.Step("Encoding..."));
-            progress?.Report(JobProgress.Detail("41%, 63 fps, about 7m 36s left") with { TimeLeft = new TimeSpan(0, 7, 36) });
-            if (StepBeforePress is not null) progress?.Report(JobProgress.Step(StepBeforePress));
-            for (var press = 0; press < PressDuring.GetValueOrDefault(index); press++) stop.Press();
-            if (cancellationToken.IsCancellationRequested)
-            {
-                job.Status = JobStatus.Interrupted;
-                job.ResumeStatus = JobStatus.Encoding;
-                await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-                throw new JobInterruptedException(job, JobStatus.Encoding, remote: false, cancellationToken);
-            }
-
-            job.Status = JobStatus.Validating;
-            await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-            job.Status = JobStatus.ReadyToFinalize;
-            await repository.UpdateAsync(databasePath, job, CancellationToken.None);
-            progress?.Report(JobProgress.Outcome(JobTone.Success, "Ready to finalise."));
-            return new JobProcessingResult(job, ExitCode.Success, "Ready to finalise.");
-        }
     }
 
     /// <summary>Ctrl+C during Immich discovery, which observes the run's token as the real service does.</summary>

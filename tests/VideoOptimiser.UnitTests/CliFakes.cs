@@ -1,8 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
+using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
+using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -20,6 +24,141 @@ internal static class CliFakes
     private sealed class NoDiagnostics : ISettingsValidator
     {
         public IReadOnlyList<Diagnostic> Validate(AppSettings settings) => [];
+    }
+}
+
+/// <summary>What the tests that run the real CLI over a queue share: a config, queued videos, and the transcript they expect.</summary>
+internal static class RunCli
+{
+    /// <summary>The config lines for a worker the Hetzner lifecycle manages.</summary>
+    public static readonly string[] ManagedHetzner = ["processing:", "  mode: \"remoteSsh\"", "  remoteSsh:", "    lifecycle: \"hetzner\""];
+
+    /// <summary>Writes <c>config.yaml</c> beside the database: the database path, then <paramref name="yaml"/>'s lines.</summary>
+    public static async Task<string> WriteConfigAsync(string databasePath, params string[] yaml)
+    {
+        var config = Path.Combine(Path.GetDirectoryName(databasePath)!, "config.yaml");
+        await File.WriteAllTextAsync(config, string.Join('\n', ["database:", $"  path: '{databasePath}'", .. yaml, ""]));
+        return config;
+    }
+
+    /// <summary>Queues 1.mp4 to <paramref name="count"/>.mp4, which need not exist, beside the database in that run order.</summary>
+    public static async Task<JobRecord[]> QueueJobsAsync(IJobRepository repository, string databasePath, int count)
+    {
+        var jobs = new List<JobRecord>();
+        for (var index = 1; index <= count; index++)
+        {
+            jobs.Add(await repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(Path.GetDirectoryName(databasePath)!, $"{index}.mp4"), Status = JobStatus.Queued }));
+            // Run order is by creation time.
+            await Task.Delay(5);
+        }
+        return [.. jobs];
+    }
+
+    public static async Task<JobStatus[]> StatusesAsync(IJobRepository repository, string databasePath, IEnumerable<JobRecord> jobs)
+    {
+        var statuses = new List<JobStatus>();
+        foreach (var job in jobs) statuses.Add((await repository.GetAsync(databasePath, job.Id))!.Status);
+        return [.. statuses];
+    }
+
+    /// <summary>The console output of these lines.</summary>
+    public static string Transcript(params string[] lines) => string.Concat(lines.Select(line => line + Environment.NewLine));
+
+    public static string[] Lines(string output) => output.Split(Environment.NewLine);
+}
+
+/// <summary>
+/// Converts each video through the statuses <see cref="JobProcessor"/> writes, without the media tools, scripted by the
+/// video's index in the run. <see cref="During"/> runs partway, as a user pressing Ctrl+C or another terminal; a cancelled
+/// token then stops the video in <see cref="StopStage"/>, as the real processor does. Every video it takes is written, so a
+/// run that took one twice would find it changed rather than loop.
+/// </summary>
+internal sealed class ScriptedRunProcessor(bool remote = false) : IJobProcessor
+{
+    private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
+
+    /// <summary>Whether a video needs the worker; by default, every remote video that passes its local checks.</summary>
+    public Func<JobRecord, bool>? NeedsWorker { get; init; }
+
+    /// <summary>The videos that fail a local check: written failed as ineligible, with no line, as nothing converted.</summary>
+    public Func<JobRecord, bool> Ineligible { get; init; } = _ => false;
+
+    /// <summary>Whether a video reports its encode, with one progress line, before <see cref="During"/>.</summary>
+    public bool ReportsEncoding { get; init; } = true;
+
+    public Dictionary<int, Func<IProgress<JobProgress>?, Task>> During { get; } = [];
+    public Dictionary<int, Func<Task>> AfterVideo { get; } = [];
+    public Dictionary<int, bool> Fail { get; } = [];
+    public Dictionary<int, bool> Unreachable { get; } = [];
+    public Dictionary<int, Exception> Throw { get; } = [];
+    public JobStatus StopStage { get; set; } = JobStatus.Encoding;
+    public int Calls { get; set; }
+    public List<string> Processed { get; } = [];
+
+    /// <summary>The command holding the run lock as each video converted.</summary>
+    public List<string?> RunLockHolders { get; } = [];
+
+    public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) =>
+        Task.FromResult(NeedsWorker?.Invoke(job) ?? (remote && !Ineligible(job)));
+
+    public async Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        var index = Calls++;
+        Processed.Add(Path.GetFileName(job.SourcePath));
+        RunLockHolders.Add(DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(databasePath))?.Command);
+        if (ReportsEncoding)
+        {
+            await WriteAsync(databasePath, job, JobStatus.Encoding);
+            progress?.Report(JobProgress.Step("Encoding..."));
+            progress?.Report(JobProgress.Detail("41%, 63 fps, about 7m 36s left") with { TimeLeft = new TimeSpan(0, 7, 36) });
+        }
+        if (During.TryGetValue(index, out var during)) await during(progress);
+        if (Throw.TryGetValue(index, out var error)) throw error;
+        if (cancellationToken.IsCancellationRequested)
+        {
+            job.ResumeStatus = StopStage;
+            await WriteAsync(databasePath, job, JobStatus.Interrupted);
+            throw new JobInterruptedException(job, StopStage, remote, cancellationToken);
+        }
+
+        JobProcessingResult result;
+        if (Ineligible(job))
+        {
+            (job.FailureCategory, job.FailureMessage, job.CompletedUtc) = ("Ineligible", "Codec av1 is not in any rule.", DateTimeOffset.UtcNow);
+            await WriteAsync(databasePath, job, JobStatus.Failed);
+            result = new JobProcessingResult(job, ExitCode.NoEligibleFiles, job.FailureMessage);
+        }
+        else if (Unreachable.GetValueOrDefault(index))
+        {
+            (job.ResumeStatus, job.FailureCategory, job.FailureMessage) = (JobStatus.Encoding, FailureCategories.RemoteUnavailable, "SSH connection failed: timed out.");
+            await WriteAsync(databasePath, job, JobStatus.Interrupted);
+            progress?.Report(JobProgress.Outcome(JobTone.Failure, "Worker unreachable: SSH connection failed: timed out."));
+            result = new JobProcessingResult(job, ExitCode.ProcessingFailure, job.FailureMessage);
+        }
+        else if (Fail.GetValueOrDefault(index))
+        {
+            (job.FailureCategory, job.FailureMessage) = ("EncodeFailed", "the encode broke.");
+            await WriteAsync(databasePath, job, JobStatus.Failed);
+            progress?.Report(JobProgress.Outcome(JobTone.Failure, "Failed: the encode broke."));
+            result = new JobProcessingResult(job, ExitCode.ProcessingFailure, job.FailureMessage);
+        }
+        else
+        {
+            await WriteAsync(databasePath, job, JobStatus.Validating, JobStatus.ReadyToFinalize);
+            progress?.Report(JobProgress.Outcome(JobTone.Success, "Ready to finalise."));
+            result = new JobProcessingResult(job, ExitCode.Success, "Ready to finalise.");
+        }
+        if (AfterVideo.TryGetValue(index, out var after)) await after();
+        return result;
+    }
+
+    private async Task WriteAsync(string databasePath, JobRecord job, params JobStatus[] steps)
+    {
+        foreach (var step in steps)
+        {
+            job.Status = step;
+            await _repository.UpdateAsync(databasePath, job, CancellationToken.None);
+        }
     }
 }
 
