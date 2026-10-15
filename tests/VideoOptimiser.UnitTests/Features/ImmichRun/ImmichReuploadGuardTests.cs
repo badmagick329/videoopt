@@ -84,6 +84,20 @@ public sealed class ImmichReuploadGuardTests : IDisposable
     }
 
     [Fact]
+    public async Task LeavesAReuploadAlreadyInTheTrashAloneWithoutAnIssue()
+    {
+        // An earlier run, or the user, trashed it already; every later run must stay silent about it.
+        await ConvertAsync("trashed reupload");
+        _immich.Add("PXL_20250501_143000000.mp4", "trashed reupload", isTrashed: true);
+
+        var result = await CheckAsync();
+
+        result.Trashed.Should().BeEmpty();
+        result.Issues.Should().BeEmpty();
+        _immich.Trashes.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ChecksConvertedChecksumsInBatchesAndTrashesReuploadsFromEach()
     {
         var reuploads = new List<string>();
