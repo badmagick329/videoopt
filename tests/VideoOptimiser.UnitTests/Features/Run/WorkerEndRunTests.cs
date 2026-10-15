@@ -40,8 +40,8 @@ public sealed class WorkerEndRunTests : IDisposable
     private string Config => $"--config \"{_config}\"";
 
     /// <summary>
-    /// The night case: Ctrl+C once, answer y, leave. The video finishes, the worker is deleted, and the next run creates a new
-    /// worker and converts the rest.
+    /// The night case: Ctrl+C once, answer y, leave. The video finishes, the worker is deleted, the status card shows no worker
+    /// and the remaining queue, and the next run creates a new worker and converts the rest.
     /// </summary>
     [Fact]
     public async Task TheNightCaseFinishesTheVideoDeletesTheWorkerAndTheNextRunConvertsTheRest()
@@ -73,6 +73,21 @@ public sealed class WorkerEndRunTests : IDisposable
         code.Should().Be((int)ExitCode.Cancelled);
         _lifecycle.DeleteCalls.Should().Be(1);
         (await StatusesAsync(_repository, DatabasePath, jobs)).Should().Equal(JobStatus.ReadyToFinalize, JobStatus.Queued, JobStatus.Queued);
+
+        var (statusCode, status, statusError) = await StatusAsync();
+        var finalise = $"video-optimiser finalize --ready {Config}";
+        var convert = $"video-optimiser run {Config}";
+        var nextWidth = Math.Max(finalise.Length, convert.Length) + 3;
+
+        status.Should().Be(Transcript(
+            "Queue: 2 waiting, 1 ready to finalise.",
+            "Run: none.",
+            "Worker: none.",
+            "Next:",
+            $"  {finalise.PadRight(nextWidth)}finalises the ready video; review it first",
+            $"  {convert.PadRight(nextWidth)}converts the 2 videos in the queue"));
+        statusError.Should().BeEmpty();
+        statusCode.Should().Be((int)ExitCode.Success);
 
         NextRun();
         var (morningCode, morning, _) = await RunAsync();
@@ -531,6 +546,14 @@ public sealed class WorkerEndRunTests : IDisposable
             services.AddSingleton<IRemoteWorkerLifecycle>(_lifecycle);
             services.AddSingleton<IJobProcessor>(_processor);
         }, "run", "--config", _config);
+
+    /// <summary>The status card after a run, with the same worker the run used: the lifecycle's own answer, not a stub, so a delete that left the worker "up" would show.</summary>
+    private Task<(int ExitCode, string Stdout, string Stderr)> StatusAsync() =>
+        ConsoleCapture.RunCliAsync(services =>
+        {
+            CliFakes.AcceptAnySettings(services);
+            services.AddSingleton<IRemoteWorkerLifecycle>(_lifecycle);
+        }, "status", "--config", _config);
 
     /// <summary>A new command: its own Ctrl+C, input and worker state.</summary>
     private void NextRun()
