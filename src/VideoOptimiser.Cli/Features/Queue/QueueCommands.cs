@@ -266,11 +266,9 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             case QueueAddOutcome.TooSmall:
                 WriteError($"{name} doesn't fit your rules: {Fragment(result.Reason!)}.");
                 return (int)ExitCode.NoEligibleFiles;
-            case QueueAddOutcome.Unreadable:
-                WriteError($"{name} can't be read, so it can't be queued: {Fragment(result.Reason!)}.");
-                return (int)ExitCode.ProcessingFailure;
             default:
-                WriteError($"ffprobe can't read {name}, so it can't be queued: {Fragment(result.Reason!)}.");
+                // Unreadable or unprobeable; every probe failure names ffprobe itself.
+                WriteError($"Can't queue {name}: {Fragment(result.Reason!)}.");
                 return (int)ExitCode.ProcessingFailure;
         }
     }

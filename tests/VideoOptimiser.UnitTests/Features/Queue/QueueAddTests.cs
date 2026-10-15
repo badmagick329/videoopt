@@ -143,8 +143,8 @@ public sealed class QueueAddTests : QueueTestBase
     }
 
     [Theory]
-    [InlineData("locked.mp4", "locked.mp4 can't be read, so it can't be queued: file cannot be opened for reading: in use.")]
-    [InlineData("broken.mp4", "ffprobe can't read broken.mp4, so it can't be queued: ffprobe exited with 1: Invalid data found when processing input.")]
+    [InlineData("locked.mp4", "Can't queue locked.mp4: file cannot be opened for reading: in use.")]
+    [InlineData("broken.mp4", "Can't queue broken.mp4: ffprobe exited with 1: Invalid data found when processing input.")]
     public async Task AFileThatCannotBeReadOrProbedIsRefused(string name, string refusal)
     {
         var path = await FileAsync(Root, name);

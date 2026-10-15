@@ -134,7 +134,7 @@ Usage:
                     modeOverrides.Add(ProcessingModeOverride.Remote);
                     break;
                 case "--crf":
-                    return Invalid("--crf is no longer supported. run selects CRF automatically.");
+                    return Invalid("--crf is no longer supported: run picks the CRF itself.");
                 case "--help" or "-h" or "help":
                     return new CliCommand(CliCommandKind.Help, null, null, false, false, false, false, null);
                 case "--version":

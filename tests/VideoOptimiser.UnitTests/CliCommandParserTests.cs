@@ -48,6 +48,7 @@ public sealed class CliCommandParserTests
     [InlineData("--dry-run is only supported by cleanup.", "run", "--dry-run")]
     [InlineData("--local and --remote cannot be used together.", "run", "--local", "--remote")]
     [InlineData("--local is only supported by run and immich run.", "queue", "add", "--local")]
+    [InlineData("--crf is no longer supported: run picks the CRF itself.", "run", "--crf", "30")]
     public void RejectsWithTheReason(string error, params string[] args)
     {
         var command = CliCommand.Parse(args);
