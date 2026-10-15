@@ -1,3 +1,4 @@
+using VideoOptimiser.Cli;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
@@ -53,13 +54,14 @@ public sealed class ImmichRunTests : IDisposable
             fingerprints,
             manifests,
             new PassingValidator(),
-            new AbAv1ProgressTranslator());
-        _queue = new QueueService(_repository, processor, new DatabaseLocks());
+            new AbAv1ProgressTranslator(),
+            new CommandHints(null));
+        _queue = new QueueService(_repository, processor, new DatabaseLocks(), new CommandHints(null));
         _run = new ImmichRunService(
             _immich,
             new ImmichReuploadGuard(_immich, _repository),
             new ImmichDiscoveryService(_immich, _repository, _ => new H264Probe(bitrate: 20_000_000), fingerprints, () => Now));
-        _finalizer = new FinalizationService(_repository, manifests, fingerprints, new SafeFileInstaller(), new ImmichFinalizer(_immich, _repository, manifests));
+        _finalizer = new FinalizationService(_repository, manifests, fingerprints, new SafeFileInstaller(), new ImmichFinalizer(_immich, _repository, manifests, new CommandHints(null)), new CommandHints(null));
     }
 
     [Fact]

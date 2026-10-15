@@ -1,3 +1,4 @@
+using VideoOptimiser.Cli;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Run;
@@ -19,7 +20,7 @@ public sealed class QueueServiceTests : IDisposable
     {
         var (databasePath, jobs) = await QueuedAsync("a.mp4");
         var skipped = new JobRecord { Id = jobs[0].Id, SourcePath = jobs[0].SourcePath, Status = JobStatus.Skipped, FailureCategory = "NotWorthConverting", FailureMessage = "AV1 would keep 95%." };
-        var queue = new QueueService(_repository, new ResultProcessor(new JobProcessingResult(skipped, ExitCode.Success, "AV1 would keep 95%.")), new DatabaseLocks());
+        var queue = new QueueService(_repository, new ResultProcessor(new JobProcessingResult(skipped, ExitCode.Success, "AV1 would keep 95%.")), new DatabaseLocks(), new CommandHints(null));
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
 
@@ -38,7 +39,7 @@ public sealed class QueueServiceTests : IDisposable
     {
         var (databasePath, jobs) = await QueuedAsync("1.mp4", "2.mp4", "3.mp4");
         var processor = new UnreachableAfterProcessor(readyBefore: 1);
-        var queue = new QueueService(_repository, processor, new DatabaseLocks());
+        var queue = new QueueService(_repository, processor, new DatabaseLocks(), new CommandHints(null));
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
 
@@ -65,7 +66,7 @@ public sealed class QueueServiceTests : IDisposable
             (await _repository.RunNextAsync(databasePath, (await _repository.GetAsync(databasePath, jobs[3].Id))!)).Should().BeTrue();
             await _repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "added.mp4"), SourceFingerprint = "added", Status = JobStatus.Queued });
         };
-        var queue = new QueueService(_repository, processor, new DatabaseLocks());
+        var queue = new QueueService(_repository, processor, new DatabaseLocks(), new CommandHints(null));
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
 
@@ -88,7 +89,7 @@ public sealed class QueueServiceTests : IDisposable
             stop.Cancel();
             throw new JobChangedException(jobs[0].Id);
         };
-        var queue = new QueueService(_repository, processor, new DatabaseLocks());
+        var queue = new QueueService(_repository, processor, new DatabaseLocks(), new CommandHints(null));
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs), stopAfterThisVideo: stop.Token);
 
@@ -107,7 +108,7 @@ public sealed class QueueServiceTests : IDisposable
         var processor = new ScriptedProcessor();
         var reported = new List<JobProgress>();
         var asked = new List<string>();
-        var queue = new QueueService(_repository, processor, new DatabaseLocks());
+        var queue = new QueueService(_repository, processor, new DatabaseLocks(), new CommandHints(null));
 
         _ = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs), (job, _) =>
         {
@@ -144,7 +145,7 @@ public sealed class QueueServiceTests : IDisposable
         (await _repository.RunNextAsync(databasePath, jobs[3])).Should().BeTrue();
         // Written last, so the database's own order (latest update first) puts it ahead; the run order must not.
         await _repository.UpdateAsync(databasePath, jobs[0]);
-        var queue = new QueueService(_repository, new NoopProcessor(), new DatabaseLocks());
+        var queue = new QueueService(_repository, new NoopProcessor(), new DatabaseLocks(), new CommandHints(null));
 
         var preparation = await queue.PrepareAsync(databasePath, new AppSettings { Database = new DatabaseSettings { Path = databasePath } }, JobSourceKind.File);
 
@@ -166,7 +167,7 @@ public sealed class QueueServiceTests : IDisposable
             Database = new DatabaseSettings { Path = databasePath },
             Processing = new ProcessingSettings { Mode = ProcessingModes.RemoteSsh, RemoteSsh = new RemoteSshSettings { Host = "video-worker", WorkingDirectory = "/w" } }
         };
-        var queue = new QueueService(new ChangingOnUpdate(_repository, jobs[0].Id), new NoopProcessor(), new DatabaseLocks());
+        var queue = new QueueService(new ChangingOnUpdate(_repository, jobs[0].Id), new NoopProcessor(), new DatabaseLocks(), new CommandHints(null));
 
         var preparation = await queue.PrepareAsync(databasePath, settings, JobSourceKind.File);
 
@@ -279,12 +280,25 @@ public sealed class QueueServiceTests : IDisposable
         stored.ResumeStatus.Should().Be(JobStatus.Finalizing);
     }
 
+    /// <summary>The message is stored with the job and shown later by queue list, so it carries the --config the run was typed with.</summary>
+    [Fact]
+    public async Task PrepareAsyncReadiesAnInterruptedImmichFinalisationWithTheResumeCommandTheUserTyped()
+    {
+        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "IMG_0001.MOV"), SourceFingerprint = "original", SourceKind = JobSourceKind.Immich, Status = JobStatus.Finalizing };
+        await _repository.CreateAsync(DatabasePath, job);
+
+        await new QueueService(_repository, new NoopProcessor(), new DatabaseLocks(), new CommandHints("my.yaml")).PrepareAsync(DatabasePath, new AppSettings(), sourceKind: null);
+
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        (stored.Status, stored.FailureMessage).Should().Be((JobStatus.ReadyToFinalize, "Finalisation was interrupted. Run 'video-optimiser immich finalize --config \"my.yaml\"' again to resume."));
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
 
     private Task<QueuePreparationResult> PrepareAsync(AppSettings settings, bool modeOverridden = false) =>
-        new QueueService(_repository, new NoopProcessor(), new DatabaseLocks()).PrepareAsync(DatabasePath, settings, JobSourceKind.File, modeOverridden: modeOverridden);
+        new QueueService(_repository, new NoopProcessor(), new DatabaseLocks(), new CommandHints(null)).PrepareAsync(DatabasePath, settings, JobSourceKind.File, modeOverridden: modeOverridden);
 
     private sealed class ChangingOnUpdate(IJobRepository inner, Guid jobId) : DelegatingJobRepository(inner)
     {

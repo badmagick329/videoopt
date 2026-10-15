@@ -316,7 +316,7 @@ public sealed class QueueAddTests : QueueTestBase
     {
         await WriteConfigAsync(Rules(roots: false));
 
-        (await RunAsync("queue", "add")).Should().Be((3, "", Transcript("queue add needs at least one watch.roots entry. For Immich videos, use 'queue add immich'.")));
+        (await RunAsync("queue", "add")).Should().Be((3, "", Transcript($"queue add needs at least one watch.roots entry. For Immich videos, use 'video-optimiser queue add immich{ConfigArgument}'.")));
     }
 
     [Fact]

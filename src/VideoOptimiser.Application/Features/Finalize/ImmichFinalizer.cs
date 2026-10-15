@@ -13,7 +13,7 @@ namespace VideoOptimiser.Application.Features.Finalize;
 /// that no longer matches its checksum, and a changed checksum makes the phone upload the original again.
 /// Every step before the trash can run again, so any failure leaves the original live and the job resumable.
 /// </summary>
-public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository jobs, IOutputManifestStore manifests)
+public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository jobs, IOutputManifestStore manifests, ICommandHints hints)
 {
     public async Task<string> ReplaceAsync(string databasePath, JobRecord job, OutputManifest manifest, AppSettings settings, CancellationToken cancellationToken)
     {
@@ -46,7 +46,7 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         {
             // Most likely an earlier run trashed it and stopped before marking the job completed, but the user may have
             // trashed it by hand before the copy finished, so the copy steps run again below.
-            if (job.ImmichNewAssetId is not { } replaced) throw new FinalizationWaitsException($"The original, asset {originalId}, is in Immich's trash. Restore it, then run 'video-optimiser immich finalize' again.");
+            if (job.ImmichNewAssetId is not { } replaced) throw new FinalizationWaitsException($"The original, asset {originalId}, is in Immich's trash. Restore it, then run '{hints.Command("immich finalize")}' again.");
             replacement = await RequireLiveAsync(client, replaced, originalId, cancellationToken);
         }
         else
@@ -122,11 +122,11 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
         return upload.IsDuplicate ? await RequireLiveAsync(client, upload.AssetId, original.Id, cancellationToken) : upload.AssetId;
     }
 
-    private static async Task<string> RequireLiveAsync(IImmichClient client, string assetId, string originalId, CancellationToken cancellationToken)
+    private async Task<string> RequireLiveAsync(IImmichClient client, string assetId, string originalId, CancellationToken cancellationToken)
     {
         var asset = await client.GetAssetAsync(assetId, cancellationToken);
         if (asset.Id == originalId) throw new FinalizationRefusedException($"Immich returned the original, asset {originalId}, as the AV1.");
-        if (asset.IsTrashed) throw new FinalizationWaitsException($"The uploaded AV1, asset {assetId}, is in Immich's trash. Restore it or delete it permanently, then run 'video-optimiser immich finalize' again.");
+        if (asset.IsTrashed) throw new FinalizationWaitsException($"The uploaded AV1, asset {assetId}, is in Immich's trash. Restore it or delete it permanently, then run '{hints.Command("immich finalize")}' again.");
         return asset.Id;
     }
 
@@ -135,9 +135,10 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
     /// deleted, the last sentence names the copies that really survive, because cancelling the job lets cleanup delete the
     /// local download and AV1: the uploaded AV1 when Immich still has it live, otherwise every local file that exists.
     /// </summary>
-    private static async Task<string> OriginalNotFoundAsync(IImmichClient client, JobRecord job, string originalId, CancellationToken cancellationToken)
+    private async Task<string> OriginalNotFoundAsync(IImmichClient client, JobRecord job, string originalId, CancellationToken cancellationToken)
     {
-        var cancel = $"'video-optimiser queue drop {job.Id:N}'";
+        var cancel = $"'{hints.Command($"queue drop {job.Id:N}")}'";
+        var finalizeAgain = hints.Command("immich finalize");
         string? deleted = null;
         if (job.ImmichNewAssetId is { } uploaded)
         {
@@ -162,8 +163,8 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
             (true, false) => $"If it was deleted, the downloaded copy at {job.SourcePath} may be the only one left: move it somewhere safe before running {cancel}.",
             (false, true) => $"If it was deleted, its AV1 at {job.OutputPath} may be the only copy left: move it somewhere safe before running {cancel}.",
             // Reached only when the AV1 was uploaded (finalise refuses a missing local AV1 otherwise) and the user removed both files.
-            _ => $"If it was deleted, no copy is left on this PC and its AV1, asset {job.ImmichNewAssetId}, can't be read in Immich: if it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again; otherwise nothing is left to keep, so run {cancel}."
+            _ => $"If it was deleted, no copy is left on this PC and its AV1, asset {job.ImmichNewAssetId}, can't be read in Immich: if it's in the Locked Folder, move it out and run '{finalizeAgain}' again; otherwise nothing is left to keep, so run {cancel}."
         };
-        return $"Immich can't find the original, asset {originalId}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run 'video-optimiser immich finalize' again. {deleted}";
+        return $"Immich can't find the original, asset {originalId}: it was deleted for good or moved to the Locked Folder. If it's in the Locked Folder, move it out and run '{finalizeAgain}' again. {deleted}";
     }
 }

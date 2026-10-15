@@ -19,7 +19,7 @@ internal sealed class ConfigCommands(IConfigurationTemplateWriter writer, ISetti
             var quality = ConfigInitQuestion.Choose(command.Quality, input.IsInteractive, Console.In, Console.Out);
             var destination = await writer.WriteAsync(command.ConfigurationPath, quality, cancellationToken);
             Console.WriteLine($"Created editable configuration template: {destination}");
-            Console.WriteLine("Add watch.roots, then run 'video-optimiser config validate'.");
+            Console.WriteLine($"Add watch.roots, then run '{command.Hint("config validate")}'.");
             return (int)ExitCode.Success;
         }
         catch (InvalidOperationException exception)

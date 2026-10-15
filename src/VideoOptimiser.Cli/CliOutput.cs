@@ -26,10 +26,10 @@ internal static class CliOutput
     }
 
     /// <summary>Whether Immich is configured; says what to set first when it is not. <c>immich run</c> and <c>immich finalize</c> both start here.</summary>
-    internal static bool RequireImmich(LoadedConfiguration configuration)
+    internal static bool RequireImmich(LoadedConfiguration configuration, CliCommand command)
     {
         if (configuration.Settings.Immich.IsConfigured) return true;
-        WriteError("Set immich.baseUrl in the configuration first; 'video-optimiser doctor' then checks the connection and the API key.");
+        WriteError($"Set immich.baseUrl in the configuration first; '{command.Hint("doctor")}' then checks the connection and the API key.");
         return false;
     }
 

@@ -1,3 +1,5 @@
+using VideoOptimiser.Application;
+using VideoOptimiser.Cli;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
@@ -135,6 +137,37 @@ public sealed class JobProcessorTests : IDisposable
 
         await action.Should().ThrowAsync<OperationCanceledException>();
         (await _repository.ListAsync(DatabasePath, terminal: false)).Should().ContainSingle(job => job.Status == JobStatus.Interrupted);
+    }
+
+    /// <summary>The line names the cleanup command with the config the user typed, as the run's other advice does.</summary>
+    [Fact]
+    public async Task APartialOutputThatCannotBeDeletedSaysToRunCleanupWithTheTypedConfig()
+    {
+        var source = await SourceAsync("locked.mp4");
+        var id = Guid.NewGuid();
+        var partial = Path.Combine(_directory, ".video-optimiser", $".tmp.ab-av1-encoding.locked.{id:N}.1.encoding.mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(partial)!);
+        await File.WriteAllTextAsync(partial, "partial av1");
+        await _repository.CreateAsync(DatabasePath, new JobRecord
+        {
+            Id = id,
+            SourcePath = source,
+            SourceFingerprint = "stale",
+            Status = JobStatus.Interrupted,
+            ResumeStatus = JobStatus.Encoding,
+            Attempt = 1,
+            Crf = 42,
+            OutputPath = Path.Combine(_directory, ".video-optimiser", $"locked.{id:N}.1.encoding.mp4")
+        });
+        var reported = new List<JobProgress>();
+
+        // Windows refuses to delete a file another handle holds without sharing delete access.
+        using (new FileStream(partial, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            await Processor(hints: new CommandHints("my.yaml")).ProcessAsync(DatabasePath, source, Settings(), force: false, new ListProgress(reported));
+        }
+
+        Steps(reported)[0].Should().EndWith("; run 'video-optimiser cleanup --config \"my.yaml\"' later to remove " + Path.GetFileName(partial) + ".");
     }
 
     [Fact]
@@ -623,7 +656,7 @@ public sealed class JobProcessorTests : IDisposable
     /// <summary>The real processor over fakes; <paramref name="session"/>, when given, replaces the local search and encoder.</summary>
     private JobProcessor Processor(
         ICrfSearchClient? search = null, IVideoEncoder? encoder = null, IProcessingSession? session = null, IOutputValidationService? validator = null,
-        IMediaProbe? probe = null, IFileReadinessService? files = null, OutputManifestStore? manifests = null, IFileFingerprintService? fingerprints = null) => new(
+        IMediaProbe? probe = null, IFileReadinessService? files = null, OutputManifestStore? manifests = null, IFileFingerprintService? fingerprints = null, ICommandHints? hints = null) => new(
         _repository,
         files ?? new ReadableFiles(),
         _ => probe ?? new H264Probe(),
@@ -631,7 +664,8 @@ public sealed class JobProcessorTests : IDisposable
         fingerprints ?? new FileFingerprintService(),
         manifests ?? new OutputManifestStore(),
         validator ?? new PassingValidator(),
-        new AbAv1ProgressTranslator());
+        new AbAv1ProgressTranslator(),
+        hints ?? new CommandHints(null));
 
     private static string[] Steps(IEnumerable<JobProgress> reported) => [.. reported.Where(line => line.Kind == JobProgressKind.Step).Select(line => line.Text)];
 

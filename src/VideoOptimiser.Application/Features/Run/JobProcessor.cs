@@ -18,7 +18,8 @@ public sealed class JobProcessor(
     IFileFingerprintService fingerprints,
     IOutputManifestStore manifests,
     IOutputValidationService validator,
-    IAbAv1ProgressTranslator translator) : IJobProcessor
+    IAbAv1ProgressTranslator translator,
+    ICommandHints hints) : IJobProcessor
 {
     public async Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
@@ -360,7 +361,7 @@ public sealed class JobProcessor(
     /// attempt writes a different file, and <c>cleanup</c> can remove this one later, for example once an ab-av1 orphaned
     /// by a crash releases it.
     /// </summary>
-    private static void DeletePartialOutput(JobRecord job, IProgress<JobProgress>? progress)
+    private void DeletePartialOutput(JobRecord job, IProgress<JobProgress>? progress)
     {
         var folder = Path.Combine(Path.GetDirectoryName(job.SourcePath)!, TemporaryOutputClassifier.FolderName);
         if (!Directory.Exists(folder)) return;
@@ -374,7 +375,7 @@ public sealed class JobProcessor(
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                progress?.Report(JobProgress.Step($"Could not delete the partial output of attempt {job.Attempt} ({exception.Message}); run 'cleanup' later to remove {Path.GetFileName(file)}."));
+                progress?.Report(JobProgress.Step($"Could not delete the partial output of attempt {job.Attempt} ({exception.Message}); run '{hints.Command("cleanup")}' later to remove {Path.GetFileName(file)}."));
             }
         }
     }

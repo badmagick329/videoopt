@@ -205,13 +205,13 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         var settings = configuration.Settings;
         if (discovery.Refusal(settings) is QueueDiscoveryRefusal.NoWatchRoots)
         {
-            WriteError("queue add needs at least one watch.roots entry. For Immich videos, use 'queue add immich'.");
+            WriteError($"queue add needs at least one watch.roots entry. For Immich videos, use '{command.Hint("queue add immich")}'.");
             return (int)ExitCode.InvalidConfiguration;
         }
 
         Console.WriteLine($"Scanning {OutputWords.Count(settings.Watch.Roots.Count, "watch root", "watch roots")} for videos to convert; files not seen before are probed with ffprobe.");
         var result = await discovery.DiscoverAsync(settings.Database.Path, settings, command.First, new QueueDiscoverConsole(Console.Out), cancellationToken);
-        QueueDiscoverConsole.WriteSummary(Console.Out, result);
+        QueueDiscoverConsole.WriteSummary(Console.Out, result, command);
         if (result.QueuedPaths.Count + result.AlreadyQueued > 0) Console.WriteLine(NextRunLine(discovery.NextRun(settings.Database.Path), command));
         if (result.ReadyToFinalize > 0) Console.WriteLine(NextSteps.ReadyToFinaliseLine(result.ReadyToFinalize, command));
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
@@ -223,7 +223,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         var result = await discovery.AddFileAsync(settings.Database.Path, settings, command.FilePath!, command.Force, cancellationToken);
         var (path, job) = (result.Path, result.Job);
         var name = Path.GetFileName(path);
-        var anyway = $"To queue it anyway: video-optimiser queue add \"{path}\" --force{ConfigArgument(command)}";
+        var anyway = $"To queue it anyway: {command.Hint($"queue add \"{path}\" --force")}";
         switch (result.Outcome)
         {
             case QueueAddOutcome.Queued:

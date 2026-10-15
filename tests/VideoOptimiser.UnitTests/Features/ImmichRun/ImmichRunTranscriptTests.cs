@@ -276,7 +276,7 @@ public sealed class ImmichRunTranscriptTests : QueueTestBase
 
         var (code, output, error) = await RunAsync("queue", "add", "immich");
 
-        (code, output, error).Should().Be((3, "", Transcript("Set immich.baseUrl in the configuration first; 'video-optimiser doctor' then checks the connection and the API key.")));
+        (code, output, error).Should().Be((3, "", Transcript($"Set immich.baseUrl in the configuration first; 'video-optimiser doctor{ConfigArgument}' then checks the connection and the API key.")));
     }
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunWithImmichAsync(params string[] args)

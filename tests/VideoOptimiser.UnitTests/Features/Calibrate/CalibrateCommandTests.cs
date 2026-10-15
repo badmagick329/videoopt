@@ -48,7 +48,7 @@ public sealed class CalibrateCommandTests : IDisposable
 
         code.Should().Be((int)ExitCode.GeneralFailure);
         stdout.Should().BeEmpty();
-        stderr.ReplaceLineEndings("\n").Should().Be("jobs.db is from an older version of video-optimiser. Run 'video-optimiser status' once to upgrade it, then run calibrate again.\n");
+        stderr.ReplaceLineEndings("\n").Should().Be($"jobs.db is from an older version of video-optimiser. Run 'video-optimiser status --config \"{ConfigPath}\"' once to upgrade it, then run calibrate again.\n");
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public sealed class CalibrateCommandTests : IDisposable
             "  hevc 4k+ 20-30 Mbps  1 video  3.0 GiB  never tried\n" +
             "\n" +
             "Suggestions\n" +
-            $"  - Never tried: hevc 4k+ 20-30 Mbps (1 video, 3.0 GiB). Test one: video-optimiser queue add \"{Clip}\" --force\n");
+            $"  - Never tried: hevc 4k+ 20-30 Mbps (1 video, 3.0 GiB). Test one: video-optimiser queue add \"{Clip}\" --force --config \"{ConfigPath}\"\n");
         service.Calls.Should().Be(1);
     }
 
@@ -80,7 +80,7 @@ public sealed class CalibrateCommandTests : IDisposable
 
         code.Should().Be((int)ExitCode.PartialSuccess);
         stderr.Should().BeEmpty();
-        var command = JsonEncodedText.Encode($"video-optimiser queue add \"{Clip}\" --force", JavaScriptEncoder.Default);
+        var command = JsonEncodedText.Encode($"video-optimiser queue add \"{Clip}\" --force --config \"{ConfigPath}\"", JavaScriptEncoder.Default);
         var path = JsonEncodedText.Encode(Clip, JavaScriptEncoder.Default);
         stdout.ReplaceLineEndings("\n").Should().Be($$"""
             {
@@ -154,7 +154,7 @@ public sealed class CalibrateCommandTests : IDisposable
             "  hevc 4k+ 20-30 Mbps  1 video  3.0 GiB  never tried\n" +
             "\n" +
             "Suggestions\n" +
-            $"  - Never tried: hevc 4k+ 20-30 Mbps (1 video, 3.0 GiB). Test one: video-optimiser queue add \"{Clip}\" --force\n");
+            $"  - Never tried: hevc 4k+ 20-30 Mbps (1 video, 3.0 GiB). Test one: video-optimiser queue add \"{Clip}\" --force --config \"{ConfigPath}\"\n");
         stderr.ReplaceLineEndings("\n").Should().Be("Immich couldn't be searched, so its videos are not in this report: Immich is unreachable at http://immich.test: connection refused.\n");
     }
 
@@ -172,6 +172,8 @@ public sealed class CalibrateCommandTests : IDisposable
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    private string ConfigPath => Path.Combine(_directory, "config.yaml");
 
     private static string Clip => @"C:\videos\clip-b.mp4";
 

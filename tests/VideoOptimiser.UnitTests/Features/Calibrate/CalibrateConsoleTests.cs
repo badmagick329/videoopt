@@ -1,3 +1,4 @@
+using VideoOptimiser.Cli;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FluentAssertions;
@@ -85,7 +86,7 @@ public sealed class CalibrateConsoleTests
 
         report.WhyNoSuggestions.Should().Be(reason);
         Lines(report)[^1].Should().Be(line);
-        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
+        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report, new CommandHints(null)), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
         json["noSuggestions"]!.ToJsonString().Should().Be(JsonSerializer.Serialize(new { reason = jsonName, text = line }));
     }
 
@@ -94,7 +95,7 @@ public sealed class CalibrateConsoleTests
     {
         var report = new CalibrationReport(97, [], [NeverTried], [], 0, 0, 0, 0, [new TestOneSuggestion(NeverTried, "clip.mp4", @"D:\Videos\clip.mp4", null)]);
 
-        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
+        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report, new CommandHints(null)), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
 
         json["noSuggestions"].Should().BeNull();
         Lines(report).Should().NotContain(line => line.StartsWith("No suggestions", StringComparison.Ordinal));
@@ -160,7 +161,7 @@ public sealed class CalibrateConsoleTests
                 new TestOneSuggestion(Unknown, "PXL_1.mp4", null, "asset-1")
             ]);
 
-        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
+        var json = JsonNode.Parse(JsonSerializer.Serialize(CalibrateConsole.ToJson(report, new CommandHints(null)), CalibrateJsonContext.Default.CalibrationJsonOutput))!;
 
         json["rules"]![0]!.ToJsonString().Should().Be(
             """{"number":2,"codecs":["h264"],"resolution":"1080p-1440p","minimumVideoBitrate":"15Mbps","minimumFileSize":"300MiB","videos":118,"bytes":64424509440,"history":{"converted":2,"convertedBitrateMbps":{"min":40,"max":45},"savedPercent":{"min":71,"max":80},"notWorthIt":5,"notWorthItBitrateMbps":{"min":20,"max":25}}}""");
@@ -178,7 +179,7 @@ public sealed class CalibrateConsoleTests
         suggestions[0]!["minimumVideoBitrate"]!.GetValue<string>().Should().Be("30Mbps");
         suggestions[1]!["minimumVideoBitrate"]!.GetValue<string>().Should().Be("40Mbps");
         suggestions[2]!["command"].Should().BeNull("no command converts one Immich asset");
-        suggestions[2]!["text"]!.GetValue<string>().Should().Be(CalibrateConsole.Text(report.Suggestions[2]));
+        suggestions[2]!["text"]!.GetValue<string>().Should().Be(CalibrateConsole.Text(report.Suggestions[2], new CommandHints(null)));
     }
 
     private static EligibilityRuleSettings Rule(string codec, string resolution, string bitrate) =>
@@ -187,7 +188,7 @@ public sealed class CalibrateConsoleTests
     private static string[] Lines(CalibrationReport report)
     {
         var output = new StringWriter();
-        CalibrateConsole.Write(output, report);
+        CalibrateConsole.Write(output, report, new CommandHints(null));
         return output.ToString().Split(Environment.NewLine)[..^1];
     }
 }

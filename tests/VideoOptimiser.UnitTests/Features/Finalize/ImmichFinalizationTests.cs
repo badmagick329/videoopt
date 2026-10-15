@@ -1,3 +1,4 @@
+using VideoOptimiser.Cli;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Finalize;
@@ -32,7 +33,7 @@ public sealed class ImmichFinalizationTests : IDisposable
             Database = new DatabaseSettings { Path = Path.Combine(_directory, "jobs.db") },
             Immich = new ImmichSettings { BaseUrl = "http://immich.test:2283", StagingDirectory = Path.Combine(_directory, "staging") }
         };
-        _finalizer = new FinalizationService(_repository, _manifests, _fingerprints, new SafeFileInstaller(), new ImmichFinalizer(_immich, _repository, _manifests));
+        _finalizer = new FinalizationService(_repository, _manifests, _fingerprints, new SafeFileInstaller(), new ImmichFinalizer(_immich, _repository, _manifests, new CommandHints(null)), new CommandHints(null));
     }
 
     [Fact]

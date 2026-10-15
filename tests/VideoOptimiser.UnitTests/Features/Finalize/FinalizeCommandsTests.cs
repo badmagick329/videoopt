@@ -184,7 +184,7 @@ public sealed class FinalizeCommandsTests : IDisposable
 
         code.Should().Be((int)ExitCode.InvalidConfiguration);
         stdout.Should().BeEmpty();
-        stderr.ReplaceLineEndings("\n").Should().Be("Set immich.baseUrl in the configuration first; 'video-optimiser doctor' then checks the connection and the API key.\n");
+        stderr.ReplaceLineEndings("\n").Should().Be($"Set immich.baseUrl in the configuration first; 'video-optimiser doctor --config \"{Path.Combine(_directory, "config.yaml")}\"' then checks the connection and the API key.\n");
         _immich.Calls.Should().BeEmpty();
     }
 

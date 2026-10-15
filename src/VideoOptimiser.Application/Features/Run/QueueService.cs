@@ -5,7 +5,7 @@ using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Features.Run;
 
-public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, IDatabaseLocks locks) : IQueueService
+public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, IDatabaseLocks locks, ICommandHints hints) : IQueueService
 {
     public async Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind? sourceKind, bool modeOverridden = false, CancellationToken cancellationToken = default)
     {
@@ -30,7 +30,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
                 if (finalizing && job.ResumeStatus == JobStatus.Finalizing) continue;
                 if (FinalizationRules.IsInterruptedImmich(job))
                 {
-                    FinalizationRules.ReturnToReady(job, FinalizationRules.InterruptedMessage);
+                    FinalizationRules.ReturnToReady(job, FinalizationRules.InterruptedMessage(hints.Command("immich finalize")));
                     await jobs.UpdateAsync(databasePath, job, cancellationToken);
                     continue;
                 }

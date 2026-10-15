@@ -23,7 +23,7 @@ public sealed class ConfigCommandsTests : IDisposable
         code.Should().Be((int)ExitCode.Success);
         stdout.ReplaceLineEndings("\n").Should().Be(
             $"Created editable configuration template: {ConfigPath}\n" +
-            "Add watch.roots, then run 'video-optimiser config validate'.\n");
+            $"Add watch.roots, then run 'video-optimiser config validate --config \"{ConfigPath}\"'.\n");
         (await File.ReadAllTextAsync(ConfigPath)).Should().Contain("minimumVmaf: 93");
     }
 

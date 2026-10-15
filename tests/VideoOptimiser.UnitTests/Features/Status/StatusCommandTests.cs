@@ -373,7 +373,7 @@ public sealed class StatusCommandTests : QueueTestBase
 
         result.Should().Be((3, "", Transcript(
             $"The configuration file selected by --config does not exist: '{missing}'.",
-            "To create one, run 'video-optimiser config init'; 'video-optimiser --help' lists every command.")));
+            $"To create one, run 'video-optimiser config init --config \"{missing}\"'; 'video-optimiser --help' lists every command.")));
     }
 
     /// <summary>The hint is for someone who typed nothing; a typed <c>status</c> already knew what it wanted.</summary>

@@ -20,7 +20,7 @@ internal static class StoppedRunMessage
     public static string StoppedAfter(string sourcePath, int waiting) =>
         $"Stopped after {Path.GetFileName(sourcePath)}; {OutputWords.Count(waiting, "video is", "videos are")} still waiting.";
 
-    public static string ConvertTheRest(CliCommand command) => $"To convert the rest: video-optimiser {RerunCommand(command)}";
+    public static string ConvertTheRest(CliCommand command) => $"To convert the rest: {RerunCommand(command)}";
 
     /// <summary>
     /// A stop now that leaves nothing running on a worker: on this PC, between a manual host's remote stages, or before any
@@ -30,7 +30,7 @@ internal static class StoppedRunMessage
     public static IReadOnlyList<string> StoppedNow(JobInterruptedException? interrupted, CliCommand command) =>
     [
         interrupted is null ? "Stopped now." : $"Stopped now. {Path.GetFileName(interrupted.Job.SourcePath)} continues from its last finished step on the next run.",
-        $"To resume: video-optimiser {RerunCommand(command)}"
+        $"To resume: {RerunCommand(command)}"
     ];
 
     /// <param name="interrupted">The job Ctrl+C stopped, or null when it came between jobs or before the first one.</param>
@@ -39,7 +39,7 @@ internal static class StoppedRunMessage
     /// <param name="settingUp">The stop came while the managed worker was still being created or bootstrapped (VOPT-67): "Nothing is running" would be wrong, as its setup is.</param>
     public static IReadOnlyList<string> Lines(JobInterruptedException? interrupted, string worker, bool managed, CliCommand command, bool settingUp = false)
     {
-        var rerun = $"video-optimiser {RerunCommand(command)}";
+        var rerun = RerunCommand(command);
         var delete = DeleteCommand(command);
         var stillRunning = interrupted is { Remote: true, Stage: JobStatus.CrfSearching or JobStatus.Encoding }
             ? $"{(interrupted.Stage == JobStatus.Encoding ? "The encode" : "The CRF search")} of {Path.GetFileName(interrupted.Job.SourcePath)} is still running on the worker {worker}."
@@ -116,10 +116,8 @@ internal static class StoppedRunMessage
     /// queue.
     /// </summary>
     public static string RerunCommand(CliCommand command) =>
-        $"run{(command.ModeOverride is null ? string.Empty : $" {command.ModeOverride.Flag}")}{ConfigArgument(command)}";
+        command.Hint($"run{(command.ModeOverride is null ? string.Empty : $" {command.ModeOverride.Flag}")}");
 
-    public static string DeleteCommand(CliCommand command) => $"video-optimiser worker delete{ConfigArgument(command)}";
+    public static string DeleteCommand(CliCommand command) => command.Hint("worker delete");
 
-    private static string ConfigArgument(CliCommand command) =>
-        command.ConfigurationPath is null ? string.Empty : $" --config \"{command.ConfigurationPath}\"";
 }

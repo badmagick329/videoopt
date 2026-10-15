@@ -56,7 +56,7 @@ public sealed class QueueCommandsTests : QueueTestBase
         {
             job.SourceKind = JobSourceKind.Immich;
             (job.Crf, job.PercentageSaved) = (29, 61.0m);
-            FinalizationRules.ReturnToReady(job, FinalizationRules.InterruptedMessage);
+            FinalizationRules.ReturnToReady(job, FinalizationRules.InterruptedMessage("video-optimiser immich finalize"));
         }, minute: 9);
         var finalising = Job("clip-h.mp4", JobStatus.Finalizing, minute: 10);
         var stoppedFinalising = Job("clip-g.mp4", JobStatus.Interrupted, job => job.ResumeStatus = JobStatus.Finalizing, minute: 11);
@@ -81,7 +81,7 @@ public sealed class QueueCommandsTests : QueueTestBase
             $"  {heldStopped.Id:N}  IMG_0001.MOV (Immich), stopped",
             "Ready to finalise",
             $"  {ready.Id:N}  clip-f.mp4, CRF 31, 58.3% saved",
-            $"  {lastFinaliseStopped.Id:N}  IMG_0002.MOV (Immich), CRF 29, 61.0% saved; the last finalise stopped: {FinalizationRules.InterruptedMessage}",
+            $"  {lastFinaliseStopped.Id:N}  IMG_0002.MOV (Immich), CRF 29, 61.0% saved; the last finalise stopped: {FinalizationRules.InterruptedMessage("video-optimiser immich finalize")}",
             $"  {finalising.Id:N}  clip-h.mp4, being finalised now",
             $"  {stoppedFinalising.Id:N}  clip-g.mp4, stopped while being finalised; 'video-optimiser finalize {stoppedFinalising.Id:N}{ConfigArgument}' checks and resumes it"), ""));
     }

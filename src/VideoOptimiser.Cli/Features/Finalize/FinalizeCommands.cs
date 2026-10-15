@@ -58,9 +58,9 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         _ => "Each original is deleted and its AV1 takes its place."
     };
 
-    public async Task<int> ImmichFinalizeAsync(LoadedConfiguration configuration, CancellationToken cancellationToken)
+    public async Task<int> ImmichFinalizeAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
-        if (!RequireImmich(configuration)) return (int)ExitCode.InvalidConfiguration;
+        if (!RequireImmich(configuration, command)) return (int)ExitCode.InvalidConfiguration;
         using var finalizeLock = await TakeFinalizeLockAsync(configuration, "immich finalize", cancellationToken);
         if (finalizeLock is null) return (int)ExitCode.GeneralFailure;
         var settings = configuration.Settings;

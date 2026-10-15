@@ -6,7 +6,7 @@ using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Features.Finalize;
 
-public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStore manifests, IFileFingerprintService fingerprints, ISafeFileInstaller installer, ImmichFinalizer immich) : IFinalizationService
+public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStore manifests, IFileFingerprintService fingerprints, ISafeFileInstaller installer, ImmichFinalizer immich, ICommandHints hints) : IFinalizationService
 {
     public async Task<FinalizationResult> FinalizeAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default)
     {
@@ -14,7 +14,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         if (job is null) return new FinalizationResult(null, ExitCode.ProcessingFailure, "Job was not found.");
         if (FinalizationRules.IsInterruptedImmich(job))
         {
-            FinalizationRules.ReturnToReady(job, FinalizationRules.InterruptedMessage);
+            FinalizationRules.ReturnToReady(job, FinalizationRules.InterruptedMessage(hints.Command("immich finalize")));
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
         }
         // A failed review is checked again like an interrupted file: VOPT-85, jobs an older version failed with nothing moved.
@@ -29,7 +29,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             // Without the record an interrupted file finalisation cannot show that nothing moved, and converting again (F2's
             // advice) would queue a path that may now hold the AV1 or nothing at all.
             if (resumingFile) return await RequireReviewAsync(databasePath, job);
-            return new FinalizationResult(job, ExitCode.FinalisationFailure, $"The AV1's validation record is missing or unreadable: {manifests.GetPath(job.OutputPath)}, so the AV1 can't be checked. To convert the video again, run 'video-optimiser queue drop {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.");
+            return new FinalizationResult(job, ExitCode.FinalisationFailure, $"The AV1's validation record is missing or unreadable: {manifests.GetPath(job.OutputPath)}, so the AV1 can't be checked. To convert the video again, run '{hints.Command($"queue drop {job.Id:N}")}', then '{hints.Command($"queue retry {job.Id:N}")}'.");
         }
         if (manifest.Validation?.Passed != true)
         {
@@ -75,7 +75,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         }
         catch (OperationCanceledException) when (fromImmich)
         {
-            if (finalizing) await ReturnToReadyAsync(databasePath, job, FinalizationRules.InterruptedMessage);
+            if (finalizing) await ReturnToReadyAsync(databasePath, job, FinalizationRules.InterruptedMessage(hints.Command("immich finalize")));
             throw;
         }
         catch (OperationCanceledException)
@@ -100,7 +100,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             // Every Immich step before the trash can run again, and the AV1's asset ID is already saved once uploaded, so
             // the job goes back to ready rather than failing: the next finalize continues where this one stopped.
             await ReturnToReadyAsync(databasePath, job, exception.Message);
-            return new FinalizationResult(job, ExitCode.FinalisationFailure, $"{exception.Message} Run 'video-optimiser immich finalize' again to resume.");
+            return new FinalizationResult(job, ExitCode.FinalisationFailure, $"{exception.Message} Run '{hints.Command("immich finalize")}' again to resume.");
         }
         catch (Exception exception)
         {
@@ -143,16 +143,16 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
     /// F4 for a folder job's original and F1 for the AV1, or null. An Immich job's missing staged copy is not one (F3), and
     /// neither is its AV1 once uploaded: finalisation then uses the asset and never reads the local file.
     /// </summary>
-    private static string? MissingFile(JobRecord job, bool fromImmich)
+    private string? MissingFile(JobRecord job, bool fromImmich)
     {
         if (!fromImmich && !File.Exists(job.SourcePath))
         {
             // If the user deleted the original, the AV1 is the only copy, and cancelling the job lets cleanup delete it.
-            return $"{FinalizationRules.OriginalMissing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. If you deleted it on purpose, the AV1 at {job.OutputPath} is now the only copy: move it somewhere safe before running 'video-optimiser queue drop {job.Id:N}'.";
+            return $"{FinalizationRules.OriginalMissing(job)} If you moved it, put it back and run '{hints.Command($"finalize {job.Id:N}")}' again. If you deleted it on purpose, the AV1 at {job.OutputPath} is now the only copy: move it somewhere safe before running '{hints.Command($"queue drop {job.Id:N}")}'.";
         }
         if (!File.Exists(job.OutputPath) && !(fromImmich && job.ImmichNewAssetId is not null))
         {
-            return $"{FinalizationRules.Av1Missing(job)} If you moved it, put it back and run 'video-optimiser finalize {job.Id:N}' again. To convert the video again instead, run 'video-optimiser queue drop {job.Id:N}', then 'video-optimiser queue retry {job.Id:N}'.";
+            return $"{FinalizationRules.Av1Missing(job)} If you moved it, put it back and run '{hints.Command($"finalize {job.Id:N}")}' again. To convert the video again instead, run '{hints.Command($"queue drop {job.Id:N}")}', then '{hints.Command($"queue retry {job.Id:N}")}'.";
         }
         return null;
     }

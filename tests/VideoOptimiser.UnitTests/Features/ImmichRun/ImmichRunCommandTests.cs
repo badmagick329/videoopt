@@ -42,7 +42,7 @@ public sealed class ImmichRunCommandTests : IDisposable
 
         code.Should().Be((int)ExitCode.InvalidConfiguration);
         stdout.Should().BeEmpty();
-        stderr.ReplaceLineEndings("\n").Should().Be("Set immich.baseUrl in the configuration first; 'video-optimiser doctor' then checks the connection and the API key.\n");
+        stderr.ReplaceLineEndings("\n").Should().Be($"Set immich.baseUrl in the configuration first; 'video-optimiser doctor --config \"{config}\"' then checks the connection and the API key.\n");
         _run.Calls.Should().Be(0);
     }
 

@@ -222,7 +222,7 @@ public sealed class RunCommandTests : IDisposable
 
         var (_, output, _) = await RunAsync("run");
 
-        output.Should().Contain("movie.mp4 was interrupted while being finalised. Run 'video-optimiser finalize --ready' to finish it.").And.NotContain("Failed jobs:");
+        output.Should().Contain($"movie.mp4 was interrupted while being finalised. Run 'video-optimiser finalize --ready --config \"{_config}\"' to finish it.").And.NotContain("Failed jobs:");
         var stored = await StoredAsync(job);
         (stored.Status, stored.ResumeStatus).Should().Be((JobStatus.Interrupted, JobStatus.Finalizing));
         _processor.Processed.Should().BeEmpty();

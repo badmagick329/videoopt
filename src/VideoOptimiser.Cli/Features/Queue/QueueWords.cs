@@ -134,5 +134,4 @@ internal static class QueueWords
     /// <summary>A scanner reason ("Extension is not allowed.") as the end of a sentence.</summary>
     public static string Fragment(string reason) => reason.Length == 0 ? reason : char.ToLowerInvariant(reason[0]) + reason[1..].TrimEnd('.');
 
-    public static string ConfigArgument(CliCommand command) => command.ConfigurationPath is null ? string.Empty : $" --config \"{command.ConfigurationPath}\"";
 }

@@ -58,7 +58,7 @@ internal sealed class RunConversion(IQueueService queue, IQueueDiscovery discove
     {
         foreach (var job in preparation.SkippedJobs) Console.WriteLine(SkippedJobMessage.Line(job, configuration, command));
         // F8 (VOPT-70): finalize checks whether anything moved and resumes, so the run leaves these jobs alone.
-        foreach (var job in preparation.InterruptedFinalizations) Console.WriteLine($"{Path.GetFileName(job.SourcePath)} was interrupted while being finalised. Run 'video-optimiser finalize --ready' to finish it.");
+        foreach (var job in preparation.InterruptedFinalizations) Console.WriteLine($"{Path.GetFileName(job.SourcePath)} was interrupted while being finalised. Run '{command.Hint("finalize --ready")}' to finish it.");
         if (preparation.Held > 0)
         {
             Console.WriteLine(preparation.Held == 1 ? "1 video is held; runs pass over it until it's released." : $"{preparation.Held} videos are held; runs pass over them until they're released.");

@@ -1,6 +1,7 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Config;
+using VideoOptimiser.Cli;
 
 internal enum CliCommandKind
 {
@@ -76,7 +77,7 @@ Usage:
     public bool ShowHelp => Kind == CliCommandKind.Help;
 
     /// <summary>A command to suggest, such as <c>queue release &lt;id&gt;</c>, with <c>--config</c> only when this one was given it.</summary>
-    public string Hint(string verb) => $"video-optimiser {verb}{(ConfigurationPath is null ? string.Empty : $" --config \"{ConfigurationPath}\"")}";
+    public string Hint(string verb) => CommandHints.Format(verb, ConfigurationPath);
 
     public static CliCommand Parse(string[] args)
     {

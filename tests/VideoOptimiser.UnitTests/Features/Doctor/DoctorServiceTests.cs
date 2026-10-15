@@ -1,3 +1,5 @@
+using VideoOptimiser.Application;
+using VideoOptimiser.Cli;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Doctor;
@@ -178,8 +180,26 @@ public sealed class DoctorServiceTests : IDisposable
             DiagnosticCategory.Dependency,
             DiagnosticStatus.Warning,
             "ManagedWorkerBilling",
-            "Managed Hetzner worker video-optimiser-1 is running and bills until it is deleted. Delete it with 'worker delete'."));
+            "Managed Hetzner worker video-optimiser-1 is running and bills until it is deleted. Delete it with 'video-optimiser worker delete'."));
         remote.WasCalled.Should().BeFalse();
+    }
+
+    /// <summary>A typed --config follows every command the doctor suggests: the worker lives in that config's database.</summary>
+    [Fact]
+    public async Task RunAsyncNamesTheTypedConfigInTheWorkerCommandsItSuggests()
+    {
+        var hints = new CommandHints("my.yaml");
+        var billing = CreateSettings();
+        billing.Processing.RemoteSsh.Lifecycle = RemoteLifecycleModes.Hetzner;
+        var remote = CreateHetznerSettings();
+
+        var local = await CreateDoctor(new FakeToolVerifier(true), lifecycle: new FakeWorkerLifecycle(), hints: hints).RunAsync(new LoadedConfiguration(billing, "my.yaml"));
+        var skipped = await CreateDoctor(new FakeToolVerifier(true), lifecycle: new FakeWorkerLifecycle { Exists = false }, hints: hints).RunAsync(new LoadedConfiguration(remote, "my.yaml"));
+
+        local.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "ManagedWorkerBilling").Which.Message
+            .Should().Be("Managed Hetzner worker video-optimiser-1 is running and bills until it is deleted. Delete it with 'video-optimiser worker delete --config \"my.yaml\"'.");
+        skipped.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "RemoteHostChecksSkipped").Which.Message
+            .Should().Be("No managed Hetzner worker exists, so remote host checks were skipped. Run 'video-optimiser worker create --config \"my.yaml\"', then doctor, to check one.");
     }
 
     [Fact]
@@ -192,7 +212,7 @@ public sealed class DoctorServiceTests : IDisposable
         var report = await CreateDoctor(new FakeToolVerifier(true), lifecycle: lifecycle).RunAsync(new LoadedConfiguration(settings, Path.Combine(_directory, "config.yaml")));
 
         report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "ManagedWorkerBilling").Which.Message
-            .Should().Be("The server of managed Hetzner worker video-optimiser-1 is gone, but its IPv4 address still bills. Delete it with 'worker delete'.");
+            .Should().Be("The server of managed Hetzner worker video-optimiser-1 is gone, but its IPv4 address still bills. Delete it with 'video-optimiser worker delete'.");
     }
 
     [Fact]
@@ -378,8 +398,8 @@ public sealed class DoctorServiceTests : IDisposable
         tools.ListingsRequested.Should().BeEmpty();
     }
 
-    private static DoctorService CreateDoctor(IToolVerifier verifier, IRemoteEnvironmentVerifier? remote = null, IRemoteWorkerLifecycle? lifecycle = null, IImmichClientFactory? immich = null) =>
-        new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier(), lifecycle ?? new FakeWorkerLifecycle { Exists = false }, immich ?? new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2)));
+    private static DoctorService CreateDoctor(IToolVerifier verifier, IRemoteEnvironmentVerifier? remote = null, IRemoteWorkerLifecycle? lifecycle = null, IImmichClientFactory? immich = null, ICommandHints? hints = null) =>
+        new(new SettingsValidator(), new SqliteDatabaseInitializer(), verifier, remote ?? new FakeRemoteEnvironmentVerifier(), lifecycle ?? new FakeWorkerLifecycle { Exists = false }, immich ?? new FakeImmichClientFactory(new ImmichServerVersion(3, 2, 2)), hints ?? new CommandHints(null));
 
     private AppSettings CreateImmichSettings()
     {

@@ -77,6 +77,7 @@
 - `validate` on a job whose validation record is missing, unreadable or corrupt prints `The AV1's validation record is missing or unreadable: <path>, so the AV1 can't be checked.` and how to convert the video again, leaves the job as it was, and exits `6`. Before, it printed a .NET error and exited `3`.
 - The first time a run reaches a worker, it stops the CRF search or encode of videos this database has dropped or finished and removes their workspaces there. Workspaces of open videos, and of videos this database doesn't know, are left alone. `queue drop` on a stopped remote video now says `Its encode may still be running on the worker; the next run on that worker stops it.`
 - `validate` on a held video refuses before checking anything: `clip.mp4 is held. To check its AV1, run 'video-optimiser queue release <id>' first.` (exit `6`). Before, it checked the AV1, then failed every time with `Job <id> changed while this command was using it.`
+- Every command a message tells you to run now repeats `--config "<path>"` when you typed it: finalise and `immich finalize` messages, `doctor`'s hints, `calibrate`'s `Test one:` command, `config init`'s closing line, and the rest. Before, many dropped it, so the copied command read a different config, or none.
 
 ## [0.7.1] - 2026-10-13
 ### Changed

@@ -1,3 +1,4 @@
+using VideoOptimiser.Cli;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Finalize;
@@ -73,7 +74,7 @@ public sealed class FolderFinalizationTests : IDisposable
     {
         var (settings, job, source, output) = await ReadyJobAsync();
         var finalizer = whileReadingTheOriginal
-            ? new FinalizationService(_repository, _manifests, new CancelledFingerprints(), new SafeFileInstaller(), new ImmichFinalizer(null!, _repository, _manifests))
+            ? new FinalizationService(_repository, _manifests, new CancelledFingerprints(), new SafeFileInstaller(), new ImmichFinalizer(null!, _repository, _manifests, new CommandHints(null)), new CommandHints(null))
             : CreateFinalizer(new CancelledInstaller());
 
         var finalizing = () => finalizer.FinalizeAsync(settings.Database.Path, job.Id, settings);
@@ -258,7 +259,7 @@ public sealed class FolderFinalizationTests : IDisposable
 
     private FinalizationService CreateFinalizer(ISafeFileInstaller installer) =>
         // A folder job never reaches the Immich finalizer, so it gets no client.
-        new(_repository, _manifests, _fingerprints, installer, new ImmichFinalizer(null!, _repository, _manifests));
+        new(_repository, _manifests, _fingerprints, installer, new ImmichFinalizer(null!, _repository, _manifests, new CommandHints(null)), new CommandHints(null));
 
     private async Task<(AppSettings Settings, JobRecord Job, string Source, string Output)> ReadyJobAsync(string name = "movie.mp4", bool validationPassed = true)
     {

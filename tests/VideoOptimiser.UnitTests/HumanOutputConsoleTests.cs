@@ -207,7 +207,7 @@ public sealed class HumanOutputConsoleTests
 
         QueueDiscoverConsole.WriteSummary(output, new QueueDiscoveryResult(
             [Path.Combine(first, "a.mp4"), Path.Combine(second, "c.mp4"), Path.Combine(first, "b.mp4")],
-            AlreadyQueued: 2, Issues: 0, CacheHits: 5, RealProbes: 4, Held: 1, ReadyToFinalize: 2));
+            AlreadyQueued: 2, Issues: 0, CacheHits: 5, RealProbes: 4, Held: 1, ReadyToFinalize: 2), CliCommand.Parse([]));
 
         output.ToString().Should().Be(
             $"Queued in {first}:\n" +
@@ -216,6 +216,19 @@ public sealed class HumanOutputConsoleTests
             $"Queued in {second}:\n" +
             "  c.mp4\n" +
             "Queued: 3. Already queued: 2. Held: 1. Ready to finalise: 2. Cache hits: 5. Real probes: 4.\n");
+    }
+
+    /// <summary>The notes under the counts suggest commands, which carry the --config the user typed.</summary>
+    [Fact]
+    public void TheNotesUnderTheCountsNameTheirCommandsWithTheTypedConfig()
+    {
+        var output = new StringWriter { NewLine = "\n" };
+
+        QueueDiscoverConsole.WriteCounts(output, new QueueDiscoveryResult([], AlreadyQueued: 0, Issues: 0, PreviouslyFailed: 1, PreviouslySkipped: 1), CliCommand.Parse(["queue", "add", "--config", "my.yaml"]));
+
+        output.ToString().Should().EndWith(
+            "Failed or cancelled originals stay out of the queue until they change. 'video-optimiser history --config \"my.yaml\"' lists their jobs; 'video-optimiser queue retry <job-id> --config \"my.yaml\"' queues one again.\n" +
+            "Skipped originals (AV1 would not save enough) are checked again when the file or the quality settings change; 'video-optimiser queue retry <job-id> --config \"my.yaml\"' queues one now.\n");
     }
 
     private static CandidateFacts Facts(string codec, int width, int height, long bitsPerSecond, long sizeBytes) => new(codec, width, height, bitsPerSecond, sizeBytes);

@@ -1,4 +1,5 @@
 using System.Globalization;
+using VideoOptimiser.Application;
 using VideoOptimiser.Application.Features.Calibrate;
 using VideoOptimiser.Domain;
 
@@ -35,7 +36,7 @@ internal static class CalibrateConsole
     /// <summary>Kept-out and codec-unknown groups shown, largest first; <c>--json</c> lists the rest.</summary>
     internal const int ShownGroups = 10;
 
-    public static void Write(TextWriter output, CalibrationReport report)
+    public static void Write(TextWriter output, CalibrationReport report, ICommandHints hints)
     {
         output.WriteLine($"Admitted by your rules (quality target VMAF {report.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)})");
         WriteRows(output, report.Rules.Select(row => new Row($"Rule {row.Number}  {RuleLabel(row)}", row.Videos, row.Bytes, row.History)).ToArray());
@@ -67,17 +68,17 @@ internal static class CalibrateConsole
         }
 
         output.WriteLine("Suggestions");
-        foreach (var suggestion in report.Suggestions) output.WriteLine($"  - {Text(suggestion)}");
+        foreach (var suggestion in report.Suggestions) output.WriteLine($"  - {Text(suggestion, hints)}");
     }
 
-    public static CalibrationJsonOutput ToJson(CalibrationReport report) => new(
+    public static CalibrationJsonOutput ToJson(CalibrationReport report, ICommandHints hints) => new(
         report.MinimumVmaf,
         report.Rules.Select(row => new CalibrationRuleJson(row.Number, [.. row.Rule.Codecs], row.Rule.Resolution, row.Rule.MinimumVideoBitrate, row.Rule.MinimumFileSize, row.Videos, row.Bytes, HistoryJson(row.History))).ToArray(),
         report.KeptOut.Select(group => new CalibrationGroupJson(group.Codec!, group.Resolution.Label, group.Bitrate.MinimumMbps, group.Bitrate.MaximumMbps, group.Videos, group.Bytes, HistoryJson(group.History))).ToArray(),
         report.CodecUnknown.Select(group => new CalibrationUnknownJson(group.Resolution.Label, group.Bitrate.MinimumMbps, group.Bitrate.MaximumMbps, group.Videos, group.Bytes)).ToArray(),
         new CalibrationTotalJson(report.AlreadyAv1Videos, report.AlreadyAv1Bytes),
         new CalibrationLeftOutJson(report.OtherSettings, report.NoVideoFacts),
-        report.Suggestions.Select(SuggestionJson).ToArray(),
+        report.Suggestions.Select(suggestion => SuggestionJson(suggestion, hints)).ToArray(),
         report.WhyNoSuggestions is { } reason ? new CalibrationNoSuggestionsJson(Name(reason), Text(reason)) : null);
 
     // One line per state, each true of that state alone: a rule whose results all converted is not "too few results", and
@@ -108,15 +109,15 @@ internal static class CalibrateConsole
         _ => throw new InvalidOperationException($"Unknown reason {reason}.")
     };
 
-    private static CalibrationSuggestionJson SuggestionJson(CalibrationSuggestion suggestion) => suggestion switch
+    private static CalibrationSuggestionJson SuggestionJson(CalibrationSuggestion suggestion, ICommandHints hints) => suggestion switch
     {
-        RaiseMinimumBitrateSuggestion raise => new RaiseMinimumBitrateJson(raise.Rule, Mbps(raise.MinimumMbps), Text(raise)),
-        AddRuleSuggestion add => new AddRuleJson(add.Group.Codec!, add.Group.Resolution.Label!, Mbps(add.MinimumMbps), Text(add)),
-        TestOneSuggestion test => new TestOneJson(test.Group.Codec, test.Group.Resolution.Label, test.Group.Bitrate.MinimumMbps, test.Group.Bitrate.MaximumMbps, test.Path, test.ImmichAssetId, test.Path is null ? null : TestCommand(test.Path), Text(test)),
+        RaiseMinimumBitrateSuggestion raise => new RaiseMinimumBitrateJson(raise.Rule, Mbps(raise.MinimumMbps), Text(raise, hints)),
+        AddRuleSuggestion add => new AddRuleJson(add.Group.Codec!, add.Group.Resolution.Label!, Mbps(add.MinimumMbps), Text(add, hints)),
+        TestOneSuggestion test => new TestOneJson(test.Group.Codec, test.Group.Resolution.Label, test.Group.Bitrate.MinimumMbps, test.Group.Bitrate.MaximumMbps, test.Path, test.ImmichAssetId, test.Path is null ? null : TestCommand(test.Path, hints), Text(test, hints)),
         _ => throw new InvalidOperationException($"Unknown suggestion {suggestion.GetType().Name}.")
     };
 
-    internal static string Text(CalibrationSuggestion suggestion) => suggestion switch
+    internal static string Text(CalibrationSuggestion suggestion, ICommandHints hints) => suggestion switch
     {
         RaiseMinimumBitrateSuggestion raise =>
             $"Rule {raise.Rule}: all {raise.NotWorthIt} results {(raise.NotWorthItBitrateMbps.Min == raise.NotWorthItBitrateMbps.Max ? $"at {raise.NotWorthItBitrateMbps.Min}" : $"from {raise.NotWorthItBitrateMbps.Min} to {raise.NotWorthItBitrateMbps.Max}")} Mbps were not worth converting" +
@@ -127,14 +128,14 @@ internal static class CalibrateConsole
             (add.Group.History.SavedPercent is { } saved ? $", saving {Range(saved)}%" : string.Empty) +
             $". Consider a rule: codecs [\"{add.Group.Codec}\"], resolution \"{add.Group.Resolution.Label}\", minimumVideoBitrate \"{Mbps(add.MinimumMbps)}\".",
         TestOneSuggestion { Path: { } path } test =>
-            $"Never tried: {GroupLabel(test.Group)} ({Videos(test.Group.Videos)}, {HumanReadableValues.FormatSize(test.Group.Bytes)}). Test one: {TestCommand(path)}",
+            $"Never tried: {GroupLabel(test.Group)} ({Videos(test.Group.Videos)}, {HumanReadableValues.FormatSize(test.Group.Bytes)}). Test one: {TestCommand(path, hints)}",
         TestOneSuggestion test =>
             $"Never tried in Immich: {GroupLabel(test.Group)} ({Videos(test.Group.Videos)}, {HumanReadableValues.FormatSize(test.Group.Bytes)}). A typical one: {test.Name}",
         _ => throw new InvalidOperationException($"Unknown suggestion {suggestion.GetType().Name}.")
     };
 
     // --force because the group is one the rules keep out; process stops before replacing anything, so this only tests.
-    private static string TestCommand(string path) => $"video-optimiser queue add \"{path}\" --force";
+    private static string TestCommand(string path, ICommandHints hints) => hints.Command($"queue add \"{path}\" --force");
 
     private static void WriteGroups(TextWriter output, IReadOnlyList<CalibrationGroup> groups, bool withHistory = true)
     {

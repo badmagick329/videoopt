@@ -16,7 +16,7 @@ internal static class UnreachableWorkerMessage
     /// <summary>U3 for a managed worker. A manual host is neither billed nor deleted by this tool, so it gets only the rerun (U3m).</summary>
     public static IReadOnlyList<string> Lines(JobRecord job, bool managed, CliCommand command)
     {
-        var resume = $"To resume: video-optimiser {StoppedRunMessage.RerunCommand(command)}";
+        var resume = $"To resume: {StoppedRunMessage.RerunCommand(command)}";
         if (!managed) return [resume];
         // As with Ctrl+C: deleting the worker loses a CRF search or encode that may still be running there, and a finished
         // encode not yet downloaded.

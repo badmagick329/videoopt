@@ -118,7 +118,8 @@ public sealed class JobConsoleOutputTests : IDisposable
         new FileFingerprintService(),
         new OutputManifestStore(),
         new SizedValidator(),
-        new AbAv1ProgressTranslator());
+        new AbAv1ProgressTranslator(),
+        new CommandHints(null));
 
     private static string[] Lines(string fixture) => AbAv1OutputTests.Fixture(fixture).Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries);
 

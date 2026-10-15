@@ -63,7 +63,7 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
     }
 
     /// <summary>What the scan found, folder by folder, then the counts that are not zero. The caller adds the next command.</summary>
-    public static void WriteSummary(TextWriter output, QueueDiscoveryResult result)
+    public static void WriteSummary(TextWriter output, QueueDiscoveryResult result, CliCommand command)
     {
         foreach (var folder in result.QueuedPaths.GroupBy(path => Path.GetDirectoryName(path) ?? string.Empty, StringComparer.OrdinalIgnoreCase))
         {
@@ -71,11 +71,11 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
             foreach (var path in folder) output.WriteLine($"  {Path.GetFileName(path)}");
         }
 
-        WriteCounts(output, result);
+        WriteCounts(output, result, command);
     }
 
     /// <summary>The counts that are not zero, and the notes under them. <c>queue add immich</c> prints this alone: it lists its queued videos as it downloads them.</summary>
-    public static void WriteCounts(TextWriter output, QueueDiscoveryResult result)
+    public static void WriteCounts(TextWriter output, QueueDiscoveryResult result, CliCommand command)
     {
         var counts = new List<string> { $"Queued: {result.QueuedPaths.Count}." };
         void Add(int count, string label) { if (count > 0) counts.Add($"{label}: {count}."); }
@@ -89,7 +89,7 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
         Add(result.RealProbes, "Real probes");
         Add(result.Issues, "Issues");
         output.WriteLine(string.Join(' ', counts));
-        if (result.PreviouslyFailed > 0) output.WriteLine("Failed or cancelled originals stay out of the queue until they change. 'history' lists their jobs; 'queue retry <job-id>' queues one again.");
-        if (result.PreviouslySkipped > 0) output.WriteLine("Skipped originals (AV1 would not save enough) are checked again when the file or the quality settings change; 'queue retry <job-id>' queues one now.");
+        if (result.PreviouslyFailed > 0) output.WriteLine($"Failed or cancelled originals stay out of the queue until they change. '{command.Hint("history")}' lists their jobs; '{command.Hint("queue retry <job-id>")}' queues one again.");
+        if (result.PreviouslySkipped > 0) output.WriteLine($"Skipped originals (AV1 would not save enough) are checked again when the file or the quality settings change; '{command.Hint("queue retry <job-id>")}' queues one now.");
     }
 }

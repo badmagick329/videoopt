@@ -8,10 +8,10 @@ public sealed class StoppedRunMessageTests
 {
     /// <summary>An <c>immich run</c> is resumed by <c>run</c>: what it queued is in the queue, and <c>run</c> converts the queue.</summary>
     [Theory]
-    [InlineData(new[] { "run", "--remote", "--config", @"C:\vo\my.yaml" }, @"run --remote --config ""C:\vo\my.yaml""")]
-    [InlineData(new[] { "immich", "run" }, "run")]
-    [InlineData(new[] { "--first", "immich", "run", "--local", "--config", "my.yaml" }, @"run --local --config ""my.yaml""")]
-    [InlineData(new[] { "immich", "run", "--limit", "3" }, "run")]
+    [InlineData(new[] { "run", "--remote", "--config", @"C:\vo\my.yaml" }, @"video-optimiser run --remote --config ""C:\vo\my.yaml""")]
+    [InlineData(new[] { "immich", "run" }, "video-optimiser run")]
+    [InlineData(new[] { "--first", "immich", "run", "--local", "--config", "my.yaml" }, @"video-optimiser run --local --config ""my.yaml""")]
+    [InlineData(new[] { "immich", "run", "--limit", "3" }, "video-optimiser run")]
     public void TheRerunCommandIsRunWithTheModeAndConfigTheUserTyped(string[] args, string expected)
     {
         StoppedRunMessage.RerunCommand(CliCommand.Parse(args)).Should().Be(expected);

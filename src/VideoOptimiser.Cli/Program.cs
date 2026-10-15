@@ -1,6 +1,7 @@
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using VideoOptimiser.Application;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Cli.Features.Calibrate;
@@ -50,7 +51,7 @@ internal static class CliApplication
                 return (int)ExitCode.InvalidArguments;
             }
 
-            using var host = BuildHost(configureServices);
+            using var host = BuildHost(command, configureServices);
             var stop = host.Services.GetRequiredService<RunStop>();
             ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
             {
@@ -77,9 +78,11 @@ internal static class CliApplication
         }
     }
 
-    private static IHost BuildHost(Action<IServiceCollection>? configureServices)
+    private static IHost BuildHost(CliCommand command, Action<IServiceCollection>? configureServices)
     {
         var builder = Host.CreateApplicationBuilder();
+        // The path the user typed, so the application layer words suggested commands exactly as this layer does.
+        builder.Services.AddSingleton<ICommandHints>(new CommandHints(command.ConfigurationPath));
         builder.Services.AddVideoOptimiser();
         configureServices?.Invoke(builder.Services);
         return builder.Build();
@@ -99,7 +102,7 @@ internal static class CliApplication
         {
             // Someone who typed nothing may not know there is anything to set up; a typed command already knew what it wanted.
             var exitCode = ReportFailure(exception);
-            WriteError("To create one, run 'video-optimiser config init'; 'video-optimiser --help' lists every command.");
+            WriteError($"To create one, run '{command.Hint("config init")}'; '{CommandHints.Format("--help", null)}' lists every command.");
             return exitCode;
         }
         if (command.ModeOverride is not null) configuration = configuration with { ConfiguredMode = command.ModeOverride.Apply(configuration.Settings) };
@@ -133,7 +136,7 @@ internal static class CliApplication
             CliCommandKind.Finalize => await services.GetRequiredService<FinalizeCommands>().FinalizeAsync(configuration, command, cancellationToken),
             CliCommandKind.Cleanup => await services.GetRequiredService<CleanupCommand>().RunAsync(configuration, command.DryRun, cancellationToken),
             CliCommandKind.ImmichRun => await services.GetRequiredService<ImmichRunCommand>().RunAsync(configuration, command, cancellationToken),
-            CliCommandKind.ImmichFinalize => await services.GetRequiredService<FinalizeCommands>().ImmichFinalizeAsync(configuration, cancellationToken),
+            CliCommandKind.ImmichFinalize => await services.GetRequiredService<FinalizeCommands>().ImmichFinalizeAsync(configuration, command, cancellationToken),
             CliCommandKind.Calibrate => await services.GetRequiredService<CalibrateCommand>().RunAsync(configuration, command.Json, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };

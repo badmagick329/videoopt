@@ -67,7 +67,8 @@ public static class FailureCategories
 /// <summary>The rules for a finalisation that stopped before completing, which finalize, a run and the queue all apply.</summary>
 public static class FinalizationRules
 {
-    public const string InterruptedMessage = "Finalisation was interrupted. Run 'video-optimiser immich finalize' again to resume.";
+    /// <summary>What a ready job says about its stopped finalisation. The caller words the command, because only the CLI knows a typed <c>--config</c>.</summary>
+    public static string InterruptedMessage(string resumeCommand) => $"Finalisation was interrupted. Run '{resumeCommand}' again to resume.";
     public const string ManualReviewMessage = "Finalisation was interrupted and requires manual review.";
 
     /// <summary>

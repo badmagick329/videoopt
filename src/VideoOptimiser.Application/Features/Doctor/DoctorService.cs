@@ -14,7 +14,8 @@ public sealed class DoctorService(
     IToolVerifier toolVerifier,
     IRemoteEnvironmentVerifier remoteEnvironmentVerifier,
     IRemoteWorkerLifecycle remoteWorkerLifecycle,
-    IImmichClientFactory immichClients) : IDoctorService
+    IImmichClientFactory immichClients,
+    ICommandHints hints) : IDoctorService
 {
     public async Task<DoctorReport> RunAsync(LoadedConfiguration configuration, CancellationToken cancellationToken = default)
     {
@@ -253,8 +254,8 @@ public sealed class DoctorService(
                     DiagnosticStatus.Warning,
                     "ManagedWorkerBilling",
                     worker.Status == RemoteWorkerStatuses.PrimaryIpRetained
-                        ? $"The server of managed Hetzner worker {worker.Name} is gone, but its IPv4 address still bills. Delete it with 'worker delete'."
-                        : $"Managed Hetzner worker {worker.Name} is {worker.Status} and bills until it is deleted. Delete it with 'worker delete'."));
+                        ? $"The server of managed Hetzner worker {worker.Name} is gone, but its IPv4 address still bills. Delete it with '{hints.Command("worker delete")}'."
+                        : $"Managed Hetzner worker {worker.Name} is {worker.Status} and bills until it is deleted. Delete it with '{hints.Command("worker delete")}'."));
             }
             return false;
         }
@@ -266,7 +267,7 @@ public sealed class DoctorService(
             DiagnosticCategory.Dependency,
             DiagnosticStatus.Warning,
             "RemoteHostChecksSkipped",
-            $"{state}, so remote host checks were skipped. Run 'worker create', then doctor, to check one."));
+            $"{state}, so remote host checks were skipped. Run '{hints.Command("worker create")}', then doctor, to check one."));
         return false;
     }
 
