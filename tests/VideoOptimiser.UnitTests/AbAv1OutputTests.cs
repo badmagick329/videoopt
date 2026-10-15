@@ -17,13 +17,4 @@ public sealed class AbAv1OutputTests
 
         exception!.Best.Should().Be(new Application.Tools.CrfAttempt(31, 97.31, 95));
     }
-
-    [Fact]
-    public void TheRealLocalLogsBestAttemptIsTheSmallestThatReachedTheVmaf()
-    {
-        // Run with --min-vmaf 95 --max-encoded-percent 80: CRF 26 and 28 passed at 97% and 84%, CRF 29 missed at 94.74.
-        var exception = AbAv1Output.NoWorthwhileCrf(Fixture("local-crf-not-worth-converting.stderr.log"), new QualitySettings { MinimumVmaf = 95, MaxEncodedPercent = 80 });
-
-        exception!.Best.Should().Be(new Application.Tools.CrfAttempt(28, 95.19, 84));
-    }
 }

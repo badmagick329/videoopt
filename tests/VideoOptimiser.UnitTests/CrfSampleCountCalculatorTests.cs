@@ -6,23 +6,17 @@ namespace VideoOptimiser.UnitTests;
 public sealed class CrfSampleCountCalculatorTests
 {
     [Theory]
-    [InlineData(120, 2)]
-    [InlineData(240, 2)]
-    [InlineData(241, 3)]
-    [InlineData(1680, 12)]
-    public void CalculatesSampleCountFromVideoDuration(double durationSeconds, int expected)
+    [InlineData(120d, 2)]
+    [InlineData(240d, 2)]
+    [InlineData(241d, 3)]
+    [InlineData(1680d, 12)]
+    [InlineData(null, 5)] // no duration: the configured count of 5
+    public void CalculatesSampleCountFromVideoDuration(double? durationSeconds, int expected)
     {
         CrfSampleCountCalculator.Calculate(durationSeconds, fallbackSampleCount: 5).Should().Be(expected);
     }
 
-    [Fact]
-    public void UsesConfiguredCountWhenDurationIsUnavailable()
-    {
-        CrfSampleCountCalculator.Calculate(null, fallbackSampleCount: 5).Should().Be(5);
-    }
-
     [Theory]
-    [InlineData(8d, 2, 20, true)]
     [InlineData(47.05, 2, 20, true)]
     [InlineData(47.1, 2, 20, false)]
     [InlineData(600d, 2, 0, true)]

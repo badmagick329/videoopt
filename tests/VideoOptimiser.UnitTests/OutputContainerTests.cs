@@ -11,17 +11,8 @@ public sealed class OutputContainerTests
     [InlineData("clip.m4v", ".mp4")]
     [InlineData("clip.mkv", ".mkv")]
     [InlineData("clip", ".mkv")]
+    [InlineData("IMG_0897.MOV", ".MP4")] // an all-capitals extension stays in capitals
+    [InlineData("clip.Mov", ".mp4")] // a mixed-case one becomes lowercase
     public void TheContainerFollowsWhatTheCodecAndMuxerAccept(string source, string expected) =>
-        OutputContainer.ExtensionFor(source).Should().Be(expected);
-
-    [Theory]
-    [InlineData("IMG_0897.MOV", ".MP4")]
-    [InlineData("IMG_0897.AVI", ".MKV")]
-    public void AnAllCapitalsExtensionStaysInCapitals(string source, string expected) =>
-        OutputContainer.ExtensionFor(source).Should().Be(expected);
-
-    [Theory]
-    [InlineData("clip.Mov", ".mp4")]
-    public void AMixedCaseExtensionBecomesLowercase(string source, string expected) =>
         OutputContainer.ExtensionFor(source).Should().Be(expected);
 }

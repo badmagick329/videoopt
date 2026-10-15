@@ -6,24 +6,16 @@ namespace VideoOptimiser.UnitTests;
 
 public sealed class FfmpegDecodeTesterTests
 {
-    [Fact]
-    public async Task DecodeAsyncFailsWhenFfmpegReportsAnErrorButExitsZero()
+    [Theory]
+    [InlineData(0, "[av1 @ 0x1] Error parsing OBU data\r\nmore detail", "[av1 @ 0x1] Error parsing OBU data")] // an error line fails even a zero exit
+    [InlineData(1, "", "ffmpeg exited with 1.")] // a non-zero exit fails even with nothing on stderr
+    public async Task DecodeAsyncFailsOnAnErrorLineOrANonZeroExit(int exitCode, string stderr, string reason)
     {
-        var runner = new StaticProcessRunner(new ExternalProcessResult(0, string.Empty, "[av1 @ 0x1] Error parsing OBU data\r\nmore detail"));
+        var runner = new StaticProcessRunner(new ExternalProcessResult(exitCode, string.Empty, stderr));
 
         var result = await new FfmpegDecodeTester("ffmpeg", runner).DecodeAsync("out.mkv", DecodeWindow.Whole);
 
-        result.Should().Be(new DecodeTestResult(false, "[av1 @ 0x1] Error parsing OBU data"));
-    }
-
-    [Fact]
-    public async Task DecodeAsyncFailsWhenFfmpegExitsNonZeroSilently()
-    {
-        var runner = new StaticProcessRunner(new ExternalProcessResult(1, string.Empty, string.Empty));
-
-        var result = await new FfmpegDecodeTester("ffmpeg", runner).DecodeAsync("out.mkv", DecodeWindow.Whole);
-
-        result.Should().Be(new DecodeTestResult(false, "ffmpeg exited with 1."));
+        result.Should().Be(new DecodeTestResult(false, reason));
     }
 
     [Fact]

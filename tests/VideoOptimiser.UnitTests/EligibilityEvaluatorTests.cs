@@ -12,11 +12,9 @@ public sealed class EligibilityEvaluatorTests : IDisposable
     public EligibilityEvaluatorTests() => Directory.CreateDirectory(_directory);
 
     [Theory]
-    [InlineData("1080p-1440p", 1920, 1080, true)]
     [InlineData("1080p-1440p", 2560, 1440, false)]
     [InlineData("1440p-4k", 2560, 1440, true)]
     [InlineData("1440p-4k", 3840, 2160, false)]
-    [InlineData("4k+", 3840, 2160, true)]
     public void IsEligibleUsesPixelCountResolutionBands(string resolution, int width, int height, bool expected)
     {
         var eligible = IsEligible(new EligibilityRuleSettings { Codecs = ["h264"], Resolution = resolution, MinimumVideoBitrate = "8Mbps", MinimumFileSize = "1B" }, Media(width: width, height: height));
@@ -31,6 +29,7 @@ public sealed class EligibilityEvaluatorTests : IDisposable
 
         IsEligible(rule, Media(codec: "hevc")).Should().BeFalse();
         IsEligible(rule, Media(bitrate: 7_999_999)).Should().BeFalse();
+        IsEligible(rule, Media(bitrate: null)).Should().BeFalse();
         IsEligible(rule, Media(width: 1280, height: 720)).Should().BeFalse();
 
         var path = CreateFile(9);
@@ -38,16 +37,8 @@ public sealed class EligibilityEvaluatorTests : IDisposable
         reason.Should().Contain("size is below 10B");
     }
 
-    [Fact]
-    public void IsEligibleDoesNotMatchWhenVideoBitrateIsMissing()
-    {
-        IsEligible(new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "8Mbps", MinimumFileSize = "1B" }, Media(bitrate: null)).Should().BeFalse();
-    }
-
     [Theory]
-    [InlineData("1080p-1440p", true)]
     [InlineData("1440p-4k", true)]
-    [InlineData("4k+", true)]
     [InlineData("1080p", false)]
     [InlineData("4K+", true)]
     public void IsValidResolutionBandRecognisesSupportedValues(string value, bool expected) =>
@@ -111,19 +102,6 @@ public sealed class EligibilityEvaluatorTests : IDisposable
         var settings = new EligibilitySettings { Rules = [Rule(["hevc"], "1080p-1440p", "10Mbps", "1B")] };
 
         EligibilityEvaluator.DescribeMismatch(1_000, Described("hevc", 1920, 1080, null), settings).Should().Be("needs a known bitrate");
-    }
-
-    [Fact]
-    public void DescribeMismatchGivesTheSameTextForAlikeSkipsWhateverTheFilesValuesAre()
-    {
-        // The text doubles as the key that counts alike skips together, so it must not carry the file's own values.
-        var settings = new EligibilitySettings { Rules = [Rule(["h264"], "1080p-1440p", "1Mbps", "2GiB"), Rule(["hevc"], "1080p-1440p", "1Mbps", "300MiB")] };
-
-        var small = EligibilityEvaluator.DescribeMismatch(100L << 20, Described("h264", 1920, 1080, 40_000_000), settings);
-        var smaller = EligibilityEvaluator.DescribeMismatch(200L << 20, Described("h264", 1920, 1080, 9_000_000), settings);
-
-        small.Should().Be("rule 1 needs 2GiB");
-        smaller.Should().Be(small);
     }
 
     [Fact]

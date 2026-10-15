@@ -33,8 +33,8 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
     public async Task ScanAsyncReusesCachedProbeAndReevaluatesCurrentEligibilityRules()
     {
         var path = await WriteVideoAsync("movie.mkv", [1, 2, 3]);
-        var probe = new CountingProbe();
-        var scanner = Scanner(probe);
+        var probe = Probe();
+        var scanner = new FileScanner(new ReadableFiles(), _ => probe, Cache());
         var eligible = Settings();
 
         var first = await scanner.ScanAsync(eligible.Watch.Roots, eligible);
@@ -47,16 +47,19 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
         second.Items.Should().ContainSingle(item => item.Path == path && item.Status == ScanItemStatus.Ineligible);
     }
 
+    /// <summary>
+    /// A new write time alone sends the file back to ffprobe and replaces its entry, so the cache never describes an
+    /// earlier version of the file.
+    /// </summary>
     [Fact]
-    public async Task ScanAsyncReprobesAndReplacesCacheWhenFileIdentityChanges()
+    public async Task ScanAsyncReprobesAndReplacesCacheWhenOnlyLastWriteTimeChanges()
     {
         var path = await WriteVideoAsync("movie.mkv", [1, 2, 3]);
-        var probe = new CountingProbe();
-        var scanner = Scanner(probe);
+        var probe = Probe();
+        var scanner = new FileScanner(new ReadableFiles(), _ => probe, Cache());
         var settings = Settings();
 
         await scanner.ScanAsync(settings.Watch.Roots, settings);
-        await File.WriteAllBytesAsync(path, [4, 5, 6, 7]);
         File.SetLastWriteTimeUtc(path, File.GetLastWriteTimeUtc(path).AddMinutes(1));
         var second = await scanner.ScanAsync(settings.Watch.Roots, settings);
         var info = new FileInfo(path);
@@ -68,62 +71,41 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task ScanAsyncReprobesWhenOnlyLastWriteTimeChanges()
-    {
-        var path = await WriteVideoAsync("touched.mkv", [1, 2, 3]);
-        var probe = new CountingProbe();
-        var scanner = Scanner(probe);
-        var settings = Settings();
-
-        await scanner.ScanAsync(settings.Watch.Roots, settings);
-        File.SetLastWriteTimeUtc(path, File.GetLastWriteTimeUtc(path).AddMinutes(1));
-        var second = await scanner.ScanAsync(settings.Watch.Roots, settings);
-
-        second.RealProbes.Should().Be(1);
-        probe.Calls.Should().Be(2);
-    }
-
-    [Fact]
     public async Task ScanAsyncDoesNotCacheFailedOrNotReadySources()
     {
         var failedPath = await WriteVideoAsync("failed.mkv", [1]);
-        var failedSettings = Settings();
-        var failedScanner = new FileScanner(new Ready(), _ => new ThrowingProbe(), Cache());
-        await failedScanner.ScanAsync(failedSettings.Watch.Roots, failedSettings);
+        var settings = Settings();
+        await new FileScanner(new ReadableFiles(), _ => new FuncProbe(_ => throw new MediaProbeException("Probe failed.")), Cache()).ScanAsync(settings.Watch.Roots, settings);
 
         var notReadyPath = await WriteVideoAsync("not-ready.mkv", [2]);
-        var notReadySettings = Settings();
-        var notReadyScanner = new FileScanner(new Ready(false), _ => new CountingProbe(), Cache());
-        await notReadyScanner.ScanAsync(notReadySettings.Watch.Roots, notReadySettings);
+        await new FileScanner(new ReadableFiles(ready: false), _ => Probe(), Cache()).ScanAsync(settings.Watch.Roots, settings);
 
-        var failedInfo = new FileInfo(failedPath);
-        var notReadyInfo = new FileInfo(notReadyPath);
-        (await Cache().LoadAllAsync(DatabasePath)).Should().NotContain(entry =>
-            entry.SourcePath == failedPath && entry.SourceSizeBytes == failedInfo.Length && entry.SourceLastWriteUtcTicks == failedInfo.LastWriteTimeUtc.Ticks);
-        (await Cache().LoadAllAsync(DatabasePath)).Should().NotContain(entry =>
-            entry.SourcePath == notReadyPath && entry.SourceSizeBytes == notReadyInfo.Length && entry.SourceLastWriteUtcTicks == notReadyInfo.LastWriteTimeUtc.Ticks);
+        (await Cache().LoadAllAsync(DatabasePath)).Select(entry => entry.SourcePath).Should().NotContain([failedPath, notReadyPath]);
     }
 
     [Fact]
     public async Task ScanAsyncDoesNotCacheOrQueueAFileThatChangesDuringProbing()
     {
         var path = await WriteVideoAsync("changing.mkv", [1, 2, 3]);
-        var original = new FileInfo(path);
         var settings = Settings();
-        var scanner = new FileScanner(new Ready(), _ => new ChangingProbe(), Cache());
+        var changing = new FuncProbe(file =>
+        {
+            File.AppendAllBytes(file, [4]);
+            return new MediaInfo("h264", 1, 0, 0, 0, null, null, 1920, 1080, 10_000_000);
+        });
 
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
+        var report = await new FileScanner(new ReadableFiles(), _ => changing, Cache()).ScanAsync(settings.Watch.Roots, settings);
 
         report.Items.Should().ContainSingle(item => item.Path == path && item.Status == ScanItemStatus.Unavailable && item.Reason == "Original changed while probing.");
-        (await Cache().LoadAllAsync(DatabasePath)).Should().NotContain(entry =>
-            entry.SourcePath == path && entry.SourceSizeBytes == original.Length && entry.SourceLastWriteUtcTicks == original.LastWriteTimeUtc.Ticks);
+        (await Cache().LoadAllAsync(DatabasePath)).Select(entry => entry.SourcePath).Should().NotContain(path);
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
     private static SqliteMediaProbeCache Cache() => new(new SqliteDatabaseInitializer());
-    private static FileScanner Scanner(CountingProbe probe) => new(new Ready(), _ => probe, Cache());
+
+    private static FuncProbe Probe() => new(path => new MediaInfo("h264", 1, 2, 3, 4, 120.5, new FileInfo(path).Length, 1920, 1080, 10_000_000));
 
     private AppSettings Settings(IEnumerable<string>? codecs = null) => new()
     {
@@ -140,34 +122,5 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
         var path = Path.Combine(_directory, name);
         await File.WriteAllBytesAsync(path, content);
         return path;
-    }
-
-    private sealed class Ready(bool isReady = true) : IFileReadinessService
-    {
-        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(isReady, isReady ? "Readable." : "Not ready."));
-    }
-
-    private sealed class CountingProbe : IMediaProbe
-    {
-        public int Calls { get; private set; }
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
-        {
-            Calls++;
-            return Task.FromResult(new MediaInfo("h264", 1, 2, 3, 4, 120.5, new FileInfo(path).Length, 1920, 1080, 10_000_000));
-        }
-    }
-
-    private sealed class ThrowingProbe : IMediaProbe
-    {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => throw new MediaProbeException("Probe failed.");
-    }
-
-    private sealed class ChangingProbe : IMediaProbe
-    {
-        public async Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
-        {
-            await File.AppendAllBytesAsync(path, [4], cancellationToken);
-            return new MediaInfo("h264", 1, 0, 0, 0, null, null, 1920, 1080, 10_000_000);
-        }
     }
 }

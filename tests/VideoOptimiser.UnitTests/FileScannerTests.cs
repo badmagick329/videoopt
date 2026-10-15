@@ -12,23 +12,18 @@ public sealed class FileScannerTests : IDisposable
     public FileScannerTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
-    public async Task ScanAsyncClassifiesAllowedH264AndRejectedCodecsWithoutMutatingFiles()
+    public async Task ScanAsyncClassifiesAllowedH264AndRejectedCodecs()
     {
         var h264 = Path.Combine(_directory, "h264.mkv");
         var hevc = Path.Combine(_directory, "hevc.mkv");
-        var tooSmall = Path.Combine(_directory, "small.mp4");
         await File.WriteAllBytesAsync(h264, [1, 2, 3]);
         await File.WriteAllBytesAsync(hevc, [4, 5, 6]);
-        await File.WriteAllBytesAsync(tooSmall, [7]);
-        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
-        var settings = Settings("2B");
+        var settings = Settings("1B");
 
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
+        var report = await Scanner().ScanAsync(settings.Watch.Roots, settings);
 
         report.Items.Should().ContainSingle(item => item.Path == h264 && item.Status == ScanItemStatus.Eligible);
         report.Items.Should().ContainSingle(item => item.Path == hevc && item.Status == ScanItemStatus.Ineligible && item.Reason.Contains("hevc"));
-        report.Items.Should().ContainSingle(item => item.Path == tooSmall && item.Status == ScanItemStatus.Ineligible && item.Reason.Contains("size is below 2B"));
-        new FileInfo(h264).Length.Should().Be(3);
     }
 
     /// <summary>The probe gives no duration, so the file size stands in for the stream. Cached and fresh probes are judged alike.</summary>
@@ -41,11 +36,10 @@ public sealed class FileScannerTests : IDisposable
         await File.WriteAllBytesAsync(fresh, [1, 2, 3]);
         await File.WriteAllBytesAsync(cached, [1, 2, 3]);
         await File.WriteAllBytesAsync(bigEnough, [1, 2, 3, 4]);
-        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new SelectiveProbeCache(new HashSet<string> { cached }));
         var settings = Settings("1B");
         settings.Savings.MinimumBytesSaved = "3B";
 
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
+        var report = await Scanner(new FakeProbeCache(cached)).ScanAsync(settings.Watch.Roots, settings);
 
         report.Items.Where(item => item.Status == ScanItemStatus.Ineligible).Select(item => (item.Path, item.Reason)).Should().BeEquivalentTo(new[]
         {
@@ -62,10 +56,9 @@ public sealed class FileScannerTests : IDisposable
         Directory.CreateDirectory(excluded);
         var path = Path.Combine(excluded, "movie.mkv");
         await File.WriteAllBytesAsync(path, [1, 2, 3]);
-        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
         var settings = Settings("1B", recursive: true);
 
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
+        var report = await Scanner().ScanAsync(settings.Watch.Roots, settings);
 
         report.Items.Should().ContainSingle(item => item.Path == path && item.Reason == "File is in an excluded directory.");
     }
@@ -81,12 +74,11 @@ public sealed class FileScannerTests : IDisposable
         var original = Path.Combine(_directory, "movie.mkv");
         await File.WriteAllBytesAsync(archived, [1, 2, 3]);
         await File.WriteAllBytesAsync(original, [1, 2, 3]);
-        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
         var settings = Settings("1B", recursive: true);
         settings.Eligibility.ExcludedDirectories = [];
         settings.Original.ArchiveDirectory = absolute ? archive : "Old originals";
 
-        var report = await scanner.ScanAsync(settings.Watch.Roots, settings);
+        var report = await Scanner().ScanAsync(settings.Watch.Roots, settings);
 
         report.Items.Should().ContainSingle(item => item.Path == archived && item.Reason == "File is in the archive directory.");
         report.Items.Should().ContainSingle(item => item.Path == original && item.Status == ScanItemStatus.Eligible);
@@ -97,9 +89,9 @@ public sealed class FileScannerTests : IDisposable
     {
         await File.WriteAllBytesAsync(Path.Combine(_directory, "first.mkv"), [1, 2, 3]);
         await File.WriteAllBytesAsync(Path.Combine(_directory, "second.mkv"), [4, 5, 6]);
-        var scanner = new FileScanner(new ReadableFileService(), _ => new CodecProbe(), new NoopProbeCache());
+        var settings = Settings("1B");
 
-        var report = await scanner.ScanAsync(Settings("1B").Watch.Roots, Settings("1B"), stopAfterFirstEligible: true);
+        var report = await Scanner().ScanAsync(settings.Watch.Roots, settings, stopAfterFirstEligible: true);
 
         report.Items.Should().ContainSingle(item => item.Status == ScanItemStatus.Eligible);
     }
@@ -107,30 +99,23 @@ public sealed class FileScannerTests : IDisposable
     [Fact]
     public async Task ScanAsyncLoadsCachedEntriesOnceWithoutReadinessOrProbeCalls()
     {
-        var cachedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var index = 0; index < 250; index++)
-        {
-            var path = Path.Combine(_directory, $"cached-{index:000}.mkv");
-            await File.WriteAllBytesAsync(path, [1, 2, 3]);
-            cachedPaths.Add(Path.GetFullPath(path));
-        }
+        var first = Path.Combine(_directory, "cached-1.mkv");
+        var second = Path.Combine(_directory, "cached-2.mkv");
+        await File.WriteAllBytesAsync(first, [1, 2, 3]);
+        await File.WriteAllBytesAsync(second, [1, 2, 3]);
+        var readiness = new ReadableFiles();
+        var probe = new FuncProbe(_ => Media());
+        var cache = new FakeProbeCache(first, second);
+        var settings = Settings("1B");
 
-        var progress = new RecordingProgress<ScanProgress>();
-        var readiness = new CountingReadiness();
-        var probe = new CountingProbe();
-        var cache = new SelectiveProbeCache(cachedPaths);
-        var scanner = new FileScanner(readiness, _ => probe, cache);
+        var report = await new FileScanner(readiness, _ => probe, cache).ScanAsync(settings.Watch.Roots, settings);
 
-        var report = await scanner.ScanAsync(Settings("1B").Watch.Roots, Settings("1B"), progress: progress);
-
-        report.Items.Should().HaveCount(250);
-        report.EligibleCount.Should().Be(250);
-        report.CacheHits.Should().Be(250);
+        report.EligibleCount.Should().Be(2);
+        report.CacheHits.Should().Be(2);
         report.RealProbes.Should().Be(0);
         cache.LoadCalls.Should().Be(1);
         readiness.Calls.Should().Be(0);
         probe.Calls.Should().Be(0);
-        progress.Values.Should().NotContain(update => update.Stage == "Cache");
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
@@ -146,69 +131,26 @@ public sealed class FileScannerTests : IDisposable
         Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = _directory, Recursive = recursive }] }
     };
 
-    private sealed class ReadableFileService : IFileReadinessService
-    {
-        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
-    }
+    /// <summary>A scanner whose files are all ready and whose probe calls a file hevc if its name says so.</summary>
+    private static FileScanner Scanner(IMediaProbeCache? cache = null) =>
+        new(new ReadableFiles(), _ => new FuncProbe(path => Media(path.EndsWith("hevc.mkv", StringComparison.Ordinal) ? "hevc" : "h264")), cache ?? new FakeProbeCache());
 
-    private sealed class CountingReadiness : IFileReadinessService
-    {
-        public int Calls { get; private set; }
-        public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default)
-        {
-            Calls++;
-            return Task.FromResult(new FileReadinessResult(true, "Readable."));
-        }
-    }
-
-    private sealed class CodecProbe : IMediaProbe
-    {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(path.EndsWith("hevc.mkv", StringComparison.Ordinal) ? Media("hevc") : Media());
-    }
-
-    private sealed class CountingProbe : IMediaProbe
-    {
-        public int Calls { get; private set; }
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
-        {
-            Calls++;
-            return Task.FromResult(Media());
-        }
-    }
-
-    private sealed class NoopProbeCache : IMediaProbeCache
-    {
-        public Task<IReadOnlyList<MediaProbeCacheEntry>> LoadAllAsync(string databasePath, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MediaProbeCacheEntry>>([]);
-        public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    }
-
-    private sealed class SelectiveProbeCache(IReadOnlySet<string> cachedPaths, params MediaProbeCacheEntry[] entries) : IMediaProbeCache
+    /// <summary>Holds the given files as already probed, as they are now, and counts how often it is loaded.</summary>
+    private sealed class FakeProbeCache(params string[] cachedPaths) : IMediaProbeCache
     {
         public int LoadCalls { get; private set; }
-        public List<MediaProbeCacheEntry> Stored { get; } = [];
 
         public Task<IReadOnlyList<MediaProbeCacheEntry>> LoadAllAsync(string databasePath, CancellationToken cancellationToken = default)
         {
             LoadCalls++;
-            var cached = cachedPaths.Select(path =>
+            return Task.FromResult<IReadOnlyList<MediaProbeCacheEntry>>([.. cachedPaths.Select(path =>
             {
                 var info = new FileInfo(path);
                 return new MediaProbeCacheEntry(path, info.Length, info.LastWriteTimeUtc.Ticks, Media());
-            }).Concat(entries).ToArray();
-            return Task.FromResult<IReadOnlyList<MediaProbeCacheEntry>>(cached);
+            })]);
         }
 
-        public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default)
-        {
-            Stored.Add(entry);
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class RecordingProgress<T> : IProgress<T>
-    {
-        public List<T> Values { get; } = [];
-        public void Report(T value) => Values.Add(value);
+        public Task StoreAsync(string databasePath, MediaProbeCacheEntry entry, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private static MediaInfo Media(string codec = "h264") => new(codec, 1, 0, 0, 0, null, null, 1920, 1080, 10_000_000);

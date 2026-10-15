@@ -784,7 +784,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         }
     }
 
-    /// <summary>An SFTP transfer that stays pending until <paramref name="finishAtTick"/>, with the remote partial's size growing per poll.</summary>
+    /// <summary>An SFTP transfer that stays pending until the clock reaches the tick it is given (<c>finishAtTick</c>), with the remote partial's size growing per poll.</summary>
     private sealed class UploadRunner : IExternalProcessRunner
     {
         // Continuations run inline, so completing it inside a tick finishes the transfer before the session looks again.

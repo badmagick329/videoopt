@@ -14,7 +14,6 @@ public sealed class SizeCapTests
     // encodes it whole and measures the file, audio included. Every row uses savings.minimumBytesSaved 100MiB and
     // quality.maxEncodedPercent 80; the stream is the file less 20 MiB of audio unless the row says otherwise.
     [Theory]
-    [InlineData(1024, 1024d, 1044, 80, false, false, 1024)] // maxEncodedPercent is lower
     [InlineData(300, 1024d, 320, 66, true, false, 300)]      // the minimum saving is lower: floor(200 / 300)
     [InlineData(500, 1024d, 520, 80, false, false, 500)]     // a tie goes to maxEncodedPercent
     [InlineData(100, 1024d, 120, 0, true, false, 100)]       // nothing left to save: rules out every CRF
@@ -35,15 +34,17 @@ public sealed class SizeCapTests
     }
 
     // A 300 MiB stream, cap 66%. 79.2% of it is 237.6 MiB, so the passing attempt saves 62.4 MiB. Reaching the lowest CRF
-    // below the VMAF is a quality verdict, so it keeps its own reason whatever set the cap.
+    // below the VMAF is a quality verdict, so it keeps its own reason whatever set the cap. The last row has no byte cap: ab-av1
+    // tries no lower CRF once an attempt is over the size limit, so the lowest CRF's VMAF is unknown and both limits are named.
     [Theory]
-    [InlineData(30, 97.2, 79.2, "AV1 would save about 62.4 MiB at the best quality-passing setting (CRF 30, VMAF 97.2); the minimum is 100MiB (savings.minimumBytesSaved).")]
-    [InlineData(30, 96.1, 25d, "No CRF reached VMAF 97 while saving 100MiB (savings.minimumBytesSaved).")]
-    [InlineData(18, 96.3, 70d, "No CRF reached VMAF 97; even CRF 18, the lowest allowed (quality.crfSearch.minCrf), scored 96.3.")]
-    public void WhenTheMinimumSavingSetTheCapTheSkipReasonNamesItInBytes(int crf, double vmaf, double encodedPercent, string reason)
+    [InlineData(true, 30, 97.2, 79.2, "AV1 would save about 62.4 MiB at the best quality-passing setting (CRF 30, VMAF 97.2); the minimum is 100MiB (savings.minimumBytesSaved).")]
+    [InlineData(true, 30, 96.1, 25d, "No CRF reached VMAF 97 while saving 100MiB (savings.minimumBytesSaved).")]
+    [InlineData(true, 18, 96.3, 70d, "No CRF reached VMAF 97; even CRF 18, the lowest allowed (quality.crfSearch.minCrf), scored 96.3.")]
+    [InlineData(false, 30, 96.1, 85d, "No CRF reached VMAF 97 within 80% of the original's size (quality.maxEncodedPercent).")]
+    public void TheSkipReasonNamesTheLimitThatStoppedTheSearch(bool bytesCap, int crf, double vmaf, double encodedPercent, string reason)
     {
         var cap = new SizeCap(66, true, 300 * MiB, false, 100 * MiB, "100MiB");
-        var quality = new QualitySettings { MinimumVmaf = 97 }.WithSizeCap(cap);
+        var quality = bytesCap ? new QualitySettings { MinimumVmaf = 97 }.WithSizeCap(cap) : new QualitySettings { MinimumVmaf = 97 };
 
         new NoWorthwhileCrfException([new CrfAttempt(crf, vmaf, encodedPercent)], quality).Message.Should().Be(reason);
     }

@@ -8,9 +8,7 @@ public sealed class SettingsValidatorTests
     [Fact]
     public void ValidateTemplateSettingsReportsRequiredUserEdits()
     {
-        var diagnostics = new SettingsValidator().Validate(new AppSettings());
-
-        diagnostics.Select(diagnostic => diagnostic.Code).Should().Contain("WatchRootsRequired");
+        Codes(new AppSettings()).Should().Contain("WatchRootsRequired");
     }
 
     [Theory]
@@ -23,7 +21,7 @@ public sealed class SettingsValidatorTests
         var settings = CreateValidSettings();
         settings.Quality.MaxEncodedPercent = percent;
 
-        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Contains("InvalidMaxEncodedPercent").Should().Be(!valid);
+        Codes(settings).Contains("InvalidMaxEncodedPercent").Should().Be(!valid);
     }
 
     [Fact]
@@ -33,15 +31,7 @@ public sealed class SettingsValidatorTests
         settings.Watch.Roots.Clear();
         settings.Immich.BaseUrl = "http://immich.test:2283";
 
-        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().NotContain("WatchRootsRequired");
-    }
-
-    [Fact]
-    public void ValidateCompleteSettingsIsValid()
-    {
-        var settings = CreateValidSettings();
-
-        new SettingsValidator().Validate(settings).Should().BeEmpty();
+        Codes(settings).Should().NotContain("WatchRootsRequired");
     }
 
     [Fact]
@@ -50,7 +40,7 @@ public sealed class SettingsValidatorTests
         var settings = CreateValidSettings();
         settings.Validation.DecodeTest = "true";
 
-        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("InvalidDecodeTest");
+        Codes(settings).Should().Contain("InvalidDecodeTest");
     }
 
     [Theory]
@@ -66,10 +56,8 @@ public sealed class SettingsValidatorTests
         var settings = CreateValidSettings();
         settings.Original = new OriginalSettings { Action = action, ArchiveDirectory = archiveDirectory };
 
-        var codes = new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code);
-
-        if (expectedCode is null) codes.Should().BeEmpty();
-        else codes.Should().Equal(expectedCode);
+        if (expectedCode is null) Codes(settings).Should().BeEmpty();
+        else Codes(settings).Should().Equal(expectedCode);
     }
 
     [Fact]
@@ -80,7 +68,7 @@ public sealed class SettingsValidatorTests
         settings.Processing.RemoteSsh.Host = "video-worker";
         settings.Tools.AbAv1Path = string.Empty;
 
-        new SettingsValidator().Validate(settings).Should().BeEmpty();
+        Codes(settings).Should().BeEmpty();
     }
 
     [Fact]
@@ -102,9 +90,7 @@ public sealed class SettingsValidatorTests
         settings.Tools.SshPath = string.Empty;
         settings.Tools.SftpPath = string.Empty;
 
-        var codes = new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code);
-
-        codes.Should().Contain([
+        Codes(settings).Should().Contain([
             "SshPathRequired",
             "SftpPathRequired",
             "InvalidRemoteHost",
@@ -138,7 +124,7 @@ public sealed class SettingsValidatorTests
                 }
             };
 
-            new SettingsValidator().Validate(settings).Should().BeEmpty();
+            Codes(settings).Should().BeEmpty();
         }
         finally
         {
@@ -160,7 +146,7 @@ public sealed class SettingsValidatorTests
             }
         };
 
-        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain([
+        Codes(settings).Should().Contain([
             "HetznerSshKeyRequired",
             "RemoteIdentityFileRequired",
             "HetznerBootstrapMissing",
@@ -190,7 +176,7 @@ public sealed class SettingsValidatorTests
             }
         };
 
-        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain(expectedCode);
+        Codes(settings).Should().Contain(expectedCode);
     }
 
     [Fact]
@@ -199,7 +185,7 @@ public sealed class SettingsValidatorTests
         var settings = CreateValidSettings();
         settings.Processing.Mode = "cloud";
 
-        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("InvalidProcessingMode");
+        Codes(settings).Should().Contain("InvalidProcessingMode");
     }
 
     [Theory]
@@ -212,7 +198,7 @@ public sealed class SettingsValidatorTests
         settings.Processing.RemoteSsh.Host = "video-worker";
         settings.Processing.RemoteSsh.WorkingDirectory = workingDirectory;
 
-        new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code).Should().Contain("InvalidRemoteWorkingDirectory");
+        Codes(settings).Should().Contain("InvalidRemoteWorkingDirectory");
     }
 
     [Theory]
@@ -228,11 +214,11 @@ public sealed class SettingsValidatorTests
         var settings = CreateValidSettings();
         settings.Immich = new ImmichSettings { BaseUrl = baseUrl, MinimumAgeDays = minimumAgeDays, StagingDirectory = stagingDirectory };
 
-        var codes = new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code);
-
-        if (expectedCode is null) codes.Should().BeEmpty();
-        else codes.Should().Equal(expectedCode);
+        if (expectedCode is null) Codes(settings).Should().BeEmpty();
+        else Codes(settings).Should().Equal(expectedCode);
     }
+
+    private static string[] Codes(AppSettings settings) => [.. new SettingsValidator().Validate(settings).Select(diagnostic => diagnostic.Code)];
 
     internal static AppSettings CreateValidSettings() => new()
     {

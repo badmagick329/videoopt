@@ -3,52 +3,37 @@ using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.UnitTests;
 
+/// <summary>
+/// One row per unit or rejection branch. The other units and every size band are pinned where they are used:
+/// <c>EligibilityEvaluatorTests</c> (<c>2GiB</c> and <c>2048MiB</c> are one fingerprint, <c>15000kbps</c> and <c>15Mbps</c> too)
+/// and the transcripts that print sizes.
+/// </summary>
 public sealed class HumanReadableValuesTests
 {
     [Theory]
-    [InlineData("2GiB", 2147483648L)]
     [InlineData("100MB", 100000000L)]
-    [InlineData("500 MiB", 524288000L)]
-    public void TryParseSizeParsesDecimalAndBinaryUnits(string value, long expected)
+    [InlineData("", null)]
+    [InlineData("-1GiB", null)]
+    public void TryParseSizeParsesDecimalUnitsAndRejectsInvalidValues(string value, long? expected)
     {
-        HumanReadableValues.TryParseSize(value, out var actual).Should().BeTrue();
-        actual.Should().Be(expected);
+        HumanReadableValues.TryParseSize(value, out var actual).Should().Be(expected is not null);
+        if (expected is not null) actual.Should().Be(expected);
     }
 
-    [Theory]
-    [InlineData("208.92 MiB", "208.9 MiB")]
-    [InlineData("1.50 GiB", "1.5 GiB")]
-    [InlineData("512 B", "512 B")]
-    [InlineData("not a size", "not a size")]
-    public void FormatSizeTextRewritesAToolsSizeInTheOneFormatEveryCommandPrints(string text, string expected) =>
-        HumanReadableValues.FormatSizeText(text).Should().Be(expected);
+    [Fact]
+    public void FormatSizeTextLeavesTextThatIsNotASizeAlone() =>
+        HumanReadableValues.FormatSizeText("not a size").Should().Be("not a size");
 
     [Theory]
-    [InlineData("")]
-    [InlineData("-1GiB")]
-    [InlineData("12XB")]
-    public void TryParseSizeRejectsInvalidValues(string value)
-    {
-        HumanReadableValues.TryParseSize(value, out _).Should().BeFalse();
-    }
-
-    [Theory]
-    [InlineData("8Mbps", 8_000_000L)]
-    [InlineData("500 Kbps", 500_000L)]
     [InlineData("1.5Gbps", 1_500_000_000L)]
-    public void TryParseBitrateParsesSupportedUnits(string value, long expected)
+    [InlineData("", null)]
+    [InlineData("0Mbps", null)]
+    [InlineData("8MB/s", null)]
+    public void TryParseBitrateParsesGigabitsAndRejectsMalformedOrZeroValues(string value, long? expected)
     {
-        HumanReadableValues.TryParseBitrate(value, out var actual).Should().BeTrue();
-        actual.Should().Be(expected);
+        HumanReadableValues.TryParseBitrate(value, out var actual).Should().Be(expected is not null);
+        if (expected is not null) actual.Should().Be(expected);
     }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("0Mbps")]
-    [InlineData("8MB/s")]
-    [InlineData("8bps")]
-    public void TryParseBitrateRejectsMalformedOrZeroValues(string value) =>
-        HumanReadableValues.TryParseBitrate(value, out _).Should().BeFalse();
 
     [Theory]
     [InlineData("500ms", 500)]

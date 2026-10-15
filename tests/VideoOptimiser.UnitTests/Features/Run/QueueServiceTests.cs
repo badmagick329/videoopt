@@ -187,7 +187,118 @@ public sealed class QueueServiceTests : IDisposable
         (await _repository.GetAsync(databasePath, jobs[0].Id))!.ExecutionMode.Should().Be(ProcessingModes.Local);
     }
 
+    /// <summary>
+    /// A started job whose remote binding no longer matches the settings is failed before any job can run, and its stored
+    /// failure says the configuration changed.
+    /// </summary>
+    [Fact]
+    public async Task PrepareAsyncFailsAStartedJobWhoseRemoteBindingChanged()
+    {
+        var job = await _repository.CreateAsync(DatabasePath, ManagedWorker.Started(_directory, "hetzner:cx43:nbg1", "/var/tmp/video-optimiser/old"));
+
+        var result = await PrepareAsync(ManagedWorker.Settings(DatabasePath));
+
+        result.RunnableJobs.Should().BeEmpty();
+        result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be(JobCompatibility.RemoteConfigurationChangedCategory);
+        (await _repository.GetAsync(DatabasePath, job.Id)).Should().Match<JobRecord>(stored =>
+            stored.Status == JobStatus.Failed && stored.FailureCategory == JobCompatibility.RemoteConfigurationChangedCategory && stored.FailureMessage == JobCompatibility.RemoteConfigurationChangedMessage);
+    }
+
+    [Fact]
+    public async Task PrepareAsyncAdoptsAQueuedJobAndMakesItRunnable()
+    {
+        var (_, jobs) = await QueuedAsync("movie.mp4");
+
+        var result = await PrepareAsync(ManagedWorker.Settings(DatabasePath));
+
+        result.FailedJobs.Should().BeEmpty();
+        result.RunnableJobs.Should().ContainSingle().Which.RemoteHost.Should().Be(RemoteExecutionIdentity.ManagedHetzner);
+        (await _repository.GetAsync(DatabasePath, jobs[0].Id))!.RemoteWorkspace.Should().Be($"/var/tmp/video-optimiser/{jobs[0].Id:N}");
+    }
+
+    [Fact]
+    public async Task PrepareAsyncWithALocalOverrideSkipsAStartedRemoteJobAndTheNextRunWithoutItResumesIt()
+    {
+        var job = await _repository.CreateAsync(DatabasePath, ManagedWorker.Started(_directory, RemoteExecutionIdentity.ManagedHetzner));
+        var localRun = ManagedWorker.Settings(DatabasePath);
+        ProcessingModeOverride.Local.Apply(localRun);
+
+        var skipped = await PrepareAsync(localRun, modeOverridden: true);
+
+        skipped.RunnableJobs.Should().BeEmpty();
+        skipped.FailedJobs.Should().BeEmpty();
+        JobCompatibility.SkippedMessage(skipped.SkippedJobs.Should().ContainSingle().Subject)
+            .Should().Be("Skipped movie.mp4: started on a managed Hetzner server; run without --local/--remote to resume it.");
+        (await _repository.GetAsync(DatabasePath, job.Id)).Should().Match<JobRecord>(stored =>
+            stored.Status == JobStatus.Interrupted && stored.ExecutionMode == ProcessingModes.RemoteSsh && stored.FailureCategory == null);
+
+        var resumed = await PrepareAsync(ManagedWorker.Settings(DatabasePath));
+
+        resumed.RunnableJobs.Should().ContainSingle().Which.Id.Should().Be(job.Id);
+        resumed.SkippedJobs.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PrepareAsyncWithAnOverrideStillFailsAStartedJobWhoseRemoteHostChanged()
+    {
+        await _repository.CreateAsync(DatabasePath, ManagedWorker.Started(_directory, "old-box", "/var/tmp/video-optimiser/old"));
+        var settings = ManagedWorker.Settings(DatabasePath);
+        ProcessingModeOverride.Remote.Apply(settings);
+
+        var result = await PrepareAsync(settings, modeOverridden: true);
+
+        result.SkippedJobs.Should().BeEmpty();
+        result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be(JobCompatibility.RemoteConfigurationChangedCategory);
+    }
+
+    /// <summary>A job that never started is bound to the mode of the override; a started one is not (see the tests above).</summary>
+    [Fact]
+    public async Task PrepareAsyncWithAnOverrideAdoptsANeverStartedJobIntoItsMode()
+    {
+        var job = await _repository.CreateAsync(DatabasePath, new JobRecord
+        {
+            Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "movie.mp4"), SourceFingerprint = "source", Status = JobStatus.Queued,
+            ExecutionMode = ProcessingModes.RemoteSsh, RemoteHost = RemoteExecutionIdentity.ManagedHetzner
+        });
+        var settings = ManagedWorker.Settings(DatabasePath);
+        ProcessingModeOverride.Local.Apply(settings);
+
+        var result = await PrepareAsync(settings, modeOverridden: true);
+
+        result.SkippedJobs.Should().BeEmpty();
+        result.RunnableJobs.Should().ContainSingle().Which.ExecutionMode.Should().Be(ProcessingModes.Local);
+        (await _repository.GetAsync(DatabasePath, job.Id))!.ExecutionMode.Should().Be(ProcessingModes.Local);
+    }
+
+    /// <summary>
+    /// A finalisation Ctrl+C or a crash stopped is neither run nor failed whatever its remote binding says: <c>finalize</c>
+    /// checks whether anything moved and resumes it (VOPT-70). The matching binding is
+    /// <c>RunCommandTests.ARunSaysToFinishAStoppedFinalisationWithFinalizeAndLeavesItAlone</c>.
+    /// </summary>
+    [Fact]
+    public async Task PrepareAsyncProtectsInterruptedFinalizationWhateverItsRemoteBinding()
+    {
+        var job = ManagedWorker.Started(_directory, "hetzner:cx43:nbg1", "/var/tmp/video-optimiser/old");
+        job.Status = JobStatus.Finalizing;
+        job.ResumeStatus = null;
+        await _repository.CreateAsync(DatabasePath, job);
+
+        var result = await PrepareAsync(ManagedWorker.Settings(DatabasePath));
+
+        result.RunnableJobs.Should().BeEmpty();
+        result.FailedJobs.Should().BeEmpty();
+        result.InterruptedFinalizations.Should().ContainSingle().Which.Id.Should().Be(job.Id);
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Interrupted);
+        stored.ResumeStatus.Should().Be(JobStatus.Finalizing);
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    private string DatabasePath => Path.Combine(_directory, "jobs.db");
+
+    private Task<QueuePreparationResult> PrepareAsync(AppSettings settings, bool modeOverridden = false) =>
+        new QueueService(_repository, new NoopProcessor(), new DatabaseLocks()).PrepareAsync(DatabasePath, settings, JobSourceKind.File, modeOverridden: modeOverridden);
 
     private sealed class ChangingOnUpdate(IJobRepository inner, Guid jobId) : DelegatingJobRepository(inner)
     {

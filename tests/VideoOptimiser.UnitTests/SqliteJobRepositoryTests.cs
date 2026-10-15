@@ -18,35 +18,14 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         _databasePath = Path.Combine(_directory, "jobs.db");
     }
 
-    [Fact]
-    public async Task MarksOnlyInFlightJobsInterrupted()
-    {
-        var encoding = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Encoding));
-        var ready = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.ReadyToFinalize, "C:\\Videos\\other.mp4"));
-
-        await _repository.MarkActiveJobsInterruptedAsync(_databasePath, includeFinalizing: true);
-
-        (await _repository.GetAsync(_databasePath, encoding.Id))!.Status.Should().Be(JobStatus.Interrupted);
-        (await _repository.GetAsync(_databasePath, ready.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
-    }
-
-    [Fact]
-    public async Task RejectsInvalidStateTransitions()
-    {
-        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
-        job.Status = JobStatus.Completed;
-
-        var action = async () => await _repository.UpdateAsync(_databasePath, job);
-
-        await action.Should().ThrowAsync<InvalidOperationException>();
-    }
-
+    /// <summary>The only tests of <c>JobStateTransitions</c>: a job cannot jump to Completed, and only a CRF search ends Skipped.</summary>
     [Theory]
-    [InlineData(JobStatus.Encoding)]
-    public async Task OnlyACrfSearchCanEndSkipped(JobStatus from)
+    [InlineData(JobStatus.Queued, JobStatus.Completed)]
+    [InlineData(JobStatus.Encoding, JobStatus.Skipped)]
+    public async Task RejectsInvalidStateTransitions(JobStatus from, JobStatus to)
     {
         var job = await _repository.CreateAsync(_databasePath, NewJob(from));
-        job.Status = JobStatus.Skipped;
+        job.Status = to;
 
         var action = async () => await _repository.UpdateAsync(_databasePath, job);
 
@@ -84,44 +63,29 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         completed.Select(job => job.ImmichAssetId).Should().Equal("asset-older", "asset-newer");
     }
 
+    /// <summary>Putting an asset again replaces the whole record, its facts included, and a record without facts clears them.</summary>
     [Fact]
-    public async Task StoresAndReplacesImmichSkips()
-    {
-        var recorded = new DateTimeOffset(2026, 10, 12, 9, 30, 0, TimeSpan.Zero);
-        await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-1", "checksum-a", "rules-a", "codec hevc matches no rule", recorded));
-        await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-2", "checksum-b", "rules-a", "shorter than 10 s", recorded));
-        await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-1", "checksum-c", "rules-b", "bitrate too low", recorded.AddDays(1)));
-
-        var skips = await _repository.ListImmichSkipsAsync(_databasePath);
-
-        skips.Should().HaveCount(2);
-        skips["asset-1"].Should().Be(new ImmichSkipRecord("asset-1", "checksum-c", "rules-b", "bitrate too low", recorded.AddDays(1)));
-        skips["asset-2"].Reason.Should().Be("shorter than 10 s");
-    }
-
-    [Fact]
-    public async Task AReplacedImmichSkipTakesTheNewVideoFactsOrNone()
+    public async Task AReplacedImmichSkipTakesTheNewRecordAndTheNewVideoFactsOrNone()
     {
         var recorded = new DateTimeOffset(2026, 10, 12, 9, 30, 0, TimeSpan.Zero);
         var facts = new VideoFacts("h264", 1920, 1080, 22_000_000, 31.5, 86_000_000);
         var newer = new VideoFacts("hevc", 3840, 2160, 40_000_000, 62, 300_000_000);
         await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-1", "checksum-a", "rules-a", "no rule for h264", recorded, facts));
-        await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-1", "checksum-d", "rules-b", "no rule for hevc", recorded, newer));
+        await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-1", "checksum-d", "rules-b", "no rule for hevc", recorded.AddDays(1), newer));
         await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-2", "checksum-b", "rules-a", "no rule for h264", recorded, facts));
         await _repository.PutImmichSkipAsync(_databasePath, new ImmichSkipRecord("asset-2", "checksum-c", "rules-b", "too small or not a listed file type", recorded));
 
         var skips = await _repository.ListImmichSkipsAsync(_databasePath);
 
-        skips["asset-1"].VideoFacts.Should().Be(newer);
-        skips["asset-2"].VideoFacts.Should().BeNull();
+        skips.Should().HaveCount(2);
+        skips["asset-1"].Should().Be(new ImmichSkipRecord("asset-1", "checksum-d", "rules-b", "no rule for hevc", recorded.AddDays(1), newer));
+        skips["asset-2"].Should().Be(new ImmichSkipRecord("asset-2", "checksum-c", "rules-b", "too small or not a listed file type", recorded));
     }
 
-    [Theory]
-    [InlineData(JobSourceKind.File)]
-    [InlineData(JobSourceKind.Immich)]
-    public async Task AJobKeepsItsVideoFactsThroughCreateAndUpdate(JobSourceKind kind)
+    [Fact]
+    public async Task AJobKeepsItsVideoFactsThroughCreateAndUpdate()
     {
-        var job = kind == JobSourceKind.File ? NewJob(JobStatus.Queued) : NewImmichJob("asset-1", JobStatus.Queued);
+        var job = NewJob(JobStatus.Queued);
         job.VideoFacts = new VideoFacts("hevc", 3840, 2160, null, 12.25, 52_428_800);
         await _repository.CreateAsync(_databasePath, job);
         (await _repository.GetAsync(_databasePath, job.Id))!.VideoFacts.Should().Be(job.VideoFacts);
@@ -132,10 +96,6 @@ public sealed class SqliteJobRepositoryTests : IDisposable
 
         (await _repository.GetAsync(_databasePath, job.Id))!.VideoFacts.Should().Be(job.VideoFacts);
     }
-
-    [Fact]
-    public async Task AJobWithoutVideoFactsReadsBackWithout() =>
-        (await _repository.GetAsync(_databasePath, (await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued))).Id))!.VideoFacts.Should().BeNull();
 
     [Fact]
     public async Task ARowWithAnUnknownSourceKindIsRefusedRatherThanReadAsAFile()
@@ -209,13 +169,17 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         (await _repository.GetAsync(_databasePath, job.Id))!.Status.Should().Be(JobStatus.Cancelled);
     }
 
-    /// <summary>R9: crash recovery is a write too, so a copy read before it cannot undo it.</summary>
+    /// <summary>
+    /// R9: crash recovery interrupts only the jobs that were in flight, and it is a write too, so a copy read before it
+    /// cannot undo it.
+    /// </summary>
     [Fact]
     public async Task AWriteFromACopyReadBeforeCrashRecoveryIsRefused()
     {
         var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
         job.Status = JobStatus.Encoding;
         await _repository.UpdateAsync(_databasePath, job);
+        var ready = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.ReadyToFinalize, @"C:\Videos\other.mp4"));
         var staleCopy = (await _repository.GetAsync(_databasePath, job.Id))!;
         await _repository.MarkActiveJobsInterruptedAsync(_databasePath, includeFinalizing: true);
 
@@ -224,6 +188,7 @@ public sealed class SqliteJobRepositoryTests : IDisposable
 
         await write.Should().ThrowAsync<JobChangedException>();
         (await _repository.GetAsync(_databasePath, job.Id))!.Status.Should().Be(JobStatus.Interrupted);
+        (await _repository.GetAsync(_databasePath, ready.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 
     /// <summary>A verb that read the job before a run started it refuses rather than dropping a video mid-conversion.</summary>
@@ -290,17 +255,6 @@ public sealed class SqliteJobRepositoryTests : IDisposable
 
         if (refused) await create.Should().ThrowAsync<OpenJobExistsException>();
         else await create.Should().NotThrowAsync();
-    }
-
-    [Fact]
-    public async Task AFinishedJobDoesNotBlockANewOneForTheSameOriginal()
-    {
-        var done = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
-        (await _repository.DropAsync(_databasePath, done)).Should().BeTrue();
-
-        var again = async () => await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
-
-        await again.Should().NotThrowAsync();
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);

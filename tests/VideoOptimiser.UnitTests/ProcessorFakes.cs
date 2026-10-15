@@ -12,9 +12,28 @@ namespace VideoOptimiser.UnitTests;
 
 // Stand-ins for the files, media tools and worker that JobProcessor drives, so a test runs the real processor without them.
 
-internal sealed class ReadableFiles : IFileReadinessService
+/// <summary>Reports every file ready, or never ready, and counts the checks.</summary>
+internal sealed class ReadableFiles(bool ready = true) : IFileReadinessService
 {
-    public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(new FileReadinessResult(true, "Readable."));
+    public int Calls { get; private set; }
+
+    public Task<FileReadinessResult> CheckAsync(string path, CancellationToken cancellationToken = default)
+    {
+        Calls++;
+        return Task.FromResult(new FileReadinessResult(ready, ready ? "Readable." : "Not ready."));
+    }
+}
+
+/// <summary>Probes by calling <paramref name="media"/>, which may throw, and counts the probes.</summary>
+internal sealed class FuncProbe(Func<string, MediaInfo> media) : IMediaProbe
+{
+    public int Calls { get; private set; }
+
+    public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
+    {
+        Calls++;
+        return Task.FromResult(media(path));
+    }
 }
 
 /// <summary>A 1080p h264 original of 120 s at the given bitrate; an encoded output (<c>.encoding.mp4</c>) probes as av1.</summary>
@@ -74,10 +93,51 @@ internal sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
     public void Report(T value) => report(value);
 }
 
-/// <summary>Keeps every line reported, synchronously, unlike <see cref="Progress{T}"/>.</summary>
+/// <summary>Keeps every line reported, synchronously, unlike <see cref="Progress{T}"/>. Tool output arrives on other threads, so adding is locked.</summary>
 internal sealed class ListProgress(List<JobProgress>? lines = null) : IProgress<JobProgress>
 {
     public List<JobProgress> Lines { get; } = lines ?? [];
 
-    public void Report(JobProgress value) => Lines.Add(value);
+    public void Report(JobProgress value)
+    {
+        lock (Lines) Lines.Add(value);
+    }
+}
+
+/// <summary>Settings for a managed Hetzner worker and a job already started on a worker, for the tests of the binding rules.</summary>
+internal static class ManagedWorker
+{
+    public static AppSettings Settings(string databasePath = "") => new()
+    {
+        Database = new DatabaseSettings { Path = databasePath },
+        Processing = new ProcessingSettings
+        {
+            Mode = ProcessingModes.RemoteSsh,
+            RemoteSsh = new RemoteSshSettings
+            {
+                Lifecycle = RemoteLifecycleModes.Hetzner,
+                WorkingDirectory = "/var/tmp/video-optimiser",
+                Hetzner = new HetznerSettings { ServerTypes = ["cx43"], Locations = ["hel1", "fsn1"] }
+            }
+        }
+    };
+
+    /// <summary>An encode interrupted on <paramref name="host"/>; with no <paramref name="workspace"/> it is the one these settings give the job.</summary>
+    public static JobRecord Started(string directory, string host, string? workspace = null)
+    {
+        var id = Guid.NewGuid();
+        return new JobRecord
+        {
+            Id = id,
+            SourcePath = Path.Combine(directory, "movie.mp4"),
+            SourceFingerprint = "source",
+            Status = JobStatus.Interrupted,
+            ResumeStatus = JobStatus.Encoding,
+            Crf = 30,
+            Attempt = 1,
+            ExecutionMode = ProcessingModes.RemoteSsh,
+            RemoteHost = host,
+            RemoteWorkspace = workspace ?? $"/var/tmp/video-optimiser/{id:N}"
+        };
+    }
 }

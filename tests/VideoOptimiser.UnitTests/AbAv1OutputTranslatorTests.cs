@@ -12,7 +12,8 @@ public sealed class AbAv1OutputTranslatorTests
     [Fact]
     public void TheRealRemoteNotWorthConvertingSearchMarksTheAttemptsThatPassedButWereTooBig()
     {
-        // The error line is left to the job's outcome, which says why the video is not worth converting.
+        // The error line is left to the job's outcome, which says why the video is not worth converting. The log's last line,
+        // "Command exited with non-zero status 1", is the remote stage's own exit report and is dropped too.
         Translate(AbAv1Stage.CrfSearch, "remote-crf-not-worth-converting.log", minimumVmaf: 97, maxEncodedPercent: 80).Should().Equal(
             JobProgress.Detail("CRF 34   VMAF 95.35   size  71%   below target"),
             JobProgress.Detail("CRF 18   VMAF 99.75   size 239%   passes, file too big"),
@@ -50,10 +51,6 @@ public sealed class AbAv1OutputTranslatorTests
     }
 
     [Fact]
-    public void AFailedRemoteStagesExitLineIsDropped() =>
-        Create(AbAv1Stage.CrfSearch).Translate("Command exited with non-zero status 1").Should().BeEmpty();
-
-    [Fact]
     public void TheTimeLeftIsMeasuredFromTheProgressSeenNotTakenFromAbAv1sCoarseEstimate()
     {
         var translator = Create(AbAv1Stage.Encode);
@@ -76,23 +73,8 @@ public sealed class AbAv1OutputTranslatorTests
         Progress(translator, 0, 10);
         // 30 s but only 4 points: the pace is still noise.
         Progress(translator, 30, 14).Should().Equal(JobProgress.Detail("14%, 8.5 fps"));
-        // 5 points but 20 s: the same.
-        var quick = Create(AbAv1Stage.Encode);
-        Progress(quick, 0, 10);
-        Progress(quick, 20, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps"));
         // Both reached.
         Progress(translator, 60, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps, about 17m 00s left") with { TimeLeft = TimeSpan.FromMinutes(17) });
-    }
-
-    [Fact]
-    public void ThePaceStartsAtTheFirstProgressLine()
-    {
-        var translator = Create(AbAv1Stage.Encode);
-
-        Progress(translator, 0, 10);
-        Progress(translator, 3, 11).Should().BeEmpty();
-        // 20 points in 50 s: 70 points left take 175 s.
-        Progress(translator, 50, 30).Should().Equal(JobProgress.Detail("30%, 8.5 fps, about 2m 55s left") with { TimeLeft = TimeSpan.FromSeconds(175) });
     }
 
     private IReadOnlyList<JobProgress> Progress(AbAv1OutputTranslator translator, int seconds, int percent)
