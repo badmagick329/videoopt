@@ -17,6 +17,18 @@ public sealed class AppSettings
     [YamlMember(Alias = "savings")] public SavingsSettings Savings { get; set; } = new();
     [YamlMember(Alias = "original")] public OriginalSettings Original { get; set; } = new();
     [YamlMember(Alias = "validation")] public ValidationSettings Validation { get; set; } = new();
+
+    /// <summary>
+    /// A copy whose <c>processing.mode</c> is <paramref name="mode"/>, sharing every other section, so a host the lifecycle
+    /// finds is written into these settings too. For a caller that must act in one mode without changing what the rest of the
+    /// process reads: the full-screen view manages the Hetzner worker in any mode, as the worker commands do.
+    /// </summary>
+    public AppSettings WithMode(string mode)
+    {
+        var copy = (AppSettings)MemberwiseClone();
+        copy.Processing = new ProcessingSettings { Mode = mode, RemoteSsh = Processing.RemoteSsh };
+        return copy;
+    }
 }
 
 [YamlSerializable]

@@ -103,10 +103,20 @@ internal static partial class TuiUpdate
         return m with { Worker = next };
     }
 
-    private static TuiModel OnWorkerChecked(TuiModel m, WorkerCheckedMsg answer) =>
-        answer.Generation != m.Worker.Generation
-            ? m
-            : m with { Worker = m.Worker with { Check = answer.Check, CheckInFlight = false } };
+    /// <summary>The footer while a check asked for with <c>r</c> waits; its answer replaces it.</summary>
+    private const string AskingHetzner = "Asking Hetzner.";
+
+    /// <summary>
+    /// A check asked for by hand says when Hetzner answered, since with no worker the pane looks the same either way; one the
+    /// clock asked for says nothing.
+    /// </summary>
+    private static TuiModel OnWorkerChecked(TuiModel m, WorkerCheckedMsg answer)
+    {
+        if (answer.Generation != m.Worker.Generation) return m;
+        m = m with { Worker = m.Worker with { Check = answer.Check, CheckInFlight = false } };
+        if (m.Notice?.Text != AskingHetzner) return m;
+        return Tell(m, answer.Check.NotCheckedReason is { } reason ? $"Couldn't ask Hetzner: {reason}" : "Checked with Hetzner just now.");
+    }
 
     // ---- the event file ---------------------------------------------------------------------
 

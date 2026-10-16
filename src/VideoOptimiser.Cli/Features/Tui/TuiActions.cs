@@ -160,11 +160,18 @@ internal sealed class TuiActions(
 
     // ---- worker -----------------------------------------------------------------------------
 
+    /// <summary>
+    /// The lifecycle treats a Hetzner worker as managed only in remote mode, but the worker keys act whatever
+    /// <c>processing.mode</c> says, as the worker commands do (VOPT-56): a config set back to local can still create and
+    /// delete its worker. A copy, so the queue's and the run's words keep reading the mode the file has.
+    /// </summary>
+    private static AppSettings Managed(AppSettings settings) => settings.WithMode(ProcessingModes.RemoteSsh);
+
     public async Task<WorkerOptionsMsg> LoadWorkerOptionsAsync(WorkerOptionsPurpose purpose, AppSettings settings, CancellationToken cancellationToken)
     {
         try
         {
-            return new WorkerOptionsMsg(purpose, await lifecycle.ListCreationOptionsAsync(settings, cancellationToken), null);
+            return new WorkerOptionsMsg(purpose, await lifecycle.ListCreationOptionsAsync(Managed(settings), cancellationToken), null);
         }
         catch (RemoteWorkerCapacityUnavailableException exception)
         {
@@ -180,7 +187,7 @@ internal sealed class TuiActions(
     {
         try
         {
-            var worker = await lifecycle.CreateAsync(settings, settings.Database.Path, option, new LogProgress(log), cancellationToken);
+            var worker = await lifecycle.CreateAsync(Managed(settings), settings.Database.Path, option, new LogProgress(log), cancellationToken);
             return Done(LogKind.Success, worker.Status == RemoteWorkerStatuses.Bootstrapping
                 ? $"Created the worker {worker.Name} ({worker.ServerType} in {worker.Location}). It is bootstrapping, and bills hourly until it is deleted."
                 : $"The worker {worker.Name} is up.", refreshWorker: true);
@@ -206,7 +213,7 @@ internal sealed class TuiActions(
     {
         try
         {
-            var deleted = await lifecycle.DeleteAsync(settings, settings.Database.Path, new LogProgress(log), cancellationToken);
+            var deleted = await lifecycle.DeleteAsync(Managed(settings), settings.Database.Path, new LogProgress(log), cancellationToken);
             // The lifecycle's own lines say what was deleted and that billing has stopped.
             return deleted ? new ActionResult([], "Deleted the worker.", RefreshWorker: true) : Done(LogKind.Info, "There was no worker to delete.", refreshWorker: true);
         }
@@ -232,7 +239,7 @@ internal sealed class TuiActions(
         {
             try
             {
-                created = await lifecycle.CreateAsync(settings, database, option, new LogProgress(log), cancellationToken);
+                created = await lifecycle.CreateAsync(Managed(settings), database, option, new LogProgress(log), cancellationToken);
             }
             catch (RemoteWorkerCapacityUnavailableException exception)
             {

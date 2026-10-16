@@ -250,6 +250,12 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
         settings.Processing.Mode.Equals(ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(settings.Processing.RemoteSsh.Lifecycle, RemoteLifecycleModes.Hetzner, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>As the real lifecycle: listing, creating and deleting refuse settings that are not in remote mode, so a caller in local mode must apply the remote mode first, as the worker commands do.</summary>
+    private void RequireManaged(AppSettings settings)
+    {
+        if (!IsManaged(settings)) throw new InvalidOperationException("The remote SSH lifecycle is not configured for Hetzner.");
+    }
+
     /// <summary>
     /// The price quote the real lifecycle asks the user to approve before it creates a server. With none, a create goes ahead
     /// unasked, as when a worker already exists; with one, a decline throws as the real lifecycle does and creates nothing.
@@ -291,6 +297,7 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
 
     public Task<IReadOnlyList<RemoteWorkerCreationOption>> ListCreationOptionsAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
+        RequireManaged(settings);
         ListCalls++;
         if (ListFailure is not null) return Task.FromException<IReadOnlyList<RemoteWorkerCreationOption>>(ListFailure);
         return Task.FromResult<IReadOnlyList<RemoteWorkerCreationOption>>(CreationOptions.ToArray());
@@ -306,6 +313,7 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
 
     public Task<RemoteWorkerInfo> CreateAsync(AppSettings settings, string databasePath, RemoteWorkerCreationOption placement, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
+        RequireManaged(settings);
         CreateCalls++;
         DatabasePaths.Add(databasePath);
         if (CreateFailure is not null) return Task.FromException<RemoteWorkerInfo>(CreateFailure);
@@ -343,6 +351,7 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
 
     public Task<bool> DeleteAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
+        RequireManaged(settings);
         cancellationToken.ThrowIfCancellationRequested();
         DeleteCalls++;
         DatabasePaths.Add(databasePath);

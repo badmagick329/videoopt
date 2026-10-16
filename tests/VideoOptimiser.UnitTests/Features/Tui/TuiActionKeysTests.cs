@@ -608,6 +608,26 @@ public sealed class TuiActionKeysTests
         Update(model, Tick(TimeSpan.FromSeconds(2))).Effects.Should().Equal(new RefreshWorkerCheck(1));
     }
 
+    /// <summary>
+    /// <c>r</c> in the worker pane says it is asking, and the answer replaces that line: with no worker the pane looks the same
+    /// before and after, so without it the press seems to do nothing. A check the clock asked for says nothing.
+    /// </summary>
+    [Theory]
+    [InlineData(null, "Checked with Hetzner just now.")]
+    [InlineData("Hetzner timed out after 15 seconds.", "Couldn't ask Hetzner: Hetzner timed out after 15 seconds.")]
+    public void CheckingTheWorkerByHandSaysWhenHetznerAnswered(string? notChecked, string said)
+    {
+        var asked = Update(Focused(WithWorker(Model()), Pane.Worker), Letter('r'));
+        Notice(asked).Should().Be("Asking Hetzner.");
+        var generation = asked.Effects.OfType<RefreshWorkerCheck>().Single().Generation;
+
+        var answered = Update(asked.Model, new WorkerCheckedMsg(generation, new WorkerCheck(null, null, notChecked)));
+
+        Notice(answered).Should().Be(said);
+        var byTheClock = Update(WithWorker(Model()), Tick(TimeSpan.FromSeconds(1))).Model;
+        After(byTheClock, new WorkerCheckedMsg(byTheClock.Worker.Generation, new WorkerCheck(null, null, null))).Notice.Should().BeNull();
+    }
+
     [Fact]
     public void ALineAnEffectReportsWhileItWorksGoesInTheLog()
     {
