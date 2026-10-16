@@ -24,8 +24,9 @@ public sealed class AbAv1ProgressTranslator : IAbAv1ProgressTranslator
 public sealed partial class AbAv1OutputTranslator
 {
     /// <summary>
-    /// A little under ab-av1's own ~15 s progress cadence and the remote 10 s poll, so each poll's first line still prints
-    /// while bursts of lines (a remote poll's batch) collapse to one.
+    /// A little under the remote 10 s poll, so each poll's first line still prints while bursts of lines (a remote poll's
+    /// batch) collapse to one. ab-av1 itself, with its output redirected, prints progress 15 s apart at first and less often
+    /// as the encode goes on (measured 2026-10-16: 16 s, 16 s, 32 s, then 63 s to the end), so locally nothing is dropped.
     /// </summary>
     internal static readonly TimeSpan ProgressInterval = TimeSpan.FromSeconds(8);
 

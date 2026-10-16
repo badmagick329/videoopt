@@ -11,8 +11,8 @@ namespace VideoOptimiser.Application.Features.Run;
 /// use it, so a TUI open in another window follows either.
 /// </summary>
 /// <remarks>
-/// ab-av1 reports its encode several times a second, and each line is a flushed write to a file that other processes read, so
-/// <see cref="JobProgressKind.ToolOutput"/> lines are written at most once a second. Every other kind is a step or an outcome
+/// A <see cref="JobProgressKind.ToolOutput"/> line here is raw tool output no translator recognised, which can come in
+/// bursts, and each line is a flushed write to a file that other processes read, so these are written at most once a second. Every other kind is a step or an outcome
 /// and is always written. One per command, registered as a singleton; progress arrives from several threads.
 /// </remarks>
 public sealed class EventLogRunObserver(IRunEventLog log, TimeProvider time) : IRunObserver
