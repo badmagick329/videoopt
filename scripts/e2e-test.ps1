@@ -64,11 +64,12 @@ $watchRoot = Join-Path $workDirectory 'videos'
 New-Item -ItemType Directory -Path $watchRoot | Out-Null
 try {
     # Three 1080p H.264 clips: 1080p is the lowest resolution band, and near-lossless H.264 clears any bitrate floor.
-    # Clip a is finalised with archive and clip c with keep; clip b's output is damaged to prove validation rejects it.
+    # Clip a is finalised with archive and clip c with keep; clip b's output is damaged to prove validation rejects it, and
+    # clip e's is truncated: validate refuses a job that already failed, so each damage check needs its own ready clip.
     # Each carries a phone-style capture date, GPS point and com.android tag, which the output must keep.
     # Clip d is a .mov with PCM audio, as a camera or phone writes: AV1 cannot go in a .mov, so its output must be an .mp4
     # with the PCM re-encoded to FLAC, and it is finalised first, in delete mode.
-    foreach ($name in 'a', 'b', 'c') {
+    foreach ($name in 'a', 'b', 'c', 'e') {
         & ffmpeg -hide_banner -v error -f lavfi -i 'testsrc2=size=1920x1080:rate=30:duration=3' `
             -f lavfi -i 'sine=frequency=440:duration=3:sample_rate=48000' `
             -c:v libx264 -preset ultrafast -qp 5 -pix_fmt yuv420p -c:a aac -shortest `
@@ -128,15 +129,16 @@ validation:
     Invoke-Cli 0 @('config', 'validate') | Out-Null
     Invoke-Cli 0 @('queue', 'add') | Out-Null
     $queued = Get-Jobs 'queue list'
-    Assert ($queued.Count -eq 4) "queue add should queue all four clips; queued $($queued.Count)."
+    Assert ($queued.Count -eq 5) "queue add should queue all five clips; queued $($queued.Count)."
 
     Invoke-Cli 0 @('run') | Out-Null
     $ready = Get-Jobs 'queue list'
-    Assert (@($ready | Where-Object status -eq 'ReadyToFinalize').Count -eq 4) "every job should be ReadyToFinalize; got $(($ready | ForEach-Object status) -join ', ')."
+    Assert (@($ready | Where-Object status -eq 'ReadyToFinalize').Count -eq 5) "every job should be ReadyToFinalize; got $(($ready | ForEach-Object status) -join ', ')."
     $jobA = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'a.mp4' }
     $jobB = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'b.mp4' }
     $jobC = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'c.mp4' }
     $jobD = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'd.mov' }
+    $jobE = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'e.mp4' }
     Assert ($jobD.outputPath -like '*.encoding.mp4') "clip d's output should be an .mp4 because AV1 cannot go in a .mov: $($jobD.outputPath)"
     Assert ((Get-VideoCodec $jobD.outputPath) -eq 'av1') 'clip d output should be AV1.'
     Assert ((Get-AudioCodec $jobD.outputPath) -eq 'flac') 'clip d output should carry its PCM audio as FLAC.'
@@ -155,9 +157,14 @@ validation:
     Assert ($corrupt -match 'Output failed the decode test') 'a corrupted output should fail the decode test.'
 
     # A truncated output, as left by an interrupted transfer, must fail validation too.
-    $stream = [System.IO.File]::Open($jobB.outputPath, 'Open', 'ReadWrite')
+    $stream = [System.IO.File]::Open($jobE.outputPath, 'Open', 'ReadWrite')
     try { $stream.SetLength([long]($stream.Length / 2)) } finally { $stream.Dispose() }
-    Invoke-Cli 7 @('validate', $jobB.id) | Out-Null
+    Invoke-Cli 7 @('validate', $jobE.id) | Out-Null
+    # A job that failed is not checked again: validate names its status and exits 6.
+    $refused = Invoke-Cli 6 @('validate', $jobE.id)
+    Assert ($refused -match 'is Failed\.') "validate should refuse a failed job: $refused"
+    # Clip e has done its job: remove its original and files so the counts below cover clips a to d only.
+    Remove-Item -LiteralPath $jobE.sourcePath, $jobE.outputPath, "$($jobE.outputPath).manifest.json" -Force -ErrorAction SilentlyContinue
 
     # Delete mode (the configured action) must remove the .mov and leave the AV1 under the .mp4 name.
     $deleted = Invoke-Cli 0 @('finalize', $jobD.id)
