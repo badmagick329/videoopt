@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using VideoOptimiser.Application;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Cli.Features.Calibrate;
 using VideoOptimiser.Cli.Features.Cleanup;
@@ -58,14 +59,16 @@ internal static class CliApplication
                 eventArgs.Cancel = true;
                 stop.Press();
             };
-            Console.CancelKeyPress += cancelHandler;
+            // The detached runner has no console to press Ctrl+C in; its stop requests come from the database.
+            var hasConsole = command.Kind != CliCommandKind.BackgroundRunner;
+            if (hasConsole) Console.CancelKeyPress += cancelHandler;
             try
             {
                 return await ExecuteAsync(host.Services, command, stop.Now);
             }
             finally
             {
-                Console.CancelKeyPress -= cancelHandler;
+                if (hasConsole) Console.CancelKeyPress -= cancelHandler;
             }
         }
         catch (OperationCanceledException)
@@ -124,6 +127,9 @@ internal static class CliApplication
             CliCommandKind.QueueAddImmich => await services.GetRequiredService<ImmichRunCommand>().AddAsync(configuration, command, cancellationToken),
             CliCommandKind.QueueAddFile => await services.GetRequiredService<QueueCommands>().AddFileAsync(configuration, command, cancellationToken),
             CliCommandKind.Run => await services.GetRequiredService<RunCommand>().RunAsync(configuration, command, cancellationToken),
+            CliCommandKind.StopRun => await services.GetRequiredService<StopRunCommand>().RunAsync(configuration, command, cancellationToken),
+            CliCommandKind.BackgroundStart => await services.GetRequiredService<BackgroundCommands>().StartAsync(configuration, command, cancellationToken),
+            CliCommandKind.BackgroundRunner => await services.GetRequiredService<BackgroundCommands>().RunnerAsync(configuration, command),
             CliCommandKind.QueueList => await services.GetRequiredService<QueueCommands>().ListAsync(configuration, command, terminal: false, cancellationToken),
             CliCommandKind.QueueHold => await services.GetRequiredService<QueueCommands>().HoldAsync(configuration, command, cancellationToken),
             CliCommandKind.QueueRelease => await services.GetRequiredService<QueueCommands>().ReleaseAsync(configuration, command, cancellationToken),

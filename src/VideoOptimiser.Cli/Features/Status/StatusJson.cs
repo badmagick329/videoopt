@@ -10,7 +10,8 @@ internal sealed record StatusJsonOutput(StatusJsonQueue Queue, StatusJsonRun? Ru
 
 internal sealed record StatusJsonQueue(int Converting, int Waiting, int Stopped, int Held, int ReadyToFinalise);
 
-internal sealed record StatusJsonRun(string Command, DateTimeOffset StartedUtc, int ProcessId, StatusJsonConverting[] Converting);
+/// <param name="Background">A run with no terminal, started from the TUI; it stops with <c>run stop</c> rather than Ctrl+C.</param>
+internal sealed record StatusJsonRun(string Command, DateTimeOffset StartedUtc, int ProcessId, bool Background, StatusJsonConverting[] Converting);
 
 internal sealed record StatusJsonConverting(string Id, string File, string Status);
 

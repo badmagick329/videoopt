@@ -44,7 +44,7 @@ public static class NextRunRule
     public static NextRun Decide(string? liveRunCommand) => liveRunCommand switch
     {
         null => NextRun.NoRun,
-        Jobs.LockHolders.Run or Jobs.LockHolders.ImmichRun => NextRun.RunTakesThem,
+        _ when Jobs.LockHolders.IsRun(liveRunCommand) => NextRun.RunTakesThem,
         _ => NextRun.AfterRunEnds
     };
 }

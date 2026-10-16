@@ -17,9 +17,10 @@ public interface IRunQuestions
 
     /// <summary>
     /// Ends the time in which the worker question is answered during the run and says what it got. The first call decides;
-    /// later calls return the same answer.
+    /// later calls return the same answer. Async because a runner with no terminal reads the answer from the database at the
+    /// end, so a fate changed mid-run counts.
     /// </summary>
-    RunWorkerAnswer AnswerGivenDuringRun();
+    Task<RunWorkerAnswer> AnswerGivenDuringRunAsync();
 
     /// <summary>
     /// "Delete the worker now?" as the run ends. Takes the answer still pending from the first stop request when there is

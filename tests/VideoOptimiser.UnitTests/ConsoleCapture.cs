@@ -28,7 +28,11 @@ internal static class ConsoleCapture
         Console.SetIn(input is null ? TextReader.Null : new StringReader(input));
         try
         {
-            var code = await CliApplication.RunAsync(args, configureServices);
+            var code = await CliApplication.RunAsync(args, services =>
+            {
+                CliFakes.NoSideEffects(services);
+                configureServices?.Invoke(services);
+            });
             return (code, output.ToString(), error.ToString());
         }
         finally

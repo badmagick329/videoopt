@@ -1,6 +1,7 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Config;
+using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Cli;
 
 internal enum CliCommandKind
@@ -33,11 +34,19 @@ internal enum CliCommandKind
     Cleanup,
     ImmichRun,
     ImmichFinalize,
-    Calibrate
+    Calibrate,
+    StopRun,
+    /// <summary>Hidden: the launcher that starts a background run (not in <see cref="CliCommand.Usage"/>; users start one from the TUI).</summary>
+    BackgroundStart,
+    /// <summary>Hidden: the detached process a background start launches.</summary>
+    BackgroundRunner
 }
 
 /// <param name="Bare">Typed with no verb: the same card as <c>status</c>, but a missing configuration also says how to create one.</param>
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false)
+/// <param name="StopNow"><c>run stop --now</c>.</param>
+/// <param name="KeepWorker">Hidden <c>background start --keep-worker</c>: the worker's fate is keep instead of the default, delete.</param>
+/// <param name="WorkerFate">Hidden <c>background runner --worker-fate</c>.</param>
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false, bool StopNow = false, bool KeepWorker = false, WorkerFateChoice? WorkerFate = null)
 {
     public const string Usage = """
 Usage:
@@ -55,6 +64,7 @@ Usage:
   video-optimiser queue add immich [--first | --limit <n>] [--config <path>]
   video-optimiser queue add <file> [--force] [--config <path>]
   video-optimiser run [--config <path>] [--local | --remote]
+  video-optimiser run stop [--now] [--config <path>]
   video-optimiser queue list [--config <path>] [--json]
   video-optimiser queue hold <job-id> [--config <path>]
   video-optimiser queue release <job-id> [--config <path>]
@@ -91,6 +101,9 @@ Usage:
         var all = false;
         var json = false;
         var finalizeReady = false;
+        var stopNow = false;
+        var keepWorker = false;
+        WorkerFateChoice? workerFate = null;
         var modeOverrides = new List<ProcessingModeOverride>();
 
         for (var index = 0; index < args.Length; index++)
@@ -132,6 +145,18 @@ Usage:
                 case "--ready":
                     finalizeReady = true;
                     break;
+                case "--now":
+                    stopNow = true;
+                    break;
+                case "--keep-worker":
+                    keepWorker = true;
+                    break;
+                case "--worker-fate" when index + 1 < args.Length && TryParseWorkerFate(args[index + 1], out var parsedFate):
+                    workerFate = parsedFate;
+                    index++;
+                    break;
+                case "--worker-fate":
+                    return Invalid("--worker-fate requires delete or keep.");
                 case "--local":
                     modeOverrides.Add(ProcessingModeOverride.Local);
                     break;
@@ -167,6 +192,9 @@ Usage:
             ["queue", "add", "immich"] => CliCommandKind.QueueAddImmich,
             ["queue", "add", _] => CliCommandKind.QueueAddFile,
             ["run"] => CliCommandKind.Run,
+            ["run", "stop"] => CliCommandKind.StopRun,
+            ["background", "start"] => CliCommandKind.BackgroundStart,
+            ["background", "runner"] => CliCommandKind.BackgroundRunner,
             ["queue", "list"] => CliCommandKind.QueueList,
             ["queue", "hold", _] => CliCommandKind.QueueHold,
             ["queue", "release", _] => CliCommandKind.QueueRelease,
@@ -220,14 +248,29 @@ Usage:
         if (finalizeReady && remaining.Count != 1) return Invalid("finalize --ready does not take a job ID.");
         if (kind == CliCommandKind.QueueDrop && all == (remaining.Count == 3)) return Invalid("queue drop requires a job ID or --all.");
         if (kind == CliCommandKind.QueueRetry && remaining.Count != 3) return Invalid("queue retry requires a job ID.");
+        if (stopNow && kind != CliCommandKind.StopRun) return Invalid("--now is only supported by run stop.");
+        if (keepWorker && kind != CliCommandKind.BackgroundStart) return Invalid("--keep-worker is only supported by background start.");
+        if (workerFate is not null && kind != CliCommandKind.BackgroundRunner) return Invalid("--worker-fate is only supported by background runner.");
+        if (workerFate is null && kind == CliCommandKind.BackgroundRunner) return Invalid("background runner requires --worker-fate delete or keep.");
         if (modeOverrides.Distinct().Count() > 1) return Invalid("--local and --remote cannot be used together.");
         var modeOverride = modeOverrides.FirstOrDefault();
-        if (modeOverride is not null && kind is not (CliCommandKind.Run or CliCommandKind.ImmichRun))
+        if (modeOverride is not null && kind is not (CliCommandKind.Run or CliCommandKind.ImmichRun or CliCommandKind.BackgroundStart or CliCommandKind.BackgroundRunner))
         {
             return Invalid($"{modeOverride.Flag} is only supported by run and immich run.");
         }
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate);
+    }
+
+    private static bool TryParseWorkerFate(string text, out WorkerFateChoice fate)
+    {
+        (var parsed, fate) = text.ToLowerInvariant() switch
+        {
+            "delete" => (true, WorkerFateChoice.Delete),
+            "keep" => (true, WorkerFateChoice.Keep),
+            _ => (false, default)
+        };
+        return parsed;
     }
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);

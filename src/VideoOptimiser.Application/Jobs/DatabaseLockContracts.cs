@@ -11,6 +11,12 @@ public static class LockHolders
     public const string Run = "video-optimiser run";
     public const string ImmichRun = "video-optimiser immich run";
 
+    /// <summary>A run with no terminal, started by the hidden launcher (later the TUI): <c>run stop</c> reaches it through the requests row.</summary>
+    public const string BackgroundRun = "video-optimiser background run";
+
+    /// <summary>Every name a run (not a queue verb) takes the run lock under in this version: each takes the next video from the queue as it is then.</summary>
+    public static bool IsRun(string command) => command is Run or ImmichRun or BackgroundRun;
+
     public const string QueueHold = "queue hold";
     public const string QueueNext = "queue next";
     public const string QueueDrop = "queue drop";
@@ -44,6 +50,12 @@ public interface IDatabaseLocks
     /// </summary>
     /// <param name="command">How the holder names itself, such as <see cref="LockHolders.QueueDrop"/>.</param>
     IDisposable? TryHoldRun(string databasePath, string command);
+
+    /// <summary>
+    /// Takes the run lock for a whole run. Null when refused, with <paramref name="holder"/> naming who has it, or null while
+    /// the holder is still writing its details.
+    /// </summary>
+    IDisposable? TakeRun(string databasePath, string command, out LiveRunHolder? holder);
 
     /// <summary>Whether a finalisation (not a run preparing) holds the finalise lock, read without taking it.</summary>
     bool IsFinaliseGoing(string databasePath);

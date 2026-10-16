@@ -1,4 +1,5 @@
 using FluentAssertions;
+using VideoOptimiser.Application.Features.Run;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -69,12 +70,45 @@ public sealed class CliCommandParserTests
     [InlineData("--local is only supported by run and immich run.", "queue", "add", "--local")]
     [InlineData("--local is only supported by run and immich run.", "queue", "add", "immich", "--local")]
     [InlineData("--crf is no longer supported: run picks the CRF itself.", "run", "--crf", "30")]
+    [InlineData("--now is only supported by run stop.", "run", "--now")]
+    [InlineData("--keep-worker is only supported by background start.", "run", "--keep-worker")]
+    [InlineData("--keep-worker is only supported by background start.", "background", "runner", "--worker-fate", "keep", "--keep-worker")]
+    [InlineData("--worker-fate is only supported by background runner.", "background", "start", "--worker-fate", "keep")]
+    [InlineData("--worker-fate requires delete or keep.", "background", "runner", "--worker-fate")]
+    [InlineData("--worker-fate requires delete or keep.", "background", "runner", "--worker-fate", "sell")]
+    [InlineData("background runner requires --worker-fate delete or keep.", "background", "runner")]
+    [InlineData("--local and --remote cannot be used together.", "background", "start", "--local", "--remote")]
+    [InlineData("--local is only supported by run and immich run.", "run", "stop", "--local")]
+    [InlineData("--json is only supported by doctor, queue list, status, history and calibrate.", "run", "stop", "--json")]
     public void RejectsWithTheReason(string error, params string[] args)
     {
         var command = CliCommand.Parse(args);
 
         command.IsValid.Should().BeFalse();
         command.Error.Should().Be(error);
+    }
+
+    /// <summary>
+    /// <c>run stop</c> is public; the two <c>background</c> verbs are the hidden launcher and the detached runner it starts, and
+    /// the runner's arguments are exactly what the launcher builds.
+    /// </summary>
+    [Theory]
+    [InlineData("StopRun", false, false, null, null, "run", "stop")]
+    [InlineData("StopRun", true, false, null, null, "run", "stop", "--now", "--config", "my.yaml")]
+    [InlineData("BackgroundStart", false, false, null, null, "background", "start")]
+    [InlineData("BackgroundStart", false, true, null, "--remote", "background", "start", "--keep-worker", "--remote")]
+    [InlineData("BackgroundRunner", false, false, WorkerFateChoice.Delete, null, "background", "runner", "--worker-fate", "delete", "--config", "my.yaml")]
+    [InlineData("BackgroundRunner", false, false, WorkerFateChoice.Keep, "--local", "background", "runner", "--worker-fate", "KEEP", "--local")]
+    public void TheStopAndBackgroundVerbsParse(string kind, bool stopNow, bool keepWorker, WorkerFateChoice? fate, string? modeFlag, params string[] args)
+    {
+        var command = CliCommand.Parse(args);
+
+        command.IsValid.Should().BeTrue(command.Error);
+        command.Kind.ToString().Should().Be(kind);
+        command.StopNow.Should().Be(stopNow);
+        command.KeepWorker.Should().Be(keepWorker);
+        command.WorkerFate.Should().Be(fate);
+        (command.ModeOverride?.Flag).Should().Be(modeFlag);
     }
 
     /// <summary>No verb is the status card, marked bare so a missing configuration can say how to create one; typed <c>status</c> is not.</summary>
@@ -106,5 +140,12 @@ public sealed class CliCommandParserTests
             .Contain("video-optimiser queue add immich [--first | --limit <n>] [--config <path>]")
             .And.Contain("video-optimiser immich run [--first | --limit <n>] [--config <path>] [--local | --remote]")
             .And.Contain("video-optimiser immich finalize [--config <path>]");
+    }
+
+    /// <summary>Users start a background run from the TUI, so the launcher and the runner stay out of the help.</summary>
+    [Fact]
+    public void HelpListsRunStopAndNotTheBackgroundVerbs()
+    {
+        CliCommand.Usage.Should().Contain("video-optimiser run stop [--now] [--config <path>]").And.NotContain("background");
     }
 }

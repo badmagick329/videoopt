@@ -5,7 +5,7 @@ using static CliOutput;
 
 /// <summary>
 /// The database locks the commands take (VOPT-54 step 3). A run holds the run lock for the whole command, so a second run
-/// cannot mark its active jobs interrupted (<c>RunWorkerEnd.TakeRunLock</c>, since taking it starts the run); a finalisation
+/// cannot mark its active jobs interrupted (<c>RunWorkerEnd.TakeRunLockAsync</c>, since taking it starts the run); a finalisation
 /// holds the finalise lock, so a run leaves its job alone. Finalize does not take the run lock: reviewing and finalising
 /// during an all-day run is the point of a separate finalise.
 /// </summary>

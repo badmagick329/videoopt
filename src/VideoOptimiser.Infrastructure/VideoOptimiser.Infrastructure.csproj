@@ -1,4 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- [LibraryImport] generates unsafe stubs (kernel32 calls for keep-awake and the detached launcher). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\VideoOptimiser.Domain\VideoOptimiser.Domain.csproj" />
     <ProjectReference Include="..\VideoOptimiser.Application\VideoOptimiser.Application.csproj" />

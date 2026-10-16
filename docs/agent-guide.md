@@ -9,7 +9,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 | Class | Commands | What you tell the person |
 | --- | --- | --- |
 | Read-only | `status` (or no command), `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `doctor` | Safe to run. `--json` is offered on the ones that list. `doctor` may create the job database and the Immich staging folder. |
-| Job database and temporary files | `config init`, `queue add`, `queue add immich`, `run`, `immich run`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry` | Nothing of theirs is lost. `config init` writes a new config and never replaces one. `queue add immich` and `immich run` download videos to the staging folder, so they need disk space and bandwidth. Their re-upload guard moves converted originals that the phone uploaded again back to Immich's trash, which is intended. |
+| Job database and temporary files | `config init`, `queue add`, `queue add immich`, `run`, `immich run`, `run stop`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry` | Nothing of theirs is lost. `config init` writes a new config and never replaces one. `queue add immich` and `immich run` download videos to the staging folder, so they need disk space and bandwidth. Their re-upload guard moves converted originals that the phone uploaded again back to Immich's trash, which is intended. |
 | **Warn** | `finalize`, `immich finalize`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Say what it does first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
 
 What to say for each **warn** command:
@@ -86,7 +86,7 @@ Next:
 ```
 
 - `Queue:` counts open videos; `Queue: empty.` when none. `waiting` and `stopped` are what a run takes; `held` are passed over; `ready to finalise` are waiting for review.
-- `Run: none.` or the running command, its start time and process ID, and what it converts.
+- `Run: none.` or the running command (`background run` for one with no terminal), its start time and process ID, and what it converts.
 - `Worker:` appears only with the Hetzner lifecycle: the server, its age and hourly price, `Worker: none.`, a server that is `gone from Hetzner, but its IPv4 address still bills`, or `as recorded on this PC; Hetzner wasn't checked: <reason>.` Any billing worker deserves a mention.
 - `Next:` holds up to three commands in priority order. `worker delete` appears there whenever a worker bills and no run is going, so **warn** before the person follows it.
 - With no config found, the bare command says so and names `config init`.
@@ -128,7 +128,7 @@ Upload and download lines appear only with a remote worker. Colour appears on a 
 
 **Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints progress about every 15 seconds; `about <time> left` appears only after 30 seconds and 5 percentage points. A job that prints nothing new for 15 minutes is stuck: ask for its last lines and `queue list --json`.
 
-**`Ctrl+C`.** The first press stops after the video being converted (`Stopping after this video ...`), keeps its work, prints `Stopped after <file>; <N> videos are still waiting.` and `To convert the rest: video-optimiser run`, and exits `9`. A second press stops at once (`Stopped now. <file> continues from its last finished step on the next run.`).
+**`Ctrl+C`.** The first press stops after the video being converted (`Stopping after this video ...`), keeps its work, prints `Stopped after <file>; <N> videos are still waiting.` and `To convert the rest: video-optimiser run`, and exits `9`. A second press stops at once (`Stopped now. <file> continues from its last finished step on the next run.`). `run stop` does the same for a background run (one with no terminal; `status` shows `Run: background run, ...`): `run stop` is the first press, `run stop --now` the second. Its worker fate was chosen when it started, so it never asks. For a run in a terminal, `run stop` exits `1` and says to press `Ctrl+C` in its window; with no run going it prints `No run is going.` and exits `0`.
 
 ### Immich discovery lines
 
@@ -170,7 +170,7 @@ Failed, dropped and skipped jobs stay settled: discovery skips them until the or
 | Code | Meaning |
 | --- | --- |
 | `0` | Success, or a confirmation answered "no" |
-| `1` | General failure, including a `doctor` failure outside configuration and dependencies, `calibrate` on a database an older version wrote, a run or finalise refused because another is using the database, a queue verb refused (the video is in a state it does not apply to, converting now, or being finalised; or a drop would leave `cleanup` the only copy), and a command that lost a race for the same job |
+| `1` | General failure, including a `doctor` failure outside configuration and dependencies, `calibrate` on a database an older version wrote, a run or finalise refused because another is using the database, `run stop` on a run started in a terminal, a queue verb refused (the video is in a state it does not apply to, converting now, or being finalised; or a drop would leave `cleanup` the only copy), and a command that lost a race for the same job |
 | `2` | Invalid arguments, including a malformed or unknown job ID for `queue hold`, `release`, `next` and `drop`, a removed command name, which says what replaced it (`'queue run' is now 'run'.`; also `queue discover`, `queue cancel` and `process`), or `queue retry` on a job it cannot retry (not found, not failed, dropped or skipped, or the original already has an open job) |
 | `3` | Invalid configuration, including `queue add` with no watch roots, `worker create` or `worker delete` without `remoteSsh.lifecycle: "hetzner"`, or an Immich API key that is missing, rejected or lacks a permission |
 | `4` | A failed dependency check in `doctor`: a media tool, the Immich server (unreachable, not Immich 3, its key, or its trash off) or the Hetzner API. Also `remote setup` when it cannot run `ssh-keygen` or list or upload the Hetzner key |
@@ -215,7 +215,7 @@ A held job keeps its status, `Queued` or `Interrupted`; runs pass over it until 
 | Field | Value |
 | --- | --- |
 | `queue` | `{ converting, waiting, stopped, held, readyToFinalise }` |
-| `run` | `null` when no run is going. Otherwise `{ command, startedUtc, processId, converting }`; `converting` is an array of `{ id, file, status }`. |
+| `run` | `null` when no run is going. Otherwise `{ command, startedUtc, processId, background, converting }`; `background` is true for a run with no terminal; `converting` is an array of `{ id, file, status }`. |
 | `worker` | `null` unless `processing.remoteSsh.lifecycle` is `hetzner`. Otherwise `{ exists, hetznerChecked, notCheckedReason, name, serverId, status, serverType, location, createdUtc, uptimeSeconds, hourlyGrossEur }`. `exists` is `true` for a server, a retained IPv4 address (`status` `server-missing-primary-ip-retained`) or a worker recorded on this PC. `hetznerChecked` is `false` with `notCheckedReason` set when Hetzner wasn't asked or didn't answer within 15 seconds; the fields are then the recorded ones (`status` `recorded`) with no uptime or price. `hourlyGrossEur` includes VAT. |
 | `next` | Up to three commands worth running now, in order |
 

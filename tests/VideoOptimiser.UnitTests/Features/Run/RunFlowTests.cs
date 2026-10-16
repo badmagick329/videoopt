@@ -23,7 +23,7 @@ public sealed class RunFlowTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
     private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
     private readonly FakeWorkerLifecycle _lifecycle = new();
-    private readonly RecordingObserver _observer = new();
+    private readonly RecordingRunObserver _observer = new();
 
     public RunFlowTests() => Directory.CreateDirectory(_directory);
 
@@ -73,14 +73,133 @@ public sealed class RunFlowTests : IDisposable
         (await RunCli.StatusesAsync(_repository, DatabasePath, jobs)).Should().Equal(JobStatus.ReadyToFinalize);
     }
 
-    private async Task<int> RunAsync(ScriptedRunProcessor processor, ScriptedQuestions questions, CancellationToken stopNow)
+    /// <summary>The scenarios of <see cref="TheWorkerFateChosenAtStartIsAppliedOnEveryWayABackgroundRunEnds"/>: how the run ends.</summary>
+    public enum BackgroundEnd
+    {
+        Finished,
+        StoppedAfterVideo,
+        StoppedNowWithWorkOnTheWorker,
+        StoppedNowWithoutWork,
+        WorkerUnreachable,
+        Failed
+    }
+
+    /// <summary>
+    /// D3's done criterion (VOPT-110): a background run asks nobody, so the fate chosen at start is the answer, and it decides at
+    /// every end. Delete deletes even when a stop now throws away work only the worker has (nobody can be asked again), and
+    /// Keep keeps whatever the settings say about a finished run. The unreachable-worker end deletes silently under Delete, as a
+    /// y does; under Keep it leaves the worker with the unreachable lines.
+    /// </summary>
+    [Theory]
+    [InlineData(BackgroundEnd.Finished, WorkerFateChoice.Delete)]
+    [InlineData(BackgroundEnd.Finished, WorkerFateChoice.Keep)]
+    [InlineData(BackgroundEnd.StoppedAfterVideo, WorkerFateChoice.Delete)]
+    [InlineData(BackgroundEnd.StoppedAfterVideo, WorkerFateChoice.Keep)]
+    [InlineData(BackgroundEnd.StoppedNowWithWorkOnTheWorker, WorkerFateChoice.Delete)]
+    [InlineData(BackgroundEnd.StoppedNowWithWorkOnTheWorker, WorkerFateChoice.Keep)]
+    [InlineData(BackgroundEnd.StoppedNowWithoutWork, WorkerFateChoice.Delete)]
+    [InlineData(BackgroundEnd.StoppedNowWithoutWork, WorkerFateChoice.Keep)]
+    [InlineData(BackgroundEnd.WorkerUnreachable, WorkerFateChoice.Delete)]
+    [InlineData(BackgroundEnd.WorkerUnreachable, WorkerFateChoice.Keep)]
+    [InlineData(BackgroundEnd.Failed, WorkerFateChoice.Delete)]
+    [InlineData(BackgroundEnd.Failed, WorkerFateChoice.Keep)]
+    public async Task TheWorkerFateChosenAtStartIsAppliedOnEveryWayABackgroundRunEnds(BackgroundEnd end, WorkerFateChoice fate)
+    {
+        await RunCli.QueueJobsAsync(_repository, DatabasePath, 2);
+        using var stopNow = new CancellationTokenSource();
+        using var stopAfter = new CancellationTokenSource();
+        var processor = new ScriptedRunProcessor(remote: end != BackgroundEnd.StoppedNowWithoutWork);
+        switch (end)
+        {
+            case BackgroundEnd.StoppedAfterVideo:
+                processor.During[0] = _ => { stopAfter.Cancel(); return Task.CompletedTask; };
+                break;
+            case BackgroundEnd.StoppedNowWithWorkOnTheWorker or BackgroundEnd.StoppedNowWithoutWork:
+                processor.During[0] = _ => { stopNow.Cancel(); return Task.CompletedTask; };
+                break;
+            case BackgroundEnd.WorkerUnreachable:
+                processor.Unreachable[0] = true;
+                break;
+            case BackgroundEnd.Failed:
+                processor.Throw[0] = new InvalidOperationException("the disk broke");
+                break;
+        }
+        var requests = new SqliteRunRequestStore(new SqliteDatabaseInitializer());
+        await requests.ResetAsync(DatabasePath, fate, CancellationToken.None);
+
+        _ = await RunAsync(processor, new BackgroundRunQuestions(requests, DatabasePath, fate), stopNow.Token, stopAfter.Token);
+
+        _lifecycle.DeleteCalls.Should().Be(fate == WorkerFateChoice.Delete ? 1 : 0);
+        // The end it was meant to reach, and what the worker's fate looked like there.
+        var (reached, kept) = end switch
+        {
+            BackgroundEnd.Finished => ("Summary:ready=2,total=2,stoppedAfter=False", "WorkerKept:Finished"),
+            BackgroundEnd.StoppedAfterVideo => ("StoppedAfter", "WorkerKept:StoppedAfterVideo"),
+            BackgroundEnd.StoppedNowWithWorkOnTheWorker => ("StoppedNow:" + fate, null),
+            BackgroundEnd.StoppedNowWithoutWork => ("StoppedNow:" + fate, null),
+            BackgroundEnd.WorkerUnreachable => ("StoppedByUnreachableWorker", "WorkerUnreachableAtEnd"),
+            _ => ("RunFailed", "WorkerKept:Failed")
+        };
+        _observer.Events.Should().Contain(reached);
+        if (fate == WorkerFateChoice.Delete) _observer.Events.Should().Contain("WorkerDeleting").And.NotContain("WorkerKept:" + end);
+        else if (kept is not null) _observer.Events.Should().Contain(kept).And.NotContain("WorkerDeleting");
+        else _observer.Events.Should().NotContain("WorkerDeleting");
+    }
+
+    /// <summary>
+    /// The fate is read when the run ends, not when it starts, so a change made while a video converts decides: that is what
+    /// lets a person keep the worker after starting the run to delete it, or the reverse.
+    /// </summary>
+    [Theory]
+    [InlineData(WorkerFateChoice.Delete, WorkerFateChoice.Keep)]
+    [InlineData(WorkerFateChoice.Keep, WorkerFateChoice.Delete)]
+    public async Task AFateChangedWhileTheRunGoesIsTheOneAppliedAtTheEnd(WorkerFateChoice atStart, WorkerFateChoice changedTo)
+    {
+        await RunCli.QueueJobsAsync(_repository, DatabasePath, 1);
+        var requests = new SqliteRunRequestStore(new SqliteDatabaseInitializer());
+        await requests.ResetAsync(DatabasePath, atStart, CancellationToken.None);
+        var processor = new ScriptedRunProcessor(remote: true);
+        processor.During[0] = _ => requests.SetWorkerFateAsync(DatabasePath, changedTo, CancellationToken.None);
+
+        _ = await RunAsync(processor, new BackgroundRunQuestions(requests, DatabasePath, atStart), CancellationToken.None);
+
+        _lifecycle.DeleteCalls.Should().Be(changedTo == WorkerFateChoice.Delete ? 1 : 0);
+    }
+
+    /// <summary>
+    /// A busy or locked database as the run ends must not leave the worker's fate undecided: with nobody watching a background
+    /// run, an undecided worker bills on unnoticed. The fate chosen at launch decides instead.
+    /// </summary>
+    [Theory]
+    [InlineData(WorkerFateChoice.Delete)]
+    [InlineData(WorkerFateChoice.Keep)]
+    public async Task AnUnreadableRequestsRowAtTheEndAppliesTheFateChosenAtLaunch(WorkerFateChoice atStart)
+    {
+        await RunCli.QueueJobsAsync(_repository, DatabasePath, 1);
+        var processor = new ScriptedRunProcessor(remote: true);
+
+        _ = await RunAsync(processor, new BackgroundRunQuestions(new UnreadableRequests(), DatabasePath, atStart), CancellationToken.None);
+
+        _lifecycle.DeleteCalls.Should().Be(atStart == WorkerFateChoice.Delete ? 1 : 0);
+        _observer.Events.Should().NotContain(e => e.StartsWith("RunFailed", StringComparison.Ordinal));
+    }
+
+    private sealed class UnreadableRequests : IRunRequestStore
+    {
+        public Task ResetAsync(string databasePath, WorkerFateChoice? fate, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<RunRequests> ReadAsync(string databasePath, CancellationToken cancellationToken) => throw new IOException("database is locked");
+        public Task RequestStopAsync(string databasePath, bool now, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task SetWorkerFateAsync(string databasePath, WorkerFateChoice fate, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private async Task<int> RunAsync(ScriptedRunProcessor processor, IRunQuestions questions, CancellationToken stopNow, CancellationToken stopAfterThisVideo = default)
     {
         var settings = Settings();
         var locks = new DatabaseLocks();
-        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new UnusedImmich());
+        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging());
         flow.MarkStarted();
         // The same shape as the CLI's: the guard decides the worker's fate for an end the conversion does not decide itself.
-        return await flow.GuardAsync(settings, _observer, questions, async () => (int)await flow.ConvertQueueAsync(settings, modeOverridden: false, _observer, questions, stopAfterThisVideo: CancellationToken.None, stopNow));
+        return await flow.GuardAsync(settings, _observer, questions, async () => (int)await flow.ConvertQueueAsync(settings, modeOverridden: false, _observer, questions, stopAfterThisVideo, stopNow));
     }
 
     private AppSettings Settings() => new()
@@ -96,60 +215,12 @@ public sealed class RunFlowTests : IDisposable
         public bool Asked { get; private set; }
         public bool CanAsk => false;
         public Task<bool> ConfirmWorkerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken) => Task.FromResult(true);
-        public RunWorkerAnswer AnswerGivenDuringRun() => answer;
+        public Task<RunWorkerAnswer> AnswerGivenDuringRunAsync() => Task.FromResult(answer);
 
         public Task<bool> AskToDeleteWorkerAsync(RunEnd runEnd, JobStatus? remoteStage)
         {
             Asked = true;
             return Task.FromResult(false);
-        }
-    }
-
-    private sealed class UnusedImmich : IImmichRestaging
-    {
-        public Task<ImmichRestageResult> RestageMissingAsync(string databasePath, AppSettings settings, IReadOnlyCollection<JobRecord> jobs, IProgress<ImmichProgress>? progress = null, CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("No Immich video is queued.");
-    }
-
-    /// <summary>Records each event as a short name, in the order the flow raised it.</summary>
-    private sealed class RecordingObserver : IRunObserver
-    {
-        public List<string> Events { get; } = [];
-        public List<string> WorkerLines { get; } = [];
-
-        public void VideoSkipped(JobRecord job) => Events.Add("VideoSkipped");
-        public void FinalisationInterrupted(JobRecord job) => Events.Add("FinalisationInterrupted");
-        public void VideosHeld(int count) => Events.Add($"VideosHeld:{count}");
-        public IProgress<ImmichProgress> ImmichRestaging() => new SynchronousProgress<ImmichProgress>(_ => { });
-        public void ImmichVideosStayQueued(int count, string? unusableReason) => Events.Add($"ImmichVideosStayQueued:{count}");
-        public void WorkerProgress(string line) => WorkerLines.Add(line);
-
-        public IProgress<JobProgress> ConversionStarted(int count, bool workerUp)
-        {
-            Events.Add($"ConversionStarted:{count},workerUp={workerUp}");
-            return new SynchronousProgress<JobProgress>(_ => { });
-        }
-
-        public void ConversionEnded() => Events.Add("ConversionEnded");
-        public void JoiningVideoSkipped(JobRecord job) => Events.Add("JoiningVideoSkipped");
-        public void JoiningVideoWaitsForWorker(JobRecord job) => Events.Add("JoiningVideoWaitsForWorker");
-        public void StoppedByUnreachableWorker(string workerName, int notConverted) => Events.Add("StoppedByUnreachableWorker");
-        public void StoppedAfter(JobRecord last, int notStarted) => Events.Add("StoppedAfter");
-        public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter) => Events.Add($"Summary:ready={ready},total={readyTotal},stoppedAfter={stoppedAfter}");
-        public void StoppedWithoutManagedWorker(JobInterruptedException? interrupted, string? manualHost) => Events.Add("StoppedWithoutManagedWorker");
-        public void StoppedNow(JobInterruptedException? interrupted, string worker, WorkerFate fate, bool settingUpWorker) => Events.Add($"StoppedNow:{fate}");
-        public void WorkerUnreachableAtEnd(JobRecord job, bool questionFollows) => Events.Add("WorkerUnreachableAtEnd");
-        public void WorkerKept(string worker, RunEnd runEnd, JobStatus? remoteStage, bool answeredNo) => Events.Add($"WorkerKept:{runEnd}");
-        public void WorkerDeleting() => Events.Add("WorkerDeleting");
-        public void WorkerDeleteFailed(string worker, string message) => Events.Add("WorkerDeleteFailed");
-        public void WorkerDeleteEnded() => Events.Add("WorkerDeleteEnded");
-        public void ManualWorkerUnreachable(JobRecord job) => Events.Add("ManualWorkerUnreachable");
-        public void ManualWorkerReminder() => Events.Add("ManualWorkerReminder");
-
-        public int RunFailed(Exception exception)
-        {
-            Events.Add("RunFailed");
-            return (int)ExitCode.GeneralFailure;
         }
     }
 }

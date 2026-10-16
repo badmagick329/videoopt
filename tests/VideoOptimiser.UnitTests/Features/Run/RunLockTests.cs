@@ -76,6 +76,26 @@ public sealed class RunLockTests : IDisposable
         (await _repository.GetAsync(DatabasePath, active.Id))!.Status.Should().Be(JobStatus.Encoding);
     }
 
+    /// <summary>A background run has no window to press Ctrl+C in, so the refusal names the command that stops it.</summary>
+    [Theory]
+    [InlineData("run")]
+    [InlineData("immich run")]
+    public async Task ASecondRunRefusedByABackgroundRunSaysToStopItWithRunStop(string command)
+    {
+        var config = await WriteConfigAsync();
+        using var running = HoldLock(DatabaseLock.RunPath(DatabasePath), LockHolders.BackgroundRun, new DateTimeOffset(new DateTime(2026, 1, 2, 14, 2, 0)));
+        string[] args = [.. command.Split(' '), "--config", config];
+
+        var (code, output, error) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, args);
+
+        code.Should().Be((int)ExitCode.GeneralFailure);
+        output.Should().BeEmpty();
+        error.Should().Be(string.Join(Environment.NewLine,
+            "Another run is using this database: a background run, started 2026-01-02 14:02 (process 4321).",
+            $"Wait for it to finish, or stop it with 'video-optimiser run stop --config \"{config}\"'.",
+            ""));
+    }
+
     [Theory]
     [InlineData("finalize", "--ready")]
     [InlineData("immich", "finalize")]

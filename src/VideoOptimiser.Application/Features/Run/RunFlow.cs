@@ -253,7 +253,7 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
     private async Task<bool> ConcludeAsync(AppSettings settings, IRunObserver observer, IRunQuestions questions, RunEnd end, JobInterruptedException? interrupted = null, JobRecord? unreachableJob = null)
     {
         _concluded = true;
-        var answer = questions.AnswerGivenDuringRun();
+        var answer = await questions.AnswerGivenDuringRunAsync();
         var recorded = lifecycle.IsManaged(settings) ? await lifecycle.ReadRecordedAsync(settings.Database.Path, CancellationToken.None) : null;
         if (recorded is null)
         {

@@ -3,6 +3,7 @@ using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Status;
 using VideoOptimiser.Application.Features.Worker;
+using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain;
 
 namespace VideoOptimiser.Cli.Features.Status;
@@ -42,13 +43,18 @@ internal sealed class StatusCommand(IStatusCard card)
         return parts.Length == 0 ? "Queue: empty." : $"Queue: {string.Join(", ", parts)}.";
     }
 
-    /// <summary>The command is printed as the lock holder recorded it, which for a run from an older version is not <c>video-optimiser run</c>.</summary>
+    /// <summary>
+    /// The command is printed as the lock holder recorded it, which for a run from an older version is not <c>video-optimiser run</c>.
+    /// A background run has no command a person typed, so it says what it is.
+    /// </summary>
     private static string RunLine(StatusRun? run)
     {
         if (run is null) return "Run: none.";
-        var line = $"Run: {run.Holder.Command}, started {CliLocks.FormatStarted(run.Holder.StartedUtc)} (process {run.Holder.ProcessId.ToString(CultureInfo.InvariantCulture)})";
+        var line = $"Run: {(IsBackground(run) ? "background run" : run.Holder.Command)}, started {CliLocks.FormatStarted(run.Holder.StartedUtc)} (process {run.Holder.ProcessId.ToString(CultureInfo.InvariantCulture)})";
         return run.Converting.Count == 0 ? line + "." : $"{line}, converting {string.Join(", ", run.Converting.Select(video => Path.GetFileName(video.SourcePath)))}.";
     }
+
+    private static bool IsBackground(StatusRun run) => run.Holder.Command == LockHolders.BackgroundRun;
 
     private static string WorkerLine(StatusWorker worker)
     {
@@ -89,7 +95,7 @@ internal sealed class StatusCommand(IStatusCard card)
         return new StatusJsonOutput(
             new StatusJsonQueue(queue.Converting, queue.Waiting, queue.Stopped, queue.Held, queue.ReadyToFinalise),
             report.Run is { } run
-                ? new StatusJsonRun(run.Holder.Command, run.Holder.StartedUtc, run.Holder.ProcessId, [.. run.Converting.Select(video => new StatusJsonConverting(video.Id.ToString("N"), Path.GetFileName(video.SourcePath), video.Status.ToString()))])
+                ? new StatusJsonRun(run.Holder.Command, run.Holder.StartedUtc, run.Holder.ProcessId, IsBackground(run), [.. run.Converting.Select(video => new StatusJsonConverting(video.Id.ToString("N"), Path.GetFileName(video.SourcePath), video.Status.ToString()))])
                 : null,
             report.Worker is { } worker ? WorkerJson(worker) : null,
             [.. report.Next.Select(step => command.Hint(Words(step, queue).Verb))]);

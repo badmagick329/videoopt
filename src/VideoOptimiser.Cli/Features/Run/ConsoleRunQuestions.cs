@@ -16,10 +16,10 @@ internal sealed class ConsoleRunQuestions(RunWorkerState state) : IRunQuestions
     public Task<bool> ConfirmWorkerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken) =>
         ConsolePrompts.ConfirmWorkerCreationAsync(quote, cancellationToken);
 
-    public RunWorkerAnswer AnswerGivenDuringRun()
+    public Task<RunWorkerAnswer> AnswerGivenDuringRunAsync()
     {
         var answer = state.Question.TakeOver();
-        return new RunWorkerAnswer(answer.Answer, answer.Pending is not null);
+        return Task.FromResult(new RunWorkerAnswer(answer.Answer, answer.Pending is not null));
     }
 
     public async Task<bool> AskToDeleteWorkerAsync(RunEnd runEnd, JobStatus? remoteStage)

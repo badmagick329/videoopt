@@ -1,15 +1,18 @@
-namespace VideoOptimiser.Cli.Features.Run;
+namespace VideoOptimiser.Application.Features.Run;
 
 /// <summary>
-/// Ctrl+C (VOPT-54 step 3). The first press while a video converts stops after that video, so its CRF search, encode and
-/// download are kept; a second press, or a first one with nothing converting, stops now, and the video resumes from its stage
-/// next run. A press while the worker is being deleted stops nothing: the delete would be cut off and the worker left billing.
-/// Child processes run with their own hidden console (<c>CreateNoWindow</c>), so a press never reaches ab-av1 or ffprobe.
+/// How a run is told to stop, from Ctrl+C or from a stop request (VOPT-54 step 3, VOPT-110). The first press while a video
+/// converts stops after that video, so its CRF search, encode and download are kept; a second press, or a first one with
+/// nothing converting, stops now, and the video resumes from its stage next run. A press while the worker is being deleted
+/// stops nothing: the delete would be cut off and the worker left billing. Child processes run with their own hidden console
+/// (<c>CreateNoWindow</c>), so a press never reaches ab-av1 or ffprobe.
 /// </summary>
 /// <remarks>
-/// One per command, registered as a service so a test can press it; <see cref="Press"/> runs on the console's signal thread.
+/// One per command, registered as a service so a test can press it. <see cref="Press"/> runs on the console's signal thread;
+/// a background run has no console, so its request poll calls <see cref="Press"/> for <c>run stop</c> and <see cref="StopNow"/>
+/// for <c>run stop --now</c>, which is the state machine Ctrl+C already is.
 /// </remarks>
-internal sealed class RunStop : IDisposable
+public sealed class RunStop : IDisposable
 {
     private readonly object _gate = new();
     private readonly CancellationTokenSource _now = new();
@@ -40,6 +43,20 @@ internal sealed class RunStop : IDisposable
                 _onStopAfterThisVideo();
                 return;
             }
+        }
+
+        _now.Cancel();
+    }
+
+    /// <summary>
+    /// What a second press does, whether or not a first came: stops now, except while the worker is being deleted, when it does
+    /// nothing. A stop request for "now" must never cut off the delete, and it needs no message for the person who sent it.
+    /// </summary>
+    public void StopNow()
+    {
+        lock (_gate)
+        {
+            if (_onPressWhileDeleting is not null) return;
         }
 
         _now.Cancel();

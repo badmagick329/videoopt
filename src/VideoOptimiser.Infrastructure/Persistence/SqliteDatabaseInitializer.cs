@@ -6,7 +6,7 @@ namespace VideoOptimiser.Infrastructure.Persistence;
 public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
 {
     /// <summary>The newest migration below. <see cref="SqliteSchemaCheck"/> refuses a database without it; raise both together.</summary>
-    public const int CurrentVersion = 9;
+    public const int CurrentVersion = 10;
 
     public async Task InitializeAsync(string databasePath, CancellationToken cancellationToken = default)
     {
@@ -167,6 +167,21 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
                 ALTER TABLE jobs ADD COLUMN row_version INTEGER NOT NULL DEFAULT 0;
                 """, cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (9, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
+        if (!await HasMigrationAsync(connection, 10, cancellationToken))
+        {
+            // What other processes ask of the run going now (run stop, later the TUI). One row, since requests are for that run
+            // alone and a run clears them when it takes the run lock.
+            await ExecuteAsync(connection, """
+                CREATE TABLE IF NOT EXISTS run_requests (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    stop_after_video INTEGER NOT NULL DEFAULT 0,
+                    stop_now INTEGER NOT NULL DEFAULT 0,
+                    worker_fate TEXT NULL,
+                    updated_utc TEXT NOT NULL
+                );
+                """, cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (10, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
         await transaction.CommitAsync(cancellationToken);
     }

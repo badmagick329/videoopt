@@ -8,10 +8,10 @@ namespace VideoOptimiser.Cli.Features.Run;
 /// <summary>
 /// What <c>run</c> and <c>immich run</c> share at the console: the banner, then <see cref="RunFlow"/> (the whole queue
 /// converted, folder and Immich videos alike, the worker, each video in turn) with the console as its front end
-/// (<see cref="ConsoleRunObserver"/> prints, <see cref="ConsoleRunQuestions"/> asks). <c>immich run</c> adds its videos to the
-/// queue first.
+/// (<see cref="ConsoleRunObserver"/> prints, <see cref="ConsoleRunQuestions"/> asks, and the event file records the same events).
+/// <c>immich run</c> adds its videos to the queue first.
 /// </summary>
-internal sealed class RunConversion(IRemoteWorkerLifecycle lifecycle, RunFlow flow, RunWorkerState state, RunStop stop)
+internal sealed class RunConversion(IRemoteWorkerLifecycle lifecycle, RunFlow flow, RunWorkerState state, RunStop stop, EventLogRunObserver eventLog)
 {
     /// <summary>
     /// Prints <see cref="RunBanner"/> before any download or encoding, so a config still set to <c>remoteSsh</c> is noticed
@@ -31,5 +31,5 @@ internal sealed class RunConversion(IRemoteWorkerLifecycle lifecycle, RunFlow fl
     /// </summary>
     /// <param name="beforeNext">Printed between the failed jobs and the line that says what to finalise.</param>
     public Task<ExitCode> ConvertQueueAsync(LoadedConfiguration configuration, CliCommand command, Action? beforeNext, CancellationToken cancellationToken) =>
-        flow.ConvertQueueAsync(configuration.Settings, command.ModeOverride is not null, new ConsoleRunObserver(configuration, command, stop, state, beforeNext), new ConsoleRunQuestions(state), stop.AfterThisVideo, cancellationToken);
+        flow.ConvertQueueAsync(configuration.Settings, command.ModeOverride is not null, new TeeRunObserver(new ConsoleRunObserver(configuration, command, stop, state, beforeNext), eventLog), new ConsoleRunQuestions(state), stop.AfterThisVideo, cancellationToken);
 }

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Windows no longer goes to sleep while a run is converting.
+- New `run stop [--now]` stops a background run the way `Ctrl+C` stops a run in a terminal. Background runs will start from the TUI in a later release. `status` shows a background run, and `status --json` adds a `background` field to its `run` object.
+
 ## [0.8.0] - 2026-10-15
 ### Breaking changes
 

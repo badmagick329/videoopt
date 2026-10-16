@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
+using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
@@ -24,6 +25,16 @@ internal static class CliFakes
 
     /// <summary>Redirected input: the worker question is never asked, and a test never waits on the console.</summary>
     public static void NotInteractive(IServiceCollection services) => services.AddSingleton<IConsoleInput>(new ScriptedInput(interactive: false));
+
+    /// <summary>
+    /// What a test of the real CLI never wants for real: a run keeps no Windows awake and launches no process. Every CLI run in
+    /// <see cref="ConsoleCapture"/> starts from these, and a test that checks them registers its own after.
+    /// </summary>
+    public static void NoSideEffects(IServiceCollection services)
+    {
+        services.AddSingleton<IKeepAwake>(new FakeKeepAwake());
+        services.AddSingleton<IDetachedLauncher>(new ScriptedLauncher());
+    }
 
     private sealed class FixedDiagnostics(Diagnostic[] diagnostics) : ISettingsValidator
     {
@@ -307,5 +318,145 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
         Exists = false;
         progress?.Report("Worker deleted; billing for it and its IPv4 address has stopped.");
         return Task.FromResult(true);
+    }
+}
+
+/// <summary>Records each hold and release, in order, so a test sees that a run keeps Windows awake exactly as long as it works.</summary>
+internal sealed class FakeKeepAwake : IKeepAwake
+{
+    public List<string> Log { get; } = [];
+    public int Holds => Log.Count(entry => entry == "hold");
+    public int Releases => Log.Count(entry => entry == "release");
+
+    /// <summary>Held and not yet released.</summary>
+    public bool Held => Holds > Releases;
+
+    public IDisposable Hold()
+    {
+        Log.Add("hold");
+        return new Release(this);
+    }
+
+    private sealed class Release(FakeKeepAwake owner) : IDisposable
+    {
+        public void Dispose() => owner.Log.Add("release");
+    }
+}
+
+/// <summary>
+/// A launcher that starts nothing: it records the launch and plays the runner's part through <see cref="OnLaunch"/> (take the
+/// run lock as the runner would) and <see cref="ExitCode"/> (the runner ended before it did). Without a script it refuses, so a
+/// test that did not mean to launch fails instead of spawning a process.
+/// </summary>
+internal sealed class ScriptedLauncher : IDetachedLauncher
+{
+    public List<(string[] Arguments, string WorkingDirectory)> Launches { get; } = [];
+
+    /// <summary>The process ID the "runner" has; this test process's own by default, which a lock held here counts as alive.</summary>
+    public int ProcessId { get; init; } = Environment.ProcessId;
+
+    public Action? OnLaunch { get; set; }
+    public int? ExitCode { get; set; }
+    public bool Scripted { get; set; }
+
+    public IDetachedProcess Launch(IReadOnlyList<string> arguments, string workingDirectory)
+    {
+        if (!Scripted) throw new InvalidOperationException("This test did not expect a process to be launched.");
+        Launches.Add(([.. arguments], workingDirectory));
+        OnLaunch?.Invoke();
+        return new FakeProcess(ProcessId, ExitCode);
+    }
+
+    private sealed class FakeProcess(int processId, int? exitCode) : IDetachedProcess
+    {
+        public int ProcessId => processId;
+        public int? WaitForExit(TimeSpan timeout) => exitCode;
+        public void Dispose()
+        {
+        }
+    }
+}
+
+/// <summary>A clock a test moves by hand.</summary>
+internal sealed class ManualTime(DateTimeOffset start) : TimeProvider
+{
+    private DateTimeOffset _now = start;
+
+    public override DateTimeOffset GetUtcNow() => _now;
+
+    public void Advance(TimeSpan by) => _now += by;
+}
+
+/// <summary>For a run whose queue holds no Immich video: restaging one is a bug in the test.</summary>
+internal sealed class NoImmichRestaging : IImmichRestaging
+{
+    public Task<ImmichRestageResult> RestageMissingAsync(string databasePath, AppSettings settings, IReadOnlyCollection<JobRecord> jobs, IProgress<ImmichProgress>? progress = null, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("No Immich video is queued.");
+}
+
+/// <summary>The event file in memory: what a run wrote, without a file to read back.</summary>
+internal sealed class MemoryEventLog : IRunEventLog
+{
+    public List<RunEvent> Events { get; } = [];
+
+    public void Begin(string databasePath) => Events.Clear();
+
+    public void Append(RunEvent runEvent)
+    {
+        lock (Events) Events.Add(runEvent);
+    }
+
+    public IReadOnlyList<RunEvent> Read(string databasePath) => Events;
+}
+
+/// <summary>
+/// Records each event of a run as a short name, in the order the flow raised it, and what its progress sinks took, with no
+/// terminal. <see cref="FailureExitCode"/> is the code a failure maps to, so a test can tell which observer an exit code came from.
+/// </summary>
+internal sealed class RecordingRunObserver : IRunObserver
+{
+    public List<string> Events { get; } = [];
+    public List<string> WorkerLines { get; } = [];
+    public List<string> ProgressTaken { get; } = [];
+    public int FailureExitCode { get; init; } = (int)ExitCode.GeneralFailure;
+
+    public void VideoSkipped(JobRecord job) => Events.Add("VideoSkipped");
+    public void FinalisationInterrupted(JobRecord job) => Events.Add("FinalisationInterrupted");
+    public void VideosHeld(int count) => Events.Add($"VideosHeld:{count}");
+    public IProgress<ImmichProgress> ImmichRestaging() => new Sink<ImmichProgress>(progress => ProgressTaken.Add(progress.ToString()!));
+    public void ImmichVideosStayQueued(int count, string? unusableReason) => Events.Add($"ImmichVideosStayQueued:{count}");
+    public void WorkerProgress(string line) => WorkerLines.Add(line);
+
+    public IProgress<JobProgress> ConversionStarted(int count, bool workerUp)
+    {
+        Events.Add($"ConversionStarted:{count},workerUp={workerUp}");
+        return new Sink<JobProgress>(progress => ProgressTaken.Add(progress.Text));
+    }
+
+    public void ConversionEnded() => Events.Add("ConversionEnded");
+    public void JoiningVideoSkipped(JobRecord job) => Events.Add("JoiningVideoSkipped");
+    public void JoiningVideoWaitsForWorker(JobRecord job) => Events.Add("JoiningVideoWaitsForWorker");
+    public void StoppedByUnreachableWorker(string workerName, int notConverted) => Events.Add("StoppedByUnreachableWorker");
+    public void StoppedAfter(JobRecord last, int notStarted) => Events.Add("StoppedAfter");
+    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter) => Events.Add($"Summary:ready={ready},total={readyTotal},stoppedAfter={stoppedAfter}");
+    public void StoppedWithoutManagedWorker(JobInterruptedException? interrupted, string? manualHost) => Events.Add("StoppedWithoutManagedWorker");
+    public void StoppedNow(JobInterruptedException? interrupted, string worker, WorkerFate fate, bool settingUpWorker) => Events.Add($"StoppedNow:{fate}");
+    public void WorkerUnreachableAtEnd(JobRecord job, bool questionFollows) => Events.Add("WorkerUnreachableAtEnd");
+    public void WorkerKept(string worker, RunEnd runEnd, JobStatus? remoteStage, bool answeredNo) => Events.Add($"WorkerKept:{runEnd}");
+    public void WorkerDeleting() => Events.Add("WorkerDeleting");
+    public void WorkerDeleteFailed(string worker, string message) => Events.Add("WorkerDeleteFailed");
+    public void WorkerDeleteEnded() => Events.Add("WorkerDeleteEnded");
+    public void ManualWorkerUnreachable(JobRecord job) => Events.Add("ManualWorkerUnreachable");
+    public void ManualWorkerReminder() => Events.Add("ManualWorkerReminder");
+
+    public int RunFailed(Exception exception)
+    {
+        Events.Add("RunFailed");
+        return FailureExitCode;
+    }
+
+    private sealed class Sink<T>(Action<T> take) : IProgress<T>
+    {
+        public void Report(T value) => take(value);
     }
 }

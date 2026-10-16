@@ -88,6 +88,33 @@ public sealed class StatusCommandTests : QueueTestBase
         result.Should().Be((0, Card("Queue: 1 waiting.", $"Run: video-optimiser immich run, started {CliLocks.FormatStarted(holder.StartedUtc)} (process {Environment.ProcessId}).", null, ("queue list", "lists the videos in the queue")), ""));
     }
 
+    /// <summary>A background run has no command a person typed; the card says what it is, and still names the video it converts.</summary>
+    [Fact]
+    public async Task ABackgroundRunIsNamedAsOneAndStillShowsWhatItConverts()
+    {
+        var converting = await QueuedAsync("clip-a.mp4");
+        await MoveAsync(converting, JobStatus.Encoding);
+        using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), LockHolders.BackgroundRun, out _);
+        var holder = DatabaseLock.ReadLiveHolder(DatabaseLock.RunPath(DatabasePath))!;
+
+        var result = await RunAsync("status");
+
+        result.Should().Be((0, Card("Queue: 1 converting.", $"Run: background run, started {CliLocks.FormatStarted(holder.StartedUtc)} (process {Environment.ProcessId}), converting clip-a.mp4.", null, ("queue list", "lists the videos in the queue")), ""));
+    }
+
+    [Theory]
+    [InlineData(LockHolders.BackgroundRun, true)]
+    [InlineData(LockHolders.Run, false)]
+    public async Task TheJsonRunSaysWhetherItIsABackgroundRun(string holderName, bool background)
+    {
+        using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), holderName, out _);
+
+        var result = await RunAsync("status", "--json");
+
+        var json = JsonDocument.Parse(result.Stdout).RootElement.GetProperty("run");
+        (json.GetProperty("command").GetString(), json.GetProperty("background").GetBoolean()).Should().Be((holderName, background));
+    }
+
     [Fact]
     public async Task SeveralVideosConvertingAreNamedInRunOrder()
     {
@@ -264,6 +291,7 @@ public sealed class StatusCommandTests : QueueTestBase
                 "command": "video-optimiser run",
                 "startedUtc": {{Json(holder.StartedUtc)}},
                 "processId": {{Environment.ProcessId}},
+                "background": false,
                 "converting": [
                   {
                     "id": "{{converting.Id:N}}",

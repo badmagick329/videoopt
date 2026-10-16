@@ -12,6 +12,13 @@ public sealed class DatabaseLocks : IDatabaseLocks
     public IDisposable? TryHoldRun(string databasePath, string command) =>
         DatabaseLock.TryAcquire(DatabaseLock.RunPath(databasePath), command, out _);
 
+    public IDisposable? TakeRun(string databasePath, string command, out LiveRunHolder? holder)
+    {
+        var taken = DatabaseLock.TryAcquire(DatabaseLock.RunPath(databasePath), command, out var recorded);
+        holder = recorded is null ? null : new LiveRunHolder(recorded.Command, recorded.StartedUtc, recorded.ProcessId);
+        return taken;
+    }
+
     public bool IsFinaliseGoing(string databasePath) =>
         DatabaseLock.ReadLiveHolder(DatabaseLock.FinalizePath(databasePath)) is { } holder && holder.Command != DatabaseLock.RunPreparing;
 

@@ -274,6 +274,7 @@ public sealed class QueueAddTests : QueueTestBase
     [Theory]
     [InlineData("video-optimiser run", "The run going now picks them up.")]
     [InlineData("video-optimiser immich run", "The run going now picks them up.")]
+    [InlineData("video-optimiser background run", "The run going now picks them up.")]
     [InlineData("video-optimiser queue process", "Next: run 'video-optimiser run{0}' once the run going now ends.")]
     public async Task TheNextLineDependsOnTheRunGoingNow(string runGoing, string line)
     {

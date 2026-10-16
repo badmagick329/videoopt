@@ -100,6 +100,31 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         (await repository.ListImmichSkipsAsync(databasePath))["skipped"].VideoFacts.Should().BeNull();
     }
 
+    [Fact]
+    public async Task MigrationTenAddsTheSingleRowRunRequestsTable()
+    {
+        var databasePath = Path.Combine(_directory, "migration-nine.db");
+        await new SqliteDatabaseInitializer().InitializeAsync(databasePath);
+        // A database exactly as migration 9 left it.
+        await ExecuteAsync(databasePath, "DROP TABLE run_requests; DELETE FROM schema_migrations WHERE version = 10;");
+
+        await new SqliteDatabaseInitializer().InitializeAsync(databasePath);
+
+        await ExecuteAsync(databasePath, "INSERT INTO run_requests(id, updated_utc) VALUES (1, 'now');");
+        await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT stop_after_video, stop_now, worker_fate, (SELECT COUNT(*) FROM schema_migrations WHERE version = 10) FROM run_requests;";
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+        (reader.GetInt32(0), reader.GetInt32(1), reader.IsDBNull(2), reader.GetInt32(3)).Should().Be((0, 0, true, 1));
+        SqliteDatabaseInitializer.CurrentVersion.Should().Be(10);
+
+        // The id check keeps it one row.
+        var second = () => ExecuteAsync(databasePath, "INSERT INTO run_requests(id, updated_utc) VALUES (2, 'now');");
+        await second.Should().ThrowAsync<SqliteException>();
+    }
+
     /// <summary>A database exactly as migration 7 left it: the current schema without migration 8's columns.</summary>
     private static async Task RollBackToMigrationSevenAsync(string databasePath)
     {
