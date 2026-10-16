@@ -89,7 +89,7 @@ Apart from the guard's work, it doesn't change Immich. The first `Ctrl+C` stops 
 
 ### 3. Review
 
-The converted files are in the staging directory, under `<asset ID>\.video-optimiser\`. `queue list` shows the videos that are ready to finalise, and `queue list --json` gives each one's exact path as `outputPath`. Watch a few.
+The converted files are in the staging directory, under `<asset ID>\.video-optimiser\`. `queue list` shows the videos that are ready to finalise, and `queue list --json` gives each one's exact path as `outputPath`. Watch a few. In the [full-screen view](tui.md), the Review pane opens each one with `a`, and `r` rejects one you don't want.
 
 ### 4. Finalise
 

@@ -8,7 +8,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 
 | Class | Commands | What you tell the person |
 | --- | --- | --- |
-| Read-only | `status` (or no command), `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `doctor` | Safe to run. `--json` is offered on the ones that list. `doctor` may create the job database and the Immich staging folder. |
+| Read-only | `status` (or no command with output redirected; in a terminal it opens the [full-screen view](#the-full-screen-view), whose keys act), `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `doctor` | Safe to run. `--json` is offered on the ones that list. `doctor` may create the job database and the Immich staging folder. |
 | Job database and temporary files | `config init`, `queue add`, `queue add immich`, `run`, `immich run`, `run stop`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry` | Nothing of theirs is lost. `config init` writes a new config and never replaces one. `queue add immich` and `immich run` download videos to the staging folder, so they need disk space and bandwidth. Their re-upload guard moves converted originals that the phone uploaded again back to Immich's trash, which is intended. |
 | **Warn** | `finalize`, `immich finalize`, `queue reject`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Say what it does first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
 
@@ -60,7 +60,7 @@ Folders:
 
 1. `queue add` queues eligible videos from the watch folders (`--first` queues one, for a first trial; `queue add <file>` queues one file, and `--force` skips the rules). It prints `Queued: N.` plus the other counts that are not zero (`Already queued`, `Held`, `Ready to finalise`, ...), and `Checked N files so far ...` every 10 seconds on a large folder, which is progress. The starter rules match only large H.264 files at 1080p to 1440p and at 4K or above, so phone footage (HEVC) needs a rule change first; `calibrate` shows what the rules leave out.
 2. `run` converts every queued video, Immich ones included, and passes over held ones. A video can take an hour or more on a PC. The person can watch from a second window with `status` or `queue list`, and `queue hold`, `queue release`, `queue next` and `queue add` take effect from the run's next video.
-3. They review the AV1s, then `finalize --ready` (**warn**).
+3. They review the AV1s, then `finalize --ready` (**warn**). In the full-screen view's Review pane, `a` opens each AV1, `f` / `F` finalise and `r` rejects one they don't want.
 
 Immich (read [immich.md](immich.md) once for the age rule behind step 1):
 
@@ -71,6 +71,33 @@ Immich (read [immich.md](immich.md) once for the age rule behind step 1):
 A `doctor` failure `ImmichTrashDisabled`, or exit `3` with `Immich's trash is off`, means the person must turn Immich's trash back on.
 
 Tuning the rules, when they ask why videos are not converted: `calibrate` writes nothing and downloads nothing. Per rule it gives `videos`, `bytes` and `history`; then the largest `keptOut` groups. Quote each suggestion's `text`; the person decides on rule changes. A `testOne` suggestion's `command` is a `queue add "<file>" --force`, which queues one file outside the rules; its `run` stops before replacing anything. `codecUnknown` groups are Immich videos no run has downloaded. A large `historyLeftOut.otherSettings` means conversions under other or unrecorded quality settings are not counted. Exit `1` with `... is from an older version of video-optimiser`: run `queue list` once, then `calibrate`.
+
+## The full-screen view
+
+A bare `video-optimiser` in a terminal opens the full-screen view (the TUI; [tui.md](tui.md) is the person's page). It reads the same database as the commands, refreshes about once a second, and follows any run, foreground or background. Quitting (`q`, `Ctrl+C`) never stops a run; with an action of theirs still going it asks first. You cannot see the screen: ask the person what a pane or the footer says. `?` lists every key.
+
+Panes, switched with `tab` / `shift+tab`: **Queue** (converting, waiting in run order, held, recent failures), **Worker** (the Hetzner worker, checked every 30 seconds), **Activity** (the run's log, the same lines a terminal run prints), **Review** (ready videos with sizes and saving).
+
+Each key is the command of the same name, with the same rules and refusals; classify it as that command when the person asks what it does:
+
+| Key | Pane | Same as | Class |
+| --- | --- | --- | --- |
+| `h`, `r`, `n` | Queue | `queue hold`, `queue release`, `queue next` | Job database |
+| `d`, `t` | Queue | `queue drop`, `queue retry` (failed videos only); asks first | Job database |
+| `s` | any | starts a background run (below) | **Warn** when it would create a Hetzner server |
+| `x`, `X` | any | `run stop`, `run stop --now`; `X` asks first | Job database |
+| `c`, `d` | Worker | `worker create` (lists servers with prices), `worker delete` (asks first) | **Warn** |
+| `r` | Worker | `worker status` | Read-only |
+| `w` | Activity | sets the background run's worker fate: delete or keep when it ends | **Warn** for keep: the worker bills |
+| `o`, `a` | Review | opens the original (an Immich video's download) or the AV1 in the default app | Read-only |
+| `f`, `F` | Review | `finalize <job-id>`, `finalize --ready`; same question first | **Warn** |
+| `r` | Review | `queue reject <job-id>`; asks first | **Warn** |
+
+The same letter means different things per pane (`r` is release, check-worker or reject), so name the pane with the key.
+
+**Starting a run with `s`.** It launches a background run, which survives closing the terminal and is shown by `status` as `Run: background run, ...`. Without `remoteSsh.lifecycle: "hetzner"` it starts at once, encoding where the config says. With it, two lists come first: which worker converts (`Use <worker>` when one is up; otherwise the servers with hourly prices incl. VAT; always `No worker: convert on this PC`), then `When the run ends`: `Delete the worker` or `Keep the worker`. A server picked from the list is created before the run starts and bills from then; if the create fails, no run starts. The background run asks nothing afterwards. `x` / `X` and `run stop [--now]` stop only a background run; a run started with `run` in a terminal stops only with `Ctrl+C` in its window.
+
+**What it does not do.** It does not add videos; the person uses `queue add` or `queue add immich` in a terminal and the view shows them within a second.
 
 ## Reading output
 

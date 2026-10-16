@@ -2,17 +2,13 @@
 
 Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a worker when a video first needs one, using the first server type on your list that Hetzner has in stock, once you approve its hourly price. When the run ends it deletes the worker if `deleteAfterRun` is true, which is the default.
 
-Setup is one-time: build the controller, create a Hetzner API token, and run `remote setup`. Do **not** create a server in the Hetzner console; VideoOptimiser creates the worker through the API.
+Setup is one-time: create a Hetzner API token and run `remote setup`. Do **not** create a server in the Hetzner console; VideoOptimiser creates the worker through the API.
 
-## 1. Build the Windows controller
+The commands below assume you run them in the folder that holds `video-optimiser.exe`, as in the README's [Quick start](../README.md#quick-start). If you put the exe on `PATH`, drop the `.\`.
 
-Skip this step when you use the release zip: it already holds the executable and `scripts/bootstrap-remote-worker.sh`. From a source checkout, install the .NET 10 SDK, then run this from the repository root:
+## 1. What runs on the worker
 
-```powershell
-.\scripts\build.ps1
-```
-
-This creates and smoke-tests the Windows Native AOT executable at `artifacts\local\video-optimiser.exe`. The Windows executable is not copied to the worker; cloud-init runs `scripts/bootstrap-remote-worker.sh` there instead.
+The release zip holds `scripts/bootstrap-remote-worker.sh` beside the exe. The exe itself never goes to the worker: when VideoOptimiser creates one, cloud-init runs that script there.
 
 The bootstrap installs this pinned stack under `/opt/video-optimiser`:
 
@@ -27,7 +23,7 @@ It creates the password-disabled, non-sudo `videoopt` SSH user and the `/var/tmp
 ## 2. Run remote setup
 
 ```powershell
-.\artifacts\local\video-optimiser.exe remote setup --config .\video-optimiser.yaml
+.\video-optimiser.exe remote setup --config .\video-optimiser.yaml
 ```
 
 `remote setup` creates no worker and costs nothing. It sets up managed Hetzner workers only: with `lifecycle: "manual"` and a `host` set, it stops with exit `3` and points you to [Manual SSH lifecycle](#manual-ssh-lifecycle). If it cannot reach the Hetzner API or run `ssh-keygen`, it exits `4`. In order, it:
@@ -76,7 +72,7 @@ Create the worker? [y/N]
 - **The second line** is the most expensive one left. It appears only when that one costs more than the first.
 - **Fallbacks:** availability is only an indicator, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`). The next type and location is then tried without asking again: one `y` approves every candidate up to the second line's price.
 - **Declining:** any answer other than `y` or `yes`, or no input at all, creates nothing. The command prints `No worker was created.`, exits `0`, and leaves the jobs queued.
-- **Scripts** approve by piping the answer: `'y' | .\artifacts\local\video-optimiser.exe run --config .\video-optimiser.yaml`.
+- **Scripts** approve by piping the answer: `'y' | .\video-optimiser.exe run --config .\video-optimiser.yaml`.
 - **A worker that's already running** is reused without asking; it is already billing.
 
 Before each create request it prints the type, location and price, such as `Creating Hetzner cpx42 in hel1 (EUR 0.134/h incl. VAT).` If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No worker is left running.
@@ -153,7 +149,7 @@ The worker's type and location show in `worker status`.
 6. Validate the settings without creating a worker:
 
    ```powershell
-   .\artifacts\local\video-optimiser.exe config validate --config .\video-optimiser.yaml
+   .\video-optimiser.exe config validate --config .\video-optimiser.yaml
    ```
 
 </details>
@@ -163,9 +159,9 @@ The worker's type and location show in `worker status`.
 Normal processing creates the worker once you approve its price. To create it early and wait for the full toolchain build:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe worker create --config .\video-optimiser.yaml
-.\artifacts\local\video-optimiser.exe doctor --config .\video-optimiser.yaml
-.\artifacts\local\video-optimiser.exe worker status --config .\video-optimiser.yaml
+.\video-optimiser.exe worker create --config .\video-optimiser.yaml
+.\video-optimiser.exe doctor --config .\video-optimiser.yaml
+.\video-optimiser.exe worker status --config .\video-optimiser.yaml
 ```
 
 `doctor` checks the worker's tools, resources and workspace only while it is running. Without one, it checks the Hetzner token and API access and warns that the host checks were skipped. It follows `lifecycle` alone, like the `worker` commands: with `lifecycle: "hetzner"` and `mode: "local"` it still checks the token and API access, and warns (`ManagedWorkerBilling`) when a worker or its IPv4 address is left billing. It takes no lock, so it answers while a run is creating the worker.
@@ -177,7 +173,7 @@ During the first build, the controller prints phase-based bootstrapping percenta
 `worker create` deliberately leaves the worker running. Delete it explicitly if no processing command will use it:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe worker delete --config .\video-optimiser.yaml
+.\video-optimiser.exe worker delete --config .\video-optimiser.yaml
 ```
 
 ## 4. Process videos
@@ -185,16 +181,16 @@ During the first build, the controller prints phase-based bootstrapping percenta
 For the watch folders:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe queue add --config .\video-optimiser.yaml
-.\artifacts\local\video-optimiser.exe run --config .\video-optimiser.yaml
-.\artifacts\local\video-optimiser.exe queue list --config .\video-optimiser.yaml
+.\video-optimiser.exe queue add --config .\video-optimiser.yaml
+.\video-optimiser.exe run --config .\video-optimiser.yaml
+.\video-optimiser.exe queue list --config .\video-optimiser.yaml
 ```
 
 For one video, queue it, then run:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe queue add "D:\Videos\clip.mkv" --config .\video-optimiser.yaml
-.\artifacts\local\video-optimiser.exe run --config .\video-optimiser.yaml
+.\video-optimiser.exe queue add "D:\Videos\clip.mkv" --config .\video-optimiser.yaml
+.\video-optimiser.exe run --config .\video-optimiser.yaml
 ```
 
 `run` converts everything in the queue. `queue list` shows the order, `queue next <job-id>` puts a video first, and `queue hold <job-id>` keeps one out until `queue release <job-id>`.
@@ -202,7 +198,7 @@ For one video, queue it, then run:
 For an initial test with an empty queue, queue only one eligible video:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe queue add --first --config .\video-optimiser.yaml
+.\video-optimiser.exe queue add --first --config .\video-optimiser.yaml
 ```
 
 `--first` limits only newly found videos; it does not remove existing queued jobs. An empty `run` does not create a worker. With work to do and no worker running, `run` shows the price and asks `Create the worker? [y/N]` first; see [How the worker is chosen](#how-the-worker-is-chosen). Before that it prints where it will encode, such as `Encoding on a new Hetzner worker created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.`
@@ -236,13 +232,17 @@ A second `Ctrl+C` stops at once, and so does a first one when no video is conver
 
 The rerun follows a stage that is still running: it prints `Picked up the encode running on the worker.` (or `Picked up the CRF search running on the worker.`) and shows only what is new, not the log the earlier run already showed. If the encode finished in the meantime it prints `The encode on the worker had already finished.` and goes straight to the download, without uploading the original again. On a new worker it uploads and encodes again with the CRF it found. An upload or download stopped by `Ctrl+C` resumes where it stopped. A small recovery file and a worker-specific known-hosts file are stored beside the configured SQLite database; neither contains credentials.
 
+### Background runs
+
+A run started with `s` in the [full-screen view](tui.md) runs in the background, so closing the terminal doesn't stop it. Before it starts, it asks which worker converts (the one that is up, a new server from a list with hourly prices, or this PC) and whether to delete or keep the worker when the run ends. A new server is created before the run starts. Nothing is asked once it runs: change the worker's fate with `w` in the Activity pane, and stop the run with `x` or `X` there, or with `run stop` or `run stop --now`. A stop never cuts off the worker's delete.
+
 ### Kept workers
 
 Inspect or delete a kept worker with:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe worker status --config .\video-optimiser.yaml
-.\artifacts\local\video-optimiser.exe worker delete --config .\video-optimiser.yaml
+.\video-optimiser.exe worker status --config .\video-optimiser.yaml
+.\video-optimiser.exe worker delete --config .\video-optimiser.yaml
 ```
 
 The delete command verifies the exact server ID and ownership labels. It refuses ambiguous or unowned resources. When the worker is already gone from Hetzner, it says `The worker <name> is already gone from Hetzner; its record on this PC is removed.` and still deletes a leftover IPv4 address and the record.
@@ -266,7 +266,7 @@ When `deleteAfterRun` is enabled, a run that finishes deletes the worker, failed
 To try a failed video again, for example after its remote configuration changed, queue it as a new job. The failed job stays in `history`, which lists its ID, and the new job does not reuse its previous remote output or workspace:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
+.\video-optimiser.exe queue retry <job-id> --config .\video-optimiser.yaml
 ```
 
 ## 5. Finalise locally
@@ -274,7 +274,7 @@ To try a failed video again, for example after its remote configuration changed,
 Finalisation remains local and can happen after the worker has been deleted:
 
 ```powershell
-.\artifacts\local\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
+.\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
 ```
 
 The original videos remain untouched until finalisation succeeds.

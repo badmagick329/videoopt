@@ -1,6 +1,6 @@
 # Configuration
 
-Settings live in the YAML file that `config init` writes. This page covers the ones you are most likely to change. Remote encoding is in [remote-ssh.md](remote-ssh.md), and Immich is in [immich.md](immich.md).
+Settings live in the YAML file that `config init` writes. This page covers the ones you are most likely to change, and the tools it needs. Remote encoding is in [remote-ssh.md](remote-ssh.md), and Immich is in [immich.md](immich.md).
 
 ## Choose which videos to convert
 
@@ -90,3 +90,14 @@ FFmpeg cannot write AV1 into `.mov` or `.m4v`, so the AV1 is always an `.mp4` or
 `IMG_0897.MOV` becomes `IMG_0897.MP4`, so anything that tracked the old path, such as an editing catalogue or a media server's watch history, loses it.
 
 Audio is copied, except PCM, which is re-encoded to FLAC. FLAC is lossless and plays in browsers; 32-bit float PCM becomes 24-bit.
+
+## Tools
+
+| Tool | Needed for | Where to get it |
+| --- | --- | --- |
+| FFmpeg and ffprobe | Every setup | The "full" build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), or `winget install Gyan.FFmpeg` |
+| ab-av1 0.11.7 or newer | Encoding on your PC | `cargo install ab-av1 --locked`, or `ab-av1.exe` from its [releases](https://github.com/alexheretic/ab-av1/releases) |
+
+To encode on your PC, FFmpeg needs libsvtav1, libvmaf and libdav1d; the full builds above have all three. A remote worker installs its own ab-av1 and FFmpeg, so your PC then needs only FFmpeg and ffprobe, with libdav1d for validation.
+
+Put the tools on `PATH`, or set their paths under `tools:` in the config. `doctor` checks them.
