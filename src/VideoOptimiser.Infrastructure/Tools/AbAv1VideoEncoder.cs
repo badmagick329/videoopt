@@ -17,6 +17,10 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
         "--crf", crf.ToString(CultureInfo.InvariantCulture),
         // Container-specific data streams such as timecode tracks are not generally portable to the output container.
         "--enc", "map=-0:d",
+        // Every frame keeps its own timestamp. Writing MP4, ffmpeg otherwise forces the header's nominal frame rate, which a
+        // phone's variable-rate video only approximates: one at 30.01 fps on average but tagged 29.75 lost a frame every 4
+        // seconds, and validation failed it on packet count.
+        "--enc", "fps_mode=passthrough",
         // ffmpeg writes no source metadata unless told to. Without these the output loses its capture date
         // (creation_time), GPS (location) and the phone's make/model (com.android.* keys, which only
         // use_metadata_tags writes), and photo libraries such as Immich date and place it wrongly.

@@ -23,7 +23,9 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
         // CRFs are whole numbers throughout (jobs, manifests, encode). ab-av1 0.11 defaults svt-av1 to quarter steps.
         "--crf-increment", "1",
         "--samples", settings.CrfSearch.SampleCount.ToString(CultureInfo.InvariantCulture),
-        "--sample-duration", settings.CrfSearch.SampleDuration
+        "--sample-duration", settings.CrfSearch.SampleDuration,
+        // The same frames as the final encode (see AbAv1VideoEncoder), so each sample's VMAF and size predict it.
+        "--enc", "fps_mode=passthrough"
     ];
 
     public async Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)

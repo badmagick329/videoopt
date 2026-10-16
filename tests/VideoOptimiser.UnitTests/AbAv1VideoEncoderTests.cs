@@ -15,7 +15,10 @@ public sealed class AbAv1VideoEncoderTests
         CrfSearch = new CrfSearchSettings { MinCrf = 18, MaxCrf = 50, SampleCount = 5, SampleDuration = "20s" }
     };
 
-    /// <summary>Data streams are excluded and the source's metadata kept; each PCM audio stream is re-encoded to FLAC and the rest copied.</summary>
+    /// <summary>
+    /// Data streams are excluded, every frame keeps its timestamp, and the source's metadata is kept; each PCM audio stream is
+    /// re-encoded to FLAC and the rest copied.
+    /// </summary>
     [Theory]
     [InlineData(new int[0], new string[0])]
     [InlineData(new[] { 1, 3 }, new[] { "--enc", "c:a:1=flac", "--enc", "c:a:3=flac" })]
@@ -27,7 +30,7 @@ public sealed class AbAv1VideoEncoderTests
         [
             "encode", "--input", "C:\\video.mp4", "--output", "C:\\out.mp4",
             "--encoder", "libsvtav1", "--pix-format", "yuv420p10le", "--preset", "6",
-            "--crf", "30", "--enc", "map=-0:d",
+            "--crf", "30", "--enc", "map=-0:d", "--enc", "fps_mode=passthrough",
             "--enc", "map_metadata=0", "--enc", "movflags=+faststart+use_metadata_tags",
             .. flacArguments
         ];
