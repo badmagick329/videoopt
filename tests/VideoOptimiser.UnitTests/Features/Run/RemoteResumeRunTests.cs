@@ -60,7 +60,7 @@ public sealed class RemoteResumeRunTests : IDisposable
             "Converting 1 video.",
             "",
             "[1/1] movie.mp4 (19 B)",
-            "      Checking the output: streams, duration, savings and decode test...",
+            "      Checking the output: streams, duration, savings and decode test.",
             "      Ready to finalise: 100 B -> 50 B, 50.0% saved.",
             "Ready to finalise: 1.",
             $"1 video is ready to finalise: review it, then run 'video-optimiser finalize --ready --config \"{config}\"'."));

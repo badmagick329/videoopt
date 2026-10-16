@@ -98,8 +98,8 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         if (verifiedPartialLength < source.Length)
         {
             progress?.Report(JobProgress.Step(verifiedPartialLength > 0
-                ? $"Resuming the upload at {HumanReadableValues.FormatSize(verifiedPartialLength)} of {size}..."
-                : $"Uploading {size} to the worker..."));
+                ? $"Resuming the upload at {HumanReadableValues.FormatSize(verifiedPartialLength)} of {size}."
+                : $"Uploading {size} to the worker."));
         }
         // The retry lives here, not in SftpCoreAsync, because each attempt must resume from what reached the worker: resending
         // the same `put` would upload the whole original again. Each attempt gets its own monitor, so a rate never counts the stall.
@@ -123,8 +123,8 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             verifiedPartialLength = await VerifyPartialUploadAsync(sourcePath, partial, source.Length, progress, cancellationToken);
             if (verifiedPartialLength == source.Length) break;
             progress?.Report(JobProgress.Step(verifiedPartialLength > 0
-                ? $"Lost the connection to the worker; resuming the upload at {HumanReadableValues.FormatSize(verifiedPartialLength)} of {size}..."
-                : $"Lost the connection to the worker; uploading {size} again from the start..."));
+                ? $"Lost the connection to the worker; resuming the upload at {HumanReadableValues.FormatSize(verifiedPartialLength)} of {size}."
+                : $"Lost the connection to the worker; uploading {size} again from the start."));
         }
         var verify = await SshAsync($"test \"$(stat -c '%s' {Quote(partial)})\" = {source.Length.ToString(CultureInfo.InvariantCulture)} && test \"$(sha256sum {Quote(partial)} | cut -d' ' -f1)\" = {Quote(localHash.ToLowerInvariant())} && mv -f -- {Quote(partial)} {Quote(RemoteSourcePath)}", cancellationToken: cancellationToken);
         EnsureSuccess(verify, "Remote original verification");
@@ -215,8 +215,8 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             : 0;
         var size = HumanReadableValues.FormatSize(outputLength);
         progress?.Report(JobProgress.Step(partialStart > 0
-            ? $"Resuming the download at {HumanReadableValues.FormatSize(partialStart)} of {size}..."
-            : $"Downloading {size} from the worker..."));
+            ? $"Resuming the download at {HumanReadableValues.FormatSize(partialStart)} of {size}."
+            : $"Downloading {size} from the worker."));
         var started = _clock();
         await DownloadAsync(remoteOutput, partial, outputLength, partialStart, progress, cancellationToken);
         const string checkingDownload = "Checking the downloaded output's checksum.";

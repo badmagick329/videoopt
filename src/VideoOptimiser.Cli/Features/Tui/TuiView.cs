@@ -249,7 +249,7 @@ internal static class TuiView
     private static List<IRenderable> QueueRows(TuiModel m, int width, int capacity, bool focused)
     {
         var ordered = m.Ordered();
-        if (!m.Loaded) return [new Line().Flex("Reading the queue…", Theme.Of(Theme.Dim)).Build(width)];
+        if (!m.Loaded) return [new Line().Flex("Reading the queue.", Theme.Of(Theme.Dim)).Build(width)];
         if (ordered.Count == 0) return [new Line().Flex("The queue is empty.", Theme.Of(Theme.Dim)).Build(width)];
 
         var all = new List<IRenderable>();
@@ -311,7 +311,7 @@ internal static class TuiView
 
     // ---- worker -----------------------------------------------------------------------------
 
-    /// <summary>The pane, with what an action on the worker is doing now ("Creating the worker…") on its last row.</summary>
+    /// <summary>The pane, with what an action on the worker is doing now ("Creating the worker.") on its last row.</summary>
     private static List<IRenderable> WorkerRows(TuiModel m, int width, int capacity)
     {
         var rows = WorkerRowsCore(m, width, capacity);
@@ -329,7 +329,7 @@ internal static class TuiView
             new Line().Left($" {label,-13}", Theme.Of(Theme.Dim)).Flex(value, valueStyle ?? Theme.Of(Theme.Text)).Build(width);
 
         if (m.Worker.Lifecycle.Length == 0)
-            return [new Line().Left(" ○ ", Theme.Of(Theme.Dim)).Flex("Reading the worker…", Theme.Of(Theme.Dim)).Build(width)];
+            return [new Line().Left(" ○ ", Theme.Of(Theme.Dim)).Flex("Reading the worker.", Theme.Of(Theme.Dim)).Build(width)];
 
         // One line, with the reason: the lifecycle is the only thing that makes a worker managed.
         if (!m.Worker.Managed)
@@ -341,7 +341,7 @@ internal static class TuiView
             rows.Add(new Line().Left(" ○ ", Theme.Of(Theme.Dim)).Flex("No worker", Theme.Of(Theme.Soft, bold: true)).Build(width));
             rows.Add(new Line().Flex(view.NotCheckedReason is { } why
                 ? $"   couldn't check: {why}"
-                : view.Asking ? "   Asking Hetzner…" : "   Nothing is billing.", Theme.Of(view.NotCheckedReason is null ? Theme.Dim : Theme.Held)).Build(width));
+                : view.Asking ? "   Asking Hetzner." : "   Nothing is billing.", Theme.Of(view.NotCheckedReason is null ? Theme.Dim : Theme.Held)).Build(width));
             return [.. rows.Take(capacity)];
         }
 
@@ -360,7 +360,7 @@ internal static class TuiView
         if (view.Uptime(m.Now) is { } uptime) rows.Add(Pair("Uptime", HumanReadableValues.FormatDuration(uptime)));
         rows.Add(view.Price is { } price
             ? Pair("Price", $"{HourlyPrice.Format(price)} incl. VAT")
-            : Pair("Price", view.Asking ? "asking Hetzner…" : "unknown", Theme.Of(Theme.Dim)));
+            : Pair("Price", view.Asking ? "asking Hetzner" : "unknown", Theme.Of(Theme.Dim)));
         if (view.Cost(m.Now) is { } cost) rows.Add(Pair("Cost so far", TuiText.Eur(cost), Theme.Of(Theme.Text, bold: true)));
         if (view.NotCheckedReason is { } reason) rows.Add(Pair("Hetzner", $"couldn't check: {reason}", Theme.Of(Theme.Held)));
         return [.. rows.Take(capacity)];

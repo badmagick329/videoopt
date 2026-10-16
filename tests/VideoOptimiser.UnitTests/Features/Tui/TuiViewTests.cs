@@ -185,7 +185,7 @@ public sealed class TuiViewTests
     {
         var text = Text(TuiModel.Initial(Now, 140, 40, "jobs.db"));
 
-        text.Should().Contain("Reading the queue…").And.Contain("Reading the worker…");
+        text.Should().Contain("Reading the queue.").And.Contain("Reading the worker.");
     }
 
     [Fact]
@@ -199,7 +199,7 @@ public sealed class TuiViewTests
     /// <summary>The worker pane says what Hetzner could and couldn't tell, so a billing worker never looks like no worker.</summary>
     [Theory]
     [InlineData("none", "No worker", "Nothing is billing.")]
-    [InlineData("asking", "No worker", "Asking Hetzner…")]
+    [InlineData("asking", "No worker", "Asking Hetzner.")]
     [InlineData("failed", "No worker", "couldn't check: Hetzner timed out after 15 seconds.")]
     public void AManagedLifecycleWithNoWorkerSaysWhatItKnows(string state, string heading, string detail)
     {
@@ -406,8 +406,8 @@ public sealed class TuiViewTests
 
         var rows = Rows(model);
 
-        Row(rows, "Deleting the worker…").Should().NotBeNull();
-        rows[^1].Should().Contain("Deleting the worker…");
+        Row(rows, "Deleting the worker.").Should().NotBeNull();
+        rows[^1].Should().Contain("Deleting the worker.");
     }
 
     private static TuiModel Guide(int width, int height) => Busy(width, height) with { Help = true };

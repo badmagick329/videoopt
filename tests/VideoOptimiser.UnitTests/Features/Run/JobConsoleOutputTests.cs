@@ -37,15 +37,15 @@ public sealed class JobConsoleOutputTests : IDisposable
         text.Should().Be(string.Join('\n',
             "",
             "[1/1] PXL_20250531_041434717.mp4 (19 B)",
-            "      Finding the best CRF for VMAF 93 (2 test clips of 20s each)...",
+            "      Finding the best CRF for VMAF 93 (2 test clips of 20s each).",
             "        CRF 34   VMAF 92.55   size  46%   below target",
             "        CRF 18   VMAF 97.45   size 137%   passes, file too big",
             "        CRF 33   VMAF 92.81   size  50%   below target",
             "        CRF 32   VMAF 93.44   size  57%   passes, chosen",
             "      Chose CRF 32 in 1m 03s. Expected output: 37.1 MiB (57% of the original).",
-            "      Encoding at CRF 32, expected to take about 14 seconds...",
+            "      Encoding at CRF 32, expected to take about 14 seconds.",
             "      Encoded 49.2 MiB (75% of the original) in 0s.",
-            "      Checking the output: streams, duration, savings and decode test...",
+            "      Checking the output: streams, duration, savings and decode test.",
             "      Ready to finalise: 1002.4 MiB -> 287.3 MiB, 71.3% saved.",
             ""));
     }
@@ -62,21 +62,21 @@ public sealed class JobConsoleOutputTests : IDisposable
         text.Should().Be(string.Join('\n',
             "",
             "[1/1] PXL_20250531_041434717.mp4 (19 B)",
-            "      Uploading 1002.4 MiB to the worker...",
+            "      Uploading 1002.4 MiB to the worker.",
             "        41% of 1002.4 MiB, 45.2 MiB/s, about 13s left",
             "      Uploaded 1002.4 MiB in 23s, checksum verified.",
-            "      Finding the best CRF for VMAF 95 (2 test clips of 20s each)...",
+            "      Finding the best CRF for VMAF 95 (2 test clips of 20s each).",
             "        CRF 34   VMAF 95.02   size  19%   passes",
             "        CRF 18   VMAF 99.46   size  61%   passes",
             "        CRF 27   VMAF 97.72   size  33%   passes",
             "        CRF 29   VMAF 97.13   size  29%   passes, chosen",
             "      Chose CRF 29 in 7m 36s. Expected output: 284.9 MiB (29% of the original).",
-            "      Encoding at CRF 29, expected to take about 5 minutes...",
+            "      Encoding at CRF 29, expected to take about 5 minutes.",
             "        20%, 54 fps",
             "      Encoded 99.8 MiB (29% of the original) in 0s.",
-            "      Downloading 99.8 MiB from the worker...",
+            "      Downloading 99.8 MiB from the worker.",
             "      Downloaded 99.8 MiB in 30s, checksum verified.",
-            "      Checking the output: streams, duration, savings and decode test...",
+            "      Checking the output: streams, duration, savings and decode test.",
             "      Ready to finalise: 1002.4 MiB -> 287.3 MiB, 71.3% saved.",
             ""));
     }
@@ -163,7 +163,7 @@ public sealed class JobConsoleOutputTests : IDisposable
 
         public Task StageAsync(string sourcePath, string sourceFingerprint, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)
         {
-            progress?.Report(JobProgress.Step("Uploading 1002.4 MiB to the worker..."));
+            progress?.Report(JobProgress.Step("Uploading 1002.4 MiB to the worker."));
             progress?.Report(JobProgress.Detail("41% of 1002.4 MiB, 45.2 MiB/s, about 13s left"));
             progress?.Report(JobProgress.Step("Uploaded 1002.4 MiB in 23s, checksum verified."));
             return Task.CompletedTask;
@@ -188,7 +188,7 @@ public sealed class JobConsoleOutputTests : IDisposable
 
         public async Task RetrieveOutputAsync(string outputPath, int attempt, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)
         {
-            progress?.Report(JobProgress.Step("Downloading 99.8 MiB from the worker..."));
+            progress?.Report(JobProgress.Step("Downloading 99.8 MiB from the worker."));
             await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
             progress?.Report(JobProgress.Step("Downloaded 99.8 MiB in 30s, checksum verified."));
         }

@@ -335,7 +335,7 @@ internal sealed class TuiActions(
 
         const int shown = 6;
         var lines = ready.Take(shown).Select(FinalizationConsole.DescribeReady).ToList();
-        if (ready.Length > shown) lines.Add($"…and {ready.Length - shown} more.");
+        if (ready.Length > shown) lines.Add($"And {ready.Length - shown} more.");
         if (ready.Where(job => job.SourceKind == JobSourceKind.File).ToArray() is { Length: > 0 } fileJobs) lines.Add(FinalizationConsole.DescribeOriginalAction(settings.Original, fileJobs));
         if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) lines.Add("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
 

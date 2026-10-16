@@ -118,7 +118,7 @@ public sealed class JobProcessor(
                     ? "testing the whole video"
                     : $"{quality.CrfSearch.SampleCount.ToString(CultureInfo.InvariantCulture)} test {(quality.CrfSearch.SampleCount == 1 ? "clip" : "clips")} of {quality.CrfSearch.SampleDuration} each";
                 var saving = cap.SetByMinimumBytes ? $" that saves {cap.MinimumText}" : string.Empty;
-                progress?.Report(JobProgress.Step($"Finding the best CRF for VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)}{saving} ({samples})..."));
+                progress?.Report(JobProgress.Step($"Finding the best CRF for VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)}{saving} ({samples})."));
                 var crfResult = await session.SearchCrfAsync(path, quality, Translating(progress, AbAv1Stage.CrfSearch, quality), cancellationToken);
                 job.Crf = crfResult.Crf;
                 // The settings that chose this CRF, so calibrate counts the eventual conversion only under them.
@@ -159,7 +159,7 @@ public sealed class JobProcessor(
                     await jobs.UpdateAsync(databasePath, job, cancellationToken);
                     Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
                     var crf = job.Crf!.Value.ToString(CultureInfo.InvariantCulture);
-                    progress?.Report(JobProgress.Step(prediction is null ? $"Encoding at CRF {crf}..." : $"Encoding at CRF {crf}, expected to take about {prediction.Taking}..."));
+                    progress?.Report(JobProgress.Step(prediction is null ? $"Encoding at CRF {crf}." : $"Encoding at CRF {crf}, expected to take about {prediction.Taking}."));
                     var encodeResult = await session.EncodeAsync(path, outputPath, job.Crf.Value, quality, job.Attempt, PcmAudioStreams(media), Translating(progress, AbAv1Stage.Encode, quality), cancellationToken);
                     encodedPath = encodeResult.OutputPath;
                     if (session.IsRemote)
@@ -181,7 +181,7 @@ public sealed class JobProcessor(
             job.ResumeStatus = null;
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
             var decodeTest = string.Equals(settings.Validation.DecodeTest, DecodeTestModes.None, StringComparison.OrdinalIgnoreCase) ? string.Empty : " and decode test";
-            progress?.Report(JobProgress.Step($"Checking the output: streams, duration, savings{decodeTest}..."));
+            progress?.Report(JobProgress.Step($"Checking the output: streams, duration, savings{decodeTest}."));
             manifest.Validation = await validator.ValidateAsync(manifest, settings, cancellationToken);
             await manifests.SaveAsync(manifest, cancellationToken);
             job.ValidationPassed = manifest.Validation.Passed;

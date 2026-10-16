@@ -364,7 +364,7 @@ public sealed class ImmichHttpClient : IImmichClient
                 _ => null
             };
             if (string.IsNullOrWhiteSpace(text)) return ".";
-            return ": " + (text.Length > 300 ? text[..300] + "..." : text);
+            return ": " + (text.Length > 300 ? text[..300] + "…" : text);
         }
         catch (Exception exception) when (exception is JsonException or IOException or HttpRequestException)
         {

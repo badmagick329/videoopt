@@ -52,10 +52,10 @@ public sealed class JobProcessorTests : IDisposable
         stored.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings));
         encoder.CallCount.Should().Be(1);
         Steps(reported).Should().Equal(
-            "Finding the best CRF for VMAF 95.5 (2 test clips of 20s each)...",
+            "Finding the best CRF for VMAF 95.5 (2 test clips of 20s each).",
             "Chose CRF 42 in 0s.",
-            "Encoding at CRF 42...",
-            "Checking the output: streams, duration, savings...",
+            "Encoding at CRF 42.",
+            "Checking the output: streams, duration, savings.",
             "Ready to finalise: 100 B -> 50 B, 50.0% saved.");
     }
 
@@ -200,8 +200,8 @@ public sealed class JobProcessorTests : IDisposable
         // The stored CRF skips the search, so there is no search line and no ab-av1 estimate to quote.
         Steps(reported).Should().Equal(
             "Deleted the unfinished AV1 from the stopped encode.",
-            "Encoding at CRF 42...",
-            "Checking the output: streams, duration, savings and decode test...",
+            "Encoding at CRF 42.",
+            "Checking the output: streams, duration, savings and decode test.",
             "Ready to finalise: 100 B -> 50 B, 50.0% saved.");
         reported.Last().Tone.Should().Be(JobTone.Success);
         reported.Where(line => line.Tone != JobTone.None).Should().ContainSingle("only the outcome line carries a tone");
@@ -417,7 +417,7 @@ public sealed class JobProcessorTests : IDisposable
         stored.CompletedUtc.Should().NotBeNull();
         // The header names the file, so the outcome line does not repeat it, and nothing follows the outcome line.
         Steps(reported).Should().Equal(
-            "Finding the best CRF for VMAF 97 that saves 100MiB (2 test clips of 20s each)...",
+            "Finding the best CRF for VMAF 97 that saves 100MiB (2 test clips of 20s each).",
             $"Not worth converting: {stored.FailureMessage}");
         reported.Last().Tone.Should().Be(JobTone.Warning);
     }
@@ -436,7 +436,7 @@ public sealed class JobProcessorTests : IDisposable
         result.Job.QualityFingerprint.Should().BeNull("a failed search judged nothing about the quality bar");
         File.ReadAllLines(log).Should().Equal("first ab-av1 line", "Error: ffmpeg exploded");
         Steps(reported).Should().Equal(
-            "Finding the best CRF for VMAF 95 (2 test clips of 20s each)...",
+            "Finding the best CRF for VMAF 95 (2 test clips of 20s each).",
             "Failed during the CRF search: ab-av1 crf-search failed with exit code 1: ffmpeg exploded",
             $"Full log: {log}");
         result.Job.FailureCategory.Should().Be("CrfSearchFailed");
@@ -492,8 +492,8 @@ public sealed class JobProcessorTests : IDisposable
         session.Calls.Should().Equal("Sweep", "HasFinishedEncode 1", "Retrieve 1", "Cleanup");
         result.Job.Attempt.Should().Be(1, "the finished encode is the one fetched, not a new attempt");
         Steps(reported).Should().Equal(saysItFinished
-            ? ["The encode on the worker had already finished.", "Checking the output: streams, duration, savings and decode test...", "Ready to finalise: 100 B -> 50 B, 50.0% saved."]
-            : ["Checking the output: streams, duration, savings and decode test...", "Ready to finalise: 100 B -> 50 B, 50.0% saved."]);
+            ? ["The encode on the worker had already finished.", "Checking the output: streams, duration, savings and decode test.", "Ready to finalise: 100 B -> 50 B, 50.0% saved."]
+            : ["Checking the output: streams, duration, savings and decode test.", "Ready to finalise: 100 B -> 50 B, 50.0% saved."]);
     }
 
     /// <summary>

@@ -186,8 +186,8 @@ public sealed class HumanOutputConsoleTests
         console.Report(Checked(90, 9));
 
         output.ToString().Should().Be(
-            "Checked 55 files so far (5 probed with ffprobe)...\n" +
-            "Checked 90 files so far (9 probed with ffprobe)...\n");
+            "Checked 55 files so far (5 probed with ffprobe).\n" +
+            "Checked 90 files so far (9 probed with ffprobe).\n");
     }
 
     [Fact]

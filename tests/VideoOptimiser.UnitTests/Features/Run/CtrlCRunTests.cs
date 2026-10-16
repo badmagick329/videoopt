@@ -41,7 +41,7 @@ public sealed class CtrlCRunTests : IDisposable
         var jobs = await QueueJobsAsync(_repository, DatabasePath, 2);
         _processor.During[0] = progress =>
         {
-            progress!.Report(JobProgress.Step("Checking the AV1..."));
+            progress!.Report(JobProgress.Step("Checking the AV1."));
             _stop.Press();
             return Task.CompletedTask;
         };
@@ -53,9 +53,9 @@ public sealed class CtrlCRunTests : IDisposable
             "Converting 2 videos.",
             "",
             "[1/2] 1.mp4",
-            "      Encoding...",
+            "      Encoding.",
             "        41%, 63 fps, about 7m 36s left",
-            "      Checking the AV1...",
+            "      Checking the AV1.",
             "Stopping after this video. Press Ctrl+C again to stop now.",
             "      Ready to finalise.",
             "",
@@ -83,7 +83,7 @@ public sealed class CtrlCRunTests : IDisposable
             "Converting 1 video.",
             "",
             "[1/1] 1.mp4",
-            "      Encoding...",
+            "      Encoding.",
             "        41%, 63 fps, about 7m 36s left",
             "Stopping after this video (the encode has about 7m 36s left). Press Ctrl+C again to stop now.",
             "      Ready to finalise.",
@@ -106,7 +106,7 @@ public sealed class CtrlCRunTests : IDisposable
             "Converting 3 videos.",
             "",
             "[1/3] 1.mp4",
-            "      Encoding...",
+            "      Encoding.",
             "        41%, 63 fps, about 7m 36s left",
             "Stopping after this video (the encode has about 7m 36s left). Press Ctrl+C again to stop now.",
             "",

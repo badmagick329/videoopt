@@ -22,7 +22,7 @@ internal sealed class ImmichSearchConsole(TextWriter output, Func<DateTimeOffset
         _lastLineAt ??= now;
         if (now - _lastLineAt < QueueDiscoverConsole.ProgressInterval) return;
         _lastLineAt = now;
-        output.WriteLine($"Searched {searched} Immich videos so far...");
+        output.WriteLine($"Searched {searched} Immich videos so far.");
         WroteLines = true;
     }
 }

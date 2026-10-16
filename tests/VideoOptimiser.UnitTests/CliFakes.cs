@@ -124,7 +124,7 @@ internal sealed class ScriptedRunProcessor(bool remote = false) : IJobProcessor
         if (ReportsEncoding)
         {
             await WriteAsync(databasePath, job, JobStatus.Encoding);
-            progress?.Report(JobProgress.Step("Encoding..."));
+            progress?.Report(JobProgress.Step("Encoding."));
             progress?.Report(JobProgress.Detail("41%, 63 fps, about 7m 36s left") with { TimeLeft = new TimeSpan(0, 7, 36) });
         }
         if (During.TryGetValue(index, out var during)) await during(progress);

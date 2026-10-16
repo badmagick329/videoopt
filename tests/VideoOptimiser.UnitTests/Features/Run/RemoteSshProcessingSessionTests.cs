@@ -98,7 +98,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", progress);
 
         progress.Lines.Should().Equal(
-            JobProgress.Step("Resuming the upload at 40 B of 100 B..."),
+            JobProgress.Step("Resuming the upload at 40 B of 100 B."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
         runner.Requests.Should().ContainSingle(request => request.FileName == "sftp" && request.StandardInput!.StartsWith("reput ", StringComparison.Ordinal));
         runner.Requests.SelectMany(request => request.Arguments).Should().NotContain(argument => argument.Contains("rm -f --", StringComparison.Ordinal));
@@ -116,8 +116,8 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
 
         runner.Transfers.Should().Equal("put", "reput");
         progress.Lines.Should().Equal(
-            JobProgress.Step("Uploading 100 B to the worker..."),
-            JobProgress.Step("Lost the connection to the worker; resuming the upload at 40 B of 100 B..."),
+            JobProgress.Step("Uploading 100 B to the worker."),
+            JobProgress.Step("Lost the connection to the worker; resuming the upload at 40 B of 100 B."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
     }
 
@@ -137,8 +137,8 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Transfers.Should().Equal("put", "put");
         runner.PartialRemovedAfterDrop.Should().BeTrue();
         progress.Lines.Should().Equal(
-            JobProgress.Step("Uploading 100 B to the worker..."),
-            JobProgress.Step("Lost the connection to the worker; uploading 100 B again from the start..."),
+            JobProgress.Step("Uploading 100 B to the worker."),
+            JobProgress.Step("Lost the connection to the worker; uploading 100 B again from the start."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
     }
 
@@ -155,7 +155,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Transfers.Should().Equal("put");
         runner.Verified.Should().BeTrue();
         progress.Lines.Should().Equal(
-            JobProgress.Step("Uploading 100 B to the worker..."),
+            JobProgress.Step("Uploading 100 B to the worker."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
     }
 
@@ -202,8 +202,8 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
 
         runner.Transfers.Should().Equal("put", "reput");
         progress.Lines.Should().Equal(
-            JobProgress.Step("Uploading 100 B to the worker..."),
-            JobProgress.Step("Lost the connection to the worker; resuming the upload at 40 B of 100 B..."),
+            JobProgress.Step("Uploading 100 B to the worker."),
+            JobProgress.Step("Lost the connection to the worker; resuming the upload at 40 B of 100 B."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
     }
 
@@ -291,7 +291,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Requests[transfer].StandardInput.Should().StartWith("put ");
         runner.Requests.Should().NotContain(request => request.StandardInput != null && request.StandardInput.StartsWith("reput ", StringComparison.Ordinal));
         progress.Lines.Should().Equal(
-            JobProgress.Step("Uploading 100 B to the worker..."),
+            JobProgress.Step("Uploading 100 B to the worker."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
     }
 
@@ -306,7 +306,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         await CreateSession(Guid.NewGuid(), runner, clock: new FakeClock()).StageAsync(source, "fingerprint", progress);
 
         progress.Lines.Should().Equal(
-            JobProgress.Step("Uploading 100 B to the worker..."),
+            JobProgress.Step("Uploading 100 B to the worker."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
         runner.Requests[0].Arguments[^1].Should().Contain("df -B1 --output=avail").And.NotContain("df -PB1");
         runner.Requests.Should().Contain(request => request.FileName == "sftp" && request.StandardInput!.StartsWith("put ", StringComparison.Ordinal));
@@ -325,7 +325,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
 
         // Ticks are 5 s apart: nothing at 5 s, the first line at 10 s, nothing at 15 s, the second at 20 s, nothing at 25 s.
         progress.Lines.Should().Equal(
-            JobProgress.Step("Uploading 1.0 MiB to the worker..."),
+            JobProgress.Step("Uploading 1.0 MiB to the worker."),
             JobProgress.Detail("25% of 1.0 MiB, 25.6 KiB/s, about 30s left"),
             JobProgress.Detail("50% of 1.0 MiB, 25.6 KiB/s, about 20s left"),
             JobProgress.Step("Uploaded 1.0 MiB in 30s, checksum verified."));
@@ -499,7 +499,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         await CreateSession(Guid.NewGuid(), new DownloadRunner(Output, Good), source).RetrieveOutputAsync(Output, 1, progress);
 
         progress.Lines.Should().Equal(
-            JobProgress.Step("Resuming the download at 5 B of 15 B..."),
+            JobProgress.Step("Resuming the download at 5 B of 15 B."),
             JobProgress.Step("Downloaded 15 B in 0s, checksum verified."));
         File.ReadAllBytes(Output).Should().Equal(Good);
     }
@@ -517,7 +517,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
 
         await CreateSession(Guid.NewGuid(), new DownloadRunner(Output, Good), source).RetrieveOutputAsync(Output, 1, progress);
 
-        progress.Lines[0].Should().Be(JobProgress.Step("Downloading 15 B from the worker..."));
+        progress.Lines[0].Should().Be(JobProgress.Step("Downloading 15 B from the worker."));
         File.ReadAllBytes(Output).Should().Equal(Good);
     }
 
@@ -532,7 +532,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         await CreateSession(Guid.NewGuid(), runner, source).RetrieveOutputAsync(Output, 1, progress);
 
         progress.Lines.Should().Equal(
-            JobProgress.Step("Downloading 15 B from the worker..."),
+            JobProgress.Step("Downloading 15 B from the worker."),
             JobProgress.Detail("Checksum mismatch; downloading again."),
             JobProgress.Step("Downloaded 15 B in 0s, checksum verified."));
         runner.Transfers.Should().Be(2);

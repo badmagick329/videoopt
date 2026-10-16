@@ -217,7 +217,7 @@ internal static partial class TuiUpdate
     /// </summary>
     private static TuiModel ConfirmQuit(TuiModel m)
     {
-        var going = m.Busy.Values.Select(text => text.TrimEnd('…')).Order(StringComparer.Ordinal).ToArray();
+        var going = m.Busy.Values.Select(text => text.TrimEnd('.')).Order(StringComparer.Ordinal).ToArray();
         var (question, detail) = going.Length == 1
             ? ($"{going[0]} is still going.", "Quitting now stops it partway. It's better to wait for it to finish.")
             : ($"{going.Length} actions are still going.", $"{string.Join("; ", going)}. Quitting now stops them partway. It's better to wait for them to finish.");
@@ -283,7 +283,7 @@ internal static partial class TuiUpdate
         if (effect.BusyKey is { } key)
         {
             if (m.Busy.TryGetValue(key, out var working)) return Told(m, working);
-            m = m with { Busy = m.Busy.SetItem(key, effect.BusyText ?? "Working…") };
+            m = m with { Busy = m.Busy.SetItem(key, effect.BusyText ?? "Working.") };
         }
         return new TuiStep(m, [effect]);
     }

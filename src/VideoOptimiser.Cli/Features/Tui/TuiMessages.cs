@@ -57,7 +57,7 @@ internal abstract record TuiEffect
     /// </summary>
     public virtual string? BusyKey => null;
 
-    /// <summary>What the footer says while the effect is out, such as "Creating the worker…".</summary>
+    /// <summary>What the footer says while the effect is out, such as "Creating the worker.".</summary>
     public virtual string? BusyText => null;
 }
 
@@ -78,12 +78,12 @@ internal sealed record QueueActionEffect(QueueAction Action, Guid Id, string Nam
 
     public override string BusyText => Action switch
     {
-        QueueAction.Hold => $"Holding {Name}…",
-        QueueAction.Release => $"Releasing {Name}…",
-        QueueAction.Next => $"Moving {Name} to the front…",
-        QueueAction.Drop => $"Dropping {Name}…",
-        QueueAction.Reject => $"Rejecting {Name}…",
-        _ => $"Queueing {Name} again…"
+        QueueAction.Hold => $"Holding {Name}.",
+        QueueAction.Release => $"Releasing {Name}.",
+        QueueAction.Next => $"Moving {Name} to the front.",
+        QueueAction.Drop => $"Dropping {Name}.",
+        QueueAction.Reject => $"Rejecting {Name}.",
+        _ => $"Queueing {Name} again."
     };
 }
 
@@ -91,19 +91,19 @@ internal sealed record QueueActionEffect(QueueAction Action, Guid Id, string Nam
 internal sealed record LoadWorkerOptions(WorkerOptionsPurpose Purpose) : TuiEffect
 {
     public override string BusyKey => "worker";
-    public override string BusyText => "Asking Hetzner for the servers…";
+    public override string BusyText => "Asking Hetzner for the servers.";
 }
 
 internal sealed record CreateWorker(RemoteWorkerCreationOption Option) : TuiEffect
 {
     public override string BusyKey => "worker";
-    public override string BusyText => "Creating the worker…";
+    public override string BusyText => "Creating the worker.";
 }
 
 internal sealed record DeleteWorker : TuiEffect
 {
     public override string BusyKey => "worker";
-    public override string BusyText => "Deleting the worker…";
+    public override string BusyText => "Deleting the worker.";
 }
 
 /// <summary>What a started run needs, all answered before it launches: a server to create first (null: none), the worker's fate and the mode flag (null: the config's).</summary>
@@ -112,19 +112,19 @@ internal sealed record StartPlan(RemoteWorkerCreationOption? Create, WorkerFateC
 internal sealed record StartRun(StartPlan Plan) : TuiEffect
 {
     public override string BusyKey => "run";
-    public override string BusyText => Plan.Create is null ? "Starting the run…" : "Creating the worker, then starting the run…";
+    public override string BusyText => Plan.Create is null ? "Starting the run." : "Creating the worker, then starting the run.";
 }
 
 internal sealed record StopRun(bool Now) : TuiEffect
 {
     public override string BusyKey => "stop";
-    public override string BusyText => Now ? "Asking the run to stop now…" : "Asking the run to stop after this video…";
+    public override string BusyText => Now ? "Asking the run to stop now." : "Asking the run to stop after this video.";
 }
 
 internal sealed record SetWorkerFate(WorkerFateChoice Fate) : TuiEffect
 {
     public override string BusyKey => "fate";
-    public override string BusyText => "Changing what happens to the worker…";
+    public override string BusyText => "Changing what happens to the worker.";
 }
 
 internal sealed record OpenFile(Guid Id, bool Original, string Name) : TuiEffect;
@@ -133,13 +133,13 @@ internal sealed record OpenFile(Guid Id, bool Original, string Name) : TuiEffect
 internal sealed record PrepareFinalise(Guid? Id) : TuiEffect
 {
     public override string BusyKey => "finalise";
-    public override string BusyText => "Reading what is ready to finalise…";
+    public override string BusyText => "Reading what is ready to finalise.";
 }
 
 internal sealed record FinaliseVideos(IReadOnlyList<Guid> Ids) : TuiEffect
 {
     public override string BusyKey => "finalise";
-    public override string BusyText => "Finalising…";
+    public override string BusyText => "Finalising.";
 }
 
 /// <summary>The model after a message, and what it asks to be done.</summary>

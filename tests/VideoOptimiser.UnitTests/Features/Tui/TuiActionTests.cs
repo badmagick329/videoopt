@@ -554,7 +554,7 @@ public sealed class TuiActionTests : IDisposable
 
         prepared.Confirm!.Question.Should().Be("Finalise 8 videos?");
         var lines = prepared.Confirm.Detail.Split('\n');
-        lines.Should().HaveCount(8).And.Contain("…and 2 more.");
+        lines.Should().HaveCount(8).And.Contain("And 2 more.");
         prepared.Confirm.OnYes.Should().BeOfType<FinaliseVideos>().Which.Ids.Should().HaveCount(8);
     }
 

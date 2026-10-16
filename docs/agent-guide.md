@@ -38,7 +38,7 @@ Create the worker? [y/N]
 
 - `y` covers the fallbacks too, up to the second line's price. `N` or Enter creates nothing, prints `No worker was created.`, exits `0` and leaves the jobs queued.
 - A run that reuses a running worker never asks; it is already billing.
-- A new worker prints `Bootstrapping the worker: ... takes several minutes.`, then `Bootstrapping: P%, <stage>...`, then `Worker ready after <duration>.`. `Still waiting for the worker's SSH (...)` appears only after 3 minutes. It is still waiting, not failing; the run stops by itself at `hetzner.bootstrapTimeout`.
+- A new worker prints `Bootstrapping the worker: ... takes several minutes.`, then `Bootstrapping: P%, <stage>.`, then `Worker ready after <duration>.`. `Still waiting for the worker's SSH (...)` appears only after 3 minutes. It is still waiting, not failing; the run stops by itself at `hetzner.bootstrapTimeout`.
 - `--local` and `--remote` on `run` and `immich run` set the mode for that run only. `--local` encodes free on this PC. Tell the person to use the flag, not to edit `processing.mode`.
 - The first line of a run, `Encoding on ...`, and `doctor`'s `EncodingLocation` say where encoding runs. Have the person read it before the run goes on; if it differs from what they expect, they stop it with `Ctrl+C`.
 
@@ -58,7 +58,7 @@ A run that finishes follows `deleteAfterRun` alone, failed videos included. A ke
 
 Folders:
 
-1. `queue add` queues eligible videos from the watch folders (`--first` queues one, for a first trial; `queue add <file>` queues one file, and `--force` skips the rules). It prints `Queued: N.` plus the other counts that are not zero (`Already queued`, `Held`, `Ready to finalise`, ...), and `Checked N files so far ...` every 10 seconds on a large folder, which is progress. The starter rules match only large H.264 files at 1080p to 1440p and at 4K or above, so phone footage (HEVC) needs a rule change first; `calibrate` shows what the rules leave out.
+1. `queue add` queues eligible videos from the watch folders (`--first` queues one, for a first trial; `queue add <file>` queues one file, and `--force` skips the rules). It prints `Queued: N.` plus the other counts that are not zero (`Already queued`, `Held`, `Ready to finalise`, ...), and `Checked N files so far (M probed with ffprobe).` every 10 seconds on a large folder, which is progress. The starter rules match only large H.264 files at 1080p to 1440p and at 4K or above, so phone footage (HEVC) needs a rule change first; `calibrate` shows what the rules leave out.
 2. `run` converts every queued video, Immich ones included, and passes over held ones. A video can take an hour or more on a PC. The person can watch from a second window with `status` or `queue list`, and `queue hold`, `queue release`, `queue next` and `queue add` take effect from the run's next video.
 3. They review the AV1s, then `finalize --ready` (**warn**). In the full-screen view's Review pane, `a` opens each AV1, `f` / `F` finalise and `r` rejects one they don't want.
 
@@ -129,18 +129,18 @@ One block per video, then a tally of non-zero outcomes (`Ready to finalise: 4. N
 
 ```text
 [2/5] clip.mp4 (1002.4 MiB)
-      Uploading 1002.4 MiB to the worker...
+      Uploading 1002.4 MiB to the worker.
       Uploaded 1002.4 MiB in 23s, checksum verified.
-      Finding the best CRF for VMAF 97 (2 test clips of 20s each)...
+      Finding the best CRF for VMAF 97 (2 test clips of 20s each).
         CRF 34   VMAF 95.02   size  19%   below target
         CRF 29   VMAF 97.13   size  29%   passes, chosen
       Chose CRF 29 in 7m 36s. Expected output: 284.9 MiB (29% of the original).
-      Encoding at CRF 29, expected to take about 5 minutes...
+      Encoding at CRF 29, expected to take about 5 minutes.
         20%, 54 fps, about 1m 06s left
       Encoded 285.1 MiB (29% of the original) in 5m 02s.
-      Downloading 285.1 MiB from the worker...
+      Downloading 285.1 MiB from the worker.
       Downloaded 285.1 MiB in 30s, checksum verified.
-      Checking the output: streams, duration, savings and decode test...
+      Checking the output: streams, duration, savings and decode test.
       Ready to finalise: 1002.4 MiB -> 287.3 MiB, 71.3% saved.
 ```
 

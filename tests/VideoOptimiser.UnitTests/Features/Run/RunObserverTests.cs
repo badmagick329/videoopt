@@ -24,7 +24,7 @@ public sealed class RunObserverTests
         sink.Report(JobProgress.Tool("a"));
         _time.Advance(TimeSpan.FromMilliseconds(400));
         sink.Report(JobProgress.Tool("b"));
-        sink.Report(JobProgress.Step("Encoding..."));
+        sink.Report(JobProgress.Step("Encoding."));
         sink.Report(JobProgress.Outcome(JobTone.Success, "Ready to finalise.") with { TimeLeft = TimeSpan.FromSeconds(30) });
         _time.Advance(TimeSpan.FromMilliseconds(700));
         sink.Report(JobProgress.Tool("c"));
@@ -32,7 +32,7 @@ public sealed class RunObserverTests
         sink.Report(JobProgress.Tool("d"));
 
         _log.Events.Select(entry => entry.Kind).Should().Equal(RunEventKind.ConversionStarted, RunEventKind.Progress, RunEventKind.Progress, RunEventKind.Progress, RunEventKind.Progress);
-        _log.Events.Skip(1).Select(entry => entry.Text).Should().Equal("a", "Encoding...", "Ready to finalise.", "c");
+        _log.Events.Skip(1).Select(entry => entry.Text).Should().Equal("a", "Encoding.", "Ready to finalise.", "c");
         _log.Events[0].Should().Match<RunEvent>(entry => entry.Count == 2 && entry.Flag == false);
         _log.Events[3].Should().Match<RunEvent>(entry => entry.Progress == "Step" && entry.Tone == "Success" && entry.TimeLeft == TimeSpan.FromSeconds(30));
     }
@@ -64,7 +64,7 @@ public sealed class RunObserverTests
 
         tee.VideosHeld(2);
         var sink = tee.ConversionStarted(1, workerUp: true);
-        sink.Report(JobProgress.Step("Encoding..."));
+        sink.Report(JobProgress.Step("Encoding."));
         tee.WorkerDeleting();
         var exitCode = tee.RunFailed(new InvalidOperationException("boom"));
 
@@ -72,7 +72,7 @@ public sealed class RunObserverTests
         string[] events = ["VideosHeld:2", "ConversionStarted:1,workerUp=True", "WorkerDeleting", "RunFailed"];
         primary.Events.Should().Equal(events);
         secondary.Events.Should().Equal(events);
-        primary.ProgressTaken.Should().Equal("Encoding...");
-        secondary.ProgressTaken.Should().Equal("Encoding...");
+        primary.ProgressTaken.Should().Equal("Encoding.");
+        secondary.ProgressTaken.Should().Equal("Encoding.");
     }
 }

@@ -5,7 +5,9 @@
 
 - In the full-screen view, creating or deleting a Hetzner worker, and starting a run on a new server, failed with "The remote SSH lifecycle is not configured for Hetzner" when `processing.mode` is `local`. They now work in any mode, as the `worker` commands do.
 - `r` in the Worker pane now says when Hetzner has answered, or why it couldn't be asked, however long Hetzner takes.
-- Long lines in the Activity log wrap instead of being cut off with `…`.
+- Long lines in the Activity log wrap onto the next line instead of being cut off.
+- Progress messages such as `Uploading 507.2 MiB to the worker.` and the full-screen view's `Creating the worker.` end with a full stop instead of `...` or `…`. An ellipsis now only means text was cut off to fit.
+- A running worker's price showed as unknown in the full-screen view, `status` and `worker status`, because Hetzner moved where it names a server's location. The price shows again.
 
 ## [0.9.0] - 2026-10-16
 ### The full-screen view

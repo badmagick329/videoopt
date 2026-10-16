@@ -140,11 +140,11 @@ public sealed class TuiActionKeysTests
         var first = Choose(model, Letter('d'), Letter('y'));
 
         first.Effects.Should().Equal(new QueueActionEffect(QueueAction.Drop, Id(1), "clip-001.mp4"));
-        first.Model.Busy.Should().ContainKey($"queue:{Id(1):N}").WhoseValue.Should().Be("Dropping clip-001.mp4…");
+        first.Model.Busy.Should().ContainKey($"queue:{Id(1):N}").WhoseValue.Should().Be("Dropping clip-001.mp4.");
 
         var second = Choose(first.Model, Letter('h'));
         second.Effects.Should().BeEmpty();
-        Notice(second).Should().Be("Dropping clip-001.mp4…");
+        Notice(second).Should().Be("Dropping clip-001.mp4.");
 
         // Another video is another thing.
         Choose(After(first.Model, Snap(Quiet([Queued(1), Queued(2)])), Press(ConsoleKey.DownArrow)), Letter('h')).Effects.Should().ContainSingle();
@@ -160,9 +160,9 @@ public sealed class TuiActionKeysTests
         var step = Update(model, Letter('c'));
 
         step.Effects.Should().Equal(new LoadWorkerOptions(WorkerOptionsPurpose.Create));
-        step.Model.Busy["worker"].Should().Be("Asking Hetzner for the servers…");
+        step.Model.Busy["worker"].Should().Be("Asking Hetzner for the servers.");
         // A second press while the list is coming is refused with the same words.
-        Notice(Update(step.Model, Letter('c'))).Should().Be("Asking Hetzner for the servers…");
+        Notice(Update(step.Model, Letter('c'))).Should().Be("Asking Hetzner for the servers.");
     }
 
     [Fact]
@@ -194,7 +194,7 @@ public sealed class TuiActionKeysTests
         var chosen = Choose(model, Press(ConsoleKey.DownArrow), Press(ConsoleKey.DownArrow), Enter);
         chosen.Effects.Should().Equal(new CreateWorker(Cx53));
         chosen.Model.Choice.Should().BeNull();
-        chosen.Model.Busy["worker"].Should().Be("Creating the worker…");
+        chosen.Model.Busy["worker"].Should().Be("Creating the worker.");
     }
 
     [Fact]
@@ -236,7 +236,7 @@ public sealed class TuiActionKeysTests
         var step = Update(model, Letter('d'));
 
         step.Model.Confirm.Should().Be(new TuiConfirm("Delete the worker video-optimiser-1?", detail, new DeleteWorker()));
-        Choose(step.Model, Letter('y')).Model.Busy["worker"].Should().Be("Deleting the worker…");
+        Choose(step.Model, Letter('y')).Model.Busy["worker"].Should().Be("Deleting the worker.");
     }
 
     // ---- starting a run ---------------------------------------------------------------------
@@ -267,7 +267,7 @@ public sealed class TuiActionKeysTests
 
         step.Model.Choice.Should().BeNull();
         step.Effects.Should().Equal(new StartRun(new StartPlan(null, WorkerFateChoice.Delete, null)));
-        step.Model.Busy["run"].Should().Be("Starting the run…");
+        step.Model.Busy["run"].Should().Be("Starting the run.");
     }
 
     [Fact]
@@ -348,7 +348,7 @@ public sealed class TuiActionKeysTests
         var step = Update(Running(), Letter('x'));
 
         step.Effects.Should().Equal(new StopRun(Now: false));
-        step.Model.Busy["stop"].Should().Be("Asking the run to stop after this video…");
+        step.Model.Busy["stop"].Should().Be("Asking the run to stop after this video.");
     }
 
     [Fact]
@@ -530,11 +530,11 @@ public sealed class TuiActionKeysTests
 
         var yes = Update(asked, Letter('y'));
         yes.Effects.Should().Equal(new QueueActionEffect(QueueAction.Reject, Id(1), "clip-001.mp4"));
-        yes.Model.Busy[$"queue:{Id(1):N}"].Should().Be("Rejecting clip-001.mp4…");
+        yes.Model.Busy[$"queue:{Id(1):N}"].Should().Be("Rejecting clip-001.mp4.");
         // Asking again is allowed, but the answer is refused while the first is out.
         var again = Choose(yes.Model, Letter('r'), Letter('y'));
         again.Effects.Should().BeEmpty();
-        Notice(again).Should().Be("Rejecting clip-001.mp4…");
+        Notice(again).Should().Be("Rejecting clip-001.mp4.");
     }
 
     /// <summary>A video in the pane that is finalising, or stopped while it was, is finalize's; the key says so instead of asking.</summary>
@@ -555,7 +555,7 @@ public sealed class TuiActionKeysTests
     {
         var confirm = new TuiConfirm("Finalise 2 videos?", "details", new FinaliseVideos([Id(1), Id(2)]));
         var asked = Update(Reviewing(Ready(1), Ready(2)), Letter('F'));
-        asked.Model.Busy["finalise"].Should().Be("Reading what is ready to finalise…");
+        asked.Model.Busy["finalise"].Should().Be("Reading what is ready to finalise.");
 
         var prepared = Update(asked.Model, new PreparedMsg("finalise", confirm, null));
         prepared.Model.Confirm.Should().Be(confirm);
@@ -563,8 +563,8 @@ public sealed class TuiActionKeysTests
 
         var yes = Update(prepared.Model, Letter('y'));
         yes.Effects.Should().ContainSingle().Which.Should().BeOfType<FinaliseVideos>().Which.Ids.Should().Equal(Id(1), Id(2));
-        yes.Model.Busy["finalise"].Should().Be("Finalising…");
-        Notice(Update(yes.Model, Letter('F'))).Should().Be("Finalising…");
+        yes.Model.Busy["finalise"].Should().Be("Finalising.");
+        Notice(Update(yes.Model, Letter('F'))).Should().Be("Finalising.");
     }
 
     [Fact]

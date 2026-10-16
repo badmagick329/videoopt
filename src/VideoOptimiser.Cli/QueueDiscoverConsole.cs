@@ -37,7 +37,7 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
             _lastLineAt ??= now;
             if (now - _lastLineAt < ProgressInterval) return;
             _lastLineAt = now;
-            output.WriteLine($"Checked {update.FilesChecked} files so far ({update.Probed} probed with ffprobe)...");
+            output.WriteLine($"Checked {update.FilesChecked} files so far ({update.Probed} probed with ffprobe).");
             WroteLines = true;
         }
     }

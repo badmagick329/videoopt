@@ -42,7 +42,7 @@ public sealed partial class ColourOutputTests
         var console = new JobProgressConsole(output, TerminalStyle.Ansi);
 
         console.Report(new JobProgress(JobProgressKind.Header, "[1/1] a.mp4 (1.0 MiB)"));
-        console.Report(JobProgress.Step("Finding the best CRF..."));
+        console.Report(JobProgress.Step("Finding the best CRF."));
         console.Report(JobProgress.Detail("CRF 34   VMAF 94.35   size  15%   below target"));
         console.Report(JobProgress.Tool("a line the translator did not recognise"));
         console.Report(JobProgress.Outcome(JobTone.Success, "Ready to finalise: 1.0 MiB -> 500.0 KiB, 51.2% saved."));
@@ -51,7 +51,7 @@ public sealed partial class ColourOutputTests
 
         output.ToString().Should().Be(
             $"\n{Esc}1m[1/1] a.mp4 (1.0 MiB){Reset}\n" +
-            "      Finding the best CRF...\n" +
+            "      Finding the best CRF.\n" +
             $"        {Esc}2mCRF 34   VMAF 94.35   size  15%   below target{Reset}\n" +
             $"        {Esc}2ma line the translator did not recognise{Reset}\n" +
             $"      {Esc}32mReady to finalise: 1.0 MiB -> 500.0 KiB, 51.2% saved.{Reset}\n" +

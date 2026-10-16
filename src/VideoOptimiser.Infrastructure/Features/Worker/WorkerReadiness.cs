@@ -109,14 +109,14 @@ internal sealed class WorkerReadiness
                     var observedAt = _utcNow();
                     if (lastProgress != currentProgress)
                     {
-                        progress?.Report($"Bootstrapping: {currentProgress.Percent}%, {DescribeStage(currentProgress.Stage)}...");
+                        progress?.Report($"Bootstrapping: {currentProgress.Percent}%, {DescribeStage(currentProgress.Stage)}.");
                         lastProgress = currentProgress;
                         phaseStartedAt = observedAt;
                         lastHeartbeatAt = observedAt;
                     }
                     else if (phaseStartedAt is not null && lastHeartbeatAt is not null && observedAt - lastHeartbeatAt >= _progressHeartbeatInterval)
                     {
-                        progress?.Report($"Bootstrapping: {currentProgress.Percent}%, {DescribeStage(currentProgress.Stage)} ({HumanReadableValues.FormatDuration(observedAt - phaseStartedAt.Value)} in this step)...");
+                        progress?.Report($"Bootstrapping: {currentProgress.Percent}%, {DescribeStage(currentProgress.Stage)} ({HumanReadableValues.FormatDuration(observedAt - phaseStartedAt.Value)} in this step).");
                         lastHeartbeatAt = observedAt;
                     }
                 }
