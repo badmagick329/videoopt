@@ -6,9 +6,7 @@
 - Only a missing original or AV1, an empty AV1, an AV1 that ffprobe cannot read, or one whose video is not AV1 fails validation now.
 - A different length (beyond `validation.durationToleranceSeconds`), a different audio or subtitle stream count, audio sync that differs or could not be checked, and a failed or skipped decode test no longer fail the video. It stays ready to finalise with a warning. The run prints `Ready to finalise: <sizes>, <x>% saved. Check it before finalising:` and one line per warning. `validate` prints `Validation passed with warnings: saved <x>%. Check the AV1 before finalising it:` and the same lines.
 - An AV1 that is not smaller than the original (with `savings.requireSmallerOutput` on) or saves less than `savings.minimumBytesSaved` is now skipped as not worth converting, instead of failing. Its AV1 and validation record are deleted, and the original stays.
-- The video packet-count check is gone. It failed variable-frame-rate phone video that was fine.
 - The decode test now also runs on an AV1 that has warnings.
-- The decode test no longer reports `non monotonically increasing dts` on variable-frame-rate phone video. The error came from the test's own throwaway output, and the AV1 was fine.
 - `validate` exits `0` for a pass, a pass with warnings and a video not worth converting, and `7` for a failure.
 - The run's tally counts warned videos in the ready count: `Ready to finalise: 4 (1 to check).` The full-screen view's log says `The run finished: 4 ready to finalise (1 to check).`
 - `queue list --json` and `history --json` have a new `validationWarnings` array, empty when there are none.
@@ -30,6 +28,11 @@
 - While several videos are being finalised, the Review pane's title says `finalising 3 of 8` and its last line says `Finalising 3 of 8, 1.2 GiB saved so far.` The video being finalised is marked `finalising`, and the ones still to come are dimmed and marked `queued`, in both the Review and Queue panes. Each video's result goes in the log as it finishes, instead of all at once when the batch ends.
 - While a finalise is going, `f`, `F` and `r` in Review answer straight away, before any question. They say whether the selected video is being finalised or is queued, or that the key has to wait until the finalise ends. `r` waits on every row, because rejecting needs the lock the finalise holds. The arrow keys, `o` and `a` work as before.
 - `Esc` stops a finalise of several videos after the video it's on, without asking. That video always finishes, and the rest stay ready to finalise. The Review pane says it's stopping, and the log's tally says how many are still ready, as in `Finalised 3; stopped with 5 still ready.`
+
+### Fixes
+
+- The video packet-count check is gone. It failed variable-frame-rate phone video that was fine.
+- The decode test no longer reports `non monotonically increasing dts` on variable-frame-rate phone video. The error came from the test's own throwaway output, and the AV1 was fine.
 
 ## [0.11.0] - 2026-10-16
 ### The full-screen view
