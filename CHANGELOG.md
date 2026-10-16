@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### The full-screen view
+
+- The Activity log lists each CRF the search tries, with its VMAF, its size as a share of the original and whether it passed, as `run` prints them in a terminal.
+- The progress line draws a bar for an encode, an upload, a download or a checksum check.
+- When a converting video has reported nothing for a minute, its progress line says how long ago it last did, in place of its time left. A healthy encode or transfer reports every few seconds.
+
+### Remote workers
+
+- A run no longer hangs when an SSH command to the worker never returns. A command with no answer after 30 seconds counts as a lost connection and is sent again with 60 seconds, then 90; the worker counts as unreachable after 3 minutes. One such command held a run for over half an hour after its encode had finished.
 
 ## [0.9.1] - 2026-10-16
 ### Fixes

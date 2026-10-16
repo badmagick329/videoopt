@@ -112,7 +112,7 @@ public sealed class EventLogRunObserver(IRunEventLog log, TimeProvider time) : I
                 _lastToolOutput = now;
             }
         }
-        Write(RunEventKind.Progress, text: progress.Text, progress: progress.Kind.ToString(), tone: progress.Tone.ToString(), timeLeft: progress.TimeLeft);
+        Write(RunEventKind.Progress, text: progress.Text, progress: progress.Kind.ToString(), tone: progress.Tone.ToString(), timeLeft: progress.TimeLeft, percent: progress.Percent);
     }
 
     private void Write(
@@ -131,8 +131,9 @@ public sealed class EventLogRunObserver(IRunEventLog log, TimeProvider time) : I
         string? tone = null,
         TimeSpan? timeLeft = null,
         bool? flag = null,
-        IReadOnlyList<FailedQueueJob>? failures = null) =>
-        log.Append(new RunEvent(time.GetUtcNow(), kind, jobId, sourcePath, count, ready, skipped, text, worker, fate, stage, runEnd, progress, tone, timeLeft, flag, failures));
+        IReadOnlyList<FailedQueueJob>? failures = null,
+        int? percent = null) =>
+        log.Append(new RunEvent(time.GetUtcNow(), kind, jobId, sourcePath, count, ready, skipped, text, worker, fate, stage, runEnd, progress, tone, timeLeft, flag, failures, percent));
 
     // Progress<T> posts to a thread-pool thread when there is no synchronisation context, which would reorder events the
     // flow raises around them.

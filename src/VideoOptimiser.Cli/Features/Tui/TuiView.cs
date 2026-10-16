@@ -415,10 +415,7 @@ internal static class TuiView
                 .Right(video.Remote ? (workerName is null ? "on the worker" : $"on {workerName}") : "on this PC", Theme.Of(Theme.Dim))
                 .Build(width));
 
-            // ab-av1 gives no fraction the TUI can trust across stages, so the line is its own words and its time left.
-            var progress = new Line().Flex(m.Activity.ProgressText ?? "No progress line yet.", Theme.Of(m.Activity.ProgressText is null ? Theme.Dim : Theme.Soft));
-            if (m.Activity.ProgressLeft is { } left) progress.Right($"about {HumanReadableValues.FormatDuration(left)} left", Theme.Of(Theme.Soft));
-            rows.Add(progress.Build(width));
+            rows.Add(ProgressLine(m, width).Build(width));
 
             rows.Add(Stepper(video, stage, width));
         }
@@ -439,7 +436,38 @@ internal static class TuiView
         return rows;
     }
 
+    /// <summary>How long a converting video may go without any event before its progress line says so.</summary>
+    internal static readonly TimeSpan QuietAfter = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// The converting video's latest progress line. A reading (an encode, a transfer) gets a bar for its own step only: ab-av1
+    /// gives no fraction across stages. When the run has said nothing for <see cref="QuietAfter"/>, the line says how long, so a
+    /// stalled run is told apart from a slow one: a healthy encode or transfer reports every few seconds, a CRF attempt about
+    /// once a minute.
+    /// </summary>
+    private static Line ProgressLine(TuiModel m, int width)
+    {
+        var activity = m.Activity;
+        var line = new Line();
+        if (activity.ProgressPercent is { } percent && width >= 48)
+        {
+            var cells = Math.Clamp(width / 4, 10, 30);
+            var filled = (int)Math.Round(cells * percent / 100d);
+            line.Left(new string('━', filled), Theme.Of(Theme.Converting))
+                .Left(new string('─', cells - filled), Theme.Of(Theme.Faint))
+                .Left("  ", Style.Plain);
+        }
+        line.Flex(activity.ProgressText ?? "No progress line yet.", Theme.Of(activity.ProgressText is null ? Theme.Dim : Theme.Soft));
+        // A quiet run's time left was measured before it went quiet, so the quiet note takes its place.
+        if (activity.LastEventAt is { } at && m.Now - at >= QuietAfter)
+            line.Right($"last update {HumanReadableValues.FormatDuration(m.Now - at)} ago", Theme.Of(Theme.Held));
+        else if (activity.ProgressLeft is { } left)
+            line.Right($"about {HumanReadableValues.FormatDuration(left)} left", Theme.Of(Theme.Soft));
+        return line;
+    }
+
     private const int LogStampCells = 10;
+    private const string DetailIndent = "  ";
 
     /// <summary>
     /// The newest entries that fit, each wrapped under its text so a long line is read whole. Scrolling still moves by entry.
@@ -461,7 +489,8 @@ internal static class TuiView
                 LogKind.Action => Theme.Text,
                 _ => Theme.Dim
             });
-            var text = TuiText.Wrap(entry.Text, Math.Max(1, width - LogStampCells));
+            var indent = entry.Kind == LogKind.Detail ? DetailIndent : string.Empty;
+            var text = TuiText.Wrap(entry.Text, Math.Max(1, width - LogStampCells - indent.Length)).Select(part => indent + part).ToList();
             if (used + text.Count > capacity && shown.Count > 0) break;
             var stamp = entry.At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) + "  ";
             var entryRows = text.Take(capacity - used)

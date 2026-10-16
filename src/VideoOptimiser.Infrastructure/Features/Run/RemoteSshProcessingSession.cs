@@ -19,12 +19,24 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     /// <summary>A step that has run this long prints its first progress line, and then at most one per interval.</summary>
     internal static readonly TimeSpan ProgressDelay = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// How long each try of one SSH command may take before it counts as a lost connection and is sent again; one entry per try.
+    /// Keepalives catch a dead link, but not an ssh whose connection stays up while its command never returns: one such poll
+    /// held a run for over half an hour after its encode had finished. Every command is a check, a launch or a poll that returns
+    /// in a few seconds; the slowest, a checksum of a large video, takes seconds per GiB. Each try is longer than the one before
+    /// because a command too slow for one limit is too slow for it again, and a longer try lets it finish; a hung command is
+    /// usually answered by its first resend, so the longer tries cost time only when the worker is really gone. Three minutes
+    /// in all before the worker counts as unreachable.
+    /// </summary>
+    internal static readonly IReadOnlyList<TimeSpan> DefaultCommandTimeouts = [TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(90)];
+
     private readonly JobRecord _job;
     private readonly AppSettings _settings;
     private readonly IExternalProcessRunner _processes;
     private readonly Func<CancellationToken, Task> _pollDelay;
     private readonly Func<TimeSpan> _clock;
     private readonly Func<CancellationToken, Task> _transferPollDelay;
+    private readonly IReadOnlyList<TimeSpan> _commandTimeouts;
     private readonly string _root;
 
     public RemoteSshProcessingSession(JobRecord job, AppSettings settings, IExternalProcessRunner processes)
@@ -35,7 +47,8 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     /// <param name="pollDelay">The wait between polls of a running remote stage.</param>
     /// <param name="clock">Elapsed time, for timing transfers and deciding when a progress line is due; tests advance it by hand.</param>
     /// <param name="transferPollDelay">The wait between checks of a running transfer; each due check of an upload is an SSH connection.</param>
-    internal RemoteSshProcessingSession(JobRecord job, AppSettings settings, IExternalProcessRunner processes, Func<CancellationToken, Task> pollDelay, Func<TimeSpan>? clock = null, Func<CancellationToken, Task>? transferPollDelay = null)
+    /// <param name="commandTimeouts">How long each try of one SSH command may take; <see cref="DefaultCommandTimeouts"/> unless a test shortens them.</param>
+    internal RemoteSshProcessingSession(JobRecord job, AppSettings settings, IExternalProcessRunner processes, Func<CancellationToken, Task> pollDelay, Func<TimeSpan>? clock = null, Func<CancellationToken, Task>? transferPollDelay = null, IReadOnlyList<TimeSpan>? commandTimeouts = null)
     {
         _job = job;
         _settings = settings;
@@ -43,6 +56,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         _pollDelay = pollDelay;
         _clock = clock ?? StartClock();
         _transferPollDelay = transferPollDelay ?? (cancellationToken => Task.Delay(TimeSpan.FromSeconds(5), cancellationToken));
+        _commandTimeouts = commandTimeouts ?? DefaultCommandTimeouts;
         _root = settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/');
         RemoteWorkspace = $"{_root}/{job.Id:N}";
         if (!GuidWorkspacePattern().IsMatch(RemoteWorkspace)) throw new InvalidOperationException("The generated remote workspace is not a safe GUID workspace.");
@@ -440,18 +454,32 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         return (destination, result.StandardOutput);
     }
 
+    /// <summary>
+    /// Runs one command on the worker, resending it after a lost connection: exit 255, or no reply within the command timeout,
+    /// which ends that ssh. The resend is safe because every command is idempotent or guarded (<see cref="BuildLaunchCommand"/>).
+    /// </summary>
     private async Task<ExternalProcessResult> SshAsync(string command, string? standardInput = null, CancellationToken cancellationToken = default)
     {
-        const int attempts = 3;
+        var attempts = _commandTimeouts.Count;
         for (var attempt = 1; ; attempt++)
         {
             ExternalProcessResult result;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(_commandTimeouts[attempt - 1]);
             try
             {
                 var arguments = OpenSshConnectionArguments.Build(_settings.Processing.RemoteSsh);
+                // -n: a command that sends nothing reads nothing, so ssh never holds the run's own stdin, which a
+                // background run inherits from no console at all.
+                if (standardInput is null) arguments.Add("-n");
                 arguments.Add(RemoteHost!);
                 arguments.Add("bash -lc " + Quote(command));
-                result = await _processes.RunAsync(new ExternalProcessRequest(_settings.Tools.SshPath, arguments, standardInput), cancellationToken);
+                result = await _processes.RunAsync(new ExternalProcessRequest(_settings.Tools.SshPath, arguments, standardInput), timeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                if (attempt >= attempts) throw new RemoteConnectionException($"The worker did not answer an SSH command {attempts} times in a row, {HumanReadableValues.FormatDuration(_commandTimeouts.Aggregate(TimeSpan.Zero, (sum, wait) => sum + wait))} in all.");
+                continue;
             }
             catch (Exception exception) when (exception is not OperationCanceledException && attempt >= attempts)
             {
@@ -649,7 +677,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             {
                 if (introduction is not null && !_introduced) progress!.Report(JobProgress.Step(introduction));
                 _introduced = true;
-                progress!.Report(JobProgress.Detail($"Checking the checksum: {percent}% of {HumanReadableValues.FormatSize(totalBytes)}"));
+                progress!.Report(JobProgress.Reading($"Checking the checksum: {percent}% of {HumanReadableValues.FormatSize(totalBytes)}", percent));
                 return;
             }
 
@@ -661,7 +689,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 text += $", {HumanReadableValues.FormatSize((long)rate)}/s";
                 if (bytes < totalBytes) text += $", about {HumanReadableValues.FormatDuration(TimeSpan.FromSeconds((totalBytes - bytes) / rate))} left";
             }
-            progress!.Report(JobProgress.Detail(text));
+            progress!.Report(JobProgress.Reading(text, percent));
         }
     }
 

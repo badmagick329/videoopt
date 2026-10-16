@@ -14,7 +14,7 @@ When the output goes to a file or another program, or with `--json`, the same co
 | --- | --- |
 | Queue | Videos converting now, waiting in run order, held, and recent failures. |
 | Worker | The Hetzner worker, if you use one: its type, location, age and hourly price, checked with Hetzner every 30 seconds. |
-| Activity | The run going now, or the last one, line by line, as it would print in a terminal. |
+| Activity | The run going now, or the last one, line by line, as it would print in a terminal. The video converting now has a progress line: a bar for an encode or a transfer, or the latest CRF tried while the CRF search runs. If the run has reported nothing for a minute, the line says when it last did. |
 | Review | Videos ready to finalise, with the original's size, the AV1's size and the saving. |
 
 `tab` and `shift+tab` move between panes. The screen refreshes about once a second.

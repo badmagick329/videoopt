@@ -35,8 +35,8 @@ public sealed class AbAv1OutputTranslatorTests
         }
 
         output.Should().Equal(
-            JobProgress.Detail("20%, 54 fps"),
-            JobProgress.Detail("42%, 57 fps"),
+            JobProgress.Reading("20%, 54 fps", 20),
+            JobProgress.Reading("42%, 57 fps", 42),
             JobProgress.Step("Encoded 99.8 MiB (29% of the original) in 1m 00s."));
     }
 
@@ -56,13 +56,13 @@ public sealed class AbAv1OutputTranslatorTests
         var translator = Create(AbAv1Stage.Encode);
 
         // ab-av1 said "2 minutes" on every one of these lines; the pace between the first line and each later one decides.
-        Progress(translator, 0, 10).Should().Equal(JobProgress.Detail("10%, 8.5 fps"));
-        Progress(translator, 10, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps"));
-        Progress(translator, 20, 20).Should().Equal(JobProgress.Detail("20%, 8.5 fps"));
+        Progress(translator, 0, 10).Should().Equal(JobProgress.Reading("10%, 8.5 fps", 10));
+        Progress(translator, 10, 15).Should().Equal(JobProgress.Reading("15%, 8.5 fps", 15));
+        Progress(translator, 20, 20).Should().Equal(JobProgress.Reading("20%, 8.5 fps", 20));
         // 20 points in 40 s: 70 points left take 140 s.
-        Progress(translator, 40, 30).Should().Equal(JobProgress.Detail("30%, 8.5 fps, about 2m 20s left") with { TimeLeft = TimeSpan.FromSeconds(140) });
+        Progress(translator, 40, 30).Should().Equal(JobProgress.Reading("30%, 8.5 fps, about 2m 20s left", 30, TimeSpan.FromSeconds(140)));
         // 80 points in 100 s: 10 points left take 12.5 s.
-        Progress(translator, 100, 90).Should().Equal(JobProgress.Detail("90%, 8.5 fps, about 12s left") with { TimeLeft = TimeSpan.FromSeconds(12.5) });
+        Progress(translator, 100, 90).Should().Equal(JobProgress.Reading("90%, 8.5 fps, about 12s left", 90, TimeSpan.FromSeconds(12.5)));
     }
 
     [Fact]
@@ -72,9 +72,9 @@ public sealed class AbAv1OutputTranslatorTests
 
         Progress(translator, 0, 10);
         // 30 s but only 4 points: the pace is still noise.
-        Progress(translator, 30, 14).Should().Equal(JobProgress.Detail("14%, 8.5 fps"));
+        Progress(translator, 30, 14).Should().Equal(JobProgress.Reading("14%, 8.5 fps", 14));
         // Both reached.
-        Progress(translator, 60, 15).Should().Equal(JobProgress.Detail("15%, 8.5 fps, about 17m 00s left") with { TimeLeft = TimeSpan.FromMinutes(17) });
+        Progress(translator, 60, 15).Should().Equal(JobProgress.Reading("15%, 8.5 fps, about 17m 00s left", 15, TimeSpan.FromMinutes(17)));
     }
 
     /// <summary>A stage that began before this command has run for longer than this translator has existed, so the time it measures is not the stage's.</summary>

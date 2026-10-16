@@ -41,7 +41,7 @@ public sealed class TuiViewTests
             Progress(JobProgressKind.Header, "[1/3] clip-001.mp4 (1.1 GiB)"),
             Progress(JobProgressKind.Step, "Uploading to the worker."),
             Progress(JobProgressKind.Step, "CRF 27 chosen, encoding."),
-            Progress(JobProgressKind.Detail, "ab-av1 encode 38%, 46 fps", left: TimeSpan.FromMinutes(6))
+            Progress(JobProgressKind.Detail, "ab-av1 encode 38%, 46 fps", left: TimeSpan.FromMinutes(6), percent: 38)
         ];
         var snapshot = Snapshot(
             open: [Converting(1, remote: true), Queued(2), Queued(3), Held(4), Ready(5, size: 800 * Mib, av1: 352 * Mib, saved: 56m), Ready(6, size: 2000 * Mib, av1: 700 * Mib, saved: 65m)],
@@ -94,13 +94,27 @@ public sealed class TuiViewTests
         var rows = Rows(Busy());
 
         Row(rows, "Encoding  clip-001.mp4").Should().Contain("on video-optimiser-1");
-        Row(rows, "ab-av1 encode 38%, 46 fps").Should().Contain("about 6m 00s left");
+        Row(rows, "ab-av1 encode 38%, 46 fps").Should().Contain("about 6m 00s left").And.NotContain("last update");
+        // The bar is a quarter of the pane's inner width, 38% of it filled.
+        var bar = Row(rows, "ab-av1 encode 38%, 46 fps").Split('│')[1].Trim().Split(' ')[0];
+        bar.Should().MatchRegex("^━+─+$");
+        ((double)bar.Count(c => c == '━') / bar.Length).Should().BeApproximately(0.38, 0.04);
         Row(rows, "✓ Uploading").Should().Contain("✓ Finding CRF").And.Contain("● Encoding").And.Contain("○ Downloading").And.Contain("○ Checking");
         Row(rows, "Background run, started").Should().Contain("(process 4242)");
         Row(rows, "╭─ Activity").Should().Contain("following").And.Contain("worker deleted at the end");
         // The log has the steps, and the progress line, which repeats, is not in it.
         Row(rows, "CRF 27 chosen, encoding.").Should().NotBeNull();
         rows.Count(row => row.Contains("ab-av1 encode 38%", StringComparison.Ordinal)).Should().Be(1);
+    }
+
+    /// <summary>A run that has said nothing for a minute says how long, so a stalled poll is told apart from a slow encode.</summary>
+    [Fact]
+    public void AConvertingVideoThatHasBeenQuietForAMinuteSaysHowLong()
+    {
+        // The last event came a second after Now.
+        Row(Rows(After(Busy(), Tick(TimeSpan.FromSeconds(60), 140, 40))), "ab-av1 encode 38%").Should().Contain("about 6m 00s left").And.NotContain("last update");
+        // The time left was measured before the run went quiet, so the note replaces it.
+        Row(Rows(After(Busy(), Tick(TimeSpan.FromMinutes(32), 140, 40))), "ab-av1 encode 38%").Should().Contain("last update 31m 59s ago").And.NotContain("left");
     }
 
     /// <summary>A log line wider than the pane wraps under its text instead of losing its end.</summary>

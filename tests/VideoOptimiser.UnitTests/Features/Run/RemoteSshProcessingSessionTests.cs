@@ -326,8 +326,8 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         // Ticks are 5 s apart: nothing at 5 s, the first line at 10 s, nothing at 15 s, the second at 20 s, nothing at 25 s.
         progress.Lines.Should().Equal(
             JobProgress.Step("Uploading 1.0 MiB to the worker."),
-            JobProgress.Detail("25% of 1.0 MiB, 25.6 KiB/s, about 30s left"),
-            JobProgress.Detail("50% of 1.0 MiB, 25.6 KiB/s, about 20s left"),
+            JobProgress.Reading("25% of 1.0 MiB, 25.6 KiB/s, about 30s left", 25),
+            JobProgress.Reading("50% of 1.0 MiB, 25.6 KiB/s, about 20s left", 50),
             JobProgress.Step("Uploaded 1.0 MiB in 30s, checksum verified."));
         runner.SizePolls.Should().Be(2, "a poll is an SSH connection, so none is made while no line is due");
     }
@@ -622,6 +622,54 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Requests.Should().HaveCount(3);
     }
 
+    /// <summary>
+    /// An ssh whose connection stays up but whose command never returns held a run for over half an hour; past the command
+    /// timeout it counts as a lost connection, is resent, and the stage goes on from the resent poll's answer.
+    /// </summary>
+    [Fact]
+    public async Task AnSshCommandWithNoReplyIsResentAfterTheTimeout()
+    {
+        var source = await SourceAsync();
+        const string log = "Error: ffmpeg exited with status 1\n";
+        var runner = new HangingRunner([null, Ok(AtEnd("completed 1", log)), Ok(log), Ok()]);
+
+        var action = async () => await CreateSession(Guid.NewGuid(), runner, source, commandTimeouts: ShortTimeouts).SearchCrfAsync(source, new QualitySettings());
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote processing stage failed with exit code 1: ffmpeg exited with status 1");
+        runner.Requests.Should().HaveCount(4).And.OnlyContain(request => request.Arguments.Contains("-n"));
+    }
+
+    [Fact]
+    public async Task ThreeSshCommandsWithNoReplyBecomeARemoteConnectionFailure()
+    {
+        var source = await SourceAsync();
+        var runner = new HangingRunner([null, null, null]);
+
+        var action = async () => await CreateSession(Guid.NewGuid(), runner, source, commandTimeouts: ShortTimeouts).StageAsync(source, "fingerprint");
+
+        await action.Should().ThrowAsync<RemoteConnectionException>();
+        runner.Requests.Should().HaveCount(3);
+    }
+
+    /// <summary>
+    /// A command too slow for the first tries, such as a checksum of a large video, would be too slow for an equal resend; the
+    /// last, longer try lets it finish instead of failing the video as an unreachable worker.
+    /// </summary>
+    [Fact]
+    public async Task ACommandTooSlowForTheFirstTriesFinishesOnTheLongerLastTry()
+    {
+        var source = await SourceAsync();
+        const string log = "Error: ffmpeg exited with status 1\n";
+        var runner = new SlowRunner(TimeSpan.FromMilliseconds(300), [Ok(AtEnd("completed 1", log)), Ok(log), Ok()]);
+
+        var action = async () => await CreateSession(Guid.NewGuid(), runner, source, commandTimeouts: ShortTimeouts).SearchCrfAsync(source, new QualitySettings());
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote processing stage failed with exit code 1: ffmpeg exited with status 1");
+        runner.Requests.Should().HaveCount(9, "each of the three commands is cut off twice and answers on its third try");
+    }
+
+    private static readonly IReadOnlyList<TimeSpan> ShortTimeouts = [TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(5)];
+
     [Fact]
     public async Task CtrlCDuringAStageLeavesItRunningOnTheWorker()
     {
@@ -727,7 +775,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
 
         progress.Lines.Should().Equal(
             JobProgress.Step("Picked up the encode running on the worker."),
-            JobProgress.Detail("60%, 58 fps"),
+            JobProgress.Reading("60%, 58 fps", 60),
             JobProgress.Step("Encoded 99.8 MiB (29% of the original)."));
         var beforeBytes = Encoding.UTF8.GetByteCount(before);
         worker.Polls.Should().Equal([(-1, 0), (beforeBytes, Encoding.UTF8.GetByteCount(progressLine)), (beforeBytes + Encoding.UTF8.GetByteCount(progressLine), Encoding.UTF8.GetByteCount(encoded))],
@@ -800,10 +848,10 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote encode check failed: bash: broken");
     }
 
-    private static RemoteSshProcessingSession CreateSession(Guid id, IExternalProcessRunner runner, string sourcePath = "C:\\Videos\\movie.mkv", FakeClock? clock = null)
+    private static RemoteSshProcessingSession CreateSession(Guid id, IExternalProcessRunner runner, string sourcePath = "C:\\Videos\\movie.mkv", FakeClock? clock = null, IReadOnlyList<TimeSpan>? commandTimeouts = null)
     {
         clock ??= new FakeClock();
-        return new RemoteSshProcessingSession(new JobRecord { Id = id, SourcePath = sourcePath }, CreateSettings(), runner, _ => Task.CompletedTask, clock.Read, clock.TickAsync);
+        return new RemoteSshProcessingSession(new JobRecord { Id = id, SourcePath = sourcePath }, CreateSettings(), runner, _ => Task.CompletedTask, clock.Read, clock.TickAsync, commandTimeouts);
     }
 
     private static AppSettings CreateSettings() => new()
@@ -868,6 +916,35 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         {
             Requests.Add(request);
             return Task.FromResult(_results.Dequeue());
+        }
+    }
+
+    /// <summary>Answers in order; a null answer is an ssh that never returns until its token is cancelled.</summary>
+    private sealed class HangingRunner(IEnumerable<ExternalProcessResult?> results) : IExternalProcessRunner
+    {
+        private readonly Queue<ExternalProcessResult?> _results = new(results);
+        public List<ExternalProcessRequest> Requests { get; } = [];
+
+        public async Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            if (_results.Dequeue() is { } result) return result;
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new System.Diagnostics.UnreachableException();
+        }
+    }
+
+    /// <summary>Answers in order, each after <paramref name="delay"/>; a request cut off first leaves its answer for the resend.</summary>
+    private sealed class SlowRunner(TimeSpan delay, IEnumerable<ExternalProcessResult> results) : IExternalProcessRunner
+    {
+        private readonly Queue<ExternalProcessResult> _results = new(results);
+        public List<ExternalProcessRequest> Requests { get; } = [];
+
+        public async Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            await Task.Delay(delay, cancellationToken);
+            return _results.Dequeue();
         }
     }
 

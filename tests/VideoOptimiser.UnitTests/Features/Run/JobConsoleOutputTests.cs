@@ -164,7 +164,7 @@ public sealed class JobConsoleOutputTests : IDisposable
         public Task StageAsync(string sourcePath, string sourceFingerprint, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)
         {
             progress?.Report(JobProgress.Step("Uploading 1002.4 MiB to the worker."));
-            progress?.Report(JobProgress.Detail("41% of 1002.4 MiB, 45.2 MiB/s, about 13s left"));
+            progress?.Report(JobProgress.Reading("41% of 1002.4 MiB, 45.2 MiB/s, about 13s left", 41));
             progress?.Report(JobProgress.Step("Uploaded 1002.4 MiB in 23s, checksum verified."));
             return Task.CompletedTask;
         }

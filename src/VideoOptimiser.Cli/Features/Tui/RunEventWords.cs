@@ -8,7 +8,8 @@ namespace VideoOptimiser.Cli.Features.Tui;
 
 /// <summary>What one event becomes on screen: log lines, and a change to the current video's progress line.</summary>
 /// <param name="ProgressText">Replaces the progress line when <paramref name="SetProgress"/>; null clears it.</param>
-internal sealed record EventEffect(IReadOnlyList<LogEntry> Lines, bool SetProgress, string? ProgressText, TimeSpan? ProgressLeft, RunPhase? Phase, bool? WaitingForWorker);
+/// <param name="ProgressPercent">The progress line's reading, for its bar; null when the line is not a reading.</param>
+internal sealed record EventEffect(IReadOnlyList<LogEntry> Lines, bool SetProgress, string? ProgressText, TimeSpan? ProgressLeft, RunPhase? Phase, bool? WaitingForWorker, int? ProgressPercent = null);
 
 /// <summary>
 /// Words for the run's events: the facts <see cref="RunEvent"/> carries, in the console's meaning and shorter, since the log is a
@@ -91,8 +92,11 @@ internal static class RunEventWords
     }
 
     /// <summary>
-    /// Header, step and outcome lines are the log. Detail and tool lines repeat many times a second as ab-av1 reports, so
-    /// the latest one stands as the video's progress line, with its time left, and the log keeps only what happened.
+    /// Header, step and outcome lines are the log. A reading (a detail line with a percent: an encode's or a transfer's progress)
+    /// repeats every few seconds, so the latest one stands as the video's progress line, with its bar and time left, and never
+    /// reaches the log. Any other detail line, such as a CRF attempt and its verdict, is a fact the user wants to read back, so
+    /// it goes to the log and stands as the progress line until the next. Raw tool lines repeat like readings. A step starts new
+    /// work, so the previous step's progress line goes.
     /// </summary>
     private static EventEffect OfProgress(RunEvent e)
     {
@@ -100,8 +104,10 @@ internal static class RunEventWords
         var tone = Enum.TryParse<JobTone>(e.Tone, out var parsedTone) ? parsedTone : JobTone.None;
         switch (Enum.TryParse<JobProgressKind>(e.Progress, out var kind) ? kind : JobProgressKind.Step)
         {
+            case JobProgressKind.Detail when e.Percent is null:
+                return new EventEffect([new LogEntry(e.At, LogKind.Detail, text)], true, text, null, null, null);
             case JobProgressKind.Detail or JobProgressKind.ToolOutput:
-                return new EventEffect([], true, text, e.TimeLeft, null, null);
+                return new EventEffect([], true, text, e.TimeLeft, null, null, e.Percent);
             case JobProgressKind.Header:
                 return new EventEffect([new LogEntry(e.At, LogKind.Stage, text)], true, null, null, null, null);
             default:
@@ -112,9 +118,7 @@ internal static class RunEventWords
                     JobTone.Failure => LogKind.Error,
                     _ => LogKind.Info
                 };
-                // An outcome ends the video's work, so its progress line goes with it.
-                var outcome = tone != JobTone.None;
-                return new EventEffect([new LogEntry(e.At, logKind, text)], outcome, null, null, null, null);
+                return new EventEffect([new LogEntry(e.At, logKind, text)], true, null, null, null, null);
         }
     }
 

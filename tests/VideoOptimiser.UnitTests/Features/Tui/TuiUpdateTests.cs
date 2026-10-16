@@ -158,32 +158,49 @@ public sealed class TuiUpdateTests
         model.Activity.EventsSeen.Should().Be(secondRun.Length);
     }
 
-    /// <summary>ab-av1 repeats its progress line many times a second; the log keeps what happened, and the pane the latest line.</summary>
+    /// <summary>
+    /// A reading repeats every few seconds, so the pane shows the latest one with its bar and the log never sees it; a CRF
+    /// attempt is a fact the user reads back, so it is logged under its step and also stands as the progress line.
+    /// </summary>
     [Fact]
-    public void DetailAndToolLinesAreTheProgressLineAndNotLogLines()
+    public void ReadingsAreOnlyTheProgressLineAndCrfAttemptsAreAlsoLogged()
     {
         RunEvent[] events =
         [
             Started(),
             Progress(JobProgressKind.Header, "[1/2] clip-001.mp4 (1.1 GiB)"),
-            Progress(JobProgressKind.Step, "Encoding."),
-            Progress(JobProgressKind.Detail, "ab-av1 encoding 12%, 41 fps", left: TimeSpan.FromMinutes(7)),
-            Progress(JobProgressKind.ToolOutput, "ab-av1 encoding 14%, 42 fps", left: TimeSpan.FromMinutes(6)),
+            Progress(JobProgressKind.Step, "Finding the best CRF."),
+            Progress(JobProgressKind.Detail, "CRF 18   VMAF 97.24   size  87%   passes, file too big"),
         ];
 
         var model = After(Model(), Snap(Snapshot([], [], new RunSection(null, null), null, events)));
 
-        model.Log.Select(entry => entry.Text).Should().Equal(
-            "Background run started (process 4242).",
-            "[1/2] clip-001.mp4 (1.1 GiB)",
-            "Encoding.");
-        model.Activity.ProgressText.Should().Be("ab-av1 encoding 14%, 42 fps");
-        model.Activity.ProgressLeft.Should().Be(TimeSpan.FromMinutes(6));
+        model.Log.Select(entry => (entry.Kind, entry.Text)).Should().Equal(
+            (LogKind.Action, "Background run started (process 4242)."),
+            (LogKind.Stage, "[1/2] clip-001.mp4 (1.1 GiB)"),
+            (LogKind.Info, "Finding the best CRF."),
+            (LogKind.Detail, "CRF 18   VMAF 97.24   size  87%   passes, file too big"));
+        model.Activity.Should().Match<ActivityState>(state => state.ProgressText == "CRF 18   VMAF 97.24   size  87%   passes, file too big" && state.ProgressPercent == null);
+
+        // A step starts new work: the attempt's line goes until the first reading.
+        RunEvent[] encoding = [.. events, Progress(JobProgressKind.Step, "Encoding at CRF 19.")];
+        model = After(model, Snap(Snapshot([], [], new RunSection(null, null), null, encoding)));
+        model.Activity.ProgressText.Should().BeNull();
+
+        RunEvent[] readings =
+        [
+            .. encoding,
+            Progress(JobProgressKind.Detail, "12%, 41 fps", left: TimeSpan.FromMinutes(7), percent: 12),
+            Progress(JobProgressKind.Detail, "14%, 42 fps", left: TimeSpan.FromMinutes(6), percent: 14),
+        ];
+        model = After(model, Snap(Snapshot([], [], new RunSection(null, null), null, readings)));
+        model.Log[^1].Text.Should().Be("Encoding at CRF 19.");
+        model.Activity.Should().Match<ActivityState>(state => state.ProgressText == "14%, 42 fps" && state.ProgressPercent == 14 && state.ProgressLeft == TimeSpan.FromMinutes(6));
 
         // The video's outcome ends its progress line.
-        RunEvent[] more = [.. events, Progress(JobProgressKind.Step, "Ready to finalise: 1.1 GiB -> 400.0 MiB, 65.0% saved.", JobTone.Success)];
+        RunEvent[] more = [.. readings, Progress(JobProgressKind.Step, "Ready to finalise: 1.1 GiB -> 400.0 MiB, 65.0% saved.", JobTone.Success)];
         model = After(model, Snap(Snapshot([], [], new RunSection(null, null), null, more)));
-        model.Activity.ProgressText.Should().BeNull();
+        model.Activity.Should().Match<ActivityState>(state => state.ProgressText == null && state.ProgressPercent == null);
         model.Log[^1].Kind.Should().Be(LogKind.Success);
     }
 

@@ -10,7 +10,10 @@ public enum JobProgressKind
     Header,
     /// <summary>A step starting or ending, or the job's outcome, one level under the header.</summary>
     Step,
-    /// <summary>Progress within a step, such as one CRF attempt, one level under the steps.</summary>
+    /// <summary>
+    /// Progress within a step, one level under the steps: a fact that stays, such as one CRF attempt and its verdict, or, with a
+    /// <see cref="JobProgress.Percent"/>, a reading that the next one replaces, such as an encode's or a transfer's progress.
+    /// </summary>
     Detail,
     /// <summary>
     /// A raw line from ab-av1, before <c>AbAv1OutputTranslator</c> rewrites it. Only processing sessions report it; anything
@@ -41,7 +44,12 @@ public enum JobTone
 /// <c>run</c> and <c>immich run</c>.
 /// </summary>
 /// <param name="TimeLeft">On an encode progress line, the estimate its text shows, so the first Ctrl+C can say how long stopping after this video takes.</param>
-public sealed record JobProgress(JobProgressKind Kind, string Text, JobTone Tone = JobTone.None, TimeSpan? TimeLeft = null)
+/// <param name="Percent">
+/// How far a step with a measurable end has got, 0 to 100, on a reading that the next one replaces (an encode, a transfer, a
+/// checksum); the text already shows it. Null on every line that stays, so a front end that shows only the latest reading can
+/// keep the others.
+/// </param>
+public sealed record JobProgress(JobProgressKind Kind, string Text, JobTone Tone = JobTone.None, TimeSpan? TimeLeft = null, int? Percent = null)
 {
     /// <summary>The block's first line: <c>[2/5] name.mp4 (1.0 GiB)</c>. The size is left out when the original is already gone.</summary>
     public static JobProgress Header(int number, int total, string sourcePath)
@@ -56,5 +64,8 @@ public sealed record JobProgress(JobProgressKind Kind, string Text, JobTone Tone
     /// <summary>A step that ends the job, or says how it ended, with the <paramref name="tone"/> that outcome deserves.</summary>
     public static JobProgress Outcome(JobTone tone, string text) => new(JobProgressKind.Step, text, tone);
     public static JobProgress Detail(string text) => new(JobProgressKind.Detail, text);
+
+    /// <summary>A reading of how far a step has got, which the next reading replaces.</summary>
+    public static JobProgress Reading(string text, int percent, TimeSpan? timeLeft = null) => new(JobProgressKind.Detail, text, TimeLeft: timeLeft, Percent: Math.Clamp(percent, 0, 100));
     public static JobProgress Tool(string text) => new(JobProgressKind.ToolOutput, text);
 }

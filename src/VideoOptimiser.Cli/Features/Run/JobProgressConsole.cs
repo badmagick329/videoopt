@@ -51,8 +51,9 @@ internal sealed class JobProgressConsole(TextWriter writer, TerminalStyle style)
     }
 
     /// <summary>
-    /// Prints the held lines. Of a run of progress lines only the last prints: the earlier ones are out of date, and a long
-    /// wait for an answer would otherwise flood the screen. Safe to call when nothing is held.
+    /// Prints the held lines. Of a run of readings (lines with a <see cref="JobProgress.Percent"/>) only the last prints: the
+    /// earlier ones are out of date, and a long wait for an answer would otherwise flood the screen. A CRF attempt is a fact, not
+    /// a reading, and always prints. Safe to call when nothing is held.
     /// </summary>
     public void Release()
     {
@@ -62,7 +63,7 @@ internal sealed class JobProgressConsole(TextWriter writer, TerminalStyle style)
             _held = null;
             for (var index = 0; index < held.Count; index++)
             {
-                var stale = held[index].Kind == JobProgressKind.Detail && index + 1 < held.Count && held[index + 1].Kind == JobProgressKind.Detail;
+                var stale = held[index].Percent is not null && index + 1 < held.Count && held[index + 1].Percent is not null;
                 if (!stale) Write(held[index]);
             }
         }

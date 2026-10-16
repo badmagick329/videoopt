@@ -26,7 +26,7 @@ public sealed class RunEventFileTests : IDisposable
         var at = new DateTimeOffset(2026, 10, 16, 8, 30, 0, TimeSpan.Zero);
         var full = new RunEvent(
             at, RunEventKind.Progress, jobId, @"C:\Videos\clip.mp4", 3, 2, 1, "line \"quoted\" é", "worker-1", "Keep", "Encoding", "Finished",
-            "Detail", "Warning", TimeSpan.FromSeconds(95), true, [new FailedQueueJob(jobId, @"C:\Videos\clip.mp4", "Encode", "boom")]);
+            "Detail", "Warning", TimeSpan.FromSeconds(95), true, [new FailedQueueJob(jobId, @"C:\Videos\clip.mp4", "Encode", "boom")], 38);
         var plain = new RunEvent(at.AddSeconds(1), RunEventKind.RunStarted, Count: 4242, Text: "video-optimiser run");
 
         log.Append(full);
@@ -39,7 +39,7 @@ public sealed class RunEventFileTests : IDisposable
                 && expected.Skipped == actual.Skipped && expected.Text == actual.Text && expected.Worker == actual.Worker
                 && expected.Fate == actual.Fate && expected.Stage == actual.Stage && expected.RunEnd == actual.RunEnd
                 && expected.Progress == actual.Progress && expected.Tone == actual.Tone && expected.TimeLeft == actual.TimeLeft
-                && expected.Flag == actual.Flag
+                && expected.Flag == actual.Flag && expected.Percent == actual.Percent
                 && (expected.Failures ?? []).SequenceEqual(actual.Failures ?? []));
     }
 

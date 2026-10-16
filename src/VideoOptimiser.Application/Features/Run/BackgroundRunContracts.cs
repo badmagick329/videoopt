@@ -85,6 +85,7 @@ public enum RunEventKind
 /// <param name="TimeLeft">For <see cref="RunEventKind.Progress"/>: the estimate, when the line has one.</param>
 /// <param name="Flag">The event's yes/no: worker up at conversion start, stopped after a video, question follows, answered no, setting up the worker.</param>
 /// <param name="Failures">For <see cref="RunEventKind.Summary"/>: the failed videos.</param>
+/// <param name="Percent">For <see cref="RunEventKind.Progress"/>: <see cref="JobProgress.Percent"/>, on a reading the next one replaces.</param>
 public sealed record RunEvent(
     DateTimeOffset At,
     RunEventKind Kind,
@@ -102,7 +103,8 @@ public sealed record RunEvent(
     string? Tone = null,
     TimeSpan? TimeLeft = null,
     bool? Flag = null,
-    IReadOnlyList<FailedQueueJob>? Failures = null);
+    IReadOnlyList<FailedQueueJob>? Failures = null,
+    int? Percent = null);
 
 /// <summary>
 /// The event file beside the database (<c>&lt;db&gt;.run.events</c>), JSON lines: a TUI open in another window follows a run

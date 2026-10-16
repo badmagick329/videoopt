@@ -112,8 +112,8 @@ public sealed class WorkerEndRunTests : IDisposable
         _processor.During[0] = async progress =>
         {
             _stop.Press();
-            progress!.Report(JobProgress.Detail("52%, 63 fps, about 6m 10s left"));
-            progress.Report(JobProgress.Detail("63%, 63 fps, about 4m 44s left"));
+            progress!.Report(JobProgress.Reading("52%, 63 fps, about 6m 10s left", 52));
+            progress.Report(JobProgress.Reading("63%, 63 fps, about 4m 44s left", 63));
             _input.Type("n");
             await _state.Question.Acknowledged;
         };

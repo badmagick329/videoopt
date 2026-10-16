@@ -126,7 +126,7 @@ public sealed partial class AbAv1OutputTranslator
         _lastProgress = now;
         var left = EstimateTimeLeft(percent, now);
         var eta = left is { } value ? $", about {HumanReadableValues.FormatDuration(value)} left" : string.Empty;
-        return [JobProgress.Detail($"{percent}%, {progress.Groups["fps"].Value} fps{eta}") with { TimeLeft = left }];
+        return [JobProgress.Reading($"{percent}%, {progress.Groups["fps"].Value} fps{eta}", percent, left)];
     }
 
     /// <summary>

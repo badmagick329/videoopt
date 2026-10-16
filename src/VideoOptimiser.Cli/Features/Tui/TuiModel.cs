@@ -21,7 +21,8 @@ internal enum VideoGroup { ConvertingNow, Queue, Held, Ready, Failed }
 /// <summary>The stages a video passes through, named as the glossary names the job statuses.</summary>
 internal enum Stage { Uploading, FindingCrf, Encoding, Downloading, Checking }
 
-internal enum LogKind { Info, Stage, Success, Warning, Error, Action }
+/// <summary>How a log line reads. <see cref="Detail"/> sits under the step it belongs to, as a CRF attempt does in the console.</summary>
+internal enum LogKind { Info, Stage, Success, Warning, Error, Action, Detail }
 
 /// <param name="Id">The job's ID: the selection follows it when the list changes under the cursor.</param>
 /// <param name="SizeBytes">The original's size; null when no probe recorded it.</param>
@@ -68,15 +69,19 @@ internal enum RunPhase { Preparing, Converting, Ending }
 /// <summary>What the run's event file has told the model so far.</summary>
 /// <param name="EventsSeen">How many of the file's events are in the log; only later ones are new.</param>
 /// <param name="Started">The file's first event; another one means another run, and the log starts again.</param>
-/// <param name="ProgressText">The latest detail or tool line of the video converting now: not a log line, because it repeats.</param>
+/// <param name="ProgressText">The latest detail or tool line of the video converting now.</param>
+/// <param name="ProgressPercent">The progress line's reading, for its bar; null when it is not a reading.</param>
 /// <param name="WaitingForWorker">The run reported creating or bootstrapping the worker and has not started converting.</param>
+/// <param name="LastEventAt">When the run last reported anything: a converting video that has been quiet for long shows how long.</param>
 internal sealed record ActivityState(
     int EventsSeen,
     RunEvent? Started,
     string? ProgressText,
     TimeSpan? ProgressLeft,
     RunPhase Phase,
-    bool WaitingForWorker)
+    bool WaitingForWorker,
+    int? ProgressPercent = null,
+    DateTimeOffset? LastEventAt = null)
 {
     public static ActivityState None { get; } = new(0, null, null, null, RunPhase.Preparing, false);
 }

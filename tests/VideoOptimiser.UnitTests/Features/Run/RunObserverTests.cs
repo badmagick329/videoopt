@@ -25,7 +25,7 @@ public sealed class RunObserverTests
         _time.Advance(TimeSpan.FromMilliseconds(400));
         sink.Report(JobProgress.Tool("b"));
         sink.Report(JobProgress.Step("Encoding."));
-        sink.Report(JobProgress.Outcome(JobTone.Success, "Ready to finalise.") with { TimeLeft = TimeSpan.FromSeconds(30) });
+        sink.Report(JobProgress.Reading("Ready to finalise.", 38, TimeSpan.FromSeconds(30)) with { Kind = JobProgressKind.Step, Tone = JobTone.Success });
         _time.Advance(TimeSpan.FromMilliseconds(700));
         sink.Report(JobProgress.Tool("c"));
         _time.Advance(TimeSpan.FromMilliseconds(500));
@@ -34,7 +34,7 @@ public sealed class RunObserverTests
         _log.Events.Select(entry => entry.Kind).Should().Equal(RunEventKind.ConversionStarted, RunEventKind.Progress, RunEventKind.Progress, RunEventKind.Progress, RunEventKind.Progress);
         _log.Events.Skip(1).Select(entry => entry.Text).Should().Equal("a", "Encoding.", "Ready to finalise.", "c");
         _log.Events[0].Should().Match<RunEvent>(entry => entry.Count == 2 && entry.Flag == false);
-        _log.Events[3].Should().Match<RunEvent>(entry => entry.Progress == "Step" && entry.Tone == "Success" && entry.TimeLeft == TimeSpan.FromSeconds(30));
+        _log.Events[3].Should().Match<RunEvent>(entry => entry.Progress == "Step" && entry.Tone == "Success" && entry.TimeLeft == TimeSpan.FromSeconds(30) && entry.Percent == 38);
     }
 
     /// <summary>Enum fields are written by name, so a reader needs none of this assembly's types, and an error is its root cause's message.</summary>
