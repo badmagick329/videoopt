@@ -28,6 +28,13 @@ public interface IJobRepository
     /// changed since it was read.
     /// </summary>
     Task<bool> RejectAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// <c>queue dismiss</c>: sets <see cref="JobRecord.DismissedUtc"/> on a failed job, leaving its status and
+    /// <c>updated_utc</c> as they were, so <c>history</c> keeps its order. False when the row changed since it was read.
+    /// </summary>
+    Task<bool> DismissAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
+    /// <summary><c>queue dismiss --all</c>: dismisses every failed job not dismissed yet, in one write. Returns how many.</summary>
+    Task<int> DismissAllFailedAsync(string databasePath, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default);
     /// <summary>
     /// Marks jobs a dead process left mid-stage <see cref="JobStatus.Interrupted"/>, so they resume from that stage. Only the

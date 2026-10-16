@@ -54,7 +54,7 @@ internal static partial class TuiUpdate
                 return v.Group switch
                 {
                     VideoGroup.ConvertingNow => Told(m, ConvertingNow(m, q)),
-                    VideoGroup.Failed => Told(m, $"{q} has failed, so there is nothing to drop."),
+                    VideoGroup.Failed => DismissKey(m, v),
                     VideoGroup.Ready => Confirming(m, $"Drop {q}?", "The original is untouched. Its AV1 stays until cleanup deletes it.", new QueueActionEffect(QueueAction.Drop, v.Id, q)),
                     _ => Confirming(m, $"Drop {q}?", "It leaves the queue. The original is untouched.", new QueueActionEffect(QueueAction.Drop, v.Id, q))
                 };
@@ -63,6 +63,24 @@ internal static partial class TuiUpdate
                     ? Confirming(m, $"Retry {q}?", "A fresh job starts from scratch. The failed one stays in history.", new QueueActionEffect(QueueAction.Retry, v.Id, q))
                     : Told(m, "Only a failed video can be retried.");
         }
+    }
+
+    private const string DismissDetail = "Dismissed failures leave this list and stay in history. Their originals stay skipped; queue retry <job-id> still queues one again.";
+
+    /// <summary>
+    /// A failed video has nothing to drop, so d dismisses it (VOPT-115). With more than one failure the choice also offers all
+    /// of them, which is how a backlog of old failures goes in one press.
+    /// </summary>
+    private static TuiStep DismissKey(TuiModel m, Video video)
+    {
+        var one = new QueueActionEffect(QueueAction.Dismiss, video.Id, video.Name);
+        if (m.Failed.Count == 1) return Confirming(m, $"Dismiss {video.Name}?", DismissDetail, one);
+        // The group shows at most MostFailed; at the cap there may be more, and all of them go.
+        var all = m.Failed.Count < TuiSnapshotReader.MostFailed ? $"Dismiss all {m.Failed.Count} failures" : "Dismiss every failure";
+        return TuiStep.Of(m with
+        {
+            Choice = new TuiChoice("Dismiss failures", DismissDetail, [new ChoiceOption($"Dismiss {video.Name}", one), new ChoiceOption(all, new DismissAllFailures())], 0)
+        });
     }
 
     private static string ConvertingNow(TuiModel m, string name) => $"{name} is converting now. {StopWords.HowToStop(m.Run)}";

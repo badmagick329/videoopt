@@ -9,7 +9,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 | Class | Commands | What you tell the person |
 | --- | --- | --- |
 | Read-only | `status` (or no command with output redirected; in a terminal it opens the [full-screen view](#the-full-screen-view), whose keys act), `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `doctor` | Safe to run. `--json` is offered on the ones that list. `doctor` may create the job database and the Immich staging folder. |
-| Job database and temporary files | `config init`, `queue add`, `queue add immich`, `run`, `immich run`, `run stop`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry` | Nothing of theirs is lost. `config init` writes a new config and never replaces one. `queue add immich` and `immich run` download videos to the staging folder, so they need disk space and bandwidth. Their re-upload guard moves converted originals that the phone uploaded again back to Immich's trash, which is intended. |
+| Job database and temporary files | `config init`, `queue add`, `queue add immich`, `run`, `immich run`, `run stop`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry`, `queue dismiss` | Nothing of theirs is lost. `config init` writes a new config and never replaces one. `queue add immich` and `immich run` download videos to the staging folder, so they need disk space and bandwidth. Their re-upload guard moves converted originals that the phone uploaded again back to Immich's trash, which is intended. |
 | **Warn** | `finalize`, `immich finalize`, `queue reject`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Say what it does first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
 
 What to say for each **warn** command:
@@ -84,6 +84,7 @@ Each key is the command of the same name, with the same rules and refusals; clas
 | --- | --- | --- | --- |
 | `h`, `r`, `n` | Queue | `queue hold`, `queue release`, `queue next` | Job database |
 | `d`, `t` | Queue | `queue drop`, `queue retry` (failed videos only); asks first | Job database |
+| `d` on a failed video | Queue | `queue dismiss <job-id>`, or `queue dismiss --all` when the person picks all; asks first | Job database |
 | `s` | any | starts a background run (below) | **Warn** when it would create a Hetzner server |
 | `x`, `X` | any | `run stop`, `run stop --now`; `X` asks first | Job database |
 | `c`, `d` | Worker | `worker create` (lists servers with prices), `worker delete` (asks first) | **Warn** |
@@ -190,7 +191,7 @@ Match the job's `status` and `failureCategory` (from `queue list --json` or `his
 | `FinalizationIncomplete` | An Immich finalisation stopped partway, or waits on the person | Relay `failureMessage`. After they do any Immich step it names, `immich finalize` again. |
 | `FinalizationFailed`, `ManualInterventionRequired` | Replacing a file original failed, or a cut-off one could not be shown to have left both files untouched | Stop. Have them look at `sourcePath` and `outputPath` and decide. `cleanup` keeps that AV1. `finalize <id>` (not `--ready`) takes back a job that failed this way with nothing moved. |
 
-Failed, dropped, rejected and skipped jobs stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` is the way back.
+Failed, dropped, rejected and skipped jobs stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` is the way back. `queue dismiss` only hides a failure from the full-screen view's failed list. The job stays `Failed` in `history` and `--json`, and stays settled.
 
 ## Reference
 

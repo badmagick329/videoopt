@@ -46,6 +46,11 @@ public sealed class JobRecord
     /// <summary><c>queue add &lt;file&gt; --force</c>: the run skips the watch-root and eligibility checks for it.</summary>
     public bool Forced { get; set; }
     /// <summary>
+    /// <c>queue dismiss</c> (VOPT-115): the user saw this failure and wants it out of the TUI's Failed group. The job stays
+    /// <see cref="JobStatus.Failed"/> so its original stays settled; null on any other status.
+    /// </summary>
+    public DateTimeOffset? DismissedUtc { get; set; }
+    /// <summary>
     /// The version of the row this copy was read at. Every write requires it unchanged and raises it, so a copy that another
     /// process changed since (a drop during a run, a hold from a second terminal) fails with <see cref="JobChangedException"/>.
     /// </summary>

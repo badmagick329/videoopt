@@ -243,6 +243,48 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
     }
 
+    /// <summary>
+    /// VOPT-115: a dismissal marks failed jobs only, leaves their status and history order alone, and is refused on a stale copy.
+    /// A job that leaves Failed loses it, so a later failure of the same job shows again.
+    /// </summary>
+    [Fact]
+    public async Task DismissMarksOnlyFailedJobsAndKeepsTheirStatusAndOrder()
+    {
+        var older = await FailAsync(@"C:\Videos\a.mp4");
+        var newer = await FailAsync(@"C:\Videos\b.mp4");
+        var dropped = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued, @"C:\Videos\c.mp4"));
+        (await _repository.DropAsync(_databasePath, dropped)).Should().BeTrue();
+        var historyOrder = (await _repository.ListAsync(_databasePath, terminal: true)).Select(job => job.Id).ToArray();
+        var staleCopy = (await _repository.GetAsync(_databasePath, older.Id))!;
+
+        (await _repository.DismissAsync(_databasePath, older)).Should().BeTrue();
+        (await _repository.DismissAsync(_databasePath, staleCopy)).Should().BeFalse();
+        (await _repository.DismissAsync(_databasePath, dropped)).Should().BeFalse();
+        (await _repository.DismissAllFailedAsync(_databasePath)).Should().Be(1);
+        (await _repository.DismissAllFailedAsync(_databasePath)).Should().Be(0);
+
+        var history = await _repository.ListAsync(_databasePath, terminal: true);
+        history.Select(job => job.Id).Should().Equal(historyOrder);
+        history.Where(job => job.DismissedUtc is not null).Select(job => job.Id).Should().BeEquivalentTo([older.Id, newer.Id]);
+        history.Single(job => job.Id == older.Id).Status.Should().Be(JobStatus.Failed);
+
+        // A failed finalisation that resumes leaves Failed, and with it the dismissal.
+        var resumed = (await _repository.GetAsync(_databasePath, newer.Id))!;
+        resumed.Status = JobStatus.ReadyToFinalize;
+        await _repository.UpdateAsync(_databasePath, resumed);
+        resumed.DismissedUtc.Should().BeNull();
+        (await _repository.GetAsync(_databasePath, newer.Id))!.DismissedUtc.Should().BeNull();
+    }
+
+    private async Task<JobRecord> FailAsync(string sourcePath)
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued, sourcePath));
+        job.Status = JobStatus.Failed;
+        job.CompletedUtc = DateTimeOffset.UtcNow;
+        await _repository.UpdateAsync(_databasePath, job);
+        return job;
+    }
+
     [Fact]
     public async Task RunNextPutsAJobAheadOfEveryOpenJobAndReleasesIt()
     {

@@ -116,6 +116,9 @@ internal static class TuiView
         return line.Build(m.Width);
     }
 
+    /// <summary>On a failed video, d dismisses rather than drops, so the footer names what it does there.</summary>
+    private static bool FailedSelected(TuiModel m) => m.Failed.Any(video => video.Id == m.QueueSelection);
+
     private static IRenderable Footer(TuiModel m)
     {
         // The stop keys work from every pane, so every footer offers them while a run is going.
@@ -128,7 +131,7 @@ internal static class TuiView
                 ? [("↑↓", "move"), ("enter", "choose"), ("esc", "cancel")]
                 : m.Focus switch
                 {
-                    Pane.Queue => [("↑↓", "select"), ("h", "hold"), ("r", "release"), ("n", "run next"), ("d", "drop"), ("t", "retry"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
+                    Pane.Queue => [("↑↓", "select"), ("h", "hold"), ("r", "release"), ("n", "run next"), ("d", FailedSelected(m) ? "dismiss" : "drop"), ("t", "retry"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
                     Pane.Worker => [("c", "create"), ("d", "delete"), ("r", "check now"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
                     Pane.Activity => [("↑↓", "scroll"), ("w", "worker fate"), .. stop, ("s", "start run"), ("end", "follow"), ("tab", ""), ("?", "help"), ("q", "quit")],
                     _ => [("↑↓", "select"), ("o", "original"), ("a", "AV1"), ("f", "finalise"), ("F", "all"), ("r", "reject"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")]

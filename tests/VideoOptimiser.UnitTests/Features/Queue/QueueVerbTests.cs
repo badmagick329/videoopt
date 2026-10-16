@@ -501,6 +501,50 @@ public sealed class QueueVerbTests : QueueTestBase
         (await StoredAsync(job)).Status.Should().Be(JobStatus.Rejected);
     }
 
+    /// <summary>VOPT-115: dismissing marks the failure and nothing else; a second dismiss says so.</summary>
+    [Fact]
+    public async Task DismissHidesAFailureAndKeepsItFailed()
+    {
+        var job = await QueuedAsync("clip.mp4");
+        await MoveAsync(job, JobStatus.Failed);
+
+        var result = await RunAsync("queue", "dismiss", job.Id.ToString("N"));
+
+        result.Should().Be((0, Transcript($"Dismissed clip.mp4. Its original stays skipped. To try it again: video-optimiser queue retry {job.Id:N}{ConfigArgument}"), ""));
+        var stored = await StoredAsync(job);
+        (stored.Status, stored.DismissedUtc is not null).Should().Be((JobStatus.Failed, true));
+        (await RunAsync("queue", "dismiss", job.Id.ToString("N"))).Should().Be((0, Transcript("clip.mp4 is already dismissed."), ""));
+    }
+
+    [Fact]
+    public async Task DismissRefusesAVideoThatDidNotFail()
+    {
+        var job = await QueuedAsync("clip.mp4");
+        await RunAsync("queue", "drop", job.Id.ToString("N"));
+
+        (await RunAsync("queue", "dismiss", job.Id.ToString("N"))).Should().Be((1, "", Transcript("Only a failed video can be dismissed; clip.mp4 was already dropped.")));
+        (await StoredAsync(job)).DismissedUtc.Should().BeNull();
+    }
+
+    /// <summary>--all takes every failure not dismissed yet, and nothing that did not fail.</summary>
+    [Fact]
+    public async Task DismissAllTakesEveryFailureAndSaysHowMany()
+    {
+        var first = await QueuedAsync("a.mp4");
+        var second = await QueuedAsync("b.mp4");
+        var waiting = await QueuedAsync("c.mp4");
+        await MoveAsync(first, JobStatus.Failed);
+        await MoveAsync(second, JobStatus.Failed);
+
+        var result = await RunAsync("queue", "dismiss", "--all");
+
+        result.Should().Be((0, Transcript($"Dismissed 2 failures. Their originals stay skipped; 'video-optimiser history{ConfigArgument}' still lists them."), ""));
+        (await StoredAsync(first)).DismissedUtc.Should().NotBeNull();
+        (await StoredAsync(second)).DismissedUtc.Should().NotBeNull();
+        (await StoredAsync(waiting)).DismissedUtc.Should().BeNull();
+        (await RunAsync("queue", "dismiss", "--all")).Should().Be((0, Transcript("No failures to dismiss."), ""));
+    }
+
     /// <summary>A rejected video's AV1 is nothing a run or finalize would read again, so a second reject, or a drop, finds the job ended.</summary>
     [Fact]
     public async Task RejectingTwiceSaysThereIsNothingToReject()

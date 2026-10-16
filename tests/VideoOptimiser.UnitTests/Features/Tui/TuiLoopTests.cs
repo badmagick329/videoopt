@@ -195,6 +195,8 @@ public sealed class TuiLoopTests
         public Task<QueueVerbOutcome> DropAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken) => Task.FromException<QueueVerbOutcome>(failure);
         public Task<QueueVerbOutcome> RejectAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken) => Task.FromException<QueueVerbOutcome>(failure);
         public IAsyncEnumerable<DropAllStep> DropAllAsync(string databasePath, CancellationToken cancellationToken) => throw failure;
+        public Task<QueueVerbOutcome> DismissAsync(string databasePath, JobRecord job, CancellationToken cancellationToken) => Task.FromException<QueueVerbOutcome>(failure);
+        public Task<int> DismissAllAsync(string databasePath, CancellationToken cancellationToken) => Task.FromException<int>(failure);
         public Task<LeftFiles?> LeftFilesAsync(AppSettings settings, JobRecord job, bool finished, CancellationToken cancellationToken) => throw failure;
         public Task<bool> CleanupDeletesFilesAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken) => throw failure;
     }

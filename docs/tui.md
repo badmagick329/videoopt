@@ -41,7 +41,7 @@ Each pane adds its own:
 | --- | --- | --- |
 | Queue | `h` / `r` | Hold a waiting or stopped video, so runs pass over it, or release it. |
 | Queue | `n` | Convert the selected video next. |
-| Queue | `d` | Drop the video from the queue, after asking. The original is untouched. |
+| Queue | `d` | Drop the video from the queue, after asking. The original is untouched. On a failed video, dismiss it instead: see [Dismissing failures](#dismissing-failures). |
 | Queue | `t` | Queue a failed video again as a fresh job, after asking. |
 | Worker | `c` | Create a worker. It lists the servers you can have, with their hourly prices. |
 | Worker | `d` | Delete the worker, after asking. It stops billing at once. |
@@ -72,6 +72,14 @@ When you watch an AV1 in the Review pane and don't want it, press `r`. The AV1 i
 If the AV1 is open in a player, it can't be deleted yet. The video is still rejected, and `cleanup` deletes the file later.
 
 The same action from a terminal is `queue reject <job-id>`.
+
+## Dismissing failures
+
+The Queue pane lists the latest failures. To clear ones you won't retry, select one and press `d`. With only one failure listed, it asks first. With several, you choose between that video and all of them.
+
+A dismissed video leaves the list, but its job stays failed in `history`. `queue add` and `immich run` still pass over it until its file changes, so dismissing it won't get it converted again. To retry one later, use `queue retry <job-id>`; `history` shows the ID.
+
+From a terminal, the same thing is `queue dismiss <job-id>`, or `queue dismiss --all` for every failure.
 
 ## What it can't do yet
 

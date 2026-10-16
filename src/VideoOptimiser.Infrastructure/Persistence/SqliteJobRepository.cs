@@ -60,6 +60,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
             throw new JobChangedException(job.Id);
         }
         job.RowVersion = previous.RowVersion + 1;
+        if (job.Status != JobStatus.Failed) job.DismissedUtc = null;
     }
 
     public Task<bool> SetHeldAsync(string databasePath, JobRecord job, bool held, CancellationToken cancellationToken = default) =>
@@ -106,6 +107,33 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     }
 
     private const string RejectedMessage = "Rejected by user.";
+
+    // Not through WriteQueueFieldsAsync: that moves updated_utc, and history sorts on it, so a dismissed old failure would jump to the top.
+    public async Task<bool> DismissAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default)
+    {
+        var dismissedUtc = DateTimeOffset.UtcNow;
+        await using var connection = await OpenAsync(databasePath, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE jobs SET dismissed_utc = $dismissedUtc, row_version = row_version + 1 WHERE id = $id AND row_version = $rowVersion AND status = $failed;";
+        command.Parameters.AddWithValue("$id", job.Id.ToString("N"));
+        command.Parameters.AddWithValue("$rowVersion", job.RowVersion);
+        command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
+        command.Parameters.AddWithValue("$dismissedUtc", dismissedUtc.ToString("O"));
+        if (await command.ExecuteNonQueryAsync(cancellationToken) == 0) return false;
+        job.DismissedUtc = dismissedUtc;
+        job.RowVersion++;
+        return true;
+    }
+
+    public async Task<int> DismissAllFailedAsync(string databasePath, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(databasePath, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE jobs SET dismissed_utc = $dismissedUtc, row_version = row_version + 1 WHERE status = $failed AND dismissed_utc IS NULL;";
+        command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
+        command.Parameters.AddWithValue("$dismissedUtc", DateTimeOffset.UtcNow.ToString("O"));
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
 
     /// <summary>A queue verb's write: only while the row is as the verb read it, so a run that started the job first wins.</summary>
     private async Task<bool> WriteQueueFieldsAsync(string databasePath, JobRecord job, string assignments, Action<SqliteCommand> parameters, Action applied, CancellationToken cancellationToken)
@@ -236,7 +264,9 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         command.CommandText = insert
             // One statement, so two commands queueing the same original at once cannot both insert an open job for it.
             ? $"""INSERT INTO jobs (id, source_path, source_fingerprint, status, resume_status, attempt, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc, execution_mode, remote_host, remote_workspace, source_kind, immich_asset_id, immich_checksum, immich_new_asset_id, quality_fingerprint, video_codec, video_width, video_height, video_bitrate, video_duration_seconds, video_size_bytes, forced) SELECT $id, $sourcePath, $sourceFingerprint, $status, $resumeStatus, $attempt, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc, $executionMode, $remoteHost, $remoteWorkspace, $sourceKind, $immichAssetId, $immichChecksum, $immichNewAssetId, $qualityFingerprint, $videoCodec, $videoWidth, $videoHeight, $videoBitrate, $videoDurationSeconds, $videoSizeBytes, $forced WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE status NOT IN ({TerminalStatuses}) AND (source_path = $sourcePath COLLATE NOCASE OR ($immichAssetId IS NOT NULL AND immich_asset_id = $immichAssetId)));"""
-            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc, execution_mode = $executionMode, remote_host = $remoteHost, remote_workspace = $remoteWorkspace, source_kind = $sourceKind, immich_asset_id = $immichAssetId, immich_checksum = $immichChecksum, immich_new_asset_id = $immichNewAssetId, quality_fingerprint = $qualityFingerprint, video_codec = $videoCodec, video_width = $videoWidth, video_height = $videoHeight, video_bitrate = $videoBitrate, video_duration_seconds = $videoDurationSeconds, video_size_bytes = $videoSizeBytes, row_version = row_version + 1 WHERE id = $id AND row_version = $rowVersion AND held = 0;""";
+            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc, execution_mode = $executionMode, remote_host = $remoteHost, remote_workspace = $remoteWorkspace, source_kind = $sourceKind, immich_asset_id = $immichAssetId, immich_checksum = $immichChecksum, immich_new_asset_id = $immichNewAssetId, quality_fingerprint = $qualityFingerprint, video_codec = $videoCodec, video_width = $videoWidth, video_height = $videoHeight, video_bitrate = $videoBitrate, video_duration_seconds = $videoDurationSeconds, video_size_bytes = $videoSizeBytes, dismissed_utc = CASE WHEN $status = $failed THEN dismissed_utc END, row_version = row_version + 1 WHERE id = $id AND row_version = $rowVersion AND held = 0;""";
+        // A dismissal is of a failure: a job that leaves Failed (a resumed finalisation) and fails again shows again.
+        if (!insert) Add(command, "$failed", (int)JobStatus.Failed);
         Add(command, "$id", job.Id.ToString("N"));
         Add(command, "$sourcePath", job.SourcePath);
         Add(command, "$sourceFingerprint", job.SourceFingerprint);
@@ -328,6 +358,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         Held = reader.GetInt32(reader.GetOrdinal("held")) != 0,
         Priority = reader.GetInt32(reader.GetOrdinal("priority")),
         Forced = reader.GetInt32(reader.GetOrdinal("forced")) != 0,
+        DismissedUtc = NullableString(reader, "dismissed_utc") is { } dismissed ? DateTimeOffset.Parse(dismissed, CultureInfo.InvariantCulture) : null,
         RowVersion = reader.GetInt64(reader.GetOrdinal("row_version"))
     };
 

@@ -19,6 +19,8 @@ internal class DelegatingJobRepository(IJobRepository inner) : IJobRepository
     public virtual Task<bool> RunNextAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => Inner.RunNextAsync(databasePath, job, cancellationToken);
     public virtual Task<bool> DropAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => Inner.DropAsync(databasePath, job, cancellationToken);
     public virtual Task<bool> RejectAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => Inner.RejectAsync(databasePath, job, cancellationToken);
+    public virtual Task<bool> DismissAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => Inner.DismissAsync(databasePath, job, cancellationToken);
+    public virtual Task<int> DismissAllFailedAsync(string databasePath, CancellationToken cancellationToken = default) => Inner.DismissAllFailedAsync(databasePath, cancellationToken);
     public virtual Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default) => Inner.ListAsync(databasePath, terminal, cancellationToken);
     public virtual Task MarkActiveJobsInterruptedAsync(string databasePath, bool includeFinalizing, CancellationToken cancellationToken = default) => Inner.MarkActiveJobsInterruptedAsync(databasePath, includeFinalizing, cancellationToken);
     public virtual Task<JobRecord?> FindOpenByImmichAssetAsync(string databasePath, string assetId, CancellationToken cancellationToken = default) => Inner.FindOpenByImmichAssetAsync(databasePath, assetId, cancellationToken);

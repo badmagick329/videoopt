@@ -11,7 +11,7 @@ using static VideoOptimiser.Cli.Features.Queue.QueueWords;
 namespace VideoOptimiser.Cli.Features.Queue;
 
 /// <summary>
-/// The queue commands: the verbs <c>queue hold</c>, <c>release</c>, <c>next</c>, <c>drop</c> (VOPT-54 step 5) and <c>reject</c> (VOPT-112); the
+/// The queue commands: the verbs <c>queue hold</c>, <c>release</c>, <c>next</c>, <c>drop</c> (VOPT-54 step 5), <c>reject</c> (VOPT-112) and <c>dismiss</c> (VOPT-115); the
 /// commands that put videos in the queue, <c>queue add</c> (was <c>queue discover</c>), <c>queue add &lt;file&gt;</c> and
 /// <c>queue retry</c> (<c>queue add immich</c> is the Immich slice's), each ending with what to run next; and the job lists <c>queue list</c> and
 /// <c>history</c>, as lines or <c>--json</c>. When a verb acts and when it refuses is decided by <see cref="IQueueVerbs"/>
@@ -126,6 +126,43 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                 return (int)ExitCode.Success;
             default:
                 throw new InvalidOperationException($"queue reject cannot end as {outcome.GetType().Name}.");
+        }
+    }
+
+    /// <summary>
+    /// <c>queue dismiss &lt;job-id&gt;</c> and <c>--all</c> (VOPT-115). It asks nothing: dismissing only hides a failure from the
+    /// TUI's Failed group, and the job stays in <c>history</c> for <c>queue retry</c>.
+    /// </summary>
+    public async Task<int> DismissAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
+    {
+        var database = configuration.Settings.Database.Path;
+        if (command.All)
+        {
+            var count = await verbs.DismissAllAsync(database, cancellationToken);
+            var history = command.Hint("history");
+            Console.WriteLine(count switch
+            {
+                0 => "No failures to dismiss.",
+                1 => $"Dismissed 1 failure. Its original stays skipped; '{history}' still lists it.",
+                _ => $"Dismissed {count} failures. Their originals stay skipped; '{history}' still lists them."
+            });
+            return (int)ExitCode.Success;
+        }
+        if (await FindJobAsync(configuration, command, cancellationToken) is not { } job) return (int)ExitCode.InvalidArguments;
+        var outcome = await verbs.DismissAsync(database, job, cancellationToken);
+        var name = Path.GetFileName(outcome.Job.SourcePath);
+        switch (outcome)
+        {
+            case VerbRefused refused:
+                return Refuse($"Only a failed video can be dismissed; {name} {StatusPhrase(refused.Job)}.");
+            case JobAlreadyDismissed:
+                Console.WriteLine($"{name} is already dismissed.");
+                return (int)ExitCode.Success;
+            case JobDismissed:
+                Console.WriteLine($"Dismissed {name}. Its original stays skipped. To try it again: {command.Hint($"queue retry {job.Id:N}")}");
+                return (int)ExitCode.Success;
+            default:
+                throw new InvalidOperationException($"queue dismiss cannot end as {outcome.GetType().Name}.");
         }
     }
 

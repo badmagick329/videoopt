@@ -6,7 +6,7 @@ namespace VideoOptimiser.Infrastructure.Persistence;
 public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
 {
     /// <summary>The newest migration below. <see cref="SqliteSchemaCheck"/> refuses a database without it; raise both together.</summary>
-    public const int CurrentVersion = 10;
+    public const int CurrentVersion = 11;
 
     public async Task InitializeAsync(string databasePath, CancellationToken cancellationToken = default)
     {
@@ -182,6 +182,13 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
                 );
                 """, cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (10, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
+        if (!await HasMigrationAsync(connection, 11, cancellationToken))
+        {
+            // queue dismiss (VOPT-115): hides a failure from the TUI's Failed group. A flag, not a status, so the failed job
+            // still settles its original.
+            await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN dismissed_utc TEXT NULL;", cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (11, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
         await transaction.CommitAsync(cancellationToken);
     }

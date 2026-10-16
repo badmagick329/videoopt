@@ -60,6 +60,7 @@ The card shows the queue's counts, the run going now, the Hetzner worker if you 
 | `queue next <job-id>` | Convert a waiting or stopped video next, and release it if it was held. A run that is going takes it after the current video. |
 | `queue drop <job-id>`, `queue drop --all` | Take one video, or every waiting, stopped and held one, out of the queue. Its files stay until `cleanup`. |
 | `queue retry <job-id>` | Queue a failed, dropped, rejected or not worth converting video again, as a fresh job. |
+| `queue dismiss <job-id>`, `queue dismiss --all` | Hide one failed video, or every one, from the full-screen view's failed list. The job stays failed in `history`, `queue add` still passes over its original, and `queue retry` still works on it. |
 
 A run reads the queue again before each video, so these count from its next video.
 

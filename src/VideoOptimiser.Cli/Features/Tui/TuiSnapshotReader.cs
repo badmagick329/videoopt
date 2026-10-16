@@ -111,7 +111,8 @@ internal sealed class TuiSnapshotReader(
 
     /// <summary>
     /// The latest failures: a failed job is shown while no later job exists for the same original, open or ended, because a
-    /// retry, a new discovery or a conversion after it replaces it. Newest first, at most <see cref="MostFailed"/>.
+    /// retry, a new discovery or a conversion after it replaces it, and until <c>queue dismiss</c> hides it. Newest first, at
+    /// most <see cref="MostFailed"/>.
     /// </summary>
     internal static ImmutableList<Video> FailedVideos(IEnumerable<JobRecord> ended, IEnumerable<JobRecord> open)
     {
@@ -122,7 +123,7 @@ internal sealed class TuiSnapshotReader(
         return
         [
             .. ended
-                .Where(job => job.Status == JobStatus.Failed && job.CreatedUtc >= newestBySource[job.SourcePath])
+                .Where(job => job.Status == JobStatus.Failed && job.DismissedUtc is null && job.CreatedUtc >= newestBySource[job.SourcePath])
                 .OrderByDescending(job => job.CompletedUtc ?? job.UpdatedUtc)
                 .Take(MostFailed)
                 .Select(FailedVideo)

@@ -108,12 +108,49 @@ public sealed class TuiActionKeysTests
     }
 
     [Fact]
-    public void DRefusesAVideoConvertingNowAndAFailedOne()
+    public void DRefusesAVideoConvertingNow()
     {
         Notice(Update(WithRun(Queue(1, Converting(1)), Background), Letter('d'))).Should().Be("clip-001.mp4 is converting now. Press x to stop the run after this video, or X to stop it now.");
+    }
 
+    private const string DismissDetail = "Dismissed failures leave this list and stay in history. Their originals stay skipped; queue retry <job-id> still queues one again.";
+
+    /// <summary>VOPT-115: a lone failure is dismissed after a yes, as a drop is.</summary>
+    [Fact]
+    public void DOnTheOnlyFailureAsksBeforeItDismissesIt()
+    {
         var failed = After(Model(), Snap(Quiet([], [Failed(1)])));
-        Notice(Update(failed, Letter('d'))).Should().Be("clip-001.mp4 has failed, so there is nothing to drop.");
+
+        var step = Update(failed, Letter('d'));
+
+        step.Effects.Should().BeEmpty();
+        step.Model.Confirm.Should().Be(new TuiConfirm("Dismiss clip-001.mp4?", DismissDetail, new QueueActionEffect(QueueAction.Dismiss, Id(1), "clip-001.mp4")));
+    }
+
+    /// <summary>With more failures, the choice offers this one or all of them; Esc dismisses nothing.</summary>
+    [Fact]
+    public void DOnOneOfSeveralFailuresOffersThatOneOrAll()
+    {
+        var failed = After(Model(), Snap(Quiet([], [Failed(1), Failed(2)])));
+
+        var choice = Update(failed, Letter('d')).Model.Choice!;
+
+        (choice.Title, choice.Detail).Should().Be(("Dismiss failures", DismissDetail));
+        choice.Options.Select(option => option.Label).Should().Equal("Dismiss clip-001.mp4", "Dismiss all 2 failures");
+        Choose(failed, Letter('d'), Enter).Effects.Should().Equal(new QueueActionEffect(QueueAction.Dismiss, Id(1), "clip-001.mp4"));
+        Choose(failed, Letter('d'), Press(ConsoleKey.DownArrow), Enter).Effects.Should().Equal(new DismissAllFailures());
+        var cancelled = Choose(failed, Letter('d'), Press(ConsoleKey.Escape));
+        cancelled.Model.Choice.Should().BeNull();
+        cancelled.Effects.Should().BeEmpty();
+    }
+
+    /// <summary>The group shows at most <see cref="TuiSnapshotReader.MostFailed"/>, so at the cap it can't count them all.</summary>
+    [Fact]
+    public void AtTheFailedGroupsCapDismissAllNamesNoNumber()
+    {
+        var failed = After(Model(), Snap(Quiet([], [.. Enumerable.Range(1, TuiSnapshotReader.MostFailed).Select(number => Failed(number))])));
+
+        Update(failed, Letter('d')).Model.Choice!.Options[1].Label.Should().Be("Dismiss every failure");
     }
 
     [Fact]

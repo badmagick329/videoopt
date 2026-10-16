@@ -29,7 +29,7 @@ internal static class TuiHelp
             new("h", "hold a waiting or stopped video"),
             new("r", "release a held video"),
             new("n", "run a video next"),
-            new("d", "drop a video from the queue, after asking"),
+            new("d", "drop a video from the queue, or dismiss a failed one, after asking"),
             new("t", "queue a failed video again, after asking")
         ]),
         new("Worker",

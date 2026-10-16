@@ -34,7 +34,9 @@ public enum VerbRefusal
     /// <summary>Neither waiting nor stopped (ready, failed, dropped, ...): the job's own status says what it is.</summary>
     NotWaiting,
     /// <summary>Not ready to finalise (waiting, converting, stopped): the job's own status says what it is. <c>reject</c> judges a finished AV1, which only a ready job has.</summary>
-    NotReady
+    NotReady,
+    /// <summary><c>dismiss</c> of a job that did not fail: the job's own status says what it is.</summary>
+    NotFailed
 }
 
 /// <summary>The verb did not act. <c>hold</c>, <c>next</c>, <c>drop</c> and <c>reject</c> refuse a finalisation; <c>hold</c>, <c>next</c> and <c>drop</c> also a job converting now; <c>hold</c> and <c>next</c> one that is not waiting or stopped; <c>reject</c> one that is not ready.</summary>
@@ -90,6 +92,11 @@ public sealed record RejectedFiles(bool Av1, bool DownloadedCopy)
 /// </summary>
 /// <param name="Deleted">What the reject deleted.</param>
 public sealed record JobRejected(JobRecord Job, RejectedFiles Deleted, RejectedFiles? LeftForCleanup) : QueueVerbOutcome(Job);
+
+/// <summary><c>queue dismiss</c> hid the failure from the TUI's Failed group; the job is still failed.</summary>
+public sealed record JobDismissed(JobRecord Job) : QueueVerbOutcome(Job);
+
+public sealed record JobAlreadyDismissed(JobRecord Job) : QueueVerbOutcome(Job);
 
 /// <summary>One step of <c>queue drop --all</c>, in the order it happened, so the CLI prints each as it goes.</summary>
 public abstract record DropAllStep;

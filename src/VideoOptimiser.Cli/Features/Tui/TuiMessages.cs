@@ -70,7 +70,7 @@ internal sealed record RefreshWorkerCheck(int Generation) : TuiEffect;
 /// <summary>Read the snapshot now, after an action changed something, instead of waiting for the feed's next second.</summary>
 internal sealed record RefreshSnapshot : TuiEffect;
 
-internal enum QueueAction { Hold, Release, Next, Drop, Retry, Reject }
+internal enum QueueAction { Hold, Release, Next, Drop, Retry, Reject, Dismiss }
 
 internal sealed record QueueActionEffect(QueueAction Action, Guid Id, string Name) : TuiEffect
 {
@@ -83,8 +83,16 @@ internal sealed record QueueActionEffect(QueueAction Action, Guid Id, string Nam
         QueueAction.Next => $"Moving {Name} to the front.",
         QueueAction.Drop => $"Dropping {Name}.",
         QueueAction.Reject => $"Rejecting {Name}.",
+        QueueAction.Dismiss => $"Dismissing {Name}.",
         _ => $"Queueing {Name} again."
     };
+}
+
+/// <summary><c>queue dismiss --all</c>: every failure not dismissed yet, not only the ones the Failed group shows.</summary>
+internal sealed record DismissAllFailures : TuiEffect
+{
+    public override string BusyKey => "dismiss";
+    public override string BusyText => "Dismissing the failures.";
 }
 
 /// <summary>List the servers a creation may choose from; Hetzner is asked, so it runs off the loop thread.</summary>

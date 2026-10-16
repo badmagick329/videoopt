@@ -243,6 +243,25 @@ public sealed class QueueAddTests : QueueTestBase
         (await RunAsync("queue", "add", job.SourcePath)).Should().Be((0, Transcript(string.Format(System.Globalization.CultureInfo.InvariantCulture, line, job.Id.ToString("N"), ConfigArgument)), ""));
     }
 
+    /// <summary>VOPT-115: dismissing only hides a failure from the TUI, so its original stays settled and queue retry still queues it.</summary>
+    [Fact]
+    public async Task ADismissedFailureStillSettlesItsOriginalAndRetryStillQueuesIt()
+    {
+        await WriteConfigAsync();
+        var job = await QueuedAsync("clip.mp4");
+        job.SourceFingerprint = await new FileFingerprintService().CreateAsync(job.SourcePath);
+        await Repository.UpdateAsync(DatabasePath, job);
+        await MoveAsync(job, JobStatus.Failed);
+        (await RunAsync("queue", "dismiss", job.Id.ToString("N"))).ExitCode.Should().Be(0);
+
+        (await RunAsync("queue", "add", job.SourcePath)).Should().Be((0, Transcript($"clip.mp4 failed before (job {job.Id:N}). To try it again: video-optimiser queue retry {job.Id:N}{ConfigArgument}"), ""));
+        (await Repository.FindOpenBySourceAsync(DatabasePath, job.SourcePath)).Should().BeNull();
+
+        (await RunAsync("queue", "retry", job.Id.ToString("N"))).ExitCode.Should().Be(0);
+        var replacement = (await Repository.FindOpenBySourceAsync(DatabasePath, job.SourcePath))!;
+        (replacement.Status, replacement.DismissedUtc).Should().Be((JobStatus.Queued, (DateTimeOffset?)null));
+    }
+
     /// <summary>R11: another command queued the file between the check and the insert; its job is named, and no second one made.</summary>
     [Fact]
     public async Task AFileQueuedFromAnotherTerminalMeanwhileNamesThatJob()

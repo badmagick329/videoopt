@@ -11,6 +11,11 @@
 - The progress line draws a bar for an encode, an upload, a download or a checksum check. Its time left shows once, after the speed, instead of twice.
 - Until a step's first progress line arrives, a spinner shows in place of `No progress line yet.`, after an empty bar when the step will draw one.
 - When a converting video has reported nothing for a minute, its progress line says how long ago it last did. A healthy encode or transfer reports every few seconds.
+- `d` on a failed video in the Queue pane dismisses it, after asking. With several failures listed, you can dismiss just that one or all of them. A dismissed video leaves the list, but its job stays failed in `history`, its original stays skipped, and `queue retry <job-id>` still works on it.
+
+### The queue
+
+- New `queue dismiss <job-id>` and `queue dismiss --all` do the same from a terminal.
 
 ### Remote workers
 

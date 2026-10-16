@@ -55,6 +55,7 @@ internal sealed class TuiActions(
             QueueAction.Release => await verbs.ReleaseAsync(database, job, cancellationToken),
             QueueAction.Next => await verbs.NextAsync(database, job, cancellationToken),
             QueueAction.Reject => await verbs.RejectAsync(settings, job, cancellationToken),
+            QueueAction.Dismiss => await verbs.DismissAsync(database, job, cancellationToken),
             _ => await verbs.DropAsync(settings, job, cancellationToken)
         };
         return await WordAsync(outcome, settings, rejecting: effect.Action == QueueAction.Reject, cancellationToken);
@@ -100,6 +101,10 @@ internal sealed class TuiActions(
                     rejectLines.Add(new LogLine(LogKind.Warning, $"Couldn't delete its {QueueWords.FilesPhrase(left)}; {(both ? "they may be" : "it may be")} open in another program. {(both ? "They stay" : "It stays")} until cleanup deletes {(both ? "them" : "it")}."));
                 }
                 return new ActionResult(rejectLines, $"Rejected {name}.");
+            case JobDismissed:
+                return Done(LogKind.Action, $"Dismissed {name}. Its original stays skipped. To try it again: video-optimiser queue retry {job.Id:N}");
+            case JobAlreadyDismissed:
+                return Done(LogKind.Info, $"{name} is already dismissed.");
             default:
                 throw new InvalidOperationException($"A queue verb cannot end as {outcome.GetType().Name}.");
         }
@@ -115,6 +120,7 @@ internal sealed class TuiActions(
             VerbRefusal.StoppedWhileFinalising => $"{name} was stopped while being finalised; finalising it checks and resumes it.",
             VerbRefusal.BeingFinalised => $"{name} is being finalised now.",
             VerbRefusal.NotReady => $"Only a video that is ready to finalise can be rejected; {name} {QueueWords.StatusPhrase(job)}.",
+            VerbRefusal.NotFailed => $"Only a failed video can be dismissed; {name} {QueueWords.StatusPhrase(job)}.",
             _ => $"Only waiting and stopped videos can be held or run next; {name} {QueueWords.StatusPhrase(job)}."
         };
     }
@@ -146,6 +152,17 @@ internal sealed class TuiActions(
             (null, _) => "Its downloaded copy stays until cleanup deletes it.",
             (_, false) => $"Its {av1} stays until cleanup deletes it.",
             _ => $"Its {av1} and downloaded copy stay until cleanup deletes them."
+        };
+    }
+
+    public async Task<ActionResult> DismissAllAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        var count = await verbs.DismissAllAsync(settings.Database.Path, cancellationToken);
+        return count switch
+        {
+            0 => Done(LogKind.Info, "No failures to dismiss."),
+            1 => Done(LogKind.Action, "Dismissed 1 failure. Its original stays skipped; history still lists it."),
+            _ => Done(LogKind.Action, $"Dismissed {count.ToString(CultureInfo.InvariantCulture)} failures. Their originals stay skipped; history still lists them.")
         };
     }
 

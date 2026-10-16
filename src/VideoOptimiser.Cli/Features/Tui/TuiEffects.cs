@@ -56,6 +56,9 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
             case QueueActionEffect queue:
                 Finish(effect, await actions.QueueAsync(queue, Settings, cancellationToken));
                 break;
+            case DismissAllFailures:
+                Finish(effect, await actions.DismissAllAsync(Settings, cancellationToken));
+                break;
             case LoadWorkerOptions load:
                 into.TryWrite(await actions.LoadWorkerOptionsAsync(load.Purpose, Settings, cancellationToken));
                 break;

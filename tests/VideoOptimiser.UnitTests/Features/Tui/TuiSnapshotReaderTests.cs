@@ -103,6 +103,22 @@ public sealed class TuiSnapshotReaderTests : IDisposable
         snapshot.Failed.Last().Id.Should().Be(Id(6));
     }
 
+    /// <summary>VOPT-115: a dismissed failure leaves the group, and the cap counts only the ones still shown.</summary>
+    [Fact]
+    public async Task TheFailedGroupLeavesOutDismissedFailures()
+    {
+        _jobs.Terminal = [.. Enumerable.Range(1, 25).Select(number =>
+        {
+            var job = Job(number, JobStatus.Failed, minute: number);
+            if (number > 20) job.DismissedUtc = T0;
+            return job;
+        })];
+
+        var snapshot = await ReadAsync();
+
+        snapshot.Failed!.Select(video => video.Id).Should().Equal(Enumerable.Range(1, 20).Reverse().Select(Id));
+    }
+
     /// <summary>The category is a name for code and <c>--json</c>; a person reads a phrase.</summary>
     [Fact]
     public async Task AFailedVideoShowsItsFailureInWordsOnOneLine()

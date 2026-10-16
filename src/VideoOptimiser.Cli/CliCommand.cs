@@ -28,6 +28,7 @@ internal enum CliCommandKind
     QueueNext,
     QueueDrop,
     QueueReject,
+    QueueDismiss,
     QueueRetry,
     Status,
     History,
@@ -77,6 +78,8 @@ Usage:
   video-optimiser queue drop <job-id> [--config <path>]
   video-optimiser queue drop --all [--config <path>]
   video-optimiser queue reject <job-id> [--config <path>]
+  video-optimiser queue dismiss <job-id> [--config <path>]
+  video-optimiser queue dismiss --all [--config <path>]
   video-optimiser queue retry <job-id> [--config <path>]
   video-optimiser status [--config <path>] [--json]
   video-optimiser history [--config <path>] [--json]
@@ -219,6 +222,7 @@ Usage:
             ["queue", "next", _] => CliCommandKind.QueueNext,
             ["queue", "drop"] or ["queue", "drop", _] => CliCommandKind.QueueDrop,
             ["queue", "reject", _] => CliCommandKind.QueueReject,
+            ["queue", "dismiss"] or ["queue", "dismiss", _] => CliCommandKind.QueueDismiss,
             ["queue", "retry", _] => CliCommandKind.QueueRetry,
             ["status"] => CliCommandKind.Status,
             ["history"] => CliCommandKind.History,
@@ -255,7 +259,7 @@ Usage:
         if (first && limit is not null) return Invalid("--first and --limit cannot be used together.");
         // --first is --limit 1 for the Immich commands; queue add keeps its own --first.
         if (first && kind is CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun) limit = 1;
-        if (all && kind != CliCommandKind.QueueDrop) return Invalid("--all is only supported by queue drop.");
+        if (all && kind is not (CliCommandKind.QueueDrop or CliCommandKind.QueueDismiss)) return Invalid("--all is only supported by queue drop and queue dismiss.");
 
         if (force && kind != CliCommandKind.QueueAddFile)
         {
@@ -266,6 +270,7 @@ Usage:
         if (finalizeReady && kind != CliCommandKind.Finalize) return Invalid("--ready is only supported by finalize.");
         if (finalizeReady && remaining.Count != 1) return Invalid("finalize --ready does not take a job ID.");
         if (kind == CliCommandKind.QueueDrop && all == (remaining.Count == 3)) return Invalid("queue drop requires a job ID or --all.");
+        if (kind == CliCommandKind.QueueDismiss && all == (remaining.Count == 3)) return Invalid("queue dismiss requires a job ID or --all.");
         if (kind == CliCommandKind.QueueRetry && remaining.Count != 3) return Invalid("queue retry requires a job ID.");
         if (stopNow && kind != CliCommandKind.StopRun) return Invalid("--now is only supported by run stop.");
         if (keepWorker && kind != CliCommandKind.BackgroundStart) return Invalid("--keep-worker is only supported by background start.");
@@ -281,7 +286,7 @@ Usage:
             return Invalid($"{modeOverride.Flag} is only supported by run and immich run.");
         }
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueReject or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate, Size: size);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueReject or CliCommandKind.QueueDismiss or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate, Size: size);
     }
 
     private static bool TryParseWorkerFate(string text, out WorkerFateChoice fate)

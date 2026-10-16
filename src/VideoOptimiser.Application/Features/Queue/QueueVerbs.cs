@@ -16,12 +16,14 @@ public interface IQueueVerbs
     Task<QueueVerbOutcome> DropAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken);
     Task<QueueVerbOutcome> RejectAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken);
     IAsyncEnumerable<DropAllStep> DropAllAsync(string databasePath, CancellationToken cancellationToken);
+    Task<QueueVerbOutcome> DismissAsync(string databasePath, JobRecord job, CancellationToken cancellationToken);
+    Task<int> DismissAllAsync(string databasePath, CancellationToken cancellationToken);
     Task<LeftFiles?> LeftFilesAsync(AppSettings settings, JobRecord job, bool finished, CancellationToken cancellationToken);
     Task<bool> CleanupDeletesFilesAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// The queue verbs (VOPT-54 step 5): <c>queue hold</c>, <c>release</c>, <c>next</c>, <c>drop</c> and <c>reject</c> (VOPT-112). Each writes only while
+/// The queue verbs (VOPT-54 step 5): <c>queue hold</c>, <c>release</c>, <c>next</c>, <c>drop</c>, <c>reject</c> (VOPT-112) and <c>dismiss</c> (VOPT-115). Each writes only while
 /// the job is as it read it (the repository's compare-and-swap), so a run that started the video first wins and a verb never
 /// half-applies: a lost race throws <see cref="JobChangedException"/>. A job in a converting status is converting only while
 /// a run holds the run lock; otherwise a crash or a closed window left it, and <see cref="RunHoldsJobsAsync"/> marks it
@@ -136,6 +138,25 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
         var deleted = new RejectedFiles(mine.Abandoned.Count > 0 && av1Left == 0, mine.StagedOriginals.Count > 0 && copyLeft == 0);
         return new JobRejected(job, deleted, left.Any ? left : null);
     }
+
+    /// <summary>
+    /// <c>queue dismiss</c> (VOPT-115): hides a failure from the TUI's Failed group. The job stays failed, so discovery still
+    /// passes over its original, and <c>queue retry</c> still queues it again. Nothing else ends a job as failed while the
+    /// user looks at it, so there is no lock to take.
+    /// </summary>
+    /// <returns><see cref="JobDismissed"/>, <see cref="JobAlreadyDismissed"/> or a <see cref="VerbRefused"/> with <see cref="VerbRefusal.NotFailed"/>.</returns>
+    public async Task<QueueVerbOutcome> DismissAsync(string databasePath, JobRecord job, CancellationToken cancellationToken)
+    {
+        if (job.Status != JobStatus.Failed) return new VerbRefused(job, VerbRefusal.NotFailed);
+        if (job.DismissedUtc is not null) return new JobAlreadyDismissed(job);
+        if (!await repository.DismissAsync(databasePath, job, cancellationToken)) throw new JobChangedException(job.Id);
+        return new JobDismissed(job);
+    }
+
+    /// <summary><c>queue dismiss --all</c>: every failure not dismissed yet, the ones the Failed group no longer shows too.</summary>
+    /// <returns>How many it dismissed.</returns>
+    public Task<int> DismissAllAsync(string databasePath, CancellationToken cancellationToken) =>
+        repository.DismissAllFailedAsync(databasePath, cancellationToken);
 
     /// <summary>
     /// What of a dropped job cleanup will delete, read from cleanup's own plan after the drop so it cannot promise more; null

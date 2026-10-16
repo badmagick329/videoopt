@@ -118,11 +118,36 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         await using var reader = await command.ExecuteReaderAsync();
         (await reader.ReadAsync()).Should().BeTrue();
         (reader.GetInt32(0), reader.GetInt32(1), reader.IsDBNull(2), reader.GetInt32(3)).Should().Be((0, 0, true, 1));
-        SqliteDatabaseInitializer.CurrentVersion.Should().Be(10);
 
         // The id check keeps it one row.
         var second = () => ExecuteAsync(databasePath, "INSERT INTO run_requests(id, updated_utc) VALUES (2, 'now');");
         await second.Should().ThrowAsync<SqliteException>();
+    }
+
+    [Fact]
+    public async Task MigrationElevenLeavesAnExistingFailureUndismissedAndDismissable()
+    {
+        var databasePath = Path.Combine(_directory, "migration-ten.db");
+        await new SqliteDatabaseInitializer().InitializeAsync(databasePath);
+        var failed = Guid.NewGuid();
+        // A database exactly as migration 10 left it, with a failure from then.
+        await ExecuteAsync(databasePath, $$"""
+            ALTER TABLE jobs DROP COLUMN dismissed_utc;
+            DELETE FROM schema_migrations WHERE version = 11;
+            INSERT INTO jobs (id, source_path, source_fingerprint, status, created_utc, updated_utc) VALUES
+                ('{{failed:N}}', 'C:\Videos\old.mp4', 'f', {{(int)JobStatus.Failed}}, '2026-01-01T00:00:00.0000000+00:00', '2026-01-01T00:00:00.0000000+00:00');
+            """);
+
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var job = (await repository.GetAsync(databasePath, failed))!;
+        job.DismissedUtc.Should().BeNull();
+        (await repository.DismissAsync(databasePath, job)).Should().BeTrue();
+
+        var dismissed = (await repository.GetAsync(databasePath, failed))!;
+        dismissed.DismissedUtc.Should().NotBeNull();
+        dismissed.Status.Should().Be(JobStatus.Failed);
+        dismissed.UpdatedUtc.Should().Be(job.UpdatedUtc);
+        SqliteDatabaseInitializer.CurrentVersion.Should().Be(11);
     }
 
     /// <summary>A database exactly as migration 7 left it: the current schema without migration 8's columns.</summary>

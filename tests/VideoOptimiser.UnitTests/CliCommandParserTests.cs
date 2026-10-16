@@ -41,6 +41,21 @@ public sealed class CliCommandParserTests
         CliCommand.Usage.Should().Contain("video-optimiser queue reject <job-id> [--config <path>]");
     }
 
+    /// <summary><c>queue dismiss</c> (VOPT-115) takes a job ID or <c>--all</c>, never both, as <c>queue drop</c> does.</summary>
+    [Fact]
+    public void QueueDismissTakesAJobIdOrAll()
+    {
+        var one = CliCommand.Parse(["queue", "dismiss", "3f2a"]);
+        var all = CliCommand.Parse(["queue", "dismiss", "--all"]);
+
+        (one.Kind, one.JobId, one.All).Should().Be((CliCommandKind.QueueDismiss, "3f2a", false));
+        (all.Kind, all.All).Should().Be((CliCommandKind.QueueDismiss, true));
+        CliCommand.Parse(["queue", "dismiss"]).Error.Should().Be("queue dismiss requires a job ID or --all.");
+        CliCommand.Parse(["queue", "dismiss", "3f2a", "--all"]).Error.Should().Be("queue dismiss requires a job ID or --all.");
+        CliCommand.Parse(["queue", "hold", "3f2a", "--all"]).Error.Should().Be("--all is only supported by queue drop and queue dismiss.");
+        CliCommand.Usage.Should().Contain("video-optimiser queue dismiss <job-id> [--config <path>]").And.Contain("video-optimiser queue dismiss --all [--config <path>]");
+    }
+
     [Fact]
     public void QueueAddImmichTakesALimit()
     {
