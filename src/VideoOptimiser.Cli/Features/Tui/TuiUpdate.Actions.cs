@@ -3,6 +3,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Cli.Features.Tui;
 
@@ -200,12 +201,26 @@ internal static partial class TuiUpdate
 
     private static TuiStep ReviewKey(TuiModel m, char c)
     {
-        if (c is not ('o' or 'a' or 'f' or 'F')) return TuiStep.Of(m);
+        if (c is not ('o' or 'a' or 'f' or 'F' or 'r')) return TuiStep.Of(m);
         var ready = m.Ready();
         if (ready.Count == 0) return Told(m, "Nothing is ready to finalise.");
         if (c == 'F') return Emit(m, new PrepareFinalise(null));
         var video = ready.FirstOrDefault(candidate => candidate.Id == m.ReviewSelection) ?? ready[0];
+        if (c == 'r') return RejectKey(m, video);
         return c == 'f' ? Emit(m, new PrepareFinalise(video.Id)) : Emit(m, new OpenFile(video.Id, Original: c == 'o', video.Name));
+    }
+
+    /// <summary>
+    /// Rejecting deletes the AV1 for good (the original stays), so it asks first. A video partway through finalising is
+    /// finalize's, as for <c>queue reject</c>; the verb refuses the other states with its own words.
+    /// </summary>
+    private static TuiStep RejectKey(TuiModel m, Video video)
+    {
+        if (video.Status != JobStatus.ReadyToFinalize) return Told(m, $"{video.Name} is part way through finalising, so it can't be rejected.");
+        var detail = video.Immich
+            ? "Its AV1 and downloaded copy are deleted at once. The original stays in Immich."
+            : "Its AV1 is deleted at once. The original is untouched.";
+        return Confirming(m, $"Reject {video.Name}?", detail, new QueueActionEffect(QueueAction.Reject, video.Id, video.Name));
     }
 
     // ---- lists ------------------------------------------------------------------------------

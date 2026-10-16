@@ -21,6 +21,12 @@ public static class LockHolders
     public const string QueueNext = "queue next";
     public const string QueueDrop = "queue drop";
 
+    /// <summary>
+    /// How <c>queue reject</c> names itself in the finalise lock. It never takes the run lock (a ready video is not
+    /// converting), so it is not in <see cref="QueueVerbs"/>.
+    /// </summary>
+    public const string QueueReject = "queue reject";
+
     /// <summary>The queue verbs take the run lock for a moment to see whether a run holds it (<see cref="IDatabaseLocks.TryHoldRun"/>); that is not a run.</summary>
     public static readonly IReadOnlySet<string> QueueVerbs = new HashSet<string>(StringComparer.Ordinal) { QueueHold, QueueNext, QueueDrop };
 }

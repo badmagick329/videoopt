@@ -81,11 +81,26 @@ internal sealed class TuiRig : IDisposable
         }
     }
 
-    /// <summary>A job ready to finalise, with an AV1 on disk and the sizes its confirmation shows.</summary>
-    public async Task<JobRecord> ReadyAsync(string name, string extension = ".mp4", bool immich = false)
+    /// <summary>
+    /// A job ready to finalise, with an AV1 on disk and the sizes its confirmation shows. <paramref name="cleanable"/> names the
+    /// AV1 as the processor does (in a <c>.video-optimiser</c> folder, by job ID and attempt), so cleanup and reject find it.
+    /// </summary>
+    public async Task<JobRecord> ReadyAsync(string name, string extension = ".mp4", bool immich = false, bool cleanable = false)
     {
         var job = await QueuedAsync(name);
-        job.OutputPath = File($"{name}.encoded{extension}");
+        if (cleanable)
+        {
+            var folder = Path.Combine(Folder, ".video-optimiser");
+            System.IO.Directory.CreateDirectory(folder);
+            job.Attempt = 1;
+            job.OutputPath = Path.Combine(folder, $"{name}.{job.Id:N}.1.encoding{extension}");
+            System.IO.File.WriteAllText(job.OutputPath, "av1");
+            System.IO.File.WriteAllText(job.OutputPath + ".manifest.json", "{}");
+        }
+        else
+        {
+            job.OutputPath = File($"{name}.encoded{extension}");
+        }
         job.OutputSizeBytes = 400;
         job.PercentageSaved = 60m;
         if (immich)

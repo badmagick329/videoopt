@@ -28,7 +28,16 @@ internal static class QueueWords
         JobStatus.Cancelled => "was already dropped",
         JobStatus.Completed => "was already finalised",
         JobStatus.Skipped => "was not worth converting",
+        JobStatus.Rejected => "was already rejected",
         _ => $"is {StatusWord(job.Status)}"
+    };
+
+    /// <summary>The files a reject deleted or left, as the end of "Deleted its …".</summary>
+    public static string FilesPhrase(RejectedFiles files) => (files.Av1, files.DownloadedCopy) switch
+    {
+        (true, true) => "AV1 and downloaded copy",
+        (true, false) => "AV1",
+        _ => "downloaded copy"
     };
 
     /// <summary>The glossary's word for a status, lower case for use inside a sentence.</summary>
@@ -46,6 +55,7 @@ internal static class QueueWords
         JobStatus.Interrupted => "stopped",
         JobStatus.Cancelled => "dropped",
         JobStatus.Skipped => "not worth converting",
+        JobStatus.Rejected => "rejected",
         _ => status.ToString().ToLowerInvariant()
     };
 

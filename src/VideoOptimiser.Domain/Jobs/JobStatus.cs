@@ -15,7 +15,9 @@ public enum JobStatus
     Staging = 10,
     Downloading = 11,
     /// <summary>Ended without converting because AV1 would not save enough. Terminal, and not a failure.</summary>
-    Skipped = 12
+    Skipped = 12,
+    /// <summary>A ready video the user looked at and did not want (<c>queue reject</c>). Terminal; its AV1 is deleted and its original is untouched.</summary>
+    Rejected = 13
 }
 
 /// <summary>Where a job's original came from. Stored as <c>file</c> or <c>immich</c>.</summary>

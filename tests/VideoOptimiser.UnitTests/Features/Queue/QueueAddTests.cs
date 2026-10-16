@@ -222,6 +222,7 @@ public sealed class QueueAddTests : QueueTestBase
     [InlineData(JobStatus.Failed, "clip.mp4 failed before (job {0}). To try it again: video-optimiser queue retry {0}{1}")]
     [InlineData(JobStatus.Cancelled, "clip.mp4 was dropped before (job {0}). To try it again: video-optimiser queue retry {0}{1}")]
     [InlineData(JobStatus.Skipped, "clip.mp4 was not worth converting before (job {0}). To try it again: video-optimiser queue retry {0}{1}")]
+    [InlineData(JobStatus.Rejected, "clip.mp4 was rejected before (job {0}). To try it again: video-optimiser queue retry {0}{1}")]
     [InlineData(JobStatus.Completed, "clip.mp4 was already converted (job {0}).")]
     public async Task AFileItsLastJobSettledPointsAtRetry(JobStatus settled, string line)
     {
@@ -231,7 +232,13 @@ public sealed class QueueAddTests : QueueTestBase
         // The quality settings that skipped it are the ones in force, so the skip still holds.
         job.QualityFingerprint = Application.Jobs.QualityFingerprint.Compute(await SettingsAsync());
         await Repository.UpdateAsync(DatabasePath, job);
-        await MoveAsync(job, settled == JobStatus.Completed ? [JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing, settled] : [settled]);
+        await MoveAsync(job, settled switch
+        {
+            JobStatus.Completed => [JobStatus.Validating, JobStatus.ReadyToFinalize, JobStatus.Finalizing, settled],
+            // Only a ready video is rejected.
+            JobStatus.Rejected => [JobStatus.Validating, JobStatus.ReadyToFinalize, settled],
+            _ => [settled]
+        });
 
         (await RunAsync("queue", "add", job.SourcePath)).Should().Be((0, Transcript(string.Format(System.Globalization.CultureInfo.InvariantCulture, line, job.Id.ToString("N"), ConfigArgument)), ""));
     }

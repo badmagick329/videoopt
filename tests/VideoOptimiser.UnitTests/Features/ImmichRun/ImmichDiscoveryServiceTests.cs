@@ -162,6 +162,21 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         result.PreviouslyFailed.Should().Be(requeued ? 0 : 1);
     }
 
+    /// <summary>VOPT-112: the user looked at that AV1 and did not want it, so the asset is not downloaded again, and it is counted as rejected, not as failed. A changed checksum makes it new (<see cref="QueuesASettledAssetAgainWhenItsChecksumChanged"/>).</summary>
+    [Fact]
+    public async Task PassesOverARejectedAssetWithoutDownloadingItAndCountsItApartFromFailures()
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        await CreateJobAsync(asset, JobStatus.Rejected, FailureCategories.Rejected);
+
+        var result = await DiscoverAsync();
+
+        result.PreviouslyRejected.Should().Be(1);
+        result.PreviouslyFailed.Should().Be(0);
+        result.Queued.Should().BeEmpty();
+        _immich.Downloads.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task JudgesAFailedAssetByItsLatestJob()
     {
@@ -195,6 +210,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     [Theory]
     [InlineData(JobStatus.Failed, "EncodeFailed")]
     [InlineData(JobStatus.Skipped, "NotWorthConverting")]
+    [InlineData(JobStatus.Rejected, "Rejected")]
     public async Task QueuesASettledAssetAgainWhenItsChecksumChanged(JobStatus status, string category)
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
@@ -529,7 +545,7 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     private async Task<JobRecord> CreateJobAsync(ImmichAsset asset, JobStatus status, string? failureCategory = null, bool staged = true)
     {
         var path = Path.Combine(_settings.Immich.StagingDirectory, asset.Id, asset.OriginalFileName);
-        if (staged && status is not (JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Skipped))
+        if (staged && status is not (JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Skipped or JobStatus.Rejected))
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, "staged");

@@ -273,7 +273,7 @@ public sealed class ImmichRunCommandTests : IDisposable
     private static ImmichReuploadGuardResult Guard(ImmichReuploadHit[]? trashed = null, ImmichReuploadHit[]? restored = null, string[]? issues = null) =>
         new(0, trashed ?? [], restored ?? [], [.. (issues ?? []).Select(reason => new ImmichReuploadIssue(Guid.NewGuid(), Guid.NewGuid().ToString("D"), reason))]);
 
-    private static ImmichDiscoveryResult Discovery(int excluded = 0, int issues = 0) => new([], 0, 0, 0, 0, 0, 0, excluded, 0, 0, issues, []);
+    private static ImmichDiscoveryResult Discovery(int excluded = 0, int issues = 0) => new([], 0, 0, 0, 0, 0, 0, 0, excluded, 0, 0, issues, []);
 
     private QueuePreparationResult OneJob() => new(
         [new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(_directory, "clip-a.mp4"), Status = JobStatus.Queued }],
@@ -287,7 +287,7 @@ public sealed class ImmichRunCommandTests : IDisposable
     {
         public int Calls { get; private set; }
         public ImmichReuploadGuardResult Guard { get; set; } = new(0, [], [], []);
-        public ImmichDiscoveryResult Discovery { get; set; } = new([], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, []);
+        public ImmichDiscoveryResult Discovery { get; set; } = new([], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, []);
         public ScanProgress[] Reports { get; set; } = [];
         public Exception? Failure { get; set; }
 

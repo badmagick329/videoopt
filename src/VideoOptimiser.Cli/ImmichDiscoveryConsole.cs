@@ -165,6 +165,7 @@ internal sealed class ImmichDiscoveryConsole(TextWriter output, TerminalStyle ou
         var notDownloaded = new List<string>();
         void Add(int count, string text) { if (count > 0) notDownloaded.Add($"{count} {text}"); }
         Add(result.AlreadyConverted + result.PreviouslyFailed + result.PreviouslySkipped, "handled in earlier runs");
+        Add(result.PreviouslyRejected, "rejected by you");
         Add(result.Ineligible, "too small or not a file type your rules list");
         if (notDownloaded.Count > 0) lines.Add($"Not downloaded: {string.Join(", ", notDownloaded)}.");
 

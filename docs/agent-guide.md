@@ -10,7 +10,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 | --- | --- | --- |
 | Read-only | `status` (or no command), `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `doctor` | Safe to run. `--json` is offered on the ones that list. `doctor` may create the job database and the Immich staging folder. |
 | Job database and temporary files | `config init`, `queue add`, `queue add immich`, `run`, `immich run`, `run stop`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry` | Nothing of theirs is lost. `config init` writes a new config and never replaces one. `queue add immich` and `immich run` download videos to the staging folder, so they need disk space and bandwidth. Their re-upload guard moves converted originals that the phone uploaded again back to Immich's trash, which is intended. |
-| **Warn** | `finalize`, `immich finalize`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Say what it does first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
+| **Warn** | `finalize`, `immich finalize`, `queue reject`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Say what it does first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
 
 What to say for each **warn** command:
 
@@ -19,6 +19,7 @@ What to say for each **warn** command:
 - `cleanup`: lists abandoned temporary outputs and downloaded Immich copies, then deletes them after `y`. `cleanup --dry-run` only lists and ends `Dry run: nothing was deleted.` A file it leaves alone prints `Kept  <path> (<reason>)`, such as an AV1 whose original is missing and which may be the only copy. Relay those lines; the person should not delete such a file by hand.
 - `worker create`, `worker delete`: create or delete the Hetzner worker. Deleting loses outputs not yet downloaded.
 - `queue drop`: keeps files; `cleanup` deletes them later. It refuses (exit `1`) when `cleanup` would then delete the only copy of a video.
+- `queue reject`: for a video that is ready to finalise. It deletes the AV1 at once, and an Immich video's download too; the original stays. It refuses (exit `1`) when the AV1 may be the only copy, and for an Immich video whose finalisation stopped partway (`finalize` finishes that one). An AV1 that is open in a player stays and is reported; `cleanup` deletes it later. `queue retry <id>` undoes it.
 - `remote setup`: uploads an SSH key to the person's Hetzner project before it asks anything. Without `y` it prints the `processing:` section it would write and changes no file; a rerun reuses the key, rewrites only `processing:` and keeps the old file as `<config>.bak`.
 
 **Prompts.** `finalize --ready`, `immich finalize`, `cleanup`, `remote setup`, and `run`, `immich run` or `worker create` when they would create a Hetzner server ask `[y/N]`. Anything but `y` cancels, changes nothing and exits `0`.
@@ -154,6 +155,7 @@ Match the job's `status` and `failureCategory` (from `queue list --json` or `his
 | `StagingFailed`, `CrfSearchFailed`, `EncodeFailed`, `DownloadFailed`, `ProcessingFailed` | A step failed | Relay `failureMessage`. After the cause is fixed, `queue retry <id>` queues it again. |
 | `RemoteConfigurationChanged` | The job started under a different processing setup | `queue retry <id>` starts a fresh job under the current setup. |
 | `Cancelled` (shown as Dropped) | `queue drop` dropped it | `queue retry <id>` queues it again. Dropping a video whose remote stage was stopped prints `Its encode may still be running on the worker; the next run on that worker stops it.` (or `Its CRF search ...`): it keeps billing until a later run reaches that worker, or the worker is deleted. |
+| `Rejected` | `queue reject` ended a ready video; its AV1 is deleted and the original is untouched | `queue retry <id>` queues it again from the start, and an Immich video's download is fetched again by the next run. |
 | `Job <id> changed while this command was using it. Run the command again.` (exit `1`) | Another command changed the job first; its change stands | Check `queue list`, then run the command again if it still applies. |
 | `Another run is using this database: ...` (exit `1`) | One run at a time | Wait for it, or check `status`. |
 | `Ineligible`, `SourceNotReady`, `SourceOutsideWatchRoot`, `SourceChanged`, `SourceMissing` | The file did not qualify, changed, or was gone when the job ran | Nothing. The next `queue add` re-checks it. |
@@ -161,7 +163,7 @@ Match the job's `status` and `failureCategory` (from `queue list --json` or `his
 | `FinalizationIncomplete` | An Immich finalisation stopped partway, or waits on the person | Relay `failureMessage`. After they do any Immich step it names, `immich finalize` again. |
 | `FinalizationFailed`, `ManualInterventionRequired` | Replacing a file original failed, or a cut-off one could not be shown to have left both files untouched | Stop. Have them look at `sourcePath` and `outputPath` and decide. `cleanup` keeps that AV1. `finalize <id>` (not `--ready`) takes back a job that failed this way with nothing moved. |
 
-Failed, dropped and skipped jobs stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` is the way back.
+Failed, dropped, rejected and skipped jobs stay settled: discovery skips them until the original changes, and a skipped one also once the quality settings change. `queue retry <id>` is the way back.
 
 ## Reference
 
@@ -170,8 +172,8 @@ Failed, dropped and skipped jobs stay settled: discovery skips them until the or
 | Code | Meaning |
 | --- | --- |
 | `0` | Success, or a confirmation answered "no" |
-| `1` | General failure, including a `doctor` failure outside configuration and dependencies, `calibrate` on a database an older version wrote, a run or finalise refused because another is using the database, `run stop` on a run started in a terminal, a queue verb refused (the video is in a state it does not apply to, converting now, or being finalised; or a drop would leave `cleanup` the only copy), and a command that lost a race for the same job |
-| `2` | Invalid arguments, including a malformed or unknown job ID for `queue hold`, `release`, `next` and `drop`, a removed command name, which says what replaced it (`'queue run' is now 'run'.`; also `queue discover`, `queue cancel` and `process`), or `queue retry` on a job it cannot retry (not found, not failed, dropped or skipped, or the original already has an open job) |
+| `1` | General failure, including a `doctor` failure outside configuration and dependencies, `calibrate` on a database an older version wrote, a run or finalise refused because another is using the database, `run stop` on a run started in a terminal, a queue verb refused (the video is in a state it does not apply to, converting now, or being finalised; or a drop or reject would leave the AV1 the only copy), and a command that lost a race for the same job |
+| `2` | Invalid arguments, including a malformed or unknown job ID for `queue hold`, `release`, `next`, `drop` and `reject`, a removed command name, which says what replaced it (`'queue run' is now 'run'.`; also `queue discover`, `queue cancel` and `process`), or `queue retry` on a job it cannot retry (not found, not failed, dropped, rejected or skipped, or the original already has an open job) |
 | `3` | Invalid configuration, including `queue add` with no watch roots, `worker create` or `worker delete` without `remoteSsh.lifecycle: "hetzner"`, or an Immich API key that is missing, rejected or lacks a permission |
 | `4` | A failed dependency check in `doctor`: a media tool, the Immich server (unreachable, not Immich 3, its key, or its trash off) or the Hetzner API. Also `remote setup` when it cannot run `ssh-keygen` or list or upload the Hetzner key |
 | `5` | `queue add <file>` refused the file: outside the watch roots or the rules (the line gives the `--force` command), too small to save `savings.minimumBytesSaved`, or a file video-optimiser made or archived (`--force` lifts neither) |
@@ -188,7 +190,7 @@ Failed, dropped and skipped jobs stay settled: discovery skips them until the or
 The console uses plain words; `--json` keeps the enum names.
 
 - **Open** (`queue list`): `Queued` (waiting), `Staging` (uploading), `CrfSearching` (finding CRF), `Encoding`, `Downloading`, `Validating` (checking), `ReadyToFinalize`, `Finalizing`, `Interrupted` (stopped).
-- **Finished** (`history`): `Completed` (finalised), `Failed`, `Cancelled` (dropped), `Skipped` (not worth converting).
+- **Finished** (`history`): `Completed` (finalised), `Failed`, `Cancelled` (dropped), `Skipped` (not worth converting), `Rejected`.
 
 A held job keeps its status, `Queued` or `Interrupted`; runs pass over it until `queue release` or `queue next`. `Staging` and `Downloading` are transfers to and from a worker. A job whose finalisation was cut off (`Finalizing`, or `Interrupted` after it) is finalised like a `ReadyToFinalize` one. An Immich one continues where it stopped. A file one continues only if its original and AV1 are where they started and the original is unchanged, and fails as `ManualInterventionRequired` otherwise; `run` leaves it alone and says so. `Ctrl+C` during `finalize` leaves the job ready.
 

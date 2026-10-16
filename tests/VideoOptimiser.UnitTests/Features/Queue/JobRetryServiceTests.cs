@@ -71,7 +71,8 @@ public sealed class JobRetryServiceTests : IDisposable
     [Theory]
     [InlineData(JobStatus.Cancelled, "Cancelled")]
     [InlineData(JobStatus.Skipped, "NotWorthConverting")]
-    public async Task RetryRequeuesACancelledOrSkippedJobWithItsFingerprint(JobStatus status, string category)
+    [InlineData(JobStatus.Rejected, "Rejected")]
+    public async Task RetryRequeuesACancelledSkippedOrRejectedJobWithItsFingerprint(JobStatus status, string category)
     {
         var original = new JobRecord { Id = Guid.NewGuid(), SourcePath = SourcePath, SourceFingerprint = "source", Status = status, FailureCategory = category, CompletedUtc = DateTimeOffset.UtcNow };
         await _repository.CreateAsync(DatabasePath, original);

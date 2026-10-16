@@ -127,6 +127,16 @@ public sealed class HumanOutputConsoleTests
             "Not downloaded: 54 handled in earlier runs, 193 too small or not a file type your rules list.");
     }
 
+    /// <summary>VOPT-112: a rejected video is the user's own verdict, so it is not counted as handled in an earlier run or as failed.</summary>
+    [Fact]
+    public void TheDiscoverySummaryCountsRejectedVideosApartFromThoseHandledInEarlierRuns()
+    {
+        var result = Result(queued: 0, skipped: 0, reasons: [], alreadyConverted: 2, previouslyFailed: 1, previouslyRejected: 3, ineligible: 4);
+
+        ImmichDiscoveryConsole.Summary(result, null).Should().Equal(
+            "Not downloaded: 3 handled in earlier runs, 3 rejected by you, 4 too small or not a file type your rules list.");
+    }
+
     [Fact]
     public void WithSeveralReasonsTheSummaryNamesTheThreeMostCommonAndCountsTheRest()
     {
@@ -231,6 +241,18 @@ public sealed class HumanOutputConsoleTests
             "Skipped originals (AV1 would not save enough) are checked again when the file or the quality settings change; 'video-optimiser queue retry <job-id> --config \"my.yaml\"' queues one now.\n");
     }
 
+    [Fact]
+    public void RejectedOriginalsAreCountedAndPointAtRetry()
+    {
+        var output = new StringWriter { NewLine = "\n" };
+
+        QueueDiscoverConsole.WriteCounts(output, new QueueDiscoveryResult([], AlreadyQueued: 0, Issues: 0, PreviouslyRejected: 2), CliCommand.Parse(["queue", "add"]));
+
+        output.ToString().Should().Be(
+            "Queued: 0. Previously rejected: 2.\n" +
+            "Rejected originals stay out of the queue until they change; 'video-optimiser queue retry <job-id>' queues one again.\n");
+    }
+
     private static CandidateFacts Facts(string codec, int width, int height, long bitsPerSecond, long sizeBytes) => new(codec, width, height, bitsPerSecond, sizeBytes);
 
     private static (ImmichDiscoveryConsole Console, StringWriter Output, StringWriter Error) ImmichConsole()
@@ -240,8 +262,8 @@ public sealed class HumanOutputConsoleTests
         return (new ImmichDiscoveryConsole(output, TerminalStyle.Plain, error, TerminalStyle.Plain), output, error);
     }
 
-    private static ImmichDiscoveryResult Result(int queued, int skipped, SkipReasonCount[] reasons, int alreadyConverted = 0, int previouslyFailed = 0, int previouslySkipped = 0, int ineligible = 0, int issues = 0) =>
-        new([.. Enumerable.Range(0, queued).Select(_ => new JobRecord())], 0, 0, 0, alreadyConverted, previouslyFailed, previouslySkipped, 0, ineligible, skipped, issues, reasons);
+    private static ImmichDiscoveryResult Result(int queued, int skipped, SkipReasonCount[] reasons, int alreadyConverted = 0, int previouslyFailed = 0, int previouslySkipped = 0, int ineligible = 0, int issues = 0, int previouslyRejected = 0) =>
+        new([.. Enumerable.Range(0, queued).Select(_ => new JobRecord())], 0, 0, 0, alreadyConverted, previouslyFailed, previouslySkipped, previouslyRejected, 0, ineligible, skipped, issues, reasons);
 
     private static ScanProgress Checked(int files, int probed) => new("x.mp4", "Checked", string.Empty, files, probed);
 

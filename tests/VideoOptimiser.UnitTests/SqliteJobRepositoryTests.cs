@@ -18,10 +18,15 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         _databasePath = Path.Combine(_directory, "jobs.db");
     }
 
-    /// <summary>The only tests of <c>JobStateTransitions</c>: a job cannot jump to Completed, and only a CRF search ends Skipped.</summary>
+    /// <summary>The only tests of <c>JobStateTransitions</c>: a job cannot jump to Completed, only a CRF search ends Skipped, and only a ready job ends Rejected, which nothing leaves.</summary>
     [Theory]
     [InlineData(JobStatus.Queued, JobStatus.Completed)]
     [InlineData(JobStatus.Encoding, JobStatus.Skipped)]
+    [InlineData(JobStatus.Queued, JobStatus.Rejected)]
+    [InlineData(JobStatus.Validating, JobStatus.Rejected)]
+    [InlineData(JobStatus.Interrupted, JobStatus.Rejected)]
+    [InlineData(JobStatus.Rejected, JobStatus.Queued)]
+    [InlineData(JobStatus.Rejected, JobStatus.ReadyToFinalize)]
     public async Task RejectsInvalidStateTransitions(JobStatus from, JobStatus to)
     {
         var job = await _repository.CreateAsync(_databasePath, NewJob(from));
@@ -207,6 +212,35 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         stored.Status.Should().Be(JobStatus.CrfSearching);
         stored.Held.Should().BeFalse();
         stored.Priority.Should().Be(0);
+    }
+
+    /// <summary>
+    /// VOPT-112: Rejected is terminal wherever the repository asks. The job leaves the open list and no longer blocks a new job
+    /// for its original, and the same compare-and-swap as a drop refuses a copy read before another command changed the row.
+    /// </summary>
+    [Fact]
+    public async Task ARejectedJobIsTerminalAndItsStaleCopyIsRefused()
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        job.Status = JobStatus.Validating;
+        await _repository.UpdateAsync(_databasePath, job);
+        job.Status = JobStatus.ReadyToFinalize;
+        await _repository.UpdateAsync(_databasePath, job);
+        var staleCopy = (await _repository.GetAsync(_databasePath, job.Id))!;
+        (await _repository.SetHeldAsync(_databasePath, job, held: true)).Should().BeTrue();
+
+        (await _repository.RejectAsync(_databasePath, staleCopy)).Should().BeFalse();
+        (await _repository.GetAsync(_databasePath, job.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
+
+        (await _repository.RejectAsync(_databasePath, job)).Should().BeTrue();
+
+        var stored = (await _repository.GetAsync(_databasePath, job.Id))!;
+        (stored.Status, stored.Held, stored.FailureCategory, stored.FailureMessage).Should().Be((JobStatus.Rejected, false, "Rejected", "Rejected by user."));
+        stored.CompletedUtc.Should().NotBeNull();
+        (await _repository.ListAsync(_databasePath, terminal: true)).Should().ContainSingle(ended => ended.Id == job.Id);
+        (await _repository.ListAsync(_databasePath, terminal: false)).Should().BeEmpty();
+        (await _repository.FindOpenBySourceAsync(_databasePath, job.SourcePath)).Should().BeNull();
+        await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
     }
 
     [Fact]

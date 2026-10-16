@@ -129,7 +129,7 @@ internal static class TuiView
                     Pane.Queue => [("↑↓", "select"), ("h", "hold"), ("r", "release"), ("n", "run next"), ("d", "drop"), ("t", "retry"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
                     Pane.Worker => [("c", "create"), ("d", "delete"), ("r", "check now"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
                     Pane.Activity => [("↑↓", "scroll"), ("w", "worker fate"), .. stop, ("s", "start run"), ("end", "follow"), ("tab", ""), ("?", "help"), ("q", "quit")],
-                    _ => [("↑↓", "select"), ("o", "original"), ("a", "AV1"), ("f", "finalise"), ("F", "finalise all"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")]
+                    _ => [("↑↓", "select"), ("o", "original"), ("a", "AV1"), ("f", "finalise"), ("F", "all"), ("r", "reject"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")]
                 };
 
         // A notice says why a key did nothing; a read problem stays until the next read works.

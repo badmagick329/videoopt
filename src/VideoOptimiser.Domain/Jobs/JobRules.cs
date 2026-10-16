@@ -21,7 +21,8 @@ public static class JobStateTransitions
         (JobStatus.Encoding, JobStatus.Downloading or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Downloading, JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Validating, JobStatus.ReadyToFinalize or JobStatus.Failed or JobStatus.Interrupted) => true,
-        (JobStatus.ReadyToFinalize, JobStatus.Validating or JobStatus.Finalizing or JobStatus.Failed or JobStatus.Cancelled) => true,
+        // Rejected only from ready: the user can judge an AV1 only once it has passed validation (VOPT-112).
+        (JobStatus.ReadyToFinalize, JobStatus.Validating or JobStatus.Finalizing or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Rejected) => true,
         // A finalisation that stops before completing returns to ready, from Finalizing or after a crash from Interrupted:
         // each Immich step can run again, and a file job returns only when nothing moved (VOPT-70).
         (JobStatus.Finalizing, JobStatus.ReadyToFinalize or JobStatus.Completed or JobStatus.Failed or JobStatus.Interrupted) => true,
@@ -50,6 +51,9 @@ public static class FailureCategories
 
     /// <summary>A <see cref="JobStatus.Skipped"/> job: AV1 cannot meet the quality bar and the size cap together.</summary>
     public const string NotWorthConverting = "NotWorthConverting";
+
+    /// <summary>A <see cref="JobStatus.Rejected"/> job. The status says it all, so no list adds a phrase for it.</summary>
+    public const string Rejected = "Rejected";
 
     /// <summary>A ready Immich job whose last finalisation stopped early carries this category until it completes.</summary>
     public const string FinalizationIncomplete = "FinalizationIncomplete";

@@ -20,4 +20,7 @@ public sealed class FailureWordsTests
 
     [Fact]
     public void ADroppedVideoAddsNothingToItsStatus() => FailureWords.Describe("Cancelled", "Dropped by user.", sentence: false).Should().BeNull();
+
+    [Fact]
+    public void ARejectedVideoAddsNothingToItsStatus() => FailureWords.Describe("Rejected", "Rejected by user.", sentence: false).Should().BeNull();
 }

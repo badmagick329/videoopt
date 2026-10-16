@@ -78,6 +78,16 @@ public sealed class ImmichHistory
         job.Status is JobStatus.Failed or JobStatus.Cancelled &&
         string.Equals(job.ImmichChecksum, asset.Checksum, StringComparison.Ordinal) &&
         !FailureCategories.Requeued.Contains(job.FailureCategory ?? string.Empty);
+
+    /// <summary>
+    /// The asset's latest job was rejected by the user while the asset was unchanged: they looked at that AV1 and did not want
+    /// it, so converting the asset again would only make it again. Counted apart from <see cref="IsSettledFailure"/> because
+    /// nothing failed. Only <c>queue retry</c> requeues it, or a change to the asset.
+    /// </summary>
+    public bool IsSettledRejection(ImmichAsset asset) =>
+        _latestTerminal.TryGetValue(asset.Id, out var job) &&
+        job.Status == JobStatus.Rejected &&
+        string.Equals(job.ImmichChecksum, asset.Checksum, StringComparison.Ordinal);
 }
 
 /// <summary>Shared by discovery and calibrate, whose Immich population must be the assets this discovery would judge.</summary>

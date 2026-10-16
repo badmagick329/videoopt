@@ -30,7 +30,7 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
             cancellationToken: cancellationToken);
         var queued = new List<string>();
         var issues = report.Issues.Count;
-        int existing = 0, held = 0, ready = 0, alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0;
+        int existing = 0, held = 0, ready = 0, alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, previouslyRejected = 0;
         // R10: a held or finished video is not one a run will take, so it is counted apart and the next command matches.
         void CountOpen(JobRecord job)
         {
@@ -52,6 +52,7 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
             {
                 if (settler.Status == JobStatus.Completed) alreadyConverted++;
                 else if (settler.Status == JobStatus.Skipped) previouslySkipped++;
+                else if (settler.Status == JobStatus.Rejected) previouslyRejected++;
                 else previouslyFailed++;
                 continue;
             }
@@ -91,7 +92,7 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
             }
         }
 
-        return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes, alreadyConverted, previouslyFailed, previouslySkipped, held, ready);
+        return new QueueDiscoveryResult(queued, existing, issues, report.CacheHits, report.RealProbes, alreadyConverted, previouslyFailed, previouslySkipped, held, ready, previouslyRejected);
     }
 
     /// <summary>Ready to finalise, being finalised, or stopped while it was: finalize's work, not a run's.</summary>
@@ -190,8 +191,8 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
 
     /// <summary>
     /// Originals discovery leaves alone because their latest job settled them, mapped to that job's status. A completed job
-    /// means <c>original.action: keep</c> left the original in place; a failed or cancelled one means converting it again
-    /// would repeat the same encode and fail the same way, or undo the user's cancel, so only <c>queue retry</c> requeues it.
+    /// means <c>original.action: keep</c> left the original in place; a failed, cancelled or rejected one means converting it again
+    /// would repeat the same encode and fail the same way, or undo the user's cancel or reject, so only <c>queue retry</c> requeues it.
     /// A skipped job (AV1 would not save enough) settles its original only while <paramref name="qualityFingerprint"/> still
     /// matches the one that skipped it: changing the quality bar checks the video again.
     /// Either way the file is still eligible, and a matching fingerprint proves it is the one that job saw; a changed file

@@ -157,7 +157,8 @@ All commands take `--config <path>`.
 | `queue hold <job-id>`, `queue release <job-id>` | Make runs pass over a waiting or stopped video, or take it again. |
 | `queue next <job-id>` | Convert a waiting or stopped video next, and release it if it was held. A `run` that is going takes it after the current video. |
 | `queue drop <job-id>`, `queue drop --all` | Take one video, or every waiting, stopped and held one, out of the queue. Refuses while `cleanup` would then delete the only copy of a video. |
-| `queue retry <job-id>` | Queue a failed, dropped or not worth converting video again. |
+| `queue reject <job-id>` | Reject a video that is ready to finalise: delete its AV1 (and an Immich video's download) and keep the original. Refuses while `cleanup` would then delete the only copy of a video. |
+| `queue retry <job-id>` | Queue a failed, dropped, rejected or not worth converting video again. |
 | `validate <job-id>` | Re-run the checks on the AV1 of a video that is ready to finalise. |
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one, Immich videos included. |
 | `cleanup [--dry-run]` | Delete temporary files no video will use again. Keeps an AV1 that may be the only copy. |
@@ -171,7 +172,7 @@ Exit code `0` means success. The other exit codes are listed in [docs/agent-guid
 ## Safety
 
 - Originals are only read until you finalise. `finalize` moves the original aside, puts the AV1 in place, and moves the original back if anything fails.
-- A video that failed, was dropped or was not worth converting is not queued again until its file changes or you run `queue retry`.
+- A video that failed, was dropped, was rejected or was not worth converting is not queued again until its file changes or you run `queue retry`.
 - The job database (`jobs.db` by default) tracks every job, so a crash or `Ctrl+C` never loses track of a file. One run uses it at a time: a second `run` or `immich run` refuses and names the one running. A hold or a drop made while a run goes can't be undone by that run.
 - AV1 files wait in a `.video-optimiser` folder beside each original. `cleanup` deletes the ones no video needs. When an AV1 may be the only copy of a video, because the original is missing or gone from Immich, `queue drop` refuses and `cleanup` keeps it.
 - Every run that ends tells you what happened to the Hetzner worker, including a run you stopped.

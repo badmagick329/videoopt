@@ -51,7 +51,7 @@ public sealed class JobRecord
     /// </summary>
     public long RowVersion { get; set; }
 
-    public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Skipped;
+    public bool IsTerminal => Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Skipped or JobStatus.Rejected;
 
     /// <summary>In the queue: a run may start it, now or once it is released. An interrupted finalisation belongs to finalize.</summary>
     public bool IsQueued => Status is JobStatus.Queued or JobStatus.Interrupted && ResumeStatus != JobStatus.Finalizing;

@@ -11,7 +11,7 @@ using static VideoOptimiser.Cli.Features.Queue.QueueWords;
 namespace VideoOptimiser.Cli.Features.Queue;
 
 /// <summary>
-/// The queue commands: the verbs <c>queue hold</c>, <c>release</c>, <c>next</c> and <c>drop</c> (VOPT-54 step 5); the
+/// The queue commands: the verbs <c>queue hold</c>, <c>release</c>, <c>next</c>, <c>drop</c> (VOPT-54 step 5) and <c>reject</c> (VOPT-112); the
 /// commands that put videos in the queue, <c>queue add</c> (was <c>queue discover</c>), <c>queue add &lt;file&gt;</c> and
 /// <c>queue retry</c> (<c>queue add immich</c> is the Immich slice's), each ending with what to run next; and the job lists <c>queue list</c> and
 /// <c>history</c>, as lines or <c>--json</c>. When a verb acts and when it refuses is decided by <see cref="IQueueVerbs"/>
@@ -84,7 +84,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             case FinaliseRunning:
                 return Refuse($"A finalise is running on this database. Wait for it to finish, then drop {name}.");
             case OnlyCopyAtRisk onlyCopy:
-                return Refuse(OnlyCopyText(onlyCopy));
+                return Refuse(OnlyCopyText(onlyCopy, "drop"));
             case JobDropped dropped:
                 Console.WriteLine($"Dropped {name}.");
                 if (dropped.RemoteStage is { } remote) Console.WriteLine(RemoteStageLine(remote));
@@ -94,6 +94,46 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             default:
                 throw new InvalidOperationException($"queue drop cannot end as {outcome.GetType().Name}.");
         }
+    }
+
+    /// <summary>
+    /// <c>queue reject &lt;job-id&gt;</c> (VOPT-112). It asks nothing, like <c>queue drop</c> of a ready video: the original
+    /// stays, and <c>queue retry</c> makes the AV1 again.
+    /// </summary>
+    public async Task<int> RejectAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
+    {
+        if (await FindJobAsync(configuration, command, cancellationToken) is not { } job) return (int)ExitCode.InvalidArguments;
+        var outcome = await verbs.RejectAsync(configuration.Settings, job, cancellationToken);
+        var name = Path.GetFileName(outcome.Job.SourcePath);
+        switch (outcome)
+        {
+            case VerbRefused refused:
+                return Refuse(RefusalText(refused, command, verb: "reject", notWaitingAction: null));
+            case JobAlreadyEnded ended:
+                WriteError($"{name} {StatusPhrase(ended.Job)}, so there is nothing to reject.");
+                if (await verbs.CleanupDeletesFilesAsync(configuration.Settings, ended.Job, cancellationToken)) WriteError($"'{command.Hint("cleanup")}' deletes its temporary files.");
+                return (int)ExitCode.GeneralFailure;
+            case FinaliseRunning:
+                return Refuse($"A finalise is running on this database. Wait for it to finish, then reject {name}.");
+            case OnlyCopyAtRisk onlyCopy:
+                return Refuse(OnlyCopyText(onlyCopy, "reject"));
+            case JobRejected rejected:
+                var immich = rejected.Job.SourceKind == JobSourceKind.Immich;
+                Console.WriteLine($"Rejected {name}. The original{(immich ? " in Immich" : string.Empty)} is untouched.");
+                if (rejected.Deleted.Any) Console.WriteLine($"Deleted its {FilesPhrase(rejected.Deleted)}.");
+                if (rejected.LeftForCleanup is { } left) Console.WriteLine(LeftForCleanupLine(left, command));
+                Console.WriteLine($"To try it again: {command.Hint($"queue retry {rejected.Job.Id:N}")}");
+                return (int)ExitCode.Success;
+            default:
+                throw new InvalidOperationException($"queue reject cannot end as {outcome.GetType().Name}.");
+        }
+    }
+
+    /// <summary>A file that cannot be deleted is almost always open in a player; the reject stands and cleanup finishes the job.</summary>
+    private static string LeftForCleanupLine(RejectedFiles left, CliCommand command)
+    {
+        var both = left is { Av1: true, DownloadedCopy: true };
+        return $"Couldn't delete its {FilesPhrase(left)}; {(both ? "they may be" : "it may be")} open in another program. {(both ? "They stay" : "It stays")} until '{command.Hint("cleanup")}' deletes {(both ? "them" : "it")}.";
     }
 
     /// <summary>Each step is printed as it happens, so a long drop shows its progress and a failure keeps what was already said.</summary>
@@ -156,20 +196,21 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             VerbRefusal.ConvertingNow => $"{name} is converting now ({StatusWord(job.Status)}). To {verb} it, press Ctrl+C twice in the run's window first.",
             VerbRefusal.StoppedWhileFinalising => $"{name} was stopped while being finalised; '{command.Hint($"finalize {job.Id:N}")}' checks and resumes it.",
             VerbRefusal.BeingFinalised => $"{name} is being finalised now.",
+            VerbRefusal.NotReady => $"Only a video that is ready to finalise can be rejected; {name} {StatusPhrase(job)}.",
             _ => $"Only waiting and stopped videos can {notWaitingAction ?? throw new InvalidOperationException($"{verb} never refuses a job for not waiting.")}; {name} {StatusPhrase(job)}."
         };
     }
 
-    private static string OnlyCopyText(OnlyCopyAtRisk onlyCopy)
+    private static string OnlyCopyText(OnlyCopyAtRisk onlyCopy, string verb)
     {
         var job = onlyCopy.Job;
         var name = Path.GetFileName(job.SourcePath);
         return onlyCopy.Reason switch
         {
-            OnlyCopyReason.OriginalMissing => $"The original of {name} is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then drop the video.",
+            OnlyCopyReason.OriginalMissing => $"The original of {name} is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then {verb} the video.",
             OnlyCopyReason.ImmichNotConfigured => ImmichUnusable("immich.baseUrl isn't set", name),
             OnlyCopyReason.ImmichUnavailable => ImmichUnusable(onlyCopy.Detail!.TrimEnd('.'), name),
-            _ => $"The original of {name} is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then drop the video."
+            _ => $"The original of {name} is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then {verb} the video."
         };
     }
 
@@ -252,6 +293,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                     JobStatus.Completed => $"{name} was already converted (job {job.Id:N}).",
                     JobStatus.Cancelled => $"{name} was dropped before (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}",
                     JobStatus.Skipped => $"{name} was not worth converting before (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}",
+                    JobStatus.Rejected => $"{name} was rejected before (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}",
                     _ => $"{name} failed before (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}"
                 });
                 return (int)ExitCode.Success;

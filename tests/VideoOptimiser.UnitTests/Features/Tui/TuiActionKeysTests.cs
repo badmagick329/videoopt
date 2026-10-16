@@ -4,6 +4,7 @@ using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Cli.Features.Tui;
+using VideoOptimiser.Domain.Jobs;
 using static VideoOptimiser.UnitTests.Features.Tui.TuiTestData;
 
 namespace VideoOptimiser.UnitTests.Features.Tui;
@@ -485,6 +486,7 @@ public sealed class TuiActionKeysTests
     [InlineData('a')]
     [InlineData('f')]
     [InlineData('F')]
+    [InlineData('r')]
     public void TheReviewKeysSayNothingIsReadyWhenNothingIs(char key)
     {
         var step = Update(Reviewing(Queued(1)), Letter(key));
@@ -493,7 +495,7 @@ public sealed class TuiActionKeysTests
         Notice(step).Should().Be("Nothing is ready to finalise.");
     }
 
-    /// <summary>The spike's reject key is gone: reject is a later step (VOPT-112), and x opens nothing in this pane.</summary>
+    /// <summary>x is a global stop key and opens nothing in this pane; the pane's own reject key is r.</summary>
     [Fact]
     public void XInTheReviewPaneDoesNothing()
     {
@@ -501,6 +503,51 @@ public sealed class TuiActionKeysTests
 
         step.Effects.Should().BeEmpty();
         step.Model.Confirm.Should().BeNull();
+    }
+
+    /// <summary>A reject deletes the AV1 for good, so it asks first, says what goes and what stays, and names the selected video.</summary>
+    [Theory]
+    [InlineData(false, "Its AV1 is deleted at once. The original is untouched.")]
+    [InlineData(true, "Its AV1 and downloaded copy are deleted at once. The original stays in Immich.")]
+    public void RAsksBeforeItRejectsTheSelectedVideoAndSaysWhatItDeletes(bool immich, string detail)
+    {
+        var model = After(Reviewing(Ready(1), Ready(2) with { Immich = immich }), Press(ConsoleKey.DownArrow));
+
+        var step = Update(model, Letter('r'));
+
+        step.Effects.Should().BeEmpty();
+        step.Model.Confirm.Should().Be(new TuiConfirm("Reject clip-002.mp4?", detail, new QueueActionEffect(QueueAction.Reject, Id(2), "clip-002.mp4")));
+    }
+
+    [Fact]
+    public void YStartsTheRejectHoldingTheVideosKeyAndANoOrAnyOtherKeyCancelsIt()
+    {
+        var asked = Update(Reviewing(Ready(1)), Letter('r')).Model;
+
+        var cancelled = Update(asked, Letter('n'));
+        cancelled.Effects.Should().BeEmpty();
+        cancelled.Model.Confirm.Should().BeNull();
+
+        var yes = Update(asked, Letter('y'));
+        yes.Effects.Should().Equal(new QueueActionEffect(QueueAction.Reject, Id(1), "clip-001.mp4"));
+        yes.Model.Busy[$"queue:{Id(1):N}"].Should().Be("Rejecting clip-001.mp4…");
+        // Asking again is allowed, but the answer is refused while the first is out.
+        var again = Choose(yes.Model, Letter('r'), Letter('y'));
+        again.Effects.Should().BeEmpty();
+        Notice(again).Should().Be("Rejecting clip-001.mp4…");
+    }
+
+    /// <summary>A video in the pane that is finalising, or stopped while it was, is finalize's; the key says so instead of asking.</summary>
+    [Theory]
+    [InlineData(JobStatus.Finalizing)]
+    [InlineData(JobStatus.Interrupted)]
+    public void RDoesNotAskAboutAVideoPartWayThroughFinalising(JobStatus status)
+    {
+        var step = Update(Reviewing(Ready(1) with { Status = status }), Letter('r'));
+
+        step.Effects.Should().BeEmpty();
+        step.Model.Confirm.Should().BeNull();
+        Notice(step).Should().Be("clip-001.mp4 is part way through finalising, so it can't be rejected.");
     }
 
     [Fact]

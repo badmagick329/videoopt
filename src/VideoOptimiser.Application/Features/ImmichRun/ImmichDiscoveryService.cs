@@ -45,7 +45,7 @@ public sealed class ImmichDiscoveryService(
         // Every open job counts here, whether or not the search reaches its asset; only a job queued from another terminal
         // meanwhile is added below.
         var alreadyQueued = history.Waiting;
-        int alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, excluded = 0, ineligible = 0, skipped = 0, issues = 0, candidates = 0;
+        int alreadyConverted = 0, previouslyFailed = 0, previouslySkipped = 0, previouslyRejected = 0, excluded = 0, ineligible = 0, skipped = 0, issues = 0, candidates = 0;
         var skipReasons = new Dictionary<string, int>(StringComparer.Ordinal);
         // Paging can return an asset twice if the library changes between pages; judge each one once.
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -67,6 +67,7 @@ public sealed class ImmichDiscoveryService(
             if (history.IsConverted(asset)) { alreadyConverted++; continue; }
             if (history.IsSettledSkip(asset, qualityFingerprint)) { previouslySkipped++; continue; }
             if (history.IsSettledFailure(asset)) { previouslyFailed++; continue; }
+            if (history.IsSettledRejection(asset)) { previouslyRejected++; continue; }
             if (skips.TryGetValue(asset.Id, out var skip) && skip.IsCurrent(asset.Checksum, rulesFingerprint)) { previouslySkipped++; continue; }
 
             if (!settings.Eligibility.Extensions.Contains(Path.GetExtension(asset.OriginalFileName), StringComparer.OrdinalIgnoreCase) ||
@@ -160,7 +161,7 @@ public sealed class ImmichDiscoveryService(
             }
         }
 
-        return new ImmichDiscoveryResult(queued, alreadyQueued, history.Held, history.ReadyToFinalize, alreadyConverted, previouslyFailed, previouslySkipped, excluded, ineligible, skipped, issues,
+        return new ImmichDiscoveryResult(queued, alreadyQueued, history.Held, history.ReadyToFinalize, alreadyConverted, previouslyFailed, previouslySkipped, previouslyRejected, excluded, ineligible, skipped, issues,
             [.. skipReasons.OrderByDescending(pair => pair.Value).ThenBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => new SkipReasonCount(pair.Key, pair.Value))]);
     }
 

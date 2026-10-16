@@ -12,7 +12,7 @@ using static VideoOptimiser.UnitTests.RunCli;
 namespace VideoOptimiser.UnitTests.Features.Queue;
 
 /// <summary>
-/// <c>queue hold</c>, <c>release</c>, <c>next</c> and <c>drop</c> through the real CLI (VOPT-54 step 5): every approved line,
+/// <c>queue hold</c>, <c>release</c>, <c>next</c>, <c>drop</c> (VOPT-54 step 5) and <c>reject</c> (VOPT-112) through the real CLI: every approved line,
 /// whole, with its exit code, and what each leaves in the database. A run is "going" when its lock is held, which these tests
 /// do in-process with <see cref="DatabaseLock"/>.
 /// </summary>
@@ -136,7 +136,9 @@ public sealed class QueueVerbTests : QueueTestBase
     [InlineData("hold", true)]
     [InlineData("next", true)]
     [InlineData("drop", true)]
+    [InlineData("reject", true)]
     [InlineData("hold", false)]
+    [InlineData("reject", false)]
     public async Task AStoppedFinalisationBelongsToFinalize(string verb, bool marked)
     {
         var job = await QueuedAsync("clip.mp4");
@@ -168,6 +170,7 @@ public sealed class QueueVerbTests : QueueTestBase
     [Theory]
     [InlineData("hold")]
     [InlineData("drop")]
+    [InlineData("reject")]
     public async Task AVideoBeingFinalisedIsLeftToTheFinalise(string verb)
     {
         var job = await QueuedAsync("clip.mp4");
@@ -304,6 +307,7 @@ public sealed class QueueVerbTests : QueueTestBase
     [InlineData("release")]
     [InlineData("next")]
     [InlineData("drop")]
+    [InlineData("reject")]
     public async Task AVerbNamesWhatIsWrongWithTheJobId(string verb)
     {
         await WriteConfigAsync();
@@ -459,6 +463,220 @@ public sealed class QueueVerbTests : QueueTestBase
         error.Should().StartWith(Transcript("'queue cancel' is now 'queue drop'."));
     }
 
+    // ---- reject (VOPT-112) ------------------------------------------------------------------
+
+    private string RetryLine(JobRecord job) => $"To try it again: video-optimiser queue retry {job.Id:N}{ConfigArgument}";
+
+    [Fact]
+    public async Task RejectDeletesAFolderVideosAv1AndLeavesItsOriginalByteForByteUntouched()
+    {
+        var job = await ReadyAsync(await QueuedAsync("clip.mp4"));
+        var original = await File.ReadAllBytesAsync(job.SourcePath);
+        var written = File.GetLastWriteTimeUtc(job.SourcePath);
+        var av1 = job.OutputPath!;
+
+        var result = await RunAsync("queue", "reject", job.Id.ToString("N"));
+
+        result.Should().Be((0, Transcript("Rejected clip.mp4. The original is untouched.", "Deleted its AV1.", RetryLine(job)), ""));
+        File.Exists(av1).Should().BeFalse();
+        File.Exists(av1 + ".manifest.json").Should().BeFalse();
+        (await File.ReadAllBytesAsync(job.SourcePath)).Should().Equal(original);
+        File.GetLastWriteTimeUtc(job.SourcePath).Should().Be(written);
+        var stored = await StoredAsync(job);
+        (stored.Status, stored.Held, stored.FailureCategory).Should().Be((JobStatus.Rejected, false, "Rejected"));
+        stored.CompletedUtc.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task RejectDeletesAnImmichVideosAv1AndDownloadedCopy()
+    {
+        var job = await ReadyAsync(await ImmichQueuedAsync());
+        _immich.Asset = Asset(job);
+
+        var result = await RunAsync("queue", "reject", job.Id.ToString("N"));
+
+        result.Should().Be((0, Transcript("Rejected IMG_0001.MOV. The original in Immich is untouched.", "Deleted its AV1 and downloaded copy.", RetryLine(job)), ""));
+        File.Exists(job.OutputPath!).Should().BeFalse();
+        File.Exists(job.SourcePath).Should().BeFalse();
+        (await StoredAsync(job)).Status.Should().Be(JobStatus.Rejected);
+    }
+
+    /// <summary>A rejected video's AV1 is nothing a run or finalize would read again, so a second reject, or a drop, finds the job ended.</summary>
+    [Fact]
+    public async Task RejectingTwiceSaysThereIsNothingToReject()
+    {
+        var job = await ReadyAsync(await QueuedAsync("clip.mp4"));
+        await RunAsync("queue", "reject", job.Id.ToString("N"));
+
+        (await RunAsync("queue", "reject", job.Id.ToString("N"))).Should().Be((1, "", Transcript("clip.mp4 was already rejected, so there is nothing to reject.")));
+        (await RunAsync("queue", "drop", job.Id.ToString("N"))).Should().Be((1, "", Transcript("clip.mp4 was already rejected, so there is nothing to drop.")));
+    }
+
+    /// <summary>A dropped ready video keeps its AV1 until cleanup, so rejecting it says that, as dropping again does.</summary>
+    [Fact]
+    public async Task RejectingADroppedVideoPointsAtCleanupForItsAv1()
+    {
+        var job = await ReadyAsync(await QueuedAsync("clip.mp4"));
+        await RunAsync("queue", "drop", job.Id.ToString("N"));
+
+        var result = await RunAsync("queue", "reject", job.Id.ToString("N"));
+
+        result.Should().Be((1, "", Transcript("clip.mp4 was already dropped, so there is nothing to reject.", $"'video-optimiser cleanup{ConfigArgument}' deletes its temporary files.")));
+        File.Exists(job.OutputPath!).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("waiting", "is waiting")]
+    [InlineData("converting", "is encoding")]
+    [InlineData("stopped", "is stopped")]
+    [InlineData("failed", "has already failed")]
+    public async Task OnlyAReadyVideoIsRejected(string state, string phrase)
+    {
+        var job = await QueuedAsync("clip.mp4");
+        switch (state)
+        {
+            case "converting": await MoveAsync(job, JobStatus.Encoding); break;
+            case "stopped": await StopAsync(job, JobStatus.Encoding); break;
+            case "failed": await MoveAsync(job, JobStatus.Failed); break;
+        }
+
+        var result = await RunAsync("queue", "reject", job.Id.ToString("N"));
+
+        // A failed video is an ended one, which says it so; every other state is "not ready".
+        var line = state == "failed" ? $"clip.mp4 {phrase}, so there is nothing to reject." : $"Only a video that is ready to finalise can be rejected; clip.mp4 {phrase}.";
+        result.Should().Be((1, "", Transcript(line)));
+        (await StoredAsync(job)).Status.Should().NotBe(JobStatus.Rejected);
+    }
+
+    /// <summary>Its upload may have made an AV1 asset in Immich already, which a reject would leave with no job to find it.</summary>
+    [Theory]
+    [InlineData("incomplete")]
+    [InlineData("uploaded")]
+    public async Task AnImmichVideoWhoseFinalisationStartedIsLeftToFinalize(string how)
+    {
+        var job = await ImmichQueuedAsync(queued => queued.ImmichNewAssetId = how == "uploaded" ? "new-asset" : null);
+        await ReadyAsync(job);
+        if (how == "incomplete")
+        {
+            FinalizationRules.ReturnToReady(job, "Immich stopped answering.");
+            await Repository.UpdateAsync(DatabasePath, job);
+        }
+        _immich.Asset = Asset(job);
+
+        var result = await RunAsync("queue", "reject", job.Id.ToString("N"));
+
+        result.Should().Be((1, "", Transcript($"IMG_0001.MOV was stopped while being finalised; 'video-optimiser finalize {job.Id:N}{ConfigArgument}' checks and resumes it.")));
+        File.Exists(job.OutputPath!).Should().BeTrue();
+        File.Exists(job.SourcePath).Should().BeTrue();
+        (await StoredAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    [Fact]
+    public async Task RejectingAReadyVideoRefusesDuringAFinalise()
+    {
+        var job = await ReadyAsync(await QueuedAsync("clip.mp4"));
+        using var finalise = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(DatabasePath), "finalize", out _);
+
+        (await RunAsync("queue", "reject", job.Id.ToString("N"))).Should().Be((1, "", Transcript("A finalise is running on this database. Wait for it to finish, then reject clip.mp4.")));
+        File.Exists(job.OutputPath!).Should().BeTrue();
+        (await StoredAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    /// <summary>A folder video whose original is gone has its AV1 as the only copy, and a reject deletes the AV1.</summary>
+    [Fact]
+    public async Task AFolderVideoWhoseOriginalIsMissingIsNotRejected()
+    {
+        var job = await ReadyAsync(await QueuedAsync("clip.mp4"));
+        File.Delete(job.SourcePath);
+
+        var result = await RunAsync("queue", "reject", job.Id.ToString("N"));
+
+        result.Should().Be((1, "", Transcript($"The original of clip.mp4 is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then reject the video.")));
+        File.Exists(job.OutputPath!).Should().BeTrue();
+        (await StoredAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnImmichVideoIsNotRejectedWhileItsOriginalMayBeGone(bool trashed)
+    {
+        var job = await ReadyAsync(await ImmichQueuedAsync());
+        if (trashed) _immich.Asset = Asset(job) with { IsTrashed = true };
+        else _immich.Failure = new ImmichApiException("ImmichUnavailable", "Immich is unreachable at http://immich.test: refused.");
+
+        var result = await RunAsync("queue", "reject", job.Id.ToString("N"));
+
+        var line = trashed
+            ? $"The original of IMG_0001.MOV is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then reject the video."
+            : "Immich can't be used (Immich is unreachable at http://immich.test: refused), so video-optimiser can't check that the original of IMG_0001.MOV is still there. Try again once it answers.";
+        result.Should().Be((1, "", Transcript(line)));
+        File.Exists(job.OutputPath!).Should().BeTrue();
+        File.Exists(job.SourcePath).Should().BeTrue();
+        (await StoredAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    /// <summary>R1: a reject that loses a race changes nothing, files included, because the write comes before the deletion.</summary>
+    [Fact]
+    public async Task ARejectThatLosesARaceDeletesNothingAndSaysToRunItAgain()
+    {
+        var job = await ReadyAsync(await QueuedAsync("clip.mp4"));
+
+        var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new RacingRepository(Repository)), "queue", "reject", job.Id.ToString("N"));
+
+        result.Should().Be((1, "", Transcript($"Job {job.Id:N} changed while this command was using it. Run the command again.")));
+        File.Exists(job.OutputPath!).Should().BeTrue();
+        (await StoredAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    /// <summary>
+    /// An AV1 the user has open in a player cannot be deleted. That is not the reject's failure: the job stays rejected, the
+    /// line says what stays, and cleanup deletes it later by the same plan.
+    /// </summary>
+    [Fact]
+    public async Task AnAv1ThatCannotBeDeletedLeavesTheJobRejectedAndCleanupDeletesItLater()
+    {
+        var job = await ReadyAsync(await QueuedAsync("clip.mp4"));
+        (int ExitCode, string Stdout, string Stderr) result;
+        using (new FileStream(job.OutputPath!, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            result = await RunAsync("queue", "reject", job.Id.ToString("N"));
+        }
+
+        result.Should().Be((0, Transcript(
+            "Rejected clip.mp4. The original is untouched.",
+            $"Couldn't delete its AV1; it may be open in another program. It stays until 'video-optimiser cleanup{ConfigArgument}' deletes it.",
+            RetryLine(job)), ""));
+        (await StoredAsync(job)).Status.Should().Be(JobStatus.Rejected);
+        File.Exists(job.OutputPath!).Should().BeTrue();
+
+        var cleanupService = new TemporaryOutputCleanupService(Repository, new OnlyCopyGuard(_immich));
+        var plan = await cleanupService.FindAsync(DatabasePath, new ImmichSettings());
+        plan.Abandoned.Should().ContainSingle(file => file.Path == job.OutputPath).Which.Reason.Should().Be("job rejected");
+        cleanupService.Delete(plan).Failures.Should().BeEmpty();
+        File.Exists(job.OutputPath!).Should().BeFalse();
+    }
+
+    /// <summary>Reject is how a video the user turned down is undone: retry queues it again, and an Immich video's deleted copy is downloaded again by the next run.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetryQueuesARejectedVideoAgain(bool immich)
+    {
+        var job = immich ? await ReadyAsync(await ImmichQueuedAsync()) : await ReadyAsync(await QueuedAsync("clip.mp4"));
+        if (immich) _immich.Asset = Asset(job);
+        await RunAsync("queue", "reject", job.Id.ToString("N"));
+
+        var result = await RunAsync("queue", "retry", job.Id.ToString("N"));
+
+        var open = (await Repository.ListAsync(DatabasePath, terminal: false)).Should().ContainSingle().Which;
+        (open.Status, open.SourcePath).Should().Be((JobStatus.Queued, job.SourcePath));
+        string[] expected = immich
+            ? [$"Queued IMG_0001.MOV again as job {open.Id:N}.", $"Its downloaded copy is gone; 'video-optimiser run{ConfigArgument}' downloads it again first.", $"Next: run 'video-optimiser run{ConfigArgument}'."]
+            : [$"Queued clip.mp4 again as job {open.Id:N}.", $"Next: run 'video-optimiser run{ConfigArgument}'."];
+        result.Should().Be((0, Transcript(expected), ""));
+    }
+
     private static Action<JobRecord> RemoteOn(string host) => job =>
     {
         job.ExecutionMode = ProcessingModes.RemoteSsh;
@@ -508,6 +726,12 @@ public sealed class QueueVerbTests : QueueTestBase
         {
             await ChangeBehindTheCommandAsync(databasePath, job.Id, cancellationToken);
             return await Inner.SetHeldAsync(databasePath, job, held, cancellationToken);
+        }
+
+        public override async Task<bool> RejectAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default)
+        {
+            await ChangeBehindTheCommandAsync(databasePath, job.Id, cancellationToken);
+            return await Inner.RejectAsync(databasePath, job, cancellationToken);
         }
     }
 

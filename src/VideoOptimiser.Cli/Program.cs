@@ -141,6 +141,7 @@ internal static class CliApplication
             CliCommandKind.QueueRelease => await services.GetRequiredService<QueueCommands>().ReleaseAsync(configuration, command, cancellationToken),
             CliCommandKind.QueueNext => await services.GetRequiredService<QueueCommands>().NextAsync(configuration, command, cancellationToken),
             CliCommandKind.QueueDrop => await services.GetRequiredService<QueueCommands>().DropAsync(configuration, command, cancellationToken),
+            CliCommandKind.QueueReject => await services.GetRequiredService<QueueCommands>().RejectAsync(configuration, command, cancellationToken),
             CliCommandKind.QueueRetry => await services.GetRequiredService<QueueCommands>().RetryAsync(configuration, command, cancellationToken),
             CliCommandKind.Status => await services.GetRequiredService<StatusCommand>().RunAsync(configuration, command, cancellationToken),
             CliCommandKind.History => await services.GetRequiredService<QueueCommands>().ListAsync(configuration, command, terminal: true, cancellationToken),

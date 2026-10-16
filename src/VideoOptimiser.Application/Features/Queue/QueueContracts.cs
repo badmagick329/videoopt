@@ -7,7 +7,7 @@ namespace VideoOptimiser.Application.Features.Queue;
 /// <param name="AlreadyQueued">Eligible files whose open job is waiting or stopped, so a run takes it.</param>
 /// <param name="Held">Eligible files whose open job is held.</param>
 /// <param name="ReadyToFinalize">Eligible files whose open job is ready to finalise, being finalised or stopped while it was.</param>
-public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0, int PreviouslySkipped = 0, int Held = 0, int ReadyToFinalize = 0);
+public sealed record QueueDiscoveryResult(IReadOnlyList<string> QueuedPaths, int AlreadyQueued, int Issues, int CacheHits = 0, int RealProbes = 0, int AlreadyConverted = 0, int PreviouslyFailed = 0, int PreviouslySkipped = 0, int Held = 0, int ReadyToFinalize = 0, int PreviouslyRejected = 0);
 
 /// <summary>What <c>queue add &lt;file&gt;</c> found. Each outcome but <see cref="Queued"/> leaves the queue as it was.</summary>
 public enum QueueAddOutcome
@@ -18,7 +18,7 @@ public enum QueueAddOutcome
     MadeByTool,
     Archived,
     OpenJob,
-    /// <summary>Its latest job settled it (completed, failed, dropped, not worth converting) and the file is unchanged.</summary>
+    /// <summary>Its latest job settled it (completed, failed, dropped, rejected, not worth converting) and the file is unchanged.</summary>
     Settled,
     OutsideRoots,
     Ineligible,

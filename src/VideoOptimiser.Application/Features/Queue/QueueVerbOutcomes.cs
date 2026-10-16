@@ -27,24 +27,26 @@ public enum VerbRefusal
 {
     /// <summary>A run holds the run lock, so the job really is converting.</summary>
     ConvertingNow,
-    /// <summary>A finalisation, stopped or left by a crash: finalize checks and resumes it.</summary>
+    /// <summary>A finalisation, stopped or left by a crash: finalize checks and resumes it. <c>reject</c> also says it of a ready Immich job whose finalisation stopped partway, which may have uploaded the AV1 already.</summary>
     StoppedWhileFinalising,
     /// <summary>A finalise is going on it now.</summary>
     BeingFinalised,
     /// <summary>Neither waiting nor stopped (ready, failed, dropped, ...): the job's own status says what it is.</summary>
-    NotWaiting
+    NotWaiting,
+    /// <summary>Not ready to finalise (waiting, converting, stopped): the job's own status says what it is. <c>reject</c> judges a finished AV1, which only a ready job has.</summary>
+    NotReady
 }
 
-/// <summary>The verb did not act. <c>hold</c>, <c>next</c> and <c>drop</c> refuse a job converting now or a finalisation; <c>hold</c> and <c>next</c> also one that is not waiting or stopped.</summary>
+/// <summary>The verb did not act. <c>hold</c>, <c>next</c>, <c>drop</c> and <c>reject</c> refuse a finalisation; <c>hold</c>, <c>next</c> and <c>drop</c> also a job converting now; <c>hold</c> and <c>next</c> one that is not waiting or stopped; <c>reject</c> one that is not ready.</summary>
 public sealed record VerbRefused(JobRecord Job, VerbRefusal Reason) : QueueVerbOutcome(Job);
 
-/// <summary><c>queue drop</c> of a job that had ended already. Whether cleanup would delete some of its files is asked after, by <see cref="QueueVerbs.CleanupDeletesFilesAsync"/>.</summary>
+/// <summary><c>queue drop</c> or <c>reject</c> of a job that had ended already. Whether cleanup would delete some of its files is asked after, by <see cref="QueueVerbs.CleanupDeletesFilesAsync"/>.</summary>
 public sealed record JobAlreadyEnded(JobRecord Job) : QueueVerbOutcome(Job);
 
-/// <summary>A finalise holds the finalise lock, and a finished AV1 is not dropped under it.</summary>
+/// <summary>A finalise holds the finalise lock, and a finished AV1 is not dropped or rejected under it.</summary>
 public sealed record FinaliseRunning(JobRecord Job) : QueueVerbOutcome(Job);
 
-/// <summary>Cleanup deletes a dropped job's AV1 and downloaded copy, and they may be the only copies, so the drop is refused.</summary>
+/// <summary>Cleanup deletes a dropped job's AV1 and downloaded copy, and a reject deletes them itself; they may be the only copies, so the drop or reject is refused.</summary>
 public sealed record OnlyCopyAtRisk(JobRecord Job, OnlyCopyReason Reason, string? Detail = null) : QueueVerbOutcome(Job);
 
 public enum RemoteStage
@@ -74,6 +76,20 @@ public sealed record LeftFiles(LeftAv1 Av1, bool DownloadedCopy);
 /// <param name="HadFinishedAv1">Whether the job had a finished AV1 before the drop; any other AV1 file of it is unfinished.</param>
 /// <param name="UploadedAssetId">The AV1 already uploaded to Immich, which a drop leaves there.</param>
 public sealed record JobDropped(JobRecord Job, RemoteStageNote? RemoteStage, bool HadFinishedAv1, string? UploadedAssetId) : QueueVerbOutcome(Job);
+
+/// <summary>What of a rejected job's files are meant: its AV1 (with its manifest and any earlier attempt's partial file) and, for an Immich video, the downloaded copy.</summary>
+public sealed record RejectedFiles(bool Av1, bool DownloadedCopy)
+{
+    public bool Any => Av1 || DownloadedCopy;
+}
+
+/// <summary>
+/// The reject is written and its files were deleted, except any that could not be (a player has the AV1 open): those are
+/// <paramref name="LeftForCleanup"/>, which <c>cleanup</c> deletes later. Null when nothing was left. A file that was not
+/// there to begin with, because the user moved it away, is in neither.
+/// </summary>
+/// <param name="Deleted">What the reject deleted.</param>
+public sealed record JobRejected(JobRecord Job, RejectedFiles Deleted, RejectedFiles? LeftForCleanup) : QueueVerbOutcome(Job);
 
 /// <summary>One step of <c>queue drop --all</c>, in the order it happened, so the CLI prints each as it goes.</summary>
 public abstract record DropAllStep;

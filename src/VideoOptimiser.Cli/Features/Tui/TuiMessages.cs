@@ -70,7 +70,7 @@ internal sealed record RefreshWorkerCheck(int Generation) : TuiEffect;
 /// <summary>Read the snapshot now, after an action changed something, instead of waiting for the feed's next second.</summary>
 internal sealed record RefreshSnapshot : TuiEffect;
 
-internal enum QueueAction { Hold, Release, Next, Drop, Retry }
+internal enum QueueAction { Hold, Release, Next, Drop, Retry, Reject }
 
 internal sealed record QueueActionEffect(QueueAction Action, Guid Id, string Name) : TuiEffect
 {
@@ -82,6 +82,7 @@ internal sealed record QueueActionEffect(QueueAction Action, Guid Id, string Nam
         QueueAction.Release => $"Releasing {Name}…",
         QueueAction.Next => $"Moving {Name} to the front…",
         QueueAction.Drop => $"Dropping {Name}…",
+        QueueAction.Reject => $"Rejecting {Name}…",
         _ => $"Queueing {Name} again…"
     };
 }

@@ -85,9 +85,11 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
         Add(result.AlreadyConverted, "Already converted");
         Add(result.PreviouslyFailed, "Previously failed or cancelled");
         Add(result.PreviouslySkipped, "Previously skipped");
+        Add(result.PreviouslyRejected, "Previously rejected");
         Add(result.Issues, "Issues");
         output.WriteLine(string.Join(' ', counts));
         if (result.PreviouslyFailed > 0) output.WriteLine($"Failed or cancelled originals stay out of the queue until they change. '{command.Hint("history")}' lists their jobs; '{command.Hint("queue retry <job-id>")}' queues one again.");
         if (result.PreviouslySkipped > 0) output.WriteLine($"Skipped originals (AV1 would not save enough) are checked again when the file or the quality settings change; '{command.Hint("queue retry <job-id>")}' queues one now.");
+        if (result.PreviouslyRejected > 0) output.WriteLine($"Rejected originals stay out of the queue until they change; '{command.Hint("queue retry <job-id>")}' queues one again.");
     }
 }

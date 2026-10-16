@@ -146,14 +146,16 @@ public sealed class TuiLoopTests
     }
 
     /// <summary>Another command changed the video between the read and the write: say so and let the refresh show how it stands.</summary>
-    [Fact]
-    public async Task AVideoAnotherCommandChangedIsSaidSoAndNeverACrash()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AVideoAnotherCommandChangedIsSaidSoAndNeverACrash(bool rejecting)
     {
         using var rig = new TuiRig(services => services.AddSingleton<IQueueVerbs>(new ThrowingVerbs(new JobChangedException(Id(1)))));
         var job = await rig.QueuedAsync("clip-a.mp4");
         var channel = NewChannel();
 
-        new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, channel.Writer).Run(new QueueActionEffect(QueueAction.Hold, job.Id, "clip-a.mp4"), CancellationToken.None);
+        new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, channel.Writer).Run(new QueueActionEffect(rejecting ? QueueAction.Reject : QueueAction.Hold, job.Id, "clip-a.mp4"), CancellationToken.None);
 
         var result = ((ActionDoneMsg)await FirstAsync(channel.Reader)).Result;
         result.Lines.Should().ContainSingle().Which.Should().Be(new LogLine(LogKind.Warning, "Another command changed that video just now. The list is refreshing; try again."));
@@ -191,6 +193,7 @@ public sealed class TuiLoopTests
         public Task<QueueVerbOutcome> ReleaseAsync(string databasePath, JobRecord job, CancellationToken cancellationToken) => Task.FromException<QueueVerbOutcome>(failure);
         public Task<QueueVerbOutcome> NextAsync(string databasePath, JobRecord job, CancellationToken cancellationToken) => Task.FromException<QueueVerbOutcome>(failure);
         public Task<QueueVerbOutcome> DropAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken) => Task.FromException<QueueVerbOutcome>(failure);
+        public Task<QueueVerbOutcome> RejectAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken) => Task.FromException<QueueVerbOutcome>(failure);
         public IAsyncEnumerable<DropAllStep> DropAllAsync(string databasePath, CancellationToken cancellationToken) => throw failure;
         public Task<LeftFiles?> LeftFilesAsync(AppSettings settings, JobRecord job, bool finished, CancellationToken cancellationToken) => throw failure;
         public Task<bool> CleanupDeletesFilesAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken) => throw failure;

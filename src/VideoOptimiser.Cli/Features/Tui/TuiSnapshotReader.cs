@@ -155,7 +155,7 @@ internal sealed class TuiSnapshotReader(
             Remote: IsRemote(job), Stopped: entry.Stopped is not null,
             Av1Bytes: group == VideoGroup.Ready ? job.OutputSizeBytes : null,
             PercentSaved: group == VideoGroup.Ready ? job.PercentageSaved : null,
-            Note: note);
+            Note: note, Immich: job.SourceKind == JobSourceKind.Immich);
     }
 
     private static long? SizeOf(JobRecord job) => job.SourceSizeBytes ?? job.VideoFacts?.SizeBytes;

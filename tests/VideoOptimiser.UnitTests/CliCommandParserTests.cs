@@ -27,6 +27,20 @@ public sealed class CliCommandParserTests
         CliCommand.Parse(["queue", "add", argument]).Kind.ToString().Should().Be(kind);
     }
 
+    /// <summary><c>queue reject</c> (VOPT-112) takes exactly a job ID, like <c>queue hold</c>; it has no <c>--all</c> or <c>--json</c>, and the usage lists it.</summary>
+    [Fact]
+    public void QueueRejectTakesAJobIdAndIsInTheUsage()
+    {
+        var command = CliCommand.Parse(["queue", "reject", "3f2a", "--config", "my.yaml"]);
+
+        command.Kind.Should().Be(CliCommandKind.QueueReject, command.Error);
+        command.JobId.Should().Be("3f2a");
+        CliCommand.Parse(["queue", "reject"]).Error.Should().Be("Unknown or incomplete command.");
+        CliCommand.Parse(["queue", "reject", "--all"]).Error.Should().Be("Unknown or incomplete command.");
+        CliCommand.Parse(["queue", "reject", "3f2a", "--json"]).Error.Should().Be("--json is only supported by doctor, queue list, status, history and calibrate.");
+        CliCommand.Usage.Should().Contain("video-optimiser queue reject <job-id> [--config <path>]");
+    }
+
     [Fact]
     public void QueueAddImmichTakesALimit()
     {

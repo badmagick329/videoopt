@@ -349,7 +349,7 @@ public sealed class TuiViewTests
     [InlineData("Queue", new[] { "h hold", "r release", "n run next", "d drop", "t retry", "x stop after", "X stop now", "s start run" })]
     [InlineData("Worker", new[] { "c create", "d delete", "r check now", "x stop after", "X stop now", "s start run" })]
     [InlineData("Activity", new[] { "w worker fate", "x stop after", "X stop now", "s start run" })]
-    [InlineData("Review", new[] { "o original", "a AV1", "f finalise", "F finalise all", "x stop after", "X stop now", "s start run" })]
+    [InlineData("Review", new[] { "o original", "a AV1", "f finalise", "F all", "r reject", "x stop after", "X stop now", "s start run" })]
     public void EachPanesFooterListsItsActionKeys(string paneName, string[] keys)
     {
         var footer = Rows(Busy(focus: Enum.Parse<Pane>(paneName)))[^1];
@@ -358,7 +358,8 @@ public sealed class TuiViewTests
         // The guide is offered before quit, so it survives as long as quit does.
         footer.Should().Contain("? help").And.Contain("q quit");
         footer.IndexOf("? help", StringComparison.Ordinal).Should().BeLessThan(footer.IndexOf("q quit", StringComparison.Ordinal));
-        footer.Should().NotContain("reject");
+        // Reject (VOPT-112) is the Review pane's key alone.
+        if (paneName != "Review") footer.Should().NotContain("reject");
     }
 
     /// <summary>The stop keys are in every footer while a run is going, and only then: with none there is nothing to stop.</summary>
@@ -412,6 +413,7 @@ public sealed class TuiViewTests
         Row(rows, "create a worker").Should().Contain("(managed worker only)");
         Row(rows, "delete or keep the worker when the run ends").Should().Contain("(background run");
         Row(rows, "finalise every ready video").Should().NotBeNull();
+        Row(rows, "reject the selected video").Should().Contain("after asking");
         Row(rows, "Any key closes this.").Should().NotBeNull();
         rows[^1].Should().Contain("any key close the help");
         // The screen behind it is still there, dimmed.

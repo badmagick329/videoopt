@@ -11,18 +11,14 @@ namespace VideoOptimiser.Infrastructure.Persistence;
 /// </summary>
 public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer, SqliteOpenMode mode = SqliteOpenMode.ReadWriteCreate) : IJobRepository
 {
-    private static readonly string TerminalStatuses = string.Join(", ", new[] { JobStatus.Completed, JobStatus.Failed, JobStatus.Cancelled, JobStatus.Skipped }.Select(status => ((int)status).ToString(CultureInfo.InvariantCulture)));
+    private static readonly string TerminalStatuses = string.Join(", ", new[] { JobStatus.Completed, JobStatus.Failed, JobStatus.Cancelled, JobStatus.Skipped, JobStatus.Rejected }.Select(status => ((int)status).ToString(CultureInfo.InvariantCulture)));
 
     public async Task<JobRecord?> FindOpenBySourceAsync(string databasePath, string sourcePath, CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM jobs WHERE source_path = $sourcePath COLLATE NOCASE AND status NOT IN ($completed, $failed, $cancelled, $skipped) ORDER BY created_utc DESC LIMIT 1;";
+        command.CommandText = $"SELECT * FROM jobs WHERE source_path = $sourcePath COLLATE NOCASE AND status NOT IN ({TerminalStatuses}) ORDER BY created_utc DESC LIMIT 1;";
         command.Parameters.AddWithValue("$sourcePath", sourcePath);
-        command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
-        command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
-        command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
-        command.Parameters.AddWithValue("$skipped", (int)JobStatus.Skipped);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
@@ -90,6 +86,27 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         }, cancellationToken);
     }
 
+    public Task<bool> RejectAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default)
+    {
+        var completedUtc = DateTimeOffset.UtcNow;
+        return WriteQueueFieldsAsync(databasePath, job, "status = $rejected, held = 0, failure_category = $category, failure_message = $message, completed_utc = $completedUtc", command =>
+        {
+            command.Parameters.AddWithValue("$rejected", (int)JobStatus.Rejected);
+            command.Parameters.AddWithValue("$category", FailureCategories.Rejected);
+            command.Parameters.AddWithValue("$message", RejectedMessage);
+            command.Parameters.AddWithValue("$completedUtc", completedUtc.ToString("O"));
+        }, () =>
+        {
+            job.Status = JobStatus.Rejected;
+            job.Held = false;
+            job.FailureCategory = FailureCategories.Rejected;
+            job.FailureMessage = RejectedMessage;
+            job.CompletedUtc = completedUtc;
+        }, cancellationToken);
+    }
+
+    private const string RejectedMessage = "Rejected by user.";
+
     /// <summary>A queue verb's write: only while the row is as the verb read it, so a run that started the job first wins.</summary>
     private async Task<bool> WriteQueueFieldsAsync(string databasePath, JobRecord job, string assignments, Action<SqliteCommand> parameters, Action applied, CancellationToken cancellationToken)
     {
@@ -112,13 +129,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = terminal
-            ? "SELECT * FROM jobs WHERE status IN ($completed, $failed, $cancelled, $skipped) ORDER BY updated_utc DESC;"
-            : "SELECT * FROM jobs WHERE status NOT IN ($completed, $failed, $cancelled, $skipped) ORDER BY updated_utc DESC;";
-        command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
-        command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
-        command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
-        command.Parameters.AddWithValue("$skipped", (int)JobStatus.Skipped);
+        command.CommandText = $"SELECT * FROM jobs WHERE status {(terminal ? "IN" : "NOT IN")} ({TerminalStatuses}) ORDER BY updated_utc DESC;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var jobs = new List<JobRecord>();
         while (await reader.ReadAsync(cancellationToken)) jobs.Add(Read(reader));
@@ -149,12 +160,8 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM jobs WHERE immich_asset_id = $assetId AND status NOT IN ($completed, $failed, $cancelled, $skipped) ORDER BY created_utc DESC LIMIT 1;";
+        command.CommandText = $"SELECT * FROM jobs WHERE immich_asset_id = $assetId AND status NOT IN ({TerminalStatuses}) ORDER BY created_utc DESC LIMIT 1;";
         command.Parameters.AddWithValue("$assetId", assetId);
-        command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
-        command.Parameters.AddWithValue("$failed", (int)JobStatus.Failed);
-        command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
-        command.Parameters.AddWithValue("$skipped", (int)JobStatus.Skipped);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }

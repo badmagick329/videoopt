@@ -14,13 +14,14 @@ public interface IQueueVerbs
     Task<QueueVerbOutcome> ReleaseAsync(string databasePath, JobRecord job, CancellationToken cancellationToken);
     Task<QueueVerbOutcome> NextAsync(string databasePath, JobRecord job, CancellationToken cancellationToken);
     Task<QueueVerbOutcome> DropAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken);
+    Task<QueueVerbOutcome> RejectAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken);
     IAsyncEnumerable<DropAllStep> DropAllAsync(string databasePath, CancellationToken cancellationToken);
     Task<LeftFiles?> LeftFilesAsync(AppSettings settings, JobRecord job, bool finished, CancellationToken cancellationToken);
     Task<bool> CleanupDeletesFilesAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// The queue verbs (VOPT-54 step 5): <c>queue hold</c>, <c>release</c>, <c>next</c> and <c>drop</c>. Each writes only while
+/// The queue verbs (VOPT-54 step 5): <c>queue hold</c>, <c>release</c>, <c>next</c>, <c>drop</c> and <c>reject</c> (VOPT-112). Each writes only while
 /// the job is as it read it (the repository's compare-and-swap), so a run that started the video first wins and a verb never
 /// half-applies: a lost race throws <see cref="JobChangedException"/>. A job in a converting status is converting only while
 /// a run holds the run lock; otherwise a crash or a closed window left it, and <see cref="RunHoldsJobsAsync"/> marks it
@@ -93,6 +94,47 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
         }
         if (!await repository.DropAsync(databasePath, job, cancellationToken)) throw new JobChangedException(job.Id);
         return new JobDropped(job, RemoteStageOf(job), finished, job.ImmichNewAssetId);
+    }
+
+    /// <summary>
+    /// <c>queue reject</c> (VOPT-112): the user looked at a ready video's AV1 and does not want it. The job ends
+    /// <see cref="JobStatus.Rejected"/>, the AV1 (and an Immich video's downloaded copy) is deleted at once, and the original
+    /// is never touched. Rejected is written first, then the files are deleted, so a crash or a file that cannot be deleted
+    /// (the user has the AV1 open in a player) leaves a rejected job whose files <c>cleanup</c> deletes: the deletion is
+    /// cleanup's own plan and delete, so the two cannot disagree about what a job's files are.
+    /// </summary>
+    /// <returns><see cref="JobRejected"/>, <see cref="JobAlreadyEnded"/>, <see cref="FinaliseRunning"/>, <see cref="OnlyCopyAtRisk"/> or a <see cref="VerbRefused"/>.</returns>
+    public async Task<QueueVerbOutcome> RejectAsync(AppSettings settings, JobRecord job, CancellationToken cancellationToken)
+    {
+        var databasePath = settings.Database.Path;
+        if (FinalisationRefusal(job, databasePath) is { } finalising) return new VerbRefused(job, finalising);
+        if (job.IsTerminal) return new JobAlreadyEnded(job);
+        if (job.Status != JobStatus.ReadyToFinalize) return new VerbRefused(job, VerbRefusal.NotReady);
+        // A finalisation that stopped partway may have uploaded the AV1 to Immich already; rejecting here would leave that asset with no job to find it, so finalize finishes it.
+        if (job.SourceKind == JobSourceKind.Immich && (job.FailureCategory == FailureCategories.FinalizationIncomplete || job.ImmichNewAssetId is not null))
+            return new VerbRefused(job, VerbRefusal.StoppedWhileFinalising);
+
+        // Under the finalise lock, so a finalisation cannot start installing the AV1 this deletes. One that ran while this
+        // waited changed the job, and the write's compare-and-swap refuses it.
+        using var finalizeLock = await locks.TakeFinalizeAsync(databasePath, LockHolders.QueueReject, cancellationToken);
+        if (finalizeLock is null) return new FinaliseRunning(job);
+        if (await onlyCopy.CheckAsync(settings.Immich, job, cancellationToken) is { } risk) return new OnlyCopyAtRisk(job, risk.Reason, risk.Detail);
+        if (!await repository.RejectAsync(databasePath, job, cancellationToken)) throw new JobChangedException(job.Id);
+
+        var plan = await CleanupPlanAsync(settings, cancellationToken);
+        var mine = new TemporaryOutputCleanupPlan(
+            [.. plan.Abandoned.Where(file => file.JobId == job.Id)],
+            [.. plan.StagedOriginals.Where(file => file.JobId == job.Id)],
+            [],
+            []);
+        cleanup.Delete(mine);
+        // What is still there afterwards could not be deleted; the delete reports its failures as text only.
+        var av1Left = mine.Abandoned.Count(file => File.Exists(file.Path));
+        var copyLeft = mine.StagedOriginals.Count(file => File.Exists(file.Path));
+        var left = new RejectedFiles(av1Left > 0, copyLeft > 0);
+        // A kind of file counts as deleted only when none of it is left, so one that is both never reads "deleted" and "couldn't delete".
+        var deleted = new RejectedFiles(mine.Abandoned.Count > 0 && av1Left == 0, mine.StagedOriginals.Count > 0 && copyLeft == 0);
+        return new JobRejected(job, deleted, left.Any ? left : null);
     }
 
     /// <summary>

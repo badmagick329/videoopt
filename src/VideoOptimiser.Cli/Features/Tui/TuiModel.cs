@@ -28,6 +28,7 @@ internal enum LogKind { Info, Stage, Success, Warning, Error, Action }
 /// <param name="Remote">The video converts on a worker, so it has an upload and a download stage.</param>
 /// <param name="Stopped">A stop left it, so a run takes it up from its stage.</param>
 /// <param name="Note">A phrase for the row's right side: why a video failed, or what a ready video's finalising did.</param>
+/// <param name="Immich">An Immich video: its original is in Immich, and the AV1 sits beside a downloaded copy.</param>
 internal sealed record Video(
     Guid Id,
     string Name,
@@ -38,7 +39,8 @@ internal sealed record Video(
     bool Stopped = false,
     long? Av1Bytes = null,
     decimal? PercentSaved = null,
-    string? Note = null)
+    string? Note = null,
+    bool Immich = false)
 {
     public long? SavedBytes => SizeBytes is { } size && Av1Bytes is { } av1 ? size - av1 : null;
 }

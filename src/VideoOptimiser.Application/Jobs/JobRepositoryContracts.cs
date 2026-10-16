@@ -22,6 +22,12 @@ public interface IJobRepository
     /// so cleanup still recognises an interrupted finalisation. False when the row changed since it was read.
     /// </summary>
     Task<bool> DropAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// <c>queue reject</c>: <see cref="JobStatus.Rejected"/>, released and completed now. The write comes before the AV1 is
+    /// deleted, so a crash between the two leaves a rejected job whose files <c>cleanup</c> deletes. False when the row
+    /// changed since it was read.
+    /// </summary>
+    Task<bool> RejectAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default);
     /// <summary>
     /// Marks jobs a dead process left mid-stage <see cref="JobStatus.Interrupted"/>, so they resume from that stage. Only the
@@ -30,7 +36,7 @@ public interface IJobRepository
     /// </summary>
     Task MarkActiveJobsInterruptedAsync(string databasePath, bool includeFinalizing, CancellationToken cancellationToken = default);
 
-    /// <summary>The newest job for the asset that is not completed, failed, cancelled or skipped.</summary>
+    /// <summary>The newest job for the asset that is not completed, failed, cancelled, skipped or rejected.</summary>
     Task<JobRecord?> FindOpenByImmichAssetAsync(string databasePath, string assetId, CancellationToken cancellationToken = default);
 
     /// <summary>Completed Immich jobs, oldest first. The re-upload guard looks for their original checksums coming back.</summary>

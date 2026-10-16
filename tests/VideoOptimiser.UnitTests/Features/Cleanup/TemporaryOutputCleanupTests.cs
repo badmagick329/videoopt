@@ -46,6 +46,7 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
     [Theory]
     [InlineData(JobStatus.Cancelled, null, null, "local", 1, true)]
     [InlineData(JobStatus.Skipped, null, "NotWorthConverting", "local", 1, true)]
+    [InlineData(JobStatus.Rejected, null, "Rejected", "local", 1, true)]
     [InlineData(JobStatus.Failed, null, "FinalizationFailed", "local", 1, false)]
     [InlineData(JobStatus.Interrupted, JobStatus.Finalizing, null, "local", 1, false)]
     [InlineData(JobStatus.Interrupted, JobStatus.Encoding, null, "remoteSsh", 1, false)]
@@ -115,6 +116,7 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var cancelled = await CreateStagedJobAsync(staging, JobStatus.Cancelled, "Cancelled");
         var completed = await CreateStagedJobAsync(staging, JobStatus.Completed, null);
         var skipped = await CreateStagedJobAsync(staging, JobStatus.Skipped, "NotWorthConverting");
+        var rejected = await CreateStagedJobAsync(staging, JobStatus.Rejected, "Rejected");
         var open = await CreateStagedJobAsync(staging, JobStatus.Queued, null);
         var finalisationFailed = await CreateStagedJobAsync(staging, JobStatus.Failed, "FinalizationFailed");
         // A retry's queued job shares the failed job's path.
@@ -128,11 +130,12 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var plan = await service.FindAsync(_databasePath, Immich(staging));
         var result = service.Delete(plan);
 
-        plan.StagedOriginals.Select(file => file.Path).Should().BeEquivalentTo([failed.SourcePath, cancelled.SourcePath, completed.SourcePath, skipped.SourcePath]);
+        plan.StagedOriginals.Select(file => file.Path).Should().BeEquivalentTo([failed.SourcePath, cancelled.SourcePath, completed.SourcePath, skipped.SourcePath, rejected.SourcePath]);
         plan.StagedOriginals.Single(file => file.Path == skipped.SourcePath).Reason.Should().Be("staged Immich original; job skipped");
+        plan.StagedOriginals.Single(file => file.Path == rejected.SourcePath).Reason.Should().Be("staged Immich original; job rejected");
         plan.Abandoned.Select(file => file.Path).Should().Equal(failedOutput);
-        result.Deleted.Should().Be(5);
-        new[] { failed, cancelled, completed, skipped }.Should().OnlyContain(job => !Directory.Exists(Path.GetDirectoryName(job.SourcePath)));
+        result.Deleted.Should().Be(6);
+        new[] { failed, cancelled, completed, skipped, rejected }.Should().OnlyContain(job => !Directory.Exists(Path.GetDirectoryName(job.SourcePath)));
         new[] { open, finalisationFailed, retried }.Should().OnlyContain(job => File.Exists(job.SourcePath));
     }
 

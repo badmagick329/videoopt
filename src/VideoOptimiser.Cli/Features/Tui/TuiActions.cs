@@ -54,12 +54,13 @@ internal sealed class TuiActions(
             QueueAction.Hold => await verbs.HoldAsync(database, job, cancellationToken),
             QueueAction.Release => await verbs.ReleaseAsync(database, job, cancellationToken),
             QueueAction.Next => await verbs.NextAsync(database, job, cancellationToken),
+            QueueAction.Reject => await verbs.RejectAsync(settings, job, cancellationToken),
             _ => await verbs.DropAsync(settings, job, cancellationToken)
         };
-        return await WordAsync(outcome, settings, cancellationToken);
+        return await WordAsync(outcome, settings, rejecting: effect.Action == QueueAction.Reject, cancellationToken);
     }
 
-    private async Task<ActionResult> WordAsync(QueueVerbOutcome outcome, AppSettings settings, CancellationToken cancellationToken)
+    private async Task<ActionResult> WordAsync(QueueVerbOutcome outcome, AppSettings settings, bool rejecting, CancellationToken cancellationToken)
     {
         var job = outcome.Job;
         var name = FileName(job);
@@ -79,17 +80,26 @@ internal sealed class TuiActions(
                 return Done(LogKind.Warning, Refusal(refused, locks.LiveRun(settings.Database.Path)));
             case JobAlreadyEnded:
                 var cleanup = await verbs.CleanupDeletesFilesAsync(settings, job, cancellationToken) ? " Cleanup deletes its temporary files." : string.Empty;
-                return Done(LogKind.Warning, $"{name} {QueueWords.StatusPhrase(job)}, so there is nothing to drop.{cleanup}");
+                return Done(LogKind.Warning, $"{name} {QueueWords.StatusPhrase(job)}, so there is nothing to {(rejecting ? "reject" : "drop")}.{cleanup}");
             case FinaliseRunning:
-                return Done(LogKind.Warning, $"A finalise is running on this database. Wait for it to finish, then drop {name}.");
+                return Done(LogKind.Warning, $"A finalise is running on this database. Wait for it to finish, then {(rejecting ? "reject" : "drop")} {name}.");
             case OnlyCopyAtRisk onlyCopy:
-                return Done(LogKind.Warning, OnlyCopy(onlyCopy));
+                return Done(LogKind.Warning, OnlyCopy(onlyCopy, rejecting ? "reject" : "drop"));
             case JobDropped dropped:
                 var lines = new List<LogLine> { new(LogKind.Action, $"Dropped {name}.") };
                 if (dropped.RemoteStage is { } remote) lines.Add(new LogLine(LogKind.Info, $"Its {(remote.Stage == RemoteStage.Encode ? "encode" : "CRF search")} may still be running on the worker; the next run on that worker stops it."));
                 if (await verbs.LeftFilesAsync(settings, dropped.Job, dropped.HadFinishedAv1, cancellationToken) is { } files) lines.Add(new LogLine(LogKind.Info, LeftFiles(files)));
                 if (dropped.UploadedAssetId is { } uploaded) lines.Add(new LogLine(LogKind.Warning, $"The AV1 already uploaded to Immich as asset {uploaded} stays there; delete it in Immich if you do not want it."));
                 return new ActionResult(lines, $"Dropped {name}.");
+            case JobRejected rejected:
+                var rejectLines = new List<LogLine> { new(LogKind.Action, $"Rejected {name}. The original{(job.SourceKind == JobSourceKind.Immich ? " in Immich" : string.Empty)} is untouched.") };
+                if (rejected.Deleted.Any) rejectLines.Add(new LogLine(LogKind.Info, $"Deleted its {QueueWords.FilesPhrase(rejected.Deleted)}."));
+                if (rejected.LeftForCleanup is { } left)
+                {
+                    var both = left is { Av1: true, DownloadedCopy: true };
+                    rejectLines.Add(new LogLine(LogKind.Warning, $"Couldn't delete its {QueueWords.FilesPhrase(left)}; {(both ? "they may be" : "it may be")} open in another program. {(both ? "They stay" : "It stays")} until cleanup deletes {(both ? "them" : "it")}."));
+                }
+                return new ActionResult(rejectLines, $"Rejected {name}.");
             default:
                 throw new InvalidOperationException($"A queue verb cannot end as {outcome.GetType().Name}.");
         }
@@ -104,21 +114,22 @@ internal sealed class TuiActions(
             VerbRefusal.ConvertingNow => $"{name} is converting now ({QueueWords.StatusWord(job.Status)}). {StopWords.HowToStop(run)}",
             VerbRefusal.StoppedWhileFinalising => $"{name} was stopped while being finalised; finalising it checks and resumes it.",
             VerbRefusal.BeingFinalised => $"{name} is being finalised now.",
+            VerbRefusal.NotReady => $"Only a video that is ready to finalise can be rejected; {name} {QueueWords.StatusPhrase(job)}.",
             _ => $"Only waiting and stopped videos can be held or run next; {name} {QueueWords.StatusPhrase(job)}."
         };
     }
 
     /// <summary>The refusals that protect a video whose AV1 may be the only copy keep their meaning and their paths.</summary>
-    private static string OnlyCopy(OnlyCopyAtRisk onlyCopy)
+    private static string OnlyCopy(OnlyCopyAtRisk onlyCopy, string verb)
     {
         var job = onlyCopy.Job;
         var name = FileName(job);
         return onlyCopy.Reason switch
         {
-            OnlyCopyReason.OriginalMissing => $"The original of {name} is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then drop the video.",
+            OnlyCopyReason.OriginalMissing => $"The original of {name} is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then {verb} the video.",
             OnlyCopyReason.ImmichNotConfigured => $"Immich can't be used (immich.baseUrl isn't set), so the original of {name} can't be checked. Try again once it answers.",
             OnlyCopyReason.ImmichUnavailable => $"Immich can't be used ({onlyCopy.Detail?.TrimEnd('.')}), so the original of {name} can't be checked. Try again once it answers.",
-            _ => $"The original of {name} is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then drop the video."
+            _ => $"The original of {name} is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then {verb} the video."
         };
     }
 

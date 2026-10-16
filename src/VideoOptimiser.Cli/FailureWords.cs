@@ -32,12 +32,12 @@ internal static class FailureWords
     };
 
     /// <summary>
-    /// The category and message as one phrase, or null when the status already says it all (a dropped video). A sentence
+    /// The category and message as one phrase, or null when the status already says it all (a dropped or rejected video). A sentence
     /// starts with a capital, for a line of its own; otherwise it continues a line, as in <c>history</c>.
     /// </summary>
     public static string? Describe(string? category, string? message, bool sentence)
     {
-        if (category == "Cancelled") return null;
+        if (category is "Cancelled" or FailureCategories.Rejected) return null;
         if (!Prefixes.TryGetValue(category ?? string.Empty, out var prefix) || prefix is null) return message;
         if (sentence) prefix = char.ToUpperInvariant(prefix[0]) + prefix[1..];
         return message is null ? prefix : $"{prefix}: {message}";

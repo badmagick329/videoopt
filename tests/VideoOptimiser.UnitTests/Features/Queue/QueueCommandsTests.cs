@@ -143,15 +143,18 @@ public sealed class QueueCommandsTests : QueueTestBase
         var dropped = Job("clip-c.mp4", JobStatus.Cancelled, job => { job.FailureCategory = "Cancelled"; job.FailureMessage = "Dropped by user."; });
         var notWorth = Job("clip-d.mp4", JobStatus.Skipped, job => { job.FailureCategory = "NotWorthConverting"; job.FailureMessage = "AV1 would keep 95%."; });
         var missing = Job("clip-e.mp4", JobStatus.Failed, job => { job.FailureCategory = "SourceMissing"; job.FailureMessage = "Original does not exist: clip-e.mp4"; });
+        // What a reject stores: likewise, the status says "Rejected".
+        var rejected = Job("clip-f.mp4", JobStatus.Rejected, job => { job.FailureCategory = "Rejected"; job.FailureMessage = "Rejected by user."; });
 
-        var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new ListingRepository(Repository, [Job("open.mp4", JobStatus.Queued)], [failed, completed, dropped, notWorth, missing])), "history");
+        var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new ListingRepository(Repository, [Job("open.mp4", JobStatus.Queued)], [failed, completed, dropped, notWorth, missing, rejected])), "history");
 
         result.Should().Be((0, Transcript(
             $"{failed.Id:N}  Failed               clip-a.mp4, encoding failed: ab-av1 exited with 1.",
             $"{completed.Id:N}  Finalised            clip-b.mp4 CRF 28 60.0% saved",
             $"{dropped.Id:N}  Dropped              clip-c.mp4",
             $"{notWorth.Id:N}  Not worth converting clip-d.mp4, AV1 would keep 95%.",
-            $"{missing.Id:N}  Failed               clip-e.mp4, Original does not exist: clip-e.mp4"), ""));
+            $"{missing.Id:N}  Failed               clip-e.mp4, Original does not exist: clip-e.mp4",
+            $"{rejected.Id:N}  Rejected             clip-f.mp4"), ""));
     }
 
     [Fact]
@@ -249,7 +252,7 @@ public sealed class QueueCommandsTests : QueueTestBase
     [Theory]
     [InlineData("3f2a", "Job ID is invalid.")]
     [InlineData("unknown", "Job was not found.")]
-    [InlineData("queued", "Only failed, cancelled or skipped jobs can be retried.")]
+    [InlineData("queued", "Only failed, cancelled, skipped or rejected jobs can be retried.")]
     public async Task RetryRefusesAJobItCannotRequeue(string which, string refusal)
     {
         var id = which switch { "queued" => (await QueuedAsync("clip-a.mp4")).Id.ToString("N"), "unknown" => Guid.NewGuid().ToString("N"), _ => which };

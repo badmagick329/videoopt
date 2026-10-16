@@ -4,6 +4,7 @@
 
 - A bare `video-optimiser` in a terminal now opens a full-screen view of the queue, the worker, what the run is doing and the videos ready to finalise. It reads the same data as `status`, follows a background or foreground run live, and catches up on one you never saw. Quitting it with `q` or `Ctrl+C` never stops a run. With input or output redirected, or with `--json`, a bare `video-optimiser` still prints the status card.
 - From that view you can hold, release, drop and run videos next, queue a failed video again, create and delete the worker, start a background run (choosing the worker and what happens to it when the run ends), stop it after this video or at once, open the original or the AV1, and finalise one video or all of them. Each of these asks first when it can lose something. Press `?` there to see every key.
+- New `queue reject <job-id>` is for a video that is ready to finalise and that you looked at and don't want. It deletes the AV1 (and an Immich video's download) at once and keeps the original. `queue add` and `immich run` then leave that video alone until its file changes, and `queue retry <job-id>` queues it again. It refuses when the AV1 may be the only copy of the video. In the full-screen view, `r` in the Review pane does the same after asking.
 - Windows no longer goes to sleep while a run is converting.
 - New `run stop [--now]` stops a background run the way `Ctrl+C` stops a run in a terminal. `status` shows a background run, and `status --json` adds a `background` field to its `run` object.
 

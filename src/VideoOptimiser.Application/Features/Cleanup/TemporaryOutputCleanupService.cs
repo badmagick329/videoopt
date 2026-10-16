@@ -107,6 +107,7 @@ public sealed class TemporaryOutputCleanupService(IJobRepository jobs, IOnlyCopy
                 JobStatus.Failed => "staged Immich original; job failed",
                 JobStatus.Cancelled => "staged Immich original; job cancelled",
                 JobStatus.Skipped => "staged Immich original; job skipped",
+                JobStatus.Rejected => "staged Immich original; job rejected",
                 _ => null
             };
             if (reason is null || !ImmichStaging.IsStagedOriginal(stagingDirectory, job.ImmichAssetId, path)) continue;

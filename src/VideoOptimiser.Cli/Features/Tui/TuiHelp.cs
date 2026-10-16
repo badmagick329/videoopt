@@ -50,7 +50,8 @@ internal static class TuiHelp
             new("o", "open the original"),
             new("a", "open the AV1"),
             new("f", "finalise the selected video, after asking"),
-            new("F", "finalise every ready video, after asking")
+            new("F", "finalise every ready video, after asking"),
+            new("r", "reject the selected video, deleting its AV1, after asking")
         ])
     ];
 }

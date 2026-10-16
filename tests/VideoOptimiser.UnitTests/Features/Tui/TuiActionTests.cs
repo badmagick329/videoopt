@@ -135,6 +135,74 @@ public sealed class TuiActionTests : IDisposable
         Texts(gone).Should().Equal("ghost.mp4 is not in the queue any more.");
     }
 
+    /// <summary>VOPT-112: the reject key calls the queue verb the CLI calls; the AV1 is deleted, the original stays, and the video leaves the Review pane.</summary>
+    [Fact]
+    public async Task RejectDeletesTheAv1KeepsTheOriginalAndTheVideoLeavesTheReviewPane()
+    {
+        var ready = await _rig.ReadyAsync("clip-r.mp4", cleanable: true);
+        var other = await _rig.ReadyAsync("clip-o.mp4", cleanable: true);
+
+        var result = await _rig.Actions.QueueAsync(Verb(QueueAction.Reject, ready), _rig.Settings, default);
+
+        result.Lines.Should().Equal(
+            new LogLine(LogKind.Action, "Rejected clip-r.mp4. The original is untouched."),
+            new LogLine(LogKind.Info, "Deleted its AV1."));
+        result.Notice.Should().Be("Rejected clip-r.mp4.");
+        File.Exists(ready.OutputPath!).Should().BeFalse();
+        File.Exists(ready.OutputPath + ".manifest.json").Should().BeFalse();
+        File.ReadAllText(ready.SourcePath).Should().Be("video bytes");
+        File.Exists(other.OutputPath!).Should().BeTrue();
+        (await _rig.StoredAsync(ready)).Status.Should().Be(JobStatus.Rejected);
+        var snapshot = await _rig.Reader.ReadAsync(_rig.Settings, default);
+        snapshot.Open.Should().ContainSingle().Which.Id.Should().Be(other.Id);
+    }
+
+    [Fact]
+    public async Task AnAv1ThatCannotBeDeletedIsAWarningAndTheVideoStaysRejected()
+    {
+        var ready = await _rig.ReadyAsync("clip-r.mp4", cleanable: true);
+        ActionResult result;
+        using (new FileStream(ready.OutputPath!, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            result = await _rig.Actions.QueueAsync(Verb(QueueAction.Reject, ready), _rig.Settings, default);
+        }
+
+        result.Lines.Should().Equal(
+            new LogLine(LogKind.Action, "Rejected clip-r.mp4. The original is untouched."),
+            new LogLine(LogKind.Warning, "Couldn't delete its AV1; it may be open in another program. It stays until cleanup deletes it."));
+        (await _rig.StoredAsync(ready)).Status.Should().Be(JobStatus.Rejected);
+    }
+
+    /// <summary>The verb's refusals, worded for the screen: nothing is deleted and the video stays as it was.</summary>
+    [Fact]
+    public async Task RejectRefusesWhatTheVerbRefusesInTheScreensWords()
+    {
+        var waiting = await _rig.QueuedAsync("clip-q.mp4");
+        var noOriginal = await _rig.ReadyAsync("clip-m.mp4", cleanable: true);
+        File.Delete(noOriginal.SourcePath);
+        var finalising = await _rig.ReadyAsync("clip-f.mp4", cleanable: true);
+
+        Texts(await _rig.Actions.QueueAsync(Verb(QueueAction.Reject, waiting), _rig.Settings, default)).Should().Equal("Only a video that is ready to finalise can be rejected; clip-q.mp4 is waiting.");
+        Texts(await _rig.Actions.QueueAsync(Verb(QueueAction.Reject, noOriginal), _rig.Settings, default)).Should().Equal($"The original of clip-m.mp4 is missing, so its AV1 at {noOriginal.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then reject the video.");
+        var (held, _) = await DatabaseLock.AcquireFinalizeAsync(_rig.DatabasePath, "finalize", default);
+        _locks.Add(held!);
+        Texts(await _rig.Actions.QueueAsync(Verb(QueueAction.Reject, finalising), _rig.Settings, default)).Should().Equal("A finalise is running on this database. Wait for it to finish, then reject clip-f.mp4.");
+        File.Exists(noOriginal.OutputPath!).Should().BeTrue();
+        File.Exists(finalising.OutputPath!).Should().BeTrue();
+        (await _rig.StoredAsync(noOriginal)).Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    [Fact]
+    public async Task RejectingAVideoThatIsAlreadyRejectedSaysSo()
+    {
+        var ready = await _rig.ReadyAsync("clip-r.mp4", cleanable: true);
+        await _rig.Actions.QueueAsync(Verb(QueueAction.Reject, ready), _rig.Settings, default);
+
+        var again = await _rig.Actions.QueueAsync(Verb(QueueAction.Reject, ready), _rig.Settings, default);
+
+        Texts(again).Should().Equal("clip-r.mp4 was already rejected, so there is nothing to reject.");
+    }
+
     [Fact]
     public async Task RetryQueuesAFailedVideoAgainThroughTheRetryService()
     {

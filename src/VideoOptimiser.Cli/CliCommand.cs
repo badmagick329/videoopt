@@ -27,6 +27,7 @@ internal enum CliCommandKind
     QueueRelease,
     QueueNext,
     QueueDrop,
+    QueueReject,
     QueueRetry,
     Status,
     History,
@@ -75,6 +76,7 @@ Usage:
   video-optimiser queue next <job-id> [--config <path>]
   video-optimiser queue drop <job-id> [--config <path>]
   video-optimiser queue drop --all [--config <path>]
+  video-optimiser queue reject <job-id> [--config <path>]
   video-optimiser queue retry <job-id> [--config <path>]
   video-optimiser status [--config <path>] [--json]
   video-optimiser history [--config <path>] [--json]
@@ -216,6 +218,7 @@ Usage:
             ["queue", "release", _] => CliCommandKind.QueueRelease,
             ["queue", "next", _] => CliCommandKind.QueueNext,
             ["queue", "drop"] or ["queue", "drop", _] => CliCommandKind.QueueDrop,
+            ["queue", "reject", _] => CliCommandKind.QueueReject,
             ["queue", "retry", _] => CliCommandKind.QueueRetry,
             ["status"] => CliCommandKind.Status,
             ["history"] => CliCommandKind.History,
@@ -278,7 +281,7 @@ Usage:
             return Invalid($"{modeOverride.Flag} is only supported by run and immich run.");
         }
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate, Size: size);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueReject or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate, Size: size);
     }
 
     private static bool TryParseWorkerFate(string text, out WorkerFateChoice fate)

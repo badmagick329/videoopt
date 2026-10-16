@@ -22,6 +22,7 @@ public sealed record ImmichDiscoveryResult(
     int AlreadyConverted,
     int PreviouslyFailed,
     int PreviouslySkipped,
+    int PreviouslyRejected,
     int Excluded,
     int Ineligible,
     int Skipped,
@@ -37,7 +38,7 @@ public sealed record SkipReasonCount(string Reason, int Count);
 public interface IImmichDiscoveryService
 {
     /// <summary>
-    /// Stages and queues every eligible Immich video without an open, completed or settled failed job. With a
+    /// Stages and queues every eligible Immich video without an open, completed, settled failed or rejected job. With a
     /// <paramref name="limit"/>, it stops once that many new jobs are queued; open jobs do not count. Assets that need a
     /// download to judge are downloaded under <see cref="ImmichSettings.StagingDirectory"/>.
     /// </summary>

@@ -105,6 +105,25 @@ public sealed class QueueDiscoveryTests : IDisposable
         result.QueuedPaths.Should().BeEmpty();
     }
 
+    /// <summary>VOPT-112: a rejected video is the user's verdict, not a failure, so it has its own count; a changed file is a new video and is queued.</summary>
+    [Fact]
+    public async Task DiscoverAsyncLeavesARejectedOriginalOutUntilItChangesAndCountsItApartFromFailures()
+    {
+        var source = (await FilesAsync("movie.mp4"))[0];
+        await JobAsync(source, JobStatus.Rejected, job => (job.FailureCategory, job.SourceSizeBytes) = (FailureCategories.Rejected, 6));
+        var scanner = new FixedScanner(source);
+
+        var unchanged = await DiscoverAsync(scanner);
+        await File.WriteAllTextAsync(source, "edited");
+        var changed = await DiscoverAsync(scanner);
+
+        unchanged.PreviouslyRejected.Should().Be(1);
+        unchanged.PreviouslyFailed.Should().Be(0);
+        unchanged.QueuedPaths.Should().BeEmpty();
+        changed.PreviouslyRejected.Should().Be(0);
+        changed.QueuedPaths.Should().Equal(source);
+    }
+
     [Fact]
     public async Task DiscoverAsyncJudgesAnOriginalByItsLatestJob()
     {
