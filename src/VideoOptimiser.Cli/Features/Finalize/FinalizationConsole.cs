@@ -36,6 +36,13 @@ internal sealed class FinalizationConsole(TextWriter output, TerminalStyle outpu
         };
     }
 
+    /// <summary>
+    /// The warnings a single finalise lists above its y/N, as <c>finalize &lt;id&gt;</c> and the TUI's <c>f</c> both say
+    /// them; empty for a clean video. Plain text: the console colours the warning lines, the TUI shows them in its dialog.
+    /// </summary>
+    internal static IReadOnlyList<string> DescribeWarnings(JobRecord job) =>
+        job.ValidationWarnings.Count == 0 ? [] : ["Validation warnings:", .. job.ValidationWarnings.Select(warning => "  " + warning)];
+
     /// <summary>Whether the job finalised. A failure goes to the error stream, as the exit code says it is one.</summary>
     public bool Outcome(JobRecord job, FinalizationResult result)
     {

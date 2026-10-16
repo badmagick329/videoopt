@@ -38,7 +38,9 @@ internal sealed class StatusCommand(IStatusCard card)
     {
         var parts = new (int Count, string Label)[]
         {
-            (queue.Converting, "converting"), (queue.Waiting, "waiting"), (queue.Stopped, "stopped"), (queue.Held, "held"), (queue.ReadyToFinalise, "ready to finalise")
+            (queue.Converting, "converting"), (queue.Waiting, "waiting"), (queue.Stopped, "stopped"), (queue.Held, "held"),
+            // As the run's tally counts them.
+            (queue.ReadyToFinalise, queue.ToCheck > 0 ? $"ready to finalise ({queue.ToCheck.ToString(CultureInfo.InvariantCulture)} to check)" : "ready to finalise")
         }.Where(part => part.Count > 0).Select(part => $"{part.Count.ToString(CultureInfo.InvariantCulture)} {part.Label}").ToArray();
         return parts.Length == 0 ? "Queue: empty." : $"Queue: {string.Join(", ", parts)}.";
     }
@@ -80,7 +82,16 @@ internal sealed class StatusCommand(IStatusCard card)
 
     private static (string Verb, string Description) Words(NextStep step, StatusCounts queue) => step switch
     {
-        NextStep.FinaliseReady => ("finalize --ready", queue.ReadyToFinalise == 1 ? "finalises the ready video; review it first" : $"finalises the {queue.ReadyToFinalise} ready videos; review them first"),
+        NextStep.FinaliseReady => ("finalize --ready", (queue.BulkFinalisable, queue.ToCheck) switch
+        {
+            (1, 0) => "finalises the ready video; review it first",
+            (_, 0) => $"finalises the {queue.BulkFinalisable} ready videos; review them first",
+            (1, _) => "finalises the ready video without warnings; review it first",
+            _ => $"finalises the {queue.BulkFinalisable} ready videos without warnings; review them first"
+        }),
+        NextStep.CheckWarned => ("queue list", queue.ToCheck == 1
+            ? "shows the warnings on 1 ready video; watch it, then finalise it on its own"
+            : $"shows the warnings on {queue.ToCheck} ready videos; watch each, then finalise it on its own"),
         NextStep.Run => ("run", queue.Runnable == 1 ? "converts the video in the queue" : $"converts the {queue.Runnable} videos in the queue"),
         NextStep.DeleteWorker => ("worker delete", "stops the worker billing"),
         NextStep.AddFromFolders => ("queue add", "queues new videos from your watch folders"),
@@ -93,7 +104,7 @@ internal sealed class StatusCommand(IStatusCard card)
     {
         var queue = report.Queue;
         return new StatusJsonOutput(
-            new StatusJsonQueue(queue.Converting, queue.Waiting, queue.Stopped, queue.Held, queue.ReadyToFinalise),
+            new StatusJsonQueue(queue.Converting, queue.Waiting, queue.Stopped, queue.Held, queue.ReadyToFinalise, queue.ToCheck),
             report.Run is { } run
                 ? new StatusJsonRun(run.Holder.Command, run.Holder.StartedUtc, run.Holder.ProcessId, IsBackground(run), [.. run.Converting.Select(video => new StatusJsonConverting(video.Id.ToString("N"), Path.GetFileName(video.SourcePath), video.Status.ToString()))])
                 : null,

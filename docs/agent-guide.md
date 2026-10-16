@@ -14,7 +14,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 
 What to say for each **warn** command:
 
-- `finalize`, `finalize --ready`: each ready AV1 takes its original's place. `original.action` decides the original: `delete`, `archive` (moved to `original.archiveDirectory`) or `keep` (AV1 installed beside it as `<name>.av1<ext>`). The prompt states which. Suggest playing the AV1s first (`queue list` shows each one's saving; `outputPath` in `queue list --json` is the file). `finalize <job-id>` asks nothing, so warn all the same.
+- `finalize`, `finalize --ready`: each ready AV1 takes its original's place. `original.action` decides the original: `delete`, `archive` (moved to `original.archiveDirectory`) or `keep` (AV1 installed beside it as `<name>.av1<ext>`). The prompt states which. Suggest playing the AV1s first (`queue list` shows each one's saving; `outputPath` in `queue list --json` is the file). `finalize <job-id>` on a video without warnings asks nothing, so warn all the same. Bulk finalise (`finalize --ready`, `immich finalize`, the view's `F`) leaves out every ready video with validation warnings and names each with its `finalize <job-id>`; the person watches each one and finalises it alone. `finalize <job-id>` on a warned video lists its warnings and asks `[y/N]`. A finalisation already under way (stopped partway) stays in bulk, warnings or not.
 - `immich finalize`: each AV1 is uploaded as a new Immich asset and each original goes to Immich's trash. A rerun after a stop continues where it stopped.
 - `cleanup`: lists abandoned temporary outputs and downloaded Immich copies, then deletes them after `y`. `cleanup --dry-run` only lists and ends `Dry run: nothing was deleted.` A file it leaves alone prints `Kept  <path> (<reason>)`, such as an AV1 whose original is missing and which may be the only copy. Relay those lines; the person should not delete such a file by hand.
 - `worker create`, `worker delete`: create or delete the Hetzner worker. Deleting loses outputs not yet downloaded.
@@ -22,7 +22,7 @@ What to say for each **warn** command:
 - `queue reject`: for a video that is ready to finalise. It deletes the AV1 at once, and an Immich video's download too; the original stays. It refuses (exit `1`) when the AV1 may be the only copy, and for an Immich video whose finalisation stopped partway (`finalize` finishes that one). An AV1 that is open in a player stays and is reported; `cleanup` deletes it later. `queue retry <id>` undoes it.
 - `remote setup`: uploads an SSH key to the person's Hetzner project before it asks anything. Without `y` it prints the `processing:` section it would write and changes no file; a rerun reuses the key, rewrites only `processing:` and keeps the old file as `<config>.bak`.
 
-**Prompts.** `finalize --ready`, `immich finalize`, `cleanup`, `remote setup`, and `run`, `immich run` or `worker create` when they would create a Hetzner server ask `[y/N]`. Anything but `y` cancels, changes nothing and exits `0`.
+**Prompts.** `finalize --ready`, `immich finalize`, `finalize <job-id>` on a warned video, `cleanup`, `remote setup`, and `run`, `immich run` or `worker create` when they would create a Hetzner server ask `[y/N]`. Anything but `y` cancels, changes nothing and exits `0`.
 
 **Secrets.** `.env` beside the config holds `VIDEO_OPTIMISER_HETZNER_TOKEN` and `VIDEO_OPTIMISER_IMMICH_API_KEY`. The person adds them there. Do not ask for a value or accept one pasted into chat; checking that a key name exists is enough.
 
@@ -91,7 +91,7 @@ Each key is the command of the same name, with the same rules and refusals; clas
 | `r` | Worker | `worker status` | Read-only |
 | `w` | Activity | sets the background run's worker fate: delete or keep when it ends | **Warn** for keep: the worker bills |
 | `o`, `a` | Review | opens the original (an Immich video's download) or the AV1 in the default app | Read-only |
-| `f`, `F` | Review | `finalize <job-id>`, `finalize --ready`; same question first | **Warn** |
+| `f`, `F` | Review | `finalize <job-id>`, `finalize --ready`; same question first, `f` listing a warned video's warnings; `F` leaves warned videos out | **Warn** |
 | `r` | Review | `queue reject <job-id>`; asks first | **Warn** |
 
 The same letter means different things per pane (`r` is release, check-worker or reject), so name the pane with the key.
@@ -114,7 +114,7 @@ Next:
   video-optimiser finalize --ready   finalises the 3 ready videos; review them first
 ```
 
-- `Queue:` counts open videos; `Queue: empty.` when none. `waiting` and `stopped` are what a run takes; `held` are passed over; `ready to finalise` are waiting for review.
+- `Queue:` counts open videos; `Queue: empty.` when none. `waiting` and `stopped` are what a run takes; `held` are passed over; `ready to finalise` are waiting for review, `(N to check)` of them with validation warnings. With warned videos, `Next:` carries `queue list`, which prints each one's warnings, and `finalize --ready` counts only the others.
 - `Run: none.` or the running command (`background run` for one with no terminal), its start time and process ID, and what it converts.
 - `Worker:` appears only with the Hetzner lifecycle: the server, its age and hourly price, `Worker: none.`, a server that is `gone from Hetzner, but its IPv4 address still bills`, or `as recorded on this PC; Hetzner wasn't checked: <reason>.` Any billing worker deserves a mention.
 - `Next:` holds up to three commands in priority order. `worker delete` appears there whenever a worker bills and no run is going, so **warn** before the person follows it.
@@ -122,7 +122,7 @@ Next:
 
 ### `queue list`
 
-It groups the open videos, each group only when it has videos: `Converting now`, `Queue, in run order` (numbered), `Held` and `Ready to finalise`. Each line starts with the job ID that `queue hold`, `release`, `next`, `drop`, `retry`, `validate` and `finalize` take. A stopped video says what the next run does with it, for example `Stopped  clip.mp4, CRF 30: picks up the encode on the worker, or encodes again on a new one`. Immich videos show `(Immich)`. `Nothing is queued or ready to finalise.` means none. `history` lists the ended ones.
+It groups the open videos, each group only when it has videos: `Converting now`, `Queue, in run order` (numbered), `Held` and `Ready to finalise`. Each line starts with the job ID that `queue hold`, `release`, `next`, `drop`, `retry`, `validate` and `finalize` take. A stopped video says what the next run does with it, for example `Stopped  clip.mp4, CRF 30: picks up the encode on the worker, or encodes again on a new one`. Immich videos show `(Immich)`. A warned ready video ends `, N warnings: <each warning>`. `Nothing is queued or ready to finalise.` means none. `history` lists the ended ones.
 
 ### The run
 
@@ -156,7 +156,7 @@ Upload and download lines appear only with a remote worker. Colour appears on a 
 | `Failed during the upload`, `the CRF search`, `encoding` or `the download: ...`, then `Full log: <path>` | `Failed`; the ab-av1 log stays at that path |
 | `Worker unreachable: ...` | `Interrupted`, `RemoteUnavailable`; the run stops here |
 
-A warning names something the AV1 check doubted: a shorter or longer video, a different number of audio or subtitle streams, audio that starts at another point relative to the video, audio sync that could not be checked, or a failed decode test. The video is ready all the same; the person watches it and decides whether to finalise or `queue reject` it. The run's tally counts warned videos within the ready ones: `Ready to finalise: 4 (1 to check).`
+A warning names something the AV1 check doubted: a shorter or longer video, a different number of audio or subtitle streams, audio that starts at another point relative to the video, audio sync that could not be checked, or a failed decode test. The video is ready all the same; the person watches it and decides whether to finalise it alone (`finalize <job-id>`, or `f` in the view) or `queue reject` it. To explain a warning, say what to watch for: a length or stream warning means the encode may have stopped short or dropped a track, so check the end of the video and its audio; an audio-sync warning means watching lips against speech; a decode-test warning on variable-frame-rate phone video is usually a false alarm, but play it through. The run's tally counts warned videos within the ready ones: `Ready to finalise: 4 (1 to check).`
 
 **Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints progress about every 15 seconds; `about <time> left` appears only after 30 seconds and 5 percentage points. A job that prints nothing new for 15 minutes is stuck: ask for its last lines and `queue list --json`.
 
@@ -248,7 +248,7 @@ A held job keeps its status, `Queued` or `Interrupted`; runs pass over it until 
 
 | Field | Value |
 | --- | --- |
-| `queue` | `{ converting, waiting, stopped, held, readyToFinalise }` |
+| `queue` | `{ converting, waiting, stopped, held, readyToFinalise, toCheck }`; `toCheck` counts the ready videos with validation warnings, which bulk finalise leaves out |
 | `run` | `null` when no run is going. Otherwise `{ command, startedUtc, processId, background, converting }`; `background` is true for a run with no terminal; `converting` is an array of `{ id, file, status }`. |
 | `worker` | `null` unless `processing.remoteSsh.lifecycle` is `hetzner`. Otherwise `{ exists, hetznerChecked, notCheckedReason, name, serverId, status, serverType, location, createdUtc, uptimeSeconds, hourlyGrossEur }`. `exists` is `true` for a server, a retained IPv4 address (`status` `server-missing-primary-ip-retained`) or a worker recorded on this PC. `hetznerChecked` is `false` with `notCheckedReason` set when Hetzner wasn't asked or didn't answer within 15 seconds; the fields are then the recorded ones (`status` `recorded`) with no uptime or price. `hourlyGrossEur` includes VAT. |
 | `next` | Up to three commands worth running now, in order |

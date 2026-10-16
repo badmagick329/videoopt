@@ -338,26 +338,51 @@ internal sealed class TuiActions(
         return new ActionResult([], $"Opened the {what} of {effect.Name}.");
     }
 
-    /// <summary>The same rule as <c>finalize --ready</c>: ready videos, and the ones whose finalisation was interrupted.</summary>
-    private static bool IsFinalisable(JobRecord job) =>
-        job.Status == JobStatus.ReadyToFinalize || FinalizationRules.IsInterruptedImmich(job) || FinalizationRules.IsInterruptedFile(job);
+    /// <summary>The most videos a finalise confirmation names before it counts the rest.</summary>
+    private const int Named = 6;
 
-    /// <summary>The confirmation <c>finalize</c> shows: a line per video, what happens to the originals, and the Immich line.</summary>
+    /// <summary>
+    /// The confirmation <c>finalize</c> shows: a line per video, what happens to the originals, and the Immich line. <c>F</c>
+    /// takes what <c>finalize --ready</c> takes and names the warned videos it leaves out, so each is finalised on purpose
+    /// after it has been watched; <c>f</c> is that purpose, so it takes any finalisable video and lists its warnings.
+    /// </summary>
     public async Task<PreparedMsg> PrepareFinaliseAsync(PrepareFinalise effect, AppSettings settings, CancellationToken cancellationToken)
     {
         var open = await jobs.ListAsync(settings.Database.Path, terminal: false, cancellationToken);
-        var ready = JobRunOrder.Sort(open).Where(IsFinalisable).ToArray();
-        if (effect.Id is { } id) ready = [.. ready.Where(job => job.Id == id)];
+        var finalisable = JobRunOrder.Sort(open).Where(FinalizationRules.IsFinalisable).ToArray();
+        JobRecord[] ready = effect.Id is { } id ? [.. finalisable.Where(job => job.Id == id)] : [.. finalisable.Where(FinalizationRules.IsBulkFinalisable)];
+        JobRecord[] leftOut = effect.Id is null ? [.. finalisable.Where(FinalizationRules.IsLeftForReview)] : [];
+        if (ready.Length == 0 && leftOut.Length > 0) return NothingInBulk(effect.BusyKey!, leftOut);
         if (ready.Length == 0) return new PreparedMsg(effect.BusyKey!, null, effect.Id is null ? "Nothing is ready to finalise." : "That video can't be finalised now.");
 
-        const int shown = 6;
-        var lines = ready.Take(shown).Select(FinalizationConsole.DescribeReady).ToList();
-        if (ready.Length > shown) lines.Add($"And {ready.Length - shown} more.");
+        var lines = ready.Take(Named).Select(FinalizationConsole.DescribeReady).ToList();
+        if (ready.Length > Named) lines.Add($"And {ready.Length - Named} more.");
+        if (effect.Id is not null) lines.AddRange(FinalizationConsole.DescribeWarnings(ready[0]));
         if (ready.Where(job => job.SourceKind == JobSourceKind.File).ToArray() is { Length: > 0 } fileJobs) lines.Add(FinalizationConsole.DescribeOriginalAction(settings.Original, fileJobs));
         if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) lines.Add("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
+        if (leftOut.Length > 0)
+        {
+            lines.Add("Left out because validation warned about them. Watch each one, then press f on its row in Review:");
+            lines.AddRange(leftOut.Take(Named).Select(job => "  " + FileName(job)));
+            if (leftOut.Length > Named) lines.Add($"  And {leftOut.Length - Named} more.");
+        }
 
         var question = ready.Length == 1 ? $"Finalise {FileName(ready[0])}?" : $"Finalise {ready.Length.ToString(CultureInfo.InvariantCulture)} videos?";
-        return new PreparedMsg(effect.BusyKey!, new TuiConfirm(question, string.Join('\n', lines), new FinaliseVideos([.. ready.Select(job => job.Id)])), null);
+        var onYes = new FinaliseVideos([.. ready.Select(job => job.Id)], [.. leftOut.Select(FileName)]);
+        return new PreparedMsg(effect.BusyKey!, new TuiConfirm(question, string.Join('\n', lines), onYes), null);
+    }
+
+    /// <summary>
+    /// <c>F</c> when every ready video has warnings: no dialog, as <c>finalize --ready</c> asks nothing then. The footer's one
+    /// line can't hold the names, so the log gets them under the same words.
+    /// </summary>
+    private static PreparedMsg NothingInBulk(string key, JobRecord[] leftOut)
+    {
+        const string message = "Nothing to finalise in bulk: every ready video has validation warnings. Watch each one, then press f on its row in Review.";
+        var lines = new List<LogLine> { new(LogKind.Warning, message) };
+        lines.AddRange(leftOut.Take(Named).Select(job => new LogLine(LogKind.Detail, FileName(job))));
+        if (leftOut.Length > Named) lines.Add(new LogLine(LogKind.Detail, $"And {leftOut.Length - Named} more."));
+        return new PreparedMsg(key, null, message, lines);
     }
 
     public async Task<ActionResult> FinaliseAsync(FinaliseVideos effect, AppSettings settings, CancellationToken cancellationToken)
@@ -392,6 +417,8 @@ internal sealed class TuiActions(
             ? finalised == 1 ? "Finalised 1 video." : $"Finalised {finalised.ToString(CultureInfo.InvariantCulture)} videos."
             : $"Finalised {finalised.ToString(CultureInfo.InvariantCulture)}; {failed.ToString(CultureInfo.InvariantCulture)} failed.";
         if (effect.Ids.Count > 1) lines.Add(new LogLine(failed == 0 ? LogKind.Success : LogKind.Warning, summary));
+        // After the tally, so the videos still waiting for a look are the last thing read.
+        if (effect.LeftOut is { Count: > 0 } leftOut) lines.Add(new LogLine(LogKind.Warning, $"Left out with validation warnings: {string.Join(", ", leftOut)}."));
         return new ActionResult(lines, summary);
     }
 

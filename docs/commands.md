@@ -18,12 +18,14 @@ Next:
   video-optimiser run               converts the 3 videos in the queue
 ```
 
+Ready videos with validation warnings are counted as `to check` (`Queue: 2 ready to finalise (1 to check).`), and the card then suggests `queue list` to read their warnings, since `finalize --ready` leaves them out.
+
 The card shows the queue's counts, the run going now, the Hetzner worker if you use one (checked with Hetzner), and up to three commands worth running next. With no config found, it says so and names `config init`.
 
 | Command | What it does |
 | --- | --- |
 | `status [--json]` | Print the card. `--json` is for scripts. |
-| `queue list [--json]` | List the open videos in groups: converting now, the queue in run order, held, and ready to finalise. |
+| `queue list [--json]` | List the open videos in groups: converting now, the queue in run order, held, and ready to finalise. A ready video with validation warnings shows them on its line. |
 | `history [--json]` | List the videos that are done: finalised, failed, dropped, rejected or not worth converting. |
 
 ## Setting up
@@ -69,8 +71,8 @@ A run reads the queue again before each video, so these count from its next vide
 | Command | What it does |
 | --- | --- |
 | `validate <job-id>` | Run the checks again on the AV1 of a video that is ready to finalise. It exits `0` when the AV1 passes, passes with warnings (length, streams, audio sync or the decode test) or turns out not worth converting, in which case the AV1 is deleted. It exits `7` when the original or AV1 is missing, the AV1 is empty or unreadable, or its video is not AV1. |
-| `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one, Immich videos included. |
-| `immich finalize` | Finalise only the Immich videos: upload each AV1 to Immich and move the original to Immich's trash. |
+| `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one, Immich videos included. `finalize --ready` leaves out videos with validation warnings and prints the `finalize <job-id>` for each. For a video with warnings, `finalize <job-id>` lists them and asks `y/N` first; a video without warnings is finalised without a question. |
+| `immich finalize` | Finalise only the Immich videos: upload each AV1 to Immich and move the original to Immich's trash. Like `finalize --ready`, it leaves out videos with validation warnings and names them. |
 | `queue reject <job-id>` | Reject a video that is ready to finalise: delete its AV1 (and an Immich video's download) now, and keep the original. Later `queue add` and `immich run` pass over it until its file changes. |
 | `cleanup [--dry-run]` | Delete temporary files no video will use again. It keeps an AV1 that may be the only copy of a video. |
 

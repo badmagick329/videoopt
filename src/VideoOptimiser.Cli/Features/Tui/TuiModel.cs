@@ -30,6 +30,7 @@ internal enum LogKind { Info, Stage, Success, Warning, Error, Action, Detail }
 /// <param name="Stopped">A stop left it, so a run takes it up from its stage.</param>
 /// <param name="Note">A phrase for the row's right side: why a video failed, or what a ready video's finalising did.</param>
 /// <param name="Immich">An Immich video: its original is in Immich, and the AV1 sits beside a downloaded copy.</param>
+/// <param name="Warnings">What validation warned about a ready video, one sentence each: <c>F</c> leaves it out, so it is watched and finalised with <c>f</c>.</param>
 internal sealed record Video(
     Guid Id,
     string Name,
@@ -41,8 +42,11 @@ internal sealed record Video(
     long? Av1Bytes = null,
     decimal? PercentSaved = null,
     string? Note = null,
-    bool Immich = false)
+    bool Immich = false,
+    IReadOnlyList<string>? Warnings = null)
 {
+    public IReadOnlyList<string> Warnings { get; init; } = Warnings ?? [];
+
     public long? SavedBytes => SizeBytes is { } size && Av1Bytes is { } av1 ? size - av1 : null;
 }
 

@@ -145,6 +145,7 @@ public sealed class TuiSnapshotReaderTests : IDisposable
         var ready = Job(3, JobStatus.ReadyToFinalize, minute: 3);
         ready.OutputSizeBytes = 80 * Mib;
         ready.PercentageSaved = 60m;
+        ready.ValidationWarnings = ["The AV1 has no audio."];
         var failedFinalise = Job(4, JobStatus.ReadyToFinalize, minute: 4, message: "Original is in use.");
         var held = Job(2, JobStatus.Queued, minute: 2);
         held.Held = true;
@@ -163,6 +164,7 @@ public sealed class TuiSnapshotReaderTests : IDisposable
             (Id(5), VideoGroup.Queue, true));
         var readyVideo = snapshot.Open!.Single(video => video.Id == Id(3));
         (readyVideo.Name, readyVideo.SizeBytes, readyVideo.Av1Bytes, readyVideo.PercentSaved, readyVideo.Note).Should().Be(("clip-003.mp4", 200 * Mib, 80 * Mib, 60m, null));
+        readyVideo.Warnings.Should().Equal("The AV1 has no audio.");
         snapshot.Open!.Single(video => video.Id == Id(4)).Note.Should().Be("last finalising failed");
         snapshot.Open!.Single(video => video.Id == Id(5)).Remote.Should().BeTrue();
     }

@@ -112,6 +112,15 @@ internal sealed class TuiRig : IDisposable
         return job;
     }
 
+    /// <summary>A ready job whose validation warned: bulk finalise leaves it out.</summary>
+    public async Task<JobRecord> WarnedAsync(string name, params string[] warnings)
+    {
+        var job = await ReadyAsync(name);
+        job.ValidationWarnings = warnings;
+        await Repository.UpdateAsync(DatabasePath, job);
+        return job;
+    }
+
     public async Task<JobRecord> StoredAsync(JobRecord job) => (await Repository.GetAsync(DatabasePath, job.Id))!;
 
     public void Dispose()

@@ -185,6 +185,66 @@ public sealed class TuiViewTests
         Row(rows, "2 ready to finalise, would save").Should().Contain("1.7 GiB");
     }
 
+    private const string LongWarning = "Audio stream 2 of the original is missing from the AV1, so a second language or commentary track may be gone.";
+
+    /// <summary>Ready with clip-005 clean and clip-006 warned, the Review pane's cursor on <paramref name="selected"/>.</summary>
+    private static TuiModel Warned(int selected, int width = 140, int height = 40) =>
+        After(TuiModel.Initial(Now, width, height, "jobs.db"), Snap(Quiet([Queued(2), Ready(5), Ready(6, size: 2000 * Mib, av1: 700 * Mib, saved: 65m) with { Warnings = ["The AV1 is 2.1 s shorter than the original.", LongWarning] }])), Tick(TimeSpan.Zero, width, height))
+            with { ReviewSelection = Id(selected) };
+
+    /// <summary>VOPT-118: F leaves a warned video out, so both panes mark it and the header counts it, wherever the cursor is.</summary>
+    [Fact]
+    public void AWarnedReadyVideoIsMarkedInBothPanesAndCountedInTheHeader()
+    {
+        var rows = Rows(Warned(selected: 5));
+
+        Row(rows, "converting").Should().Contain("2 ready, 1 to check");
+        var warned = rows.Where(row => row.Contains("clip-006.mp4", StringComparison.Ordinal)).ToArray();
+        warned.Should().HaveCount(2);
+        warned[0].Should().Contain("2 warnings · saves 65%");
+        warned[1].Should().MatchRegex(@"2 warnings\s+2\.0 GiB\s+700\.0 MiB\s+-65%");
+        rows.Where(row => row.Contains("clip-005.mp4", StringComparison.Ordinal)).Should().HaveCount(2).And.OnlyContain(row => !row.Contains("warning", StringComparison.Ordinal));
+    }
+
+    /// <summary>The selected video's warnings show whole in the Review pane, a long one wrapped; a clean video shows none.</summary>
+    [Theory]
+    [InlineData(6, true)]
+    [InlineData(5, false)]
+    public void TheSelectedVideosWarningsShowInTheReviewPane(int selected, bool shown)
+    {
+        var rows = Rows(Warned(selected));
+
+        // The right column starts at 55% of the width; the rows of the left one would hold the queue's names.
+        var review = rows.Select(row => row[77..].Trim().Trim('│').Trim()).ToArray();
+        if (!shown)
+        {
+            review.Should().NotContain(cell => cell.Contains("Validation warnings:", StringComparison.Ordinal) || cell.Contains("shorter", StringComparison.Ordinal));
+            return;
+        }
+        var heading = Array.IndexOf(review, "Validation warnings:");
+        heading.Should().BePositive();
+        review[heading + 1].Should().Be("The AV1 is 2.1 s shorter than the original.");
+        // The long one wraps under its text, whole, and the pinned summary still follows.
+        string.Join(' ', review.Skip(heading + 2).TakeWhile(cell => !cell.StartsWith("2 ready to finalise", StringComparison.Ordinal))).Should().Be(LongWarning);
+        review.Should().NotContain(cell => cell.Contains('…'));
+    }
+
+    /// <summary>A short pane keeps the list's rows first: the warnings keep their first rows and end in an ellipsis where cut.</summary>
+    [Fact]
+    public void OnAShortPaneTheWarningsGiveWayToTheList()
+    {
+        // Stacked and focused: Review gets the 7 rows left after three collapsed panes, too few for both warnings beside the list.
+        var rows = Rows(Warned(selected: 6, width: 80, height: 20) with { Focus = Pane.Review });
+
+        Row(rows, "clip-005.mp4").Should().Contain("%");
+        Row(rows, "clip-006.mp4").Should().Contain("-65%");
+        Row(rows, "Validation warnings:").Should().NotBeNull();
+        Row(rows, "The AV1 is 2.1 s shorter than the original.").Should().NotContain("…");
+        Row(rows, "Audio stream 2").Should().MatchRegex(@"…\s*│$");
+        rows.Should().NotContain(row => row.Contains("commentary track may be gone.", StringComparison.Ordinal));
+        Row(rows, "2 ready to finalise, would save").Should().NotBeNull();
+    }
+
     [Fact]
     public void TheFooterListsTheFocusedPanesKeys()
     {

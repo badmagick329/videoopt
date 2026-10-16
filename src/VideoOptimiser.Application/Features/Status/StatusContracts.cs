@@ -8,10 +8,14 @@ namespace VideoOptimiser.Application.Features.Status;
 /// <summary>What the open jobs add up to, in the groups <c>queue list</c> shows them under.</summary>
 /// <param name="Waiting">Waiting videos a run takes; <paramref name="Stopped"/> are the ones a stop left, which it also takes.</param>
 /// <param name="ReadyToFinalise">Ready, last finalise stopped, being finalised or stopped while it was: finalize's work.</param>
-public sealed record StatusCounts(int Converting, int Waiting, int Stopped, int Held, int ReadyToFinalise)
+/// <param name="ToCheck">The ready ones with validation warnings, which <c>finalize --ready</c> leaves for the person to finalise one by one.</param>
+public sealed record StatusCounts(int Converting, int Waiting, int Stopped, int Held, int ReadyToFinalise, int ToCheck)
 {
     /// <summary>What a run would take.</summary>
     public int Runnable => Waiting + Stopped;
+
+    /// <summary>What <c>finalize --ready</c> would take.</summary>
+    public int BulkFinalisable => ReadyToFinalise - ToCheck;
 }
 
 /// <summary>A video the run going now is converting.</summary>
@@ -29,6 +33,8 @@ public enum NextStep
 {
     /// <summary><c>finalize --ready</c>.</summary>
     FinaliseReady,
+    /// <summary><c>queue list</c>, to read the warnings of the ready videos bulk finalise leaves out.</summary>
+    CheckWarned,
     /// <summary><c>run</c>.</summary>
     Run,
     /// <summary><c>worker delete</c>: something bills.</summary>

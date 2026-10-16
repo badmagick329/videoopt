@@ -12,6 +12,20 @@
 - The run's tally counts warned videos in the ready count: `Ready to finalise: 4 (1 to check).` The full-screen view's log says `The run finished: 4 ready to finalise (1 to check).`
 - `queue list --json` and `history --json` have a new `validationWarnings` array, empty when there are none.
 
+### Finalising
+
+- `finalize --ready` and `immich finalize` leave out videos with validation warnings. The question and the last lines name each one with the `finalize <job-id>` that finalises it alone. When every ready video has warnings, they say there is nothing to finalise in bulk and list them.
+- `finalize <job-id>` on a video with warnings lists them and asks `y/N` first. A video without warnings is still finalised without a question.
+- A finalisation that stopped partway is still resumed by `finalize --ready` and `immich finalize`, warnings or not.
+- The status card counts warned videos, as in `Queue: 2 ready to finalise (1 to check).`, and suggests `queue list` to read their warnings. `status --json` has a new `queue.toCheck` count.
+- `queue list` prints a warned video's warnings on its line.
+
+### The full-screen view
+
+- A ready video with validation warnings is marked `1 warning` (or `2 warnings`) in the Review and Queue panes, and the header says `2 ready, 1 to check`.
+- The Review pane lists the selected video's warnings in full at its bottom.
+- `f` on a warned video lists its warnings in the question. `F` leaves warned videos out and names them, so each one is finalised with `f`.
+
 ## [0.11.0] - 2026-10-16
 ### The full-screen view
 

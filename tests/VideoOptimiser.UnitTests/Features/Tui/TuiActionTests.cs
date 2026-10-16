@@ -567,6 +567,69 @@ public sealed class TuiActionTests : IDisposable
         (await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(waiting.Id), _rig.Settings, default)).Should().Be(new PreparedMsg("finalise", null, "That video can't be finalised now."));
     }
 
+    /// <summary>VOPT-118: F takes only the clean videos and names the warned ones, which are each finalised with f once watched.</summary>
+    [Fact]
+    public async Task FConfirmsOnlyTheCleanVideosAndNamesTheWarnedOnesItLeavesOut()
+    {
+        var clean = await _rig.ReadyAsync("clip-a.mp4");
+        await _rig.WarnedAsync("clip-b.mp4", "The AV1 is 2.1 s shorter than the original.");
+
+        var prepared = await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(null), _rig.Settings, default);
+
+        prepared.Confirm!.Question.Should().Be("Finalise clip-a.mp4?");
+        prepared.Confirm.Detail.Split('\n').Should().Equal(
+            "clip-a.mp4  1000 B -> 400 B, 60.0% saved",
+            "Each original is deleted and its AV1 takes its place as an .mp4 file.",
+            "Left out because validation warned about them. Watch each one, then press f on its row in Review:",
+            "  clip-b.mp4");
+        var onYes = prepared.Confirm.OnYes.Should().BeOfType<FinaliseVideos>().Subject;
+        onYes.Ids.Should().Equal(clean.Id);
+        onYes.LeftOut.Should().Equal("clip-b.mp4");
+    }
+
+    [Fact]
+    public async Task FWithOnlyWarnedVideosReadyOpensNoDialogAndNamesThemInTheLog()
+    {
+        await _rig.WarnedAsync("clip-a.mp4", "The AV1 is 2.1 s shorter than the original.");
+        await _rig.WarnedAsync("clip-b.mp4", "The AV1 has no audio.");
+        const string message = "Nothing to finalise in bulk: every ready video has validation warnings. Watch each one, then press f on its row in Review.";
+
+        var prepared = await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(null), _rig.Settings, default);
+
+        prepared.Confirm.Should().BeNull();
+        prepared.Notice.Should().Be(message);
+        prepared.Lines.Should().Equal(new LogLine(LogKind.Warning, message), new LogLine(LogKind.Detail, "clip-a.mp4"), new LogLine(LogKind.Detail, "clip-b.mp4"));
+    }
+
+    /// <summary>f is the deliberate press, so it takes a warned video and shows what validation found before the y/N.</summary>
+    [Fact]
+    public async Task FOnOneWarnedVideoListsItsWarningsAboveWhatHappensToTheOriginal()
+    {
+        var warned = await _rig.WarnedAsync("clip-a.mp4", "The AV1 is 2.1 s shorter than the original.", "The AV1 has no audio.");
+
+        var prepared = await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(warned.Id), _rig.Settings, default);
+
+        prepared.Confirm!.Detail.Split('\n').Should().Equal(
+            "clip-a.mp4  1000 B -> 400 B, 60.0% saved",
+            "Validation warnings:",
+            "  The AV1 is 2.1 s shorter than the original.",
+            "  The AV1 has no audio.",
+            "Each original is deleted and its AV1 takes its place as an .mp4 file.");
+        prepared.Confirm.OnYes.Should().BeOfType<FinaliseVideos>().Which.Ids.Should().Equal(warned.Id);
+    }
+
+    [Fact]
+    public async Task AfterFTheWarnedVideosItLeftOutAreTheLastLine()
+    {
+        var first = await _rig.ReadyAsync("clip-a.mp4");
+        var second = await _rig.ReadyAsync("clip-b.mp4");
+
+        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id], ["clip-c.mp4", "clip-d.mp4"]), _rig.Settings, default);
+
+        result.Lines[^2].Should().Be(new LogLine(LogKind.Success, "Finalised 2 videos."));
+        result.Lines[^1].Should().Be(new LogLine(LogKind.Warning, "Left out with validation warnings: clip-c.mp4, clip-d.mp4."));
+    }
+
     [Fact]
     public async Task FinaliseHoldsTheFinaliseLockFinalisesEachVideoInOrderAndLogsOneLineEachAndASummary()
     {

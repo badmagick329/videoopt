@@ -222,6 +222,21 @@ public sealed class StatusCommandTests : QueueTestBase
         result.Should().Be((0, Card(queueLine, "Run: none.", null, ("finalize --ready", description)), ""));
     }
 
+    /// <summary><c>finalize --ready</c> leaves warned videos out, so the card counts them apart and points at their warnings.</summary>
+    [Theory]
+    [InlineData(1, 1, "Queue: 2 ready to finalise (1 to check).", "finalises the ready video without warnings; review it first", "shows the warnings on 1 ready video; watch it, then finalise it on its own")]
+    [InlineData(0, 2, "Queue: 2 ready to finalise (2 to check).", null, "shows the warnings on 2 ready videos; watch each, then finalise it on its own")]
+    public async Task WarnedReadyVideosAreCountedApartAndLeftForQueueList(int clean, int warned, string queueLine, string? finaliseDescription, string checkDescription)
+    {
+        for (var index = 0; index < clean; index++) await ReadyAsync(await QueuedAsync($"clip-{index}.mp4"));
+        for (var index = 0; index < warned; index++) await ReadyAsync(await QueuedAsync($"warned-{index}.mp4", job => job.ValidationWarnings = ["The decode test failed."]));
+
+        var result = await RunAsync("status");
+
+        (string, string)[] next = finaliseDescription is null ? [("queue list", checkDescription)] : [("finalize --ready", finaliseDescription), ("queue list", checkDescription)];
+        result.Should().Be((0, Card(queueLine, "Run: none.", null, next), ""));
+    }
+
     /// <summary>A finalise that is going is already doing what the card would offer, so it offers the rest.</summary>
     [Fact]
     public async Task AFinaliseGoingIsNotOfferedAgain()
@@ -285,7 +300,8 @@ public sealed class StatusCommandTests : QueueTestBase
                 "waiting": 1,
                 "stopped": 0,
                 "held": 1,
-                "readyToFinalise": 1
+                "readyToFinalise": 1,
+                "toCheck": 0
               },
               "run": {
                 "command": "video-optimiser run",
@@ -335,7 +351,8 @@ public sealed class StatusCommandTests : QueueTestBase
                 "waiting": 0,
                 "stopped": 0,
                 "held": 0,
-                "readyToFinalise": 0
+                "readyToFinalise": 0,
+                "toCheck": 0
               },
               "run": null,
               "worker": null,

@@ -8,7 +8,8 @@ namespace VideoOptimiser.Cli.Features.Status;
 /// <param name="Next">The commands only, as the text card prints them.</param>
 internal sealed record StatusJsonOutput(StatusJsonQueue Queue, StatusJsonRun? Run, StatusJsonWorker? Worker, string[] Next);
 
-internal sealed record StatusJsonQueue(int Converting, int Waiting, int Stopped, int Held, int ReadyToFinalise);
+/// <param name="ToCheck">The ready ones with validation warnings, which <c>finalize --ready</c> leaves out.</param>
+internal sealed record StatusJsonQueue(int Converting, int Waiting, int Stopped, int Held, int ReadyToFinalise, int ToCheck);
 
 /// <param name="Background">A run with no terminal, started from the TUI; it stops with <c>run stop</c> rather than Ctrl+C.</param>
 internal sealed record StatusJsonRun(string Command, DateTimeOffset StartedUtc, int ProcessId, bool Background, StatusJsonConverting[] Converting);

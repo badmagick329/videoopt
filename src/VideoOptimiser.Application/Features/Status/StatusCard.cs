@@ -2,6 +2,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Features.Status;
 
@@ -22,7 +23,8 @@ public sealed class StatusCard(IQueueDiscovery discovery, IDatabaseLocks locks, 
             Waiting: open.Count(entry => entry is { Group: OpenJobGroup.Queue, Stopped: null }),
             Stopped: open.Count(entry => entry is { Group: OpenJobGroup.Queue, Stopped: not null }),
             Held: open.Count(entry => entry.Group == OpenJobGroup.Held),
-            ReadyToFinalise: open.Count(entry => entry.Group == OpenJobGroup.ReadyToFinalise));
+            ReadyToFinalise: open.Count(entry => entry.Group == OpenJobGroup.ReadyToFinalise),
+            ToCheck: open.Count(entry => entry.Group == OpenJobGroup.ReadyToFinalise && FinalizationRules.IsLeftForReview(entry.Job)));
 
         var run = locks.LiveRun(databasePath) is { } holder
             ? new StatusRun(holder, [.. open.Where(entry => entry.Group == OpenJobGroup.ConvertingNow).Select(entry => new StatusConverting(entry.Job.Id, entry.Job.SourcePath, entry.Job.Status))])
@@ -53,7 +55,8 @@ public sealed class StatusCard(IQueueDiscovery discovery, IDatabaseLocks locks, 
     private static NextStep[] ChooseNextSteps(AppSettings settings, StatusCounts queue, bool runGoing, bool finaliseGoing, bool billing)
     {
         var steps = new List<NextStep>();
-        if (queue.ReadyToFinalise > 0 && !finaliseGoing) steps.Add(NextStep.FinaliseReady);
+        if (queue.BulkFinalisable > 0 && !finaliseGoing) steps.Add(NextStep.FinaliseReady);
+        if (queue.ToCheck > 0) steps.Add(NextStep.CheckWarned);
         if (queue.Runnable > 0 && !runGoing) steps.Add(NextStep.Run);
         if (billing && !runGoing) steps.Add(NextStep.DeleteWorker);
         if (queue.Runnable + queue.ReadyToFinalise == 0 && !runGoing)

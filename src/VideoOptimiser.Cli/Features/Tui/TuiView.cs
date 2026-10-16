@@ -93,12 +93,14 @@ internal static class TuiView
     {
         var line = new Line().Left(" VideoOptimiser", Theme.Of(Theme.Text, bold: true));
 
+        // The ready chip stays in the narrow header, so the videos F leaves out are counted wherever the count of ready ones is.
+        var toCheck = m.Ready().Count(video => video.Warnings.Count > 0);
         var chips = new List<(string Label, Color Color)>
         {
             ($"{m.Count(VideoGroup.ConvertingNow)} converting", Theme.Converting),
             ($"{m.Count(VideoGroup.Queue)} in the queue", Theme.Queue),
             ($"{m.Count(VideoGroup.Held)} held", Theme.Held),
-            ($"{m.Count(VideoGroup.Ready)} ready", Theme.Ready)
+            ($"{m.Count(VideoGroup.Ready)} ready{(toCheck > 0 ? $", {toCheck} to check" : string.Empty)}", Theme.Ready)
         };
         if (m.Count(VideoGroup.Failed) > 0) chips.Add(($"{m.Count(VideoGroup.Failed)} failed", Theme.Failed));
 
@@ -301,8 +303,13 @@ internal static class TuiView
                 line.Right($" · {size} ", Theme.Of(Theme.Dim));
                 break;
             case { Group: VideoGroup.Ready }:
-                if (video.Note is not null) line.Right(video.Note + " ", Theme.Of(Theme.Held));
-                else if (video.PercentSaved is { } saved) line.Right($"saves {TuiText.Percent(saved)} ", Theme.Of(Theme.Ready));
+                if (video.Note is not null)
+                {
+                    line.Right(video.Note + " ", Theme.Of(Theme.Held));
+                    break;
+                }
+                if (video.Warnings.Count > 0) line.Right(WarningMark(video), Theme.Of(Theme.Held)).Right(" · ", Theme.Of(Theme.Dim));
+                if (video.PercentSaved is { } saved) line.Right($"saves {TuiText.Percent(saved)} ", Theme.Of(Theme.Ready));
                 else line.Right(size + " ", Theme.Of(Theme.Dim));
                 break;
             case { Group: VideoGroup.Failed }:
@@ -589,10 +596,14 @@ internal static class TuiView
         var rows = new List<IRenderable>();
         var sizes = width >= 52;
 
-        // Column heads, then the list, then a pinned summary. The summary and heads give way on short panes.
+        // Column heads, then the list, then the selected video's validation warnings and a summary, both pinned to the bottom.
+        // The summary and heads give way on short panes; the warnings take only what the list can spare.
         var showHead = capacity >= 4;
         var showSummary = capacity >= 5;
         var listCapacity = capacity - (showHead ? 1 : 0) - (showSummary ? 1 : 0);
+        var chosen = ready.FirstOrDefault(video => video.Id == m.ReviewSelection) ?? ready.FirstOrDefault();
+        var warnings = WarningRows(chosen, width, listCapacity - Math.Min(Math.Max(1, ready.Count), ListRowsKept));
+        listCapacity -= warnings.Count;
 
         if (showHead)
         {
@@ -612,6 +623,7 @@ internal static class TuiView
                 .Left(selected ? "▌" : " ", Theme.Of(focused ? Theme.Accent : Theme.Dim))
                 .Left("  ", Style.Plain)
                 .Flex(video.Name, Theme.Of(Theme.Text, bold: selected));
+            if (video.Warnings.Count > 0) line.Right(WarningMark(video) + "  ", Theme.Of(Theme.Held));
             if (sizes)
             {
                 line.Right($"{(video.SizeBytes is { } original ? TuiText.Size(original) : "-"),10} ", Theme.Of(Theme.Dim));
@@ -623,15 +635,44 @@ internal static class TuiView
         var start = Bars.WindowStart(items.Count, selectedRow, Math.Max(1, listCapacity));
         rows.AddRange(items.Skip(start).Take(Math.Max(1, listCapacity)));
 
+        var pinned = warnings.Count + (showSummary ? 1 : 0);
+        if (pinned > 0)
+        {
+            while (rows.Count < capacity - pinned) rows.Add(new Line().Build(width));
+            rows.AddRange(warnings);
+        }
         if (showSummary)
         {
-            while (rows.Count < capacity - 1) rows.Add(new Line().Build(width));
             var summary = ready.Count == 0
                 ? string.Empty
                 : $" {ready.Count} ready to finalise, would save {TuiText.Size(ready.Sum(video => video.SavedBytes ?? 0))}.";
             rows.Add(new Line().Flex(summary, Theme.Of(Theme.Dim)).Build(width));
         }
         return rows;
+    }
+
+    /// <summary>The list rows the warnings leave, so the selected video and its neighbours stay in view as the cursor moves.</summary>
+    private const int ListRowsKept = 3;
+
+    private static string WarningMark(Video video) => video.Warnings.Count == 1 ? "1 warning" : $"{video.Warnings.Count} warnings";
+
+    /// <summary>
+    /// The selected video's warnings under a dim heading, each wrapped under its text as the log wraps, since they are what to
+    /// watch for before <c>f</c>. With less room than they need the first rows stay and the last one ends in an ellipsis; with
+    /// no room for the heading and one row they give way entirely.
+    /// </summary>
+    private static List<IRenderable> WarningRows(Video? video, int width, int room)
+    {
+        if (video is not { Warnings.Count: > 0 } || room < 2) return [];
+        const string indent = "     ";
+        var parts = video.Warnings.SelectMany(warning => TuiText.Wrap(warning, Math.Max(1, width - indent.Length))).ToList();
+        var shown = parts.Take(room - 1).ToList();
+        if (shown.Count < parts.Count) shown[^1] = TuiText.Fit(shown[^1] + "…", Math.Max(1, width - indent.Length));
+        return
+        [
+            new Line().Left("   ", Style.Plain).Flex("Validation warnings:", Theme.Of(Theme.Dim)).Build(width),
+            .. shown.Select(part => new Line().Left(indent, Style.Plain).Flex(part, Theme.Of(Theme.Held)).Build(width))
+        ];
     }
 
     // ---- dialog -----------------------------------------------------------------------------

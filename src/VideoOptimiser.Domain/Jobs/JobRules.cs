@@ -107,6 +107,20 @@ public static class FinalizationRules
     public static bool IsFailedFileReview(JobRecord job) =>
         job is { SourceKind: JobSourceKind.File, Status: JobStatus.Failed, ResumeStatus: JobStatus.Finalizing, FailureCategory: FailureCategories.ManualInterventionRequired };
 
+    /// <summary>What finalising one video accepts: a ready video, or one whose finalisation was interrupted.</summary>
+    public static bool IsFinalisable(JobRecord job) => job.Status == JobStatus.ReadyToFinalize || IsInterruptedImmich(job) || IsInterruptedFile(job);
+
+    /// <summary>
+    /// A ready video whose validation left warnings. Bulk finalise leaves it out, so each one is finalised on purpose with
+    /// <c>finalize &lt;id&gt;</c> or the TUI's <c>f</c> after the user has watched it (VOPT-116). A finalisation that was
+    /// already under way stays in: its user already chose to finalise it.
+    /// </summary>
+    public static bool IsLeftForReview(JobRecord job) =>
+        job is { Status: JobStatus.ReadyToFinalize, ValidationWarnings.Count: > 0 } && job.FailureCategory != FailureCategories.FinalizationIncomplete;
+
+    /// <summary>What <c>finalize --ready</c>, <c>immich finalize</c> and the TUI's <c>F</c> take.</summary>
+    public static bool IsBulkFinalisable(JobRecord job) => IsFinalisable(job) && !IsLeftForReview(job);
+
     private static bool IsInterrupted(JobRecord job) =>
         job.Status == JobStatus.Finalizing || job.Status == JobStatus.Interrupted && job.ResumeStatus == JobStatus.Finalizing;
 

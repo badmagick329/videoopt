@@ -125,6 +125,8 @@ internal static class QueueWords
         if (entry.Group == OpenJobGroup.Held && entry.Stopped is not null) facts.Add("stopped");
         if (entry.State == OpenJobState.StoppedWhileFinalising) facts.Add("stopped while being finalised");
         var line = string.Join(", ", facts);
+        // In full, as the run printed them: the person reads them here before choosing to finalise the video on its own.
+        if (FinalizationRules.IsLeftForReview(job)) line += $", {OutputWords.Count(job.ValidationWarnings.Count, "warning", "warnings")}: {string.Join(' ', job.ValidationWarnings)}";
         return entry.State switch
         {
             OpenJobState.LastFinaliseFailed => $"{line}; the last finalise stopped: {job.FailureMessage}",

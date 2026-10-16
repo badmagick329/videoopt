@@ -43,7 +43,8 @@ internal enum WorkerOptionsPurpose { Create, Start }
 internal sealed record WorkerOptionsMsg(WorkerOptionsPurpose Purpose, IReadOnlyList<RemoteWorkerCreationOption>? Options, string? Error) : TuiMsg;
 
 /// <summary>A dialog an effect prepared from data it had to read (finalising shows what the confirmation shows), or why there is none.</summary>
-internal sealed record PreparedMsg(string Key, TuiConfirm? Confirm, string? Notice) : TuiMsg;
+/// <param name="Lines">For the log, when the footer's one line can't hold everything: <c>F</c> with only warned videos names them there.</param>
+internal sealed record PreparedMsg(string Key, TuiConfirm? Confirm, string? Notice, IReadOnlyList<LogLine>? Lines = null) : TuiMsg;
 
 /// <summary>
 /// A thing Update asks the world to do. Update stays pure by returning these instead of doing them; <see cref="TuiEffects"/>
@@ -144,7 +145,10 @@ internal sealed record PrepareFinalise(Guid? Id) : TuiEffect
     public override string BusyText => "Reading what is ready to finalise.";
 }
 
-internal sealed record FinaliseVideos(IReadOnlyList<Guid> Ids) : TuiEffect
+/// <param name="LeftOut">
+/// The names of the warned videos <c>F</c> left out, said again after the tally so they are the last thing read; empty for <c>f</c>.
+/// </param>
+internal sealed record FinaliseVideos(IReadOnlyList<Guid> Ids, IReadOnlyList<string>? LeftOut = null) : TuiEffect
 {
     public override string BusyKey => "finalise";
     public override string BusyText => "Finalising.";

@@ -22,19 +22,29 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         if (!command.FinalizeReady)
         {
             if (!Guid.TryParse(command.JobId, out var id)) { WriteError("Job ID is invalid."); return (int)ExitCode.InvalidArguments; }
+            // Only a warned video asks first: a clean one finalises at once, as scripts and the e2e test rely on. An unknown ID
+            // falls through, so the service reports it as before.
+            if (await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken) is { } warned && FinalizationRules.IsLeftForReview(warned)
+                && !ConfirmWarned(warned, configuration.Settings.Original))
+            {
+                Console.WriteLine("Finalisation cancelled.");
+                return (int)ExitCode.Success;
+            }
             var result = await finalizer.FinalizeAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
             if (result.ExitCode == ExitCode.Success) Console.WriteLine(result.Message);
             else WriteError(result.Message);
             return (int)result.ExitCode;
         }
 
-        var ready = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken))
-            .Where(job => job.Status == JobStatus.ReadyToFinalize || FinalizationRules.IsInterruptedImmich(job) || FinalizationRules.IsInterruptedFile(job))
-            .ToArray();
-        if (ready.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
+        var finalisable = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Where(FinalizationRules.IsFinalisable).ToArray();
+        if (finalisable.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
+        var ready = finalisable.Where(FinalizationRules.IsBulkFinalisable).ToArray();
+        var leftOut = finalisable.Where(FinalizationRules.IsLeftForReview).ToArray();
+        if (ready.Length == 0) return OnlyWarned("every ready video has validation warnings", leftOut, command);
         foreach (var job in ready) Console.WriteLine(FinalizationConsole.DescribeReady(job));
         if (ready.Where(job => job.SourceKind == JobSourceKind.File).ToArray() is { Length: > 0 } fileJobs) Console.WriteLine(FinalizationConsole.DescribeOriginalAction(configuration.Settings.Original, fileJobs));
-        if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) Console.WriteLine("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
+        if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) Console.WriteLine(ImmichTrashLine);
+        WriteLeftOut("Left out because validation warned about them. Watch each one, then finalise it on its own:", leftOut, command);
         Console.Write("Finalise these jobs? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
         var report = new FinalizationConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
@@ -46,7 +56,44 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         }
 
         report.Summary(ready.Length, failed);
+        WriteLeftOut("Left out with validation warnings:", leftOut, command);
         return failed == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
+    }
+
+    private const string ImmichTrashLine = "Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.";
+
+    /// <summary>
+    /// What a warned video is and what validation said, then the y/N. The warnings are what the user should have watched the AV1
+    /// for, so they come right before the question rather than in a separate command.
+    /// </summary>
+    private static bool ConfirmWarned(JobRecord job, OriginalSettings original)
+    {
+        Console.WriteLine(FinalizationConsole.DescribeReady(job));
+        var warnings = FinalizationConsole.DescribeWarnings(job);
+        Console.WriteLine(warnings[0]);
+        // The sentences are coloured as validate colours them; the header and indent stay plain.
+        foreach (var line in warnings.Skip(1)) Console.WriteLine($"  {OutputStyle.Tone(JobTone.Warning, line.TrimStart())}");
+        Console.WriteLine(job.SourceKind == JobSourceKind.Immich ? ImmichTrashLine : FinalizationConsole.DescribeOriginalAction(original, [job]));
+        Console.Write("Finalise it? [y/N] ");
+        return string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A bulk finalise where every candidate was left out. It succeeds without a prompt: there is nothing to confirm, and each
+    /// video's own command is the way on.
+    /// </summary>
+    private static int OnlyWarned(string why, IReadOnlyList<JobRecord> leftOut, CliCommand command)
+    {
+        WriteLeftOut($"Nothing to finalise in bulk: {why}. Watch each one, then finalise it on its own:", leftOut, command);
+        return (int)ExitCode.Success;
+    }
+
+    /// <summary>The warned videos a bulk finalise skipped, each with the command that finalises it alone. Nothing when none were.</summary>
+    private static void WriteLeftOut(string header, IReadOnlyList<JobRecord> leftOut, CliCommand command)
+    {
+        if (leftOut.Count == 0) return;
+        Console.WriteLine(header);
+        foreach (var job in leftOut) Console.WriteLine($"  {Path.GetFileName(job.SourcePath)}  {command.Hint($"finalize {job.Id:N}")}");
     }
 
     public async Task<int> ImmichFinalizeAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
@@ -55,10 +102,14 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         using var finalizeLock = await TakeFinalizeLockAsync(configuration, "immich finalize", cancellationToken);
         if (finalizeLock is null) return (int)ExitCode.GeneralFailure;
         var settings = configuration.Settings;
-        var ready =(await repository.ListAsync(settings.Database.Path, terminal: false, cancellationToken))
-            .Where(job => job.SourceKind == JobSourceKind.Immich && (job.Status == JobStatus.ReadyToFinalize || FinalizationRules.IsInterruptedImmich(job)))
+        var finalisable = (await repository.ListAsync(settings.Database.Path, terminal: false, cancellationToken))
+            .Where(job => job.SourceKind == JobSourceKind.Immich && FinalizationRules.IsFinalisable(job))
             .ToArray();
-        if (ready.Length == 0) { Console.WriteLine("No Immich jobs are ready to finalise."); return (int)ExitCode.Success; }
+        if (finalisable.Length == 0) { Console.WriteLine("No Immich jobs are ready to finalise."); return (int)ExitCode.Success; }
+        var ready = finalisable.Where(FinalizationRules.IsBulkFinalisable).ToArray();
+        var leftOut = finalisable.Where(FinalizationRules.IsLeftForReview).ToArray();
+        // Says "Immich video": clean file videos may be ready too, and this command does not take them.
+        if (ready.Length == 0) return OnlyWarned("every ready Immich video has validation warnings", leftOut, command);
 
         var client = immichClients.Create(settings.Immich);
         // Before the prompt, so the user is not asked to confirm a finalisation every job would refuse.
@@ -87,6 +138,7 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         var totalAfter = ready.Sum(job => job.OutputSizeBytes ?? 0);
         Console.WriteLine($"{OutputWords.Count(ready.Length, "video", "videos")}: {HumanReadableValues.FormatSize(totalBefore)} -> {HumanReadableValues.FormatSize(totalAfter)}, saving {HumanReadableValues.FormatSize(totalBefore - totalAfter)}.");
         Console.WriteLine("Each AV1 is uploaded as a new asset with the original's albums, tags, favourite and other relations; then the original goes to Immich's trash.");
+        WriteLeftOut("Left out because validation warned about them. Watch each one, then finalise it on its own:", leftOut, command);
         Console.Write("Finalise these jobs? [y/N] ");
         if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
 
@@ -100,6 +152,8 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
 
         report.Summary(ready.Length, failed);
         if (failed == 0) await PrintTrashRetentionAsync(client, cancellationToken);
+        // Last, so what is still to do is the last thing the user reads.
+        WriteLeftOut("Left out with validation warnings:", leftOut, command);
         return failed == 0 ? (int)ExitCode.Success
             : failed < ready.Length ? (int)ExitCode.PartialSuccess
             : (int)ExitCode.FinalisationFailure;

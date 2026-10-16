@@ -51,7 +51,7 @@ public sealed class QueueCommandsTests : QueueTestBase
         }, minute: 4);
         var held = Job("clip-e.mp4", JobStatus.Queued, job => job.Held = true, minute: 6);
         var heldStopped = Job("IMG_0001.MOV", JobStatus.Interrupted, job => { job.SourceKind = JobSourceKind.Immich; job.Held = true; job.ResumeStatus = JobStatus.Queued; }, minute: 7);
-        var ready = Job("clip-f.mp4", JobStatus.ReadyToFinalize, job => { job.Crf = 31; job.PercentageSaved = 58.3m; }, minute: 8);
+        var ready = Job("clip-f.mp4", JobStatus.ReadyToFinalize, job => { job.Crf = 31; job.PercentageSaved = 58.3m; job.ValidationWarnings = ["The AV1 is 2.1 s shorter than the original.", "The decode test failed."]; }, minute: 8);
         var lastFinaliseStopped = Job("IMG_0002.MOV", JobStatus.ReadyToFinalize, job =>
         {
             job.SourceKind = JobSourceKind.Immich;
@@ -80,7 +80,7 @@ public sealed class QueueCommandsTests : QueueTestBase
             $"  {held.Id:N}  clip-e.mp4",
             $"  {heldStopped.Id:N}  IMG_0001.MOV (Immich), stopped",
             "Ready to finalise",
-            $"  {ready.Id:N}  clip-f.mp4, CRF 31, 58.3% saved",
+            $"  {ready.Id:N}  clip-f.mp4, CRF 31, 58.3% saved, 2 warnings: The AV1 is 2.1 s shorter than the original. The decode test failed.",
             $"  {lastFinaliseStopped.Id:N}  IMG_0002.MOV (Immich), CRF 29, 61.0% saved; the last finalise stopped: {FinalizationRules.InterruptedMessage("video-optimiser immich finalize")}",
             $"  {finalising.Id:N}  clip-h.mp4, being finalised now",
             $"  {stoppedFinalising.Id:N}  clip-g.mp4, stopped while being finalised; 'video-optimiser finalize {stoppedFinalising.Id:N}{ConfigArgument}' checks and resumes it"), ""));

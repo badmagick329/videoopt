@@ -37,18 +37,107 @@ public sealed class FinalizeCommandsTests : IDisposable
         _finalizer.Calls.Should().BeEmpty();
     }
 
+    /// <summary>A clean video finalises without a question: scripts and the e2e test run <c>finalize &lt;id&gt;</c> unattended.</summary>
     [Fact]
-    public async Task ASuccessfulFinalizePrintsItsMessageOnStdout()
+    public async Task ASuccessfulFinalizeOfACleanJobPrintsItsMessageOnStdoutWithoutAPrompt()
     {
-        var id = Guid.NewGuid();
-        _finalizer.Results[id] = new(null, ExitCode.Success, "Original deleted.");
+        var job = FileJob("clip-a.mp4", null, null, null);
+        _jobs.Add(job);
+        _finalizer.Results[job.Id] = new(job, ExitCode.Success, "Original deleted.");
 
-        var (code, stdout, stderr) = await RunAsync(null, "finalize", id.ToString("N"));
+        var (code, stdout, stderr) = await RunAsync(null, "finalize", job.Id.ToString("N"));
 
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
         stdout.ReplaceLineEndings("\n").Should().Be("Original deleted.\n");
-        _finalizer.Calls.Should().Equal(id);
+        _finalizer.Calls.Should().Equal(job.Id);
+    }
+
+    [Theory]
+    [InlineData(false, "y", true)]
+    [InlineData(false, "n", false)]
+    [InlineData(true, "y", true)]
+    public async Task FinalizingAWarnedJobListsItsWarningsAndFinalisesOnlyOnYes(bool immich, string answer, bool finalises)
+    {
+        var job = Warned(immich ? ImmichJob("clip-a.mp4", "asset-a") : FileJob("clip-a.mp4", null, null, null));
+        _jobs.Add(job);
+        _finalizer.Results[job.Id] = new(job, ExitCode.Success, "Original deleted.");
+
+        var (code, stdout, stderr) = await RunAsync(answer + "\n", "finalize", job.Id.ToString("N"));
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        var originals = immich
+            ? "Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations."
+            : "Each original is deleted and its AV1 takes its place as an .mp4 file.";
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            "clip-a.mp4  sizes unknown\n" +
+            "Validation warnings:\n" +
+            "  The AV1 is 2.0 s shorter than the original.\n" +
+            "  The AV1 has no audio.\n" +
+            $"{originals}\n" +
+            $"Finalise it? [y/N] {(finalises ? "Original deleted." : "Finalisation cancelled.")}\n");
+        _finalizer.Calls.Should().HaveCount(finalises ? 1 : 0);
+    }
+
+    [Fact]
+    public async Task ReadyFinalisesOnlyTheCleanJobAndNamesTheWarnedOneBeforeThePromptAndAtTheEnd()
+    {
+        var clean = FileJob("clip-a.mp4", null, null, null);
+        var warned = Warned(FileJob("clip-b.mp4", null, null, null));
+        _jobs.AddRange([clean, warned]);
+        _finalizer.Results[clean.Id] = new(clean, ExitCode.Success, "Original deleted.");
+
+        var (code, stdout, stderr) = await RunAsync("y\n", "finalize", "--ready");
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            "clip-a.mp4  sizes unknown\n" +
+            "Each original is deleted and its AV1 takes its place as an .mp4 file.\n" +
+            "Left out because validation warned about them. Watch each one, then finalise it on its own:\n" +
+            $"  clip-b.mp4  {FinalizeHint(warned)}\n" +
+            "Finalise these jobs? [y/N] Done    clip-a.mp4: Original deleted.\n" +
+            "Finalised: 1.\n" +
+            "Left out with validation warnings:\n" +
+            $"  clip-b.mp4  {FinalizeHint(warned)}\n");
+        _finalizer.Calls.Should().Equal(clean.Id);
+    }
+
+    /// <summary>A finalisation that was under way when it stopped is resumed in bulk despite its warnings: its user already chose.</summary>
+    [Fact]
+    public async Task ReadyTakesAResumedFinalisationWithWarnings()
+    {
+        var resumed = Warned(ImmichJob("clip-a.mp4", "asset-a"));
+        resumed.FailureCategory = FailureCategories.FinalizationIncomplete;
+        resumed.FailureMessage = "The upload finished.";
+        _jobs.Add(resumed);
+        _finalizer.Results[resumed.Id] = new(resumed, ExitCode.Success, "New asset n1; the original is in Immich's trash.");
+
+        var (code, stdout, _) = await RunAsync("y\n", "finalize", "--ready");
+
+        code.Should().Be((int)ExitCode.Success);
+        stdout.Should().NotContain("Left out");
+        _finalizer.Calls.Should().Equal(resumed.Id);
+    }
+
+    [Theory]
+    [InlineData("finalize", "every ready video has validation warnings")]
+    [InlineData("immich", "every ready Immich video has validation warnings")]
+    public async Task BulkWithOnlyWarnedJobsNamesThemAndSucceedsWithoutAPrompt(string verb, string why)
+    {
+        var warned = Warned(ImmichJob("clip-a.mp4", "asset-a"));
+        _jobs.Add(warned);
+
+        var (code, stdout, stderr) = verb == "finalize" ? await RunAsync("y\n", "finalize", "--ready") : await RunAsync("y\n", "immich", "finalize");
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            $"Nothing to finalise in bulk: {why}. Watch each one, then finalise it on its own:\n" +
+            $"  clip-a.mp4  {FinalizeHint(warned)}\n");
+        _finalizer.Calls.Should().BeEmpty();
+        _immich.Calls.Should().BeEmpty();
     }
 
     [Fact]
@@ -257,6 +346,36 @@ public sealed class FinalizeCommandsTests : IDisposable
         _immich.Calls.Should().NotContain("get asset-e");
     }
 
+    /// <summary><c>immich finalize</c> names only the Immich videos it left out; a warned file video is not its to mention.</summary>
+    [Fact]
+    public async Task ImmichFinalizeSkipsAWarnedImmichJobAndNamesIt()
+    {
+        var clean = ImmichJob("clip-a.mp4", "asset-a");
+        var warned = Warned(ImmichJob("clip-b.mp4", "asset-b"));
+        _jobs.AddRange([clean, warned, Warned(FileJob("clip-c.mp4", null, null, null))]);
+        _immich.Assets["asset-a"] = Asset("asset-a", trashed: false);
+        _finalizer.Results[clean.Id] = new(clean, ExitCode.Success, "New asset n1; the original is in Immich's trash.");
+        _immich.Trash = new ImmichTrashSettings(true, 30);
+
+        var (code, stdout, stderr) = await RunAsync("y\n", "immich", "finalize");
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be(
+            $"{clean.Id:N}  clip-a.mp4  taken 2025-05-01 14:30  sizes unknown\n" +
+            "1 video: 0 B -> 0 B, saving 0 B.\n" +
+            "Each AV1 is uploaded as a new asset with the original's albums, tags, favourite and other relations; then the original goes to Immich's trash.\n" +
+            "Left out because validation warned about them. Watch each one, then finalise it on its own:\n" +
+            $"  clip-b.mp4  {FinalizeHint(warned)}\n" +
+            "Finalise these jobs? [y/N] Done    clip-a.mp4: New asset n1; the original is in Immich's trash.\n" +
+            "Finalised: 1.\n" +
+            "Immich keeps the originals in its trash for 30 days; space comes back when it empties.\n" +
+            "Left out with validation warnings:\n" +
+            $"  clip-b.mp4  {FinalizeHint(warned)}\n");
+        _finalizer.Calls.Should().Equal(clean.Id);
+        _immich.Calls.Should().NotContain("get asset-b");
+    }
+
     [Fact]
     public async Task ImmichFinalizeRefusesBeforeThePromptWhileImmichsTrashIsOff()
     {
@@ -375,6 +494,14 @@ public sealed class FinalizeCommandsTests : IDisposable
         return job;
     }
 
+    private static JobRecord Warned(JobRecord job)
+    {
+        job.ValidationWarnings = ["The AV1 is 2.0 s shorter than the original.", "The AV1 has no audio."];
+        return job;
+    }
+
+    private string FinalizeHint(JobRecord job) => $"video-optimiser finalize {job.Id:N} --config \"{Path.Combine(_directory, "config.yaml")}\"";
+
     private static ImmichAsset Asset(string id, bool trashed) => new(
         id, "checksum", "clip.mp4", ImmichValues.Video, ImmichValues.Timeline, false, trashed, null, null,
         new DateTimeOffset(2025, 5, 1, 14, 30, 0, TimeSpan.Zero), new DateTimeOffset(2025, 5, 1, 14, 30, 0, TimeSpan.Zero), new DateTimeOffset(2025, 5, 1, 14, 30, 0, TimeSpan.Zero),
@@ -392,6 +519,10 @@ public sealed class FinalizeCommandsTests : IDisposable
 
         public override Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<JobRecord>>(jobs.Where(job => TerminalStatuses.Contains(job.Status) == terminal).ToArray());
+
+        /// <summary><c>finalize &lt;id&gt;</c> reads the job to see whether it has warnings; an ID not in the list is unknown.</summary>
+        public override Task<JobRecord?> GetAsync(string databasePath, Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult(jobs.FirstOrDefault(job => job.Id == id));
     }
 
     private sealed class FakeFinalizer : IFinalizationService

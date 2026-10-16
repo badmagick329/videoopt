@@ -616,6 +616,19 @@ public sealed class TuiActionKeysTests
         Notice(step).Should().Be("Nothing is ready to finalise.");
     }
 
+    /// <summary>F with only warned videos names them, which the footer's one line can't hold, so the names go in the log.</summary>
+    [Fact]
+    public void APreparationsLogLinesGoInTheLogBesideItsFooterNotice()
+    {
+        var model = Update(Reviewing(Ready(1) with { Warnings = ["The AV1 has no audio."] }), Letter('F')).Model;
+        LogLine[] lines = [new(LogKind.Warning, "Nothing to finalise in bulk."), new(LogKind.Detail, "clip-001.mp4")];
+
+        var step = Update(model, new PreparedMsg("finalise", null, "Nothing to finalise in bulk.", lines));
+
+        step.Model.Log.Select(entry => (entry.Kind, entry.Text)).Should().EndWith([(LogKind.Warning, "Nothing to finalise in bulk."), (LogKind.Detail, "clip-001.mp4")]);
+        Notice(step).Should().Be("Nothing to finalise in bulk.");
+    }
+
     // ---- what the effects report ------------------------------------------------------------
 
     [Fact]

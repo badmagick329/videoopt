@@ -275,6 +275,7 @@ internal static partial class TuiUpdate
     private static TuiModel OnPrepared(TuiModel m, PreparedMsg prepared)
     {
         m = m with { Busy = m.Busy.Remove(prepared.Key) };
+        if (prepared.Lines is { } lines) m = AppendLines(m, lines);
         if (prepared.Confirm is { } confirm) m = m with { Confirm = confirm };
         return prepared.Notice is { } notice ? Tell(m, notice) : m;
     }
