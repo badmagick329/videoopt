@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-10-16
 ### The full-screen view
 
 - Run `video-optimiser` with no command in a terminal to open it. It shows the queue, the worker, the run's log and the videos ready to finalise, and refreshes about once a second.
