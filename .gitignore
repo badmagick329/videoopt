@@ -4,6 +4,7 @@ video-optimiser.yaml
 .env.local
 jobs.db
 jobs.db-*
+jobs.db.*
 *.hetzner-worker.json
 *.hetzner-worker.json.partial
 *.hetzner-worker.lock
