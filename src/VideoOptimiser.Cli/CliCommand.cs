@@ -3,6 +3,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Config;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Cli;
+using VideoOptimiser.Cli.Features.Tui;
 
 internal enum CliCommandKind
 {
@@ -39,14 +40,17 @@ internal enum CliCommandKind
     /// <summary>Hidden: the launcher that starts a background run (not in <see cref="CliCommand.Usage"/>; users start one from the TUI).</summary>
     BackgroundStart,
     /// <summary>Hidden: the detached process a background start launches.</summary>
-    BackgroundRunner
+    BackgroundRunner,
+    /// <summary>Hidden: prints the TUI's screen once as plain text (<c>tui --snapshot</c>), so it can be checked from a shell.</summary>
+    TuiSnapshot
 }
 
 /// <param name="Bare">Typed with no verb: the same card as <c>status</c>, but a missing configuration also says how to create one.</param>
 /// <param name="StopNow"><c>run stop --now</c>.</param>
 /// <param name="KeepWorker">Hidden <c>background start --keep-worker</c>: the worker's fate is keep instead of the default, delete.</param>
 /// <param name="WorkerFate">Hidden <c>background runner --worker-fate</c>.</param>
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false, bool StopNow = false, bool KeepWorker = false, WorkerFateChoice? WorkerFate = null)
+/// <param name="Size">Hidden <c>tui --snapshot --size</c>.</param>
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false, bool StopNow = false, bool KeepWorker = false, WorkerFateChoice? WorkerFate = null, FrameSize? Size = null)
 {
     public const string Usage = """
 Usage:
@@ -104,6 +108,8 @@ Usage:
         var stopNow = false;
         var keepWorker = false;
         WorkerFateChoice? workerFate = null;
+        var snapshot = false;
+        FrameSize? size = null;
         var modeOverrides = new List<ProcessingModeOverride>();
 
         for (var index = 0; index < args.Length; index++)
@@ -157,6 +163,15 @@ Usage:
                     break;
                 case "--worker-fate":
                     return Invalid("--worker-fate requires delete or keep.");
+                case "--snapshot":
+                    snapshot = true;
+                    break;
+                case "--size" when index + 1 < args.Length && FrameSize.TryParse(args[index + 1], out var parsedSize):
+                    size = parsedSize;
+                    index++;
+                    break;
+                case "--size":
+                    return Invalid("--size requires WIDTHxHEIGHT, such as 140x40.");
                 case "--local":
                     modeOverrides.Add(ProcessingModeOverride.Local);
                     break;
@@ -195,6 +210,7 @@ Usage:
             ["run", "stop"] => CliCommandKind.StopRun,
             ["background", "start"] => CliCommandKind.BackgroundStart,
             ["background", "runner"] => CliCommandKind.BackgroundRunner,
+            ["tui"] => CliCommandKind.TuiSnapshot,
             ["queue", "list"] => CliCommandKind.QueueList,
             ["queue", "hold", _] => CliCommandKind.QueueHold,
             ["queue", "release", _] => CliCommandKind.QueueRelease,
@@ -252,6 +268,9 @@ Usage:
         if (keepWorker && kind != CliCommandKind.BackgroundStart) return Invalid("--keep-worker is only supported by background start.");
         if (workerFate is not null && kind != CliCommandKind.BackgroundRunner) return Invalid("--worker-fate is only supported by background runner.");
         if (workerFate is null && kind == CliCommandKind.BackgroundRunner) return Invalid("background runner requires --worker-fate delete or keep.");
+        if (snapshot && kind != CliCommandKind.TuiSnapshot) return Invalid("--snapshot is only supported by tui.");
+        if (size is not null && kind != CliCommandKind.TuiSnapshot) return Invalid("--size is only supported by tui.");
+        if (!snapshot && kind == CliCommandKind.TuiSnapshot) return Invalid("tui requires --snapshot.");
         if (modeOverrides.Distinct().Count() > 1) return Invalid("--local and --remote cannot be used together.");
         var modeOverride = modeOverrides.FirstOrDefault();
         if (modeOverride is not null && kind is not (CliCommandKind.Run or CliCommandKind.ImmichRun or CliCommandKind.BackgroundStart or CliCommandKind.BackgroundRunner))
@@ -259,7 +278,7 @@ Usage:
             return Invalid($"{modeOverride.Flag} is only supported by run and immich run.");
         }
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate, Size: size);
     }
 
     private static bool TryParseWorkerFate(string text, out WorkerFateChoice fate)

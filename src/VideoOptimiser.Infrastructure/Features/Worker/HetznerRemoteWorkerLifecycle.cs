@@ -65,9 +65,13 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         {
             _ = await _cloud.DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
             progress?.Report("No Hetzner worker exists yet.");
-            // cloud-init runs the script with bash, which fails on CRLF; a Windows checkout with core.autocrlf has CRLF.
-            var script = (await File.ReadAllTextAsync(settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, cancellationToken)).ReplaceLineEndings("\n");
-            state = await CreateAsync(token, settings, controller, statePath, script, progress, confirmCreation, cancellationToken);
+            var script = await ReadBootstrapScriptAsync(settings, cancellationToken);
+            var (candidates, reports) = await _placement.PreflightCandidatesAsync(token, settings.Processing.RemoteSsh, progress, cancellationToken);
+            // Asked once, inside the lifecycle lock, so the approved candidates are the ones tried. The fallback loop never
+            // asks again: the quote already named the most it can cost.
+            if (confirmCreation is not null && !await confirmCreation(HetznerPlacement.Quote(candidates), cancellationToken))
+                throw new RemoteWorkerCreationDeclinedException();
+            state = await PlaceAsync(token, settings, controller, statePath, script, candidates, reports, progress, cancellationToken);
             progress?.Report($"Created the Hetzner worker {state.Name}; it is bootstrapping.");
             progress?.Report("Bootstrapping the worker: it builds libvmaf, SVT-AV1 and FFmpeg from source and installs ab-av1, which takes several minutes. Progress follows.");
         }
@@ -79,6 +83,55 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         ApplyConnection(settings, state);
         await _readiness.WaitUntilReadyAsync(settings, state, progress, cancellationToken);
         return state.ToInfo("ready");
+    }
+
+    public async Task<IReadOnlyList<RemoteWorkerCreationOption>> ListCreationOptionsAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    {
+        RequireManaged(settings);
+        // No lifecycle lock: this only reads Hetzner, and a run that is bootstrapping holds the lock for minutes.
+        var token = GetToken(settings);
+        var (candidates, _) = await _placement.PreflightCandidatesAsync(token, settings.Processing.RemoteSsh, null, cancellationToken);
+        return candidates.Select(candidate => new RemoteWorkerCreationOption(candidate.ServerType, candidate.Location, candidate.HourlyGross)).ToArray();
+    }
+
+    public async Task<RemoteWorkerInfo> CreateAsync(
+        AppSettings settings,
+        string databasePath,
+        RemoteWorkerCreationOption placement,
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        RequireManaged(settings);
+        await using var lifecycleLock = await WorkerStateStore.AcquireLockAsync(databasePath, progress, cancellationToken);
+        var token = GetToken(settings);
+        var controller = ControllerId(databasePath);
+        var statePath = WorkerStateStore.StatePath(databasePath);
+        // The dialog's list can be minutes old, or another command can have created the worker since: never a second server.
+        // Whether the existing one finished bootstrapping isn't known here, so its status is the record's.
+        if (await ResolveStateAsync(token, controller, statePath, cancellationToken) is { } existing)
+            return existing.ToInfo(RemoteWorkerStatuses.Recorded);
+
+        _ = await _cloud.DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
+        progress?.Report("No Hetzner worker exists yet.");
+        var script = await ReadBootstrapScriptAsync(settings, cancellationToken);
+        var (candidates, reports) = await _placement.PreflightCandidatesAsync(token, settings.Processing.RemoteSsh, progress, cancellationToken);
+        var chosen = candidates.Where(candidate =>
+            candidate.ServerType.Equals(placement.ServerType, StringComparison.OrdinalIgnoreCase) &&
+            candidate.Location.Equals(placement.Location, StringComparison.OrdinalIgnoreCase)).ToArray();
+        // Only the chosen type's outcome: the user picked this one, so the other types' skip notes would be noise.
+        var chosenReports = new OrderedDictionary<string, TypeReport>(StringComparer.OrdinalIgnoreCase);
+        if (reports.TryGetValue(placement.ServerType, out var chosenReport)) chosenReports.Add(placement.ServerType, chosenReport);
+        if (chosen.Length == 0)
+        {
+            var reason = chosenReport is { Notes.Count: > 0 }
+                ? string.Join("; ", chosenReport.Notes)
+                : $"not offered in {placement.Location} within the price cap";
+            throw new RemoteWorkerCapacityUnavailableException([new RemoteWorkerTypeOutcome(placement.ServerType, [placement.Location], reason)]);
+        }
+
+        var state = await PlaceAsync(token, settings, controller, statePath, script, chosen, chosenReports, progress, cancellationToken);
+        progress?.Report($"Created the Hetzner worker {state.Name}; it is bootstrapping.");
+        return state.ToInfo(RemoteWorkerStatuses.Bootstrapping);
     }
 
     public async Task<RemoteWorkerInfo?> ReadRecordedAsync(string databasePath, CancellationToken cancellationToken = default)
@@ -248,24 +301,32 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         ServerType = server.ServerType.Length > 0 ? server.ServerType : state.ServerType
     };
 
-    private async Task<WorkerState> CreateAsync(
+    private static async Task<string> ReadBootstrapScriptAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        // cloud-init runs the script with bash, which fails on CRLF; a Windows checkout with core.autocrlf has CRLF.
+        var script = (await File.ReadAllTextAsync(settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, cancellationToken)).ReplaceLineEndings("\n");
+        if (Encoding.UTF8.GetByteCount(script) > 32 * 1024) throw new InvalidOperationException("The Hetzner bootstrap script exceeds the 32 KiB user-data limit.");
+        return script;
+    }
+
+    /// <summary>
+    /// Requests the candidates one after another until Hetzner accepts one, and returns its server once the create action has
+    /// finished. Shared by the run's create (every candidate, fallback included) and the chosen-placement create (one
+    /// candidate, so a refusal ends it). A failed attempt is cleaned up first, so nothing bills when it throws.
+    /// </summary>
+    private async Task<WorkerState> PlaceAsync(
         string token,
         AppSettings settings,
         string controller,
         string statePath,
         string bootstrapScript,
+        IReadOnlyList<PlacementCandidate> candidates,
+        OrderedDictionary<string, TypeReport> reports,
         IProgress<string>? progress,
-        Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation,
         CancellationToken cancellationToken)
     {
         var hetzner = settings.Processing.RemoteSsh.Hetzner;
-        if (Encoding.UTF8.GetByteCount(bootstrapScript) > 32 * 1024) throw new InvalidOperationException("The Hetzner bootstrap script exceeds the 32 KiB user-data limit.");
         var name = $"{hetzner.ServerNamePrefix}-{controller[..12]}".ToLowerInvariant();
-        var (candidates, reports) = await _placement.PreflightCandidatesAsync(token, settings.Processing.RemoteSsh, progress, cancellationToken);
-        // Asked once, inside the lifecycle lock, so the approved candidates are the ones tried. The fallback loop below never
-        // asks again: the quote already named the most it can cost.
-        if (confirmCreation is not null && !await confirmCreation(HetznerPlacement.Quote(candidates), cancellationToken))
-            throw new RemoteWorkerCreationDeclinedException();
         var failures = new List<string>();
         Exception? lastPlacementFailure = null;
         for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)

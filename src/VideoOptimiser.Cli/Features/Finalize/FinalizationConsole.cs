@@ -1,3 +1,4 @@
+using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Finalize;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
@@ -16,6 +17,23 @@ internal sealed class FinalizationConsole(TextWriter output, TerminalStyle outpu
         var sizes = job is { SourceSizeBytes: { } before, OutputSizeBytes: { } after } ? $"{HumanReadableValues.FormatSize(before)} -> {HumanReadableValues.FormatSize(after)}" : "sizes unknown";
         var saved = job.PercentageSaved is { } percentage ? $", {percentage:F1}% saved" : string.Empty;
         return $"{Path.GetFileName(job.SourcePath)}  {sizes}{saved}";
+    }
+
+    /// <summary>What finalising does with the originals, as <c>finalize</c> and the TUI's confirmation both say it.</summary>
+    internal static string DescribeOriginalAction(OriginalSettings original, IReadOnlyList<JobRecord> fileJobs)
+    {
+        // The AV1 takes the output container's extension, not the original's: a .mov original is replaced by an .mp4 file. The
+        // containers come from the AV1s about to be installed, so the line is true for every original in the list.
+        var containers = fileJobs.Select(job => Path.GetExtension(job.OutputPath ?? string.Empty).ToLowerInvariant()).Where(extension => extension.Length > 0).Distinct().Order().ToArray();
+        var place = containers.Length == 0 ? "its AV1 takes its place." : $"its AV1 takes its place as an {string.Join(" or ", containers)} file.";
+        return original.Action.ToLowerInvariant() switch
+        {
+            OriginalActions.Archive => Path.IsPathFullyQualified(original.ArchiveDirectory)
+                ? $"Each original moves to {original.ArchiveDirectory} and {place}"
+                : $"Each original moves to an {original.ArchiveDirectory} folder beside it and {place}",
+            OriginalActions.Keep => "Each original stays; its AV1 is installed beside it as <name>.av1<extension>.",
+            _ => $"Each original is deleted and {place}"
+        };
     }
 
     /// <summary>Whether the job finalised. A failure goes to the error stream, as the exit code says it is one.</summary>

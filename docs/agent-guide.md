@@ -75,7 +75,7 @@ Tuning the rules, when they ask why videos are not converted: `calibrate` writes
 
 ### The status card
 
-`status` and a bare `video-optimiser` print the card. It is read-only and answers at once, even during a run. Example:
+`status` prints the card, and so does a bare `video-optimiser` when its input or output is redirected; in a terminal a bare `video-optimiser` opens the full-screen TUI instead. The card is read-only and answers at once, even during a run. Example:
 
 ```text
 Queue: 1 converting, 2 waiting, 1 held, 3 ready to finalise.

@@ -281,6 +281,41 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
         return CliFakes.Worker;
     }
 
+    /// <summary>What the listing answers: the servers a creation could choose from, in the order it would try them.</summary>
+    public List<RemoteWorkerCreationOption> CreationOptions { get; set; } = [new("cx43", "hel1", 0.0119m)];
+
+    /// <summary>Thrown by the listing, as the real one does when nothing qualifies or the token is missing.</summary>
+    public Exception? ListFailure { get; set; }
+
+    public int ListCalls { get; private set; }
+
+    public Task<IReadOnlyList<RemoteWorkerCreationOption>> ListCreationOptionsAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    {
+        ListCalls++;
+        if (ListFailure is not null) return Task.FromException<IReadOnlyList<RemoteWorkerCreationOption>>(ListFailure);
+        return Task.FromResult<IReadOnlyList<RemoteWorkerCreationOption>>(CreationOptions.ToArray());
+    }
+
+    /// <summary>Each placement a create actually made, in order; a create that found a worker already there adds none.</summary>
+    public List<RemoteWorkerCreationOption> Created { get; } = [];
+
+    /// <summary>Thrown by the chosen-placement create, as a placement Hetzner refuses would be; nothing is created.</summary>
+    public Exception? CreateFailure { get; set; }
+
+    public int CreateCalls { get; private set; }
+
+    public Task<RemoteWorkerInfo> CreateAsync(AppSettings settings, string databasePath, RemoteWorkerCreationOption placement, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
+    {
+        CreateCalls++;
+        DatabasePaths.Add(databasePath);
+        if (CreateFailure is not null) return Task.FromException<RemoteWorkerInfo>(CreateFailure);
+        if (Exists) return Task.FromResult(CliFakes.Worker);
+        Created.Add(placement);
+        Exists = true;
+        progress?.Report($"Creating Hetzner {placement.ServerType} in {placement.Location}.");
+        return Task.FromResult(CliFakes.Worker with { Status = RemoteWorkerStatuses.Bootstrapping, ServerType = placement.ServerType, Location = placement.Location });
+    }
+
     /// <summary>Thrown when the state file is read, as an unreadable one would be.</summary>
     public Exception? ReadFailure { get; set; }
 

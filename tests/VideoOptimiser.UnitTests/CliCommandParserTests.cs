@@ -111,6 +111,47 @@ public sealed class CliCommandParserTests
         (command.ModeOverride?.Flag).Should().Be(modeFlag);
     }
 
+    /// <summary><c>tui --snapshot</c> is the hidden way to see the TUI's screen from a shell; the size is optional and defaults where the command prints it.</summary>
+    [Theory]
+    [InlineData(null, null, "tui", "--snapshot")]
+    [InlineData(80, 30, "tui", "--snapshot", "--size", "80x30")]
+    [InlineData(140, 40, "--config", "my.yaml", "tui", "--size", "140X40", "--snapshot")]
+    public void TheHiddenTuiSnapshotVerbParses(int? width, int? height, params string[] args)
+    {
+        var command = CliCommand.Parse(args);
+
+        command.IsValid.Should().BeTrue(command.Error);
+        command.Kind.Should().Be(CliCommandKind.TuiSnapshot);
+        command.Bare.Should().BeFalse();
+        (command.Size?.Width).Should().Be(width);
+        (command.Size?.Height).Should().Be(height);
+    }
+
+    [Theory]
+    [InlineData("tui requires --snapshot.", "tui")]
+    [InlineData("--snapshot is only supported by tui.", "status", "--snapshot")]
+    [InlineData("--snapshot is only supported by tui.", "--snapshot")]
+    [InlineData("--size is only supported by tui.", "status", "--size", "80x30")]
+    [InlineData("--size requires WIDTHxHEIGHT, such as 140x40.", "tui", "--snapshot", "--size")]
+    [InlineData("--size requires WIDTHxHEIGHT, such as 140x40.", "tui", "--snapshot", "--size", "wide")]
+    [InlineData("--size requires WIDTHxHEIGHT, such as 140x40.", "tui", "--snapshot", "--size", "0x40")]
+    [InlineData("--size requires WIDTHxHEIGHT, such as 140x40.", "tui", "--snapshot", "--size", "80x-1")]
+    [InlineData("--json is only supported by doctor, queue list, status, history and calibrate.", "tui", "--snapshot", "--json")]
+    public void TheTuiSnapshotVerbRefusesWhatItCannotUse(string error, params string[] args)
+    {
+        var command = CliCommand.Parse(args);
+
+        command.IsValid.Should().BeFalse();
+        command.Error.Should().Be(error);
+    }
+
+    /// <summary>The bare command opens the TUI, so the snapshot verb that checks it from a shell stays out of the help, like the background verbs.</summary>
+    [Fact]
+    public void TheTuiSnapshotVerbIsHiddenFromHelp()
+    {
+        CliCommand.Usage.Should().NotContain("tui").And.NotContain("snapshot");
+    }
+
     /// <summary>No verb is the status card, marked bare so a missing configuration can say how to create one; typed <c>status</c> is not.</summary>
     [Theory]
     [InlineData(true, null)]

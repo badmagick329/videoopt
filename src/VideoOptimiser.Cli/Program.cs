@@ -15,6 +15,7 @@ using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.RemoteSetup;
 using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Cli.Features.Status;
+using VideoOptimiser.Cli.Features.Tui;
 using VideoOptimiser.Cli.Features.Validate;
 using VideoOptimiser.Cli.Features.Worker;
 using VideoOptimiser.Domain;
@@ -114,6 +115,11 @@ internal static class CliApplication
         {
             return refused;
         }
+        // A bare command in a terminal opens the TUI; redirected, or with --json, it is the status card, as in a script.
+        if (command is { Bare: true, Json: false } && services.GetRequiredService<ITuiScreen>() is { IsAvailable: true } screen)
+        {
+            return await screen.RunAsync(configuration, cancellationToken);
+        }
         return command.Kind switch
         {
             CliCommandKind.ConfigShow => ConfigCommands.Show(configuration),
@@ -143,6 +149,7 @@ internal static class CliApplication
             CliCommandKind.Cleanup => await services.GetRequiredService<CleanupCommand>().RunAsync(configuration, command.DryRun, cancellationToken),
             CliCommandKind.ImmichRun => await services.GetRequiredService<ImmichRunCommand>().RunAsync(configuration, command, cancellationToken),
             CliCommandKind.ImmichFinalize => await services.GetRequiredService<FinalizeCommands>().ImmichFinalizeAsync(configuration, command, cancellationToken),
+            CliCommandKind.TuiSnapshot => await services.GetRequiredService<TuiCommand>().SnapshotAsync(configuration, command, cancellationToken),
             CliCommandKind.Calibrate => await services.GetRequiredService<CalibrateCommand>().RunAsync(configuration, command.Json, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };

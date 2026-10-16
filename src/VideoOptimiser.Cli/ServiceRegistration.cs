@@ -15,6 +15,7 @@ using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.RemoteSetup;
 using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Cli.Features.Status;
+using VideoOptimiser.Cli.Features.Tui;
 using VideoOptimiser.Cli.Features.Validate;
 using VideoOptimiser.Cli.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
@@ -45,7 +46,8 @@ internal static class ServiceRegistration
         .AddValidate()
         .AddFinalize()
         .AddCleanup()
-        .AddCalibrate();
+        .AddCalibrate()
+        .AddTui();
 
     public static IServiceCollection AddSharedKernel(this IServiceCollection services)
     {

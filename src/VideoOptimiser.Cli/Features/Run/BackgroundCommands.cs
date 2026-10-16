@@ -17,7 +17,7 @@ internal sealed class BackgroundCommands(ISettingsValidator settingsValidator, B
     {
         if (ReportInvalidSettings(settingsValidator, configuration)) return (int)ExitCode.InvalidConfiguration;
 
-        var result = await launch.StartAsync(configuration.Settings.Database.Path, RunnerArguments(configuration, command), Environment.CurrentDirectory, cancellationToken);
+        var result = await launch.StartAsync(configuration.Settings.Database.Path, BackgroundRunnerArguments.For(configuration.Path, command.KeepWorker ? WorkerFateChoice.Keep : WorkerFateChoice.Delete, command.ModeOverride), Environment.CurrentDirectory, cancellationToken);
         switch (result.Outcome)
         {
             case BackgroundLaunchOutcome.Started:
@@ -34,17 +34,6 @@ internal sealed class BackgroundCommands(ISettingsValidator settingsValidator, B
                 WriteError($"The background run (process {result.ProcessId}) has not started yet. '{command.Hint("status")}' shows whether it has.");
                 return (int)ExitCode.GeneralFailure;
         }
-    }
-
-    /// <summary>
-    /// The runner gets the full path of the configuration, since its working directory is the launcher's but it must not depend
-    /// on that, and a mode flag only when the launcher was given one.
-    /// </summary>
-    private static List<string> RunnerArguments(LoadedConfiguration configuration, CliCommand command)
-    {
-        List<string> arguments = ["background", "runner", "--worker-fate", command.KeepWorker ? "keep" : "delete", "--config", Path.GetFullPath(configuration.Path)];
-        if (command.ModeOverride is not null) arguments.Add(command.ModeOverride.Flag);
-        return arguments;
     }
 
     public Task<int> RunnerAsync(LoadedConfiguration configuration, CliCommand command) =>

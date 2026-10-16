@@ -16,10 +16,17 @@ public static class RemoteWorkerStatuses
     /// <summary>The server is gone but its Primary IPv4 still exists, and an address that exists bills.</summary>
     public const string PrimaryIpRetained = "server-missing-primary-ip-retained";
 
-    /// <summary>The status as a user reads it: the two internal values become words, and Hetzner's own (<c>running</c>, <c>off</c>) are already words.</summary>
+    /// <summary>
+    /// The server exists and its create action finished, but nobody waited for its bootstrap. Hetzner would still say
+    /// <c>initializing</c> or <c>running</c>, neither of which tells the user it can't take a job yet.
+    /// </summary>
+    public const string Bootstrapping = "bootstrapping";
+
+    /// <summary>The status as a user reads it: the internal values become words, and Hetzner's own (<c>running</c>, <c>off</c>) are already words.</summary>
     public static string Describe(string status) => status switch
     {
         Recorded => "as recorded on this PC",
+        Bootstrapping => "bootstrapping, not ready for jobs yet",
         PrimaryIpRetained => "gone from Hetzner, its IPv4 address still bills",
         _ => status
     };
@@ -122,6 +129,28 @@ public interface IRemoteWorkerLifecycle
         string databasePath,
         IProgress<string>? progress = null,
         Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Every server type and location a worker may be created in, in the order <see cref="EnsureReadyAsync"/> would try them
+    /// (<c>serverTypes</c>, then <c>locations</c>), with the price each bills. It runs the same Hetzner availability preflight
+    /// as a creation, filtered by availability, suitability and <c>maxHourlyPrice</c>, but only reads Hetzner, so it takes no
+    /// lifecycle lock. Throws <see cref="RemoteWorkerCapacityUnavailableException"/> when nothing qualifies, as a creation does.
+    /// </summary>
+    Task<IReadOnlyList<RemoteWorkerCreationOption>> ListCreationOptionsAsync(AppSettings settings, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates the worker in exactly <paramref name="placement"/> and returns once the server exists and Hetzner has started
+    /// it, without waiting for its bootstrap: a run started next finds the record and waits there. A worker that already
+    /// exists for this database is returned instead, so there are never two. The chosen placement has no fallback: when it is
+    /// no longer a candidate, or Hetzner refuses it, <see cref="RemoteWorkerCapacityUnavailableException"/> says why and
+    /// nothing bills.
+    /// </summary>
+    Task<RemoteWorkerInfo> CreateAsync(
+        AppSettings settings,
+        string databasePath,
+        RemoteWorkerCreationOption placement,
+        IProgress<string>? progress = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

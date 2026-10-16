@@ -243,6 +243,160 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     [Fact]
+    public async Task ListingOffersEveryCandidateInCreationOrderWithoutTheLockOrAServer()
+    {
+        using var fixture = new Fixture();
+        // ccx43 is over the cap in every location; cx43 is sold out in fsn1 only.
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx43", "ccx43", "cx53"];
+        fixture.Handler.Catalogue["cx43"].Locations["fsn1"] = (false, false);
+        using var lifecycle = fixture.CreateLifecycle();
+        // A run that is bootstrapping holds this lock for minutes; the list the worker dialog shows must not wait for it.
+        await using var held = await WorkerStateStore.AcquireLockAsync(fixture.DatabasePath, null, CancellationToken.None);
+
+        var options = await lifecycle.ListCreationOptionsAsync(fixture.Settings).WaitAsync(TimeSpan.FromSeconds(10));
+
+        options.Should().Equal(
+            new RemoteWorkerCreationOption("cx43", "hel1", 0.031m),
+            new RemoteWorkerCreationOption("cx43", "nbg1", 0.031m),
+            new RemoteWorkerCreationOption("cx53", "hel1", 0.057m),
+            new RemoteWorkerCreationOption("cx53", "fsn1", 0.057m),
+            new RemoteWorkerCreationOption("cx53", "nbg1", 0.057m));
+        fixture.Handler.CreateCount.Should().Be(0);
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListingWithNoCandidateThrowsWhatCreationThrows()
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.Catalogue["cx43"].SoldOut();
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.ListCreationOptionsAsync(fixture.Settings);
+
+        var exception = await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
+        exception.Which.Outcomes.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new RemoteWorkerTypeOutcome("cx43", ["hel1", "fsn1", "nbg1"], "unavailable in hel1, fsn1, and nbg1"));
+    }
+
+    [Fact]
+    public async Task ListingWithoutAnApiTokenThrowsTheErrorEnsureThrows()
+    {
+        using var fixture = new Fixture();
+        fixture.RemoveToken();
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.ListCreationOptionsAsync(fixture.Settings);
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Hetzner API token*was not found*");
+        fixture.Handler.RequestCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CreatingAChosenOptionMakesThatServerAndReturnsWithoutWaitingForBootstrap()
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx43", "cx53"];
+        using var lifecycle = fixture.CreateLifecycle();
+        var messages = new List<string>();
+
+        var worker = await lifecycle.CreateAsync(fixture.Settings, fixture.DatabasePath, new RemoteWorkerCreationOption("cx53", "fsn1", 0.057m), new SynchronousProgress(messages.Add));
+
+        fixture.Handler.CreateServerTypes.Should().Equal("cx53");
+        fixture.Handler.CreateLocations.Should().Equal("fsn1");
+        worker.Status.Should().Be(RemoteWorkerStatuses.Bootstrapping);
+        worker.ServerType.Should().Be("cx53");
+        worker.Location.Should().Be("fsn1");
+        // The readiness wait would ssh to the new server; the next run does that, not the dialog.
+        fixture.Processes.Requests.Should().BeEmpty();
+        messages.Should().Contain("Creating Hetzner cx53 in fsn1 (EUR 0.057/h incl. VAT).");
+        messages.Should().Contain($"Created the Hetzner worker {worker.Name}; it is bootstrapping.");
+        messages.Should().NotContain(message => message.StartsWith("Bootstrapping the worker", StringComparison.Ordinal));
+        File.ReadAllText(fixture.DatabasePath + ".hetzner-worker.json").Should().Contain("\"serverType\": \"cx53\"");
+    }
+
+    [Fact]
+    public async Task ARunStartedAfterACreateReusesTheServerAndWaitsForItsBootstrap()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.CreateAsync(fixture.Settings, fixture.DatabasePath, new RemoteWorkerCreationOption("cx43", "hel1", 0.031m));
+
+        var worker = await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        fixture.Handler.CreateCount.Should().Be(1);
+        worker.Status.Should().Be("ready");
+        fixture.Processes.Requests.Should().NotBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("sold out")]
+    [InlineData("over the cap")]
+    public async Task CreatingAnOptionThatIsNoLongerACandidateThrowsAndNeverFallsBack(string reason)
+    {
+        using var fixture = new Fixture();
+        fixture.Settings.Processing.RemoteSsh.Hetzner.ServerTypes = ["cx43", "cx53"];
+        // cx43 stays available throughout, so a fallback to it would be the bug.
+        if (reason == "sold out") fixture.Handler.Catalogue["cx53"].SoldOut();
+        else fixture.Handler.Catalogue["cx53"].PriceOverrides["hel1"] = 0.90m;
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.CreateAsync(fixture.Settings, fixture.DatabasePath, new RemoteWorkerCreationOption("cx53", "hel1", 0.057m));
+
+        var exception = await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
+        exception.Which.Outcomes.Should().ContainSingle().Which.ServerType.Should().Be("cx53");
+        exception.Which.Message.Should().Contain("cx53");
+        fixture.Handler.CreateCount.Should().Be(0);
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreatingAChosenOptionHetznerRefusesLeavesNothingAndTriesNoOtherLocation()
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.CreateFailures.Enqueue((HttpStatusCode.PreconditionFailed, "resource_unavailable", "hel capacity"));
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.CreateAsync(fixture.Settings, fixture.DatabasePath, new RemoteWorkerCreationOption("cx43", "hel1", 0.031m));
+
+        var exception = await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
+        exception.Which.AttemptedFailures.Should().ContainSingle().Which.Should().Contain("cx43 in hel1");
+        exception.Which.Message.Should().Contain("placement failed in hel1");
+        fixture.Handler.CreateCount.Should().Be(1);
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreatingAChosenOptionWhoseProvisioningFailsDeletesTheServerAndItsIpAndTriesNoOtherLocation()
+    {
+        using var fixture = new Fixture { AutoDeletePrimaryIpWithServer = false };
+        fixture.Handler.ActionFailures.Enqueue(("resource_unavailable", "error during placement"));
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.CreateAsync(fixture.Settings, fixture.DatabasePath, new RemoteWorkerCreationOption("cx43", "hel1", 0.031m));
+
+        await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
+        fixture.Handler.CreateCount.Should().Be(1);
+        fixture.Handler.ServerExists.Should().BeFalse();
+        fixture.Handler.PrimaryIpDeleted.Should().BeTrue();
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreatingWhenAWorkerExistsReturnsItAndCreatesNothing()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle();
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        var worker = await lifecycle.CreateAsync(fixture.Settings, fixture.DatabasePath, new RemoteWorkerCreationOption("cx53", "fsn1", 0.057m));
+
+        worker.ServerId.Should().Be(42);
+        worker.ServerType.Should().Be("cx43");
+        fixture.Handler.CreateCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task ReadRecordedReturnsTheStoredWorkerWithoutCallingHetzner()
     {
         using var fixture = new Fixture();
