@@ -190,12 +190,12 @@ public sealed class TuiUpdateTests
         RunEvent[] readings =
         [
             .. encoding,
-            Progress(JobProgressKind.Detail, "12%, 41 fps", left: TimeSpan.FromMinutes(7), percent: 12),
-            Progress(JobProgressKind.Detail, "14%, 42 fps", left: TimeSpan.FromMinutes(6), percent: 14),
+            Progress(JobProgressKind.Detail, "12%, 41 fps, about 7m 00s left", percent: 12),
+            Progress(JobProgressKind.Detail, "14%, 42 fps, about 6m 00s left", percent: 14),
         ];
         model = After(model, Snap(Snapshot([], [], new RunSection(null, null), null, readings)));
         model.Log[^1].Text.Should().Be("Encoding at CRF 19.");
-        model.Activity.Should().Match<ActivityState>(state => state.ProgressText == "14%, 42 fps" && state.ProgressPercent == 14 && state.ProgressLeft == TimeSpan.FromMinutes(6));
+        model.Activity.Should().Match<ActivityState>(state => state.ProgressText == "14%, 42 fps, about 6m 00s left" && state.ProgressPercent == 14);
 
         // The video's outcome ends its progress line.
         RunEvent[] more = [.. readings, Progress(JobProgressKind.Step, "Ready to finalise: 1.1 GiB -> 400.0 MiB, 65.0% saved.", JobTone.Success)];

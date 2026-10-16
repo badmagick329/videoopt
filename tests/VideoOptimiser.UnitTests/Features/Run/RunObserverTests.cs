@@ -34,7 +34,7 @@ public sealed class RunObserverTests
         _log.Events.Select(entry => entry.Kind).Should().Equal(RunEventKind.ConversionStarted, RunEventKind.Progress, RunEventKind.Progress, RunEventKind.Progress, RunEventKind.Progress);
         _log.Events.Skip(1).Select(entry => entry.Text).Should().Equal("a", "Encoding.", "Ready to finalise.", "c");
         _log.Events[0].Should().Match<RunEvent>(entry => entry.Count == 2 && entry.Flag == false);
-        _log.Events[3].Should().Match<RunEvent>(entry => entry.Progress == "Step" && entry.Tone == "Success" && entry.TimeLeft == TimeSpan.FromSeconds(30) && entry.Percent == 38);
+        _log.Events[3].Should().Match<RunEvent>(entry => entry.Progress == "Step" && entry.Tone == "Success" && entry.Percent == 38);
     }
 
     /// <summary>Enum fields are written by name, so a reader needs none of this assembly's types, and an error is its root cause's message.</summary>

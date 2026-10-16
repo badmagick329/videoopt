@@ -8,8 +8,9 @@
 ### The full-screen view
 
 - The Activity log lists each CRF the search tries, with its VMAF, its size as a share of the original and whether it passed, as `run` prints them in a terminal.
-- The progress line draws a bar for an encode, an upload, a download or a checksum check.
-- When a converting video has reported nothing for a minute, its progress line says how long ago it last did, in place of its time left. A healthy encode or transfer reports every few seconds.
+- The progress line draws a bar for an encode, an upload, a download or a checksum check. Its time left shows once, after the speed, instead of twice.
+- Until a step's first progress line arrives, a spinner shows in place of `No progress line yet.`, after an empty bar when the step will draw one.
+- When a converting video has reported nothing for a minute, its progress line says how long ago it last did. A healthy encode or transfer reports every few seconds.
 
 ### Remote workers
 

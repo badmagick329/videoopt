@@ -9,7 +9,7 @@ namespace VideoOptimiser.Cli.Features.Tui;
 /// <summary>What one event becomes on screen: log lines, and a change to the current video's progress line.</summary>
 /// <param name="ProgressText">Replaces the progress line when <paramref name="SetProgress"/>; null clears it.</param>
 /// <param name="ProgressPercent">The progress line's reading, for its bar; null when the line is not a reading.</param>
-internal sealed record EventEffect(IReadOnlyList<LogEntry> Lines, bool SetProgress, string? ProgressText, TimeSpan? ProgressLeft, RunPhase? Phase, bool? WaitingForWorker, int? ProgressPercent = null);
+internal sealed record EventEffect(IReadOnlyList<LogEntry> Lines, bool SetProgress, string? ProgressText, RunPhase? Phase, bool? WaitingForWorker, int? ProgressPercent = null);
 
 /// <summary>
 /// Words for the run's events: the facts <see cref="RunEvent"/> carries, in the console's meaning and shorter, since the log is a
@@ -24,8 +24,8 @@ internal static class RunEventWords
         var file = e.SourcePath is null ? "A video" : Clean(Path.GetFileName(e.SourcePath));
         var worker = e.Worker is null ? "the worker" : $"the worker {Clean(e.Worker)}";
         IReadOnlyList<LogEntry> Line(LogKind kind, string text) => [new LogEntry(e.At, kind, Clean(text))];
-        EventEffect Say(LogKind kind, string text, RunPhase? phase = null, bool? waiting = null) => new(Line(kind, text), false, null, null, phase, waiting);
-        EventEffect Silent(RunPhase? phase = null) => new([], false, null, null, phase, null);
+        EventEffect Say(LogKind kind, string text, RunPhase? phase = null, bool? waiting = null) => new(Line(kind, text), false, null, phase, waiting);
+        EventEffect Silent(RunPhase? phase = null) => new([], false, null, phase, null);
 
         switch (e.Kind)
         {
@@ -51,11 +51,11 @@ internal static class RunEventWords
                 // Only while the run has not started converting: the same kind reports the delete at the end.
                 return Say(LogKind.Info, e.Text ?? string.Empty, waiting: true);
             case RunEventKind.ConversionStarted:
-                return new EventEffect(Line(LogKind.Stage, $"Converting {Videos(e.Count ?? 0, "video", "videos")}."), true, null, null, RunPhase.Converting, false);
+                return new EventEffect(Line(LogKind.Stage, $"Converting {Videos(e.Count ?? 0, "video", "videos")}."), true, null, RunPhase.Converting, false);
             case RunEventKind.Progress:
                 return OfProgress(e);
             case RunEventKind.ConversionEnded:
-                return new EventEffect([], true, null, null, RunPhase.Ending, false);
+                return new EventEffect([], true, null, RunPhase.Ending, false);
             case RunEventKind.JoiningVideoWaitsForWorker:
                 return Say(LogKind.Info, $"{file} waits for the next run: it needs a worker, and this run has none.");
             case RunEventKind.StoppedByUnreachableWorker:
@@ -105,11 +105,11 @@ internal static class RunEventWords
         switch (Enum.TryParse<JobProgressKind>(e.Progress, out var kind) ? kind : JobProgressKind.Step)
         {
             case JobProgressKind.Detail when e.Percent is null:
-                return new EventEffect([new LogEntry(e.At, LogKind.Detail, text)], true, text, null, null, null);
+                return new EventEffect([new LogEntry(e.At, LogKind.Detail, text)], true, text, null, null);
             case JobProgressKind.Detail or JobProgressKind.ToolOutput:
-                return new EventEffect([], true, text, e.TimeLeft, null, null, e.Percent);
+                return new EventEffect([], true, text, null, null, e.Percent);
             case JobProgressKind.Header:
-                return new EventEffect([new LogEntry(e.At, LogKind.Stage, text)], true, null, null, null, null);
+                return new EventEffect([new LogEntry(e.At, LogKind.Stage, text)], true, null, null, null);
             default:
                 var logKind = tone switch
                 {
@@ -118,7 +118,7 @@ internal static class RunEventWords
                     JobTone.Failure => LogKind.Error,
                     _ => LogKind.Info
                 };
-                return new EventEffect([new LogEntry(e.At, logKind, text)], true, null, null, null, null);
+                return new EventEffect([new LogEntry(e.At, logKind, text)], true, null, null, null);
         }
     }
 
@@ -155,7 +155,7 @@ internal static class RunEventWords
             var why = FailureWords.Describe(job.FailureCategory, job.FailureMessage, sentence: false) ?? job.FailureMessage;
             lines.Add(new LogEntry(e.At, LogKind.Error, Clean($"{Path.GetFileName(job.SourcePath)}: {why}")));
         }
-        return new EventEffect(lines, false, null, null, null, null);
+        return new EventEffect(lines, false, null, null, null);
     }
 
     private static string StoppedNow(RunEvent e, string file, string worker)
@@ -183,10 +183,10 @@ internal static class RunEventWords
         if (e.RunEnd is nameof(RunEnd.StoppedNow) or nameof(RunEnd.WorkerUnreachable))
         {
             return e.Flag == true
-                ? new EventEffect([new LogEntry(e.At, LogKind.Warning, Clean($"{Capital(worker)} stays up, billed hourly, until it is deleted."))], false, null, null, null, null)
-                : new EventEffect([], false, null, null, null, null);
+                ? new EventEffect([new LogEntry(e.At, LogKind.Warning, Clean($"{Capital(worker)} stays up, billed hourly, until it is deleted."))], false, null, null, null)
+                : new EventEffect([], false, null, null, null);
         }
-        return new EventEffect([new LogEntry(e.At, LogKind.Warning, Clean($"{Capital(worker)} stays up, billed hourly, until it is deleted."))], false, null, null, null, null);
+        return new EventEffect([new LogEntry(e.At, LogKind.Warning, Clean($"{Capital(worker)} stays up, billed hourly, until it is deleted."))], false, null, null, null);
     }
 
     private static string Capital(string text) => char.ToUpperInvariant(text[0]) + text[1..];

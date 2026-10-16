@@ -74,8 +74,8 @@ internal static class TuiTestData
     public static RunEvent Event(RunEventKind kind, int secondsAfterNow = 1, string? path = null, int? count = null, string? text = null, bool? flag = null) =>
         new(Now.AddSeconds(secondsAfterNow), kind, SourcePath: path, Count: count, Text: text, Flag: flag);
 
-    public static RunEvent Progress(JobProgressKind kind, string text, JobTone tone = JobTone.None, TimeSpan? left = null, int secondsAfterNow = 1, int? percent = null) =>
-        new(Now.AddSeconds(secondsAfterNow), RunEventKind.Progress, Text: text, Progress: kind.ToString(), Tone: tone.ToString(), TimeLeft: left, Percent: percent);
+    public static RunEvent Progress(JobProgressKind kind, string text, JobTone tone = JobTone.None, int secondsAfterNow = 1, int? percent = null) =>
+        new(Now.AddSeconds(secondsAfterNow), RunEventKind.Progress, Text: text, Progress: kind.ToString(), Tone: tone.ToString(), Percent: percent);
 
     public static RemoteWorkerInfo AWorker(long id = 42, string name = "video-optimiser-1", string status = RemoteWorkerStatuses.Recorded, DateTimeOffset? created = null) =>
         new(id, name, "203.0.113.10", status, created ?? Now - TimeSpan.FromMinutes(72), "cx43", "hel1");

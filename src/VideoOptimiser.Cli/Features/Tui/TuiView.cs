@@ -18,6 +18,8 @@ internal static class TuiView
     public const int WideFrom = 100;
     private const string Spinner = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 
+    private static char SpinnerFrame(TuiModel m) => Spinner[(int)(m.Now.Ticks / 1_000_000 % Spinner.Length)];
+
     public static IRenderable Screen(TuiModel m)
     {
         if (m.Width < 40 || m.Height < 10)
@@ -348,9 +350,8 @@ internal static class TuiView
         var status = worker.Status;
         var settling = status is RemoteWorkerStatuses.Bootstrapping or "initializing" or "starting";
         var statusColor = status == "running" ? Theme.Ready : settling ? Theme.Held : status == RemoteWorkerStatuses.Recorded ? Theme.Soft : Theme.Failed;
-        var spin = Spinner[(int)(m.Now.Ticks / 1_000_000 % Spinner.Length)];
         rows.Add(new Line()
-            .Left(settling ? $" {spin} " : " ● ", Theme.Of(statusColor))
+            .Left(settling ? $" {SpinnerFrame(m)} " : " ● ", Theme.Of(statusColor))
             .Flex(worker.Name, Theme.Of(Theme.Text, bold: true))
             .Right(RemoteWorkerStatuses.Describe(status) + " ", Theme.Of(statusColor))
             .Build(width));
@@ -415,7 +416,7 @@ internal static class TuiView
                 .Right(video.Remote ? (workerName is null ? "on the worker" : $"on {workerName}") : "on this PC", Theme.Of(Theme.Dim))
                 .Build(width));
 
-            rows.Add(ProgressLine(m, width).Build(width));
+            rows.Add(ProgressLine(m, stage, width).Build(width));
 
             rows.Add(Stepper(video, stage, width));
         }
@@ -441,28 +442,35 @@ internal static class TuiView
 
     /// <summary>
     /// The converting video's latest progress line. A reading (an encode, a transfer) gets a bar for its own step only: ab-av1
-    /// gives no fraction across stages. When the run has said nothing for <see cref="QuietAfter"/>, the line says how long, so a
-    /// stalled run is told apart from a slow one: a healthy encode or transfer reports every few seconds, a CRF attempt about
-    /// once a minute.
+    /// gives no fraction across stages; its text carries the time left. Before a step's first line a spinner stands in, after
+    /// the empty bar of a stage whose lines are readings, so the bar does not move when they arrive. When the run has said
+    /// nothing for <see cref="QuietAfter"/>, the line says how long, so a stalled run is told apart from a slow one: a healthy
+    /// encode or transfer reports every few seconds, a CRF attempt about once a minute.
     /// </summary>
-    private static Line ProgressLine(TuiModel m, int width)
+    private static Line ProgressLine(TuiModel m, Stage stage, int width)
     {
         var activity = m.Activity;
         var line = new Line();
+        var cells = Math.Clamp(width / 4, 10, 30);
         if (activity.ProgressPercent is { } percent && width >= 48)
         {
-            var cells = Math.Clamp(width / 4, 10, 30);
             var filled = (int)Math.Round(cells * percent / 100d);
             line.Left(new string('━', filled), Theme.Of(Theme.Converting))
                 .Left(new string('─', cells - filled), Theme.Of(Theme.Faint))
                 .Left("  ", Style.Plain);
         }
-        line.Flex(activity.ProgressText ?? "No progress line yet.", Theme.Of(activity.ProgressText is null ? Theme.Dim : Theme.Soft));
-        // A quiet run's time left was measured before it went quiet, so the quiet note takes its place.
+        if (activity.ProgressText is { } text)
+        {
+            line.Flex(text, Theme.Of(Theme.Soft));
+        }
+        else
+        {
+            if (stage is Stage.Uploading or Stage.Encoding or Stage.Downloading && width >= 48)
+                line.Left(new string('─', cells), Theme.Of(Theme.Faint)).Left("  ", Style.Plain);
+            line.Flex(SpinnerFrame(m).ToString(), Theme.Of(Theme.Converting));
+        }
         if (activity.LastEventAt is { } at && m.Now - at >= QuietAfter)
             line.Right($"last update {HumanReadableValues.FormatDuration(m.Now - at)} ago", Theme.Of(Theme.Held));
-        else if (activity.ProgressLeft is { } left)
-            line.Right($"about {HumanReadableValues.FormatDuration(left)} left", Theme.Of(Theme.Soft));
         return line;
     }
 

@@ -82,7 +82,6 @@ public enum RunEventKind
 /// <param name="Stage">A job status: the stage a stopped video was in.</param>
 /// <param name="Progress">For <see cref="RunEventKind.Progress"/>: the <see cref="JobProgressKind"/>.</param>
 /// <param name="Tone">For <see cref="RunEventKind.Progress"/>: the <see cref="JobTone"/>.</param>
-/// <param name="TimeLeft">For <see cref="RunEventKind.Progress"/>: the estimate, when the line has one.</param>
 /// <param name="Flag">The event's yes/no: worker up at conversion start, stopped after a video, question follows, answered no, setting up the worker.</param>
 /// <param name="Failures">For <see cref="RunEventKind.Summary"/>: the failed videos.</param>
 /// <param name="Percent">For <see cref="RunEventKind.Progress"/>: <see cref="JobProgress.Percent"/>, on a reading the next one replaces.</param>
@@ -101,7 +100,6 @@ public sealed record RunEvent(
     string? RunEnd = null,
     string? Progress = null,
     string? Tone = null,
-    TimeSpan? TimeLeft = null,
     bool? Flag = null,
     IReadOnlyList<FailedQueueJob>? Failures = null,
     int? Percent = null);

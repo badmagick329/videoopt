@@ -159,7 +159,7 @@ internal static partial class TuiUpdate
             var effect = RunEventWords.Of(events[index], m.Worker.Managed);
             added.AddRange(effect.Lines);
             if (effect.Phase is { } phase) activity = activity with { Phase = phase };
-            if (effect.SetProgress) activity = activity with { ProgressText = effect.ProgressText, ProgressLeft = effect.ProgressLeft, ProgressPercent = effect.ProgressPercent };
+            if (effect.SetProgress) activity = activity with { ProgressText = effect.ProgressText, ProgressPercent = effect.ProgressPercent };
             activity = activity with { LastEventAt = events[index].At };
             // Only before conversion starts is the run waiting for the worker: the delete at the end reports progress too.
             if (effect.WaitingForWorker is { } waiting) activity = activity with { WaitingForWorker = waiting && activity.Phase == RunPhase.Preparing };

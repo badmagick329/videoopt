@@ -41,7 +41,7 @@ public sealed class TuiViewTests
             Progress(JobProgressKind.Header, "[1/3] clip-001.mp4 (1.1 GiB)"),
             Progress(JobProgressKind.Step, "Uploading to the worker."),
             Progress(JobProgressKind.Step, "CRF 27 chosen, encoding."),
-            Progress(JobProgressKind.Detail, "ab-av1 encode 38%, 46 fps", left: TimeSpan.FromMinutes(6), percent: 38)
+            Progress(JobProgressKind.Detail, "38%, 46 fps, about 6m 00s left", percent: 38)
         ];
         var snapshot = Snapshot(
             open: [Converting(1, remote: true), Queued(2), Queued(3), Held(4), Ready(5, size: 800 * Mib, av1: 352 * Mib, saved: 56m), Ready(6, size: 2000 * Mib, av1: 700 * Mib, saved: 65m)],
@@ -94,9 +94,11 @@ public sealed class TuiViewTests
         var rows = Rows(Busy());
 
         Row(rows, "Encoding  clip-001.mp4").Should().Contain("on video-optimiser-1");
-        Row(rows, "ab-av1 encode 38%, 46 fps").Should().Contain("about 6m 00s left").And.NotContain("last update");
+        Row(rows, "38%, 46 fps").Should().Contain("about 6m 00s left").And.NotContain("last update");
+        // The reading's own time left is the only one.
+        Row(rows, "38%, 46 fps").Split(" left").Should().HaveCount(2);
         // The bar is a quarter of the pane's inner width, 38% of it filled.
-        var bar = Row(rows, "ab-av1 encode 38%, 46 fps").Split('│')[1].Trim().Split(' ')[0];
+        var bar = Row(rows, "38%, 46 fps").Split('│')[1].Trim().Split(' ')[0];
         bar.Should().MatchRegex("^━+─+$");
         ((double)bar.Count(c => c == '━') / bar.Length).Should().BeApproximately(0.38, 0.04);
         Row(rows, "✓ Uploading").Should().Contain("✓ Finding CRF").And.Contain("● Encoding").And.Contain("○ Downloading").And.Contain("○ Checking");
@@ -104,7 +106,7 @@ public sealed class TuiViewTests
         Row(rows, "╭─ Activity").Should().Contain("following").And.Contain("worker deleted at the end");
         // The log has the steps, and the progress line, which repeats, is not in it.
         Row(rows, "CRF 27 chosen, encoding.").Should().NotBeNull();
-        rows.Count(row => row.Contains("ab-av1 encode 38%", StringComparison.Ordinal)).Should().Be(1);
+        rows.Count(row => row.Contains("38%, 46 fps", StringComparison.Ordinal)).Should().Be(1);
     }
 
     /// <summary>A run that has said nothing for a minute says how long, so a stalled poll is told apart from a slow encode.</summary>
@@ -112,9 +114,36 @@ public sealed class TuiViewTests
     public void AConvertingVideoThatHasBeenQuietForAMinuteSaysHowLong()
     {
         // The last event came a second after Now.
-        Row(Rows(After(Busy(), Tick(TimeSpan.FromSeconds(60), 140, 40))), "ab-av1 encode 38%").Should().Contain("about 6m 00s left").And.NotContain("last update");
-        // The time left was measured before the run went quiet, so the note replaces it.
-        Row(Rows(After(Busy(), Tick(TimeSpan.FromMinutes(32), 140, 40))), "ab-av1 encode 38%").Should().Contain("last update 31m 59s ago").And.NotContain("left");
+        Row(Rows(After(Busy(), Tick(TimeSpan.FromSeconds(60), 140, 40))), "38%, 46 fps").Should().Contain("about 6m 00s left").And.NotContain("last update");
+        Row(Rows(After(Busy(), Tick(TimeSpan.FromMinutes(32), 140, 40))), "38%, 46 fps").Should().Contain("last update 31m 59s ago");
+    }
+
+    /// <summary>
+    /// Before a step's first line a spinner stands in. A stage whose lines are readings also shows its empty bar, where the
+    /// reading's bar will fill; a CRF search's lines have none.
+    /// </summary>
+    [Theory]
+    [InlineData(JobStatus.Encoding, "Encoding", "^─+  [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$")]
+    [InlineData(JobStatus.CrfSearching, "Finding CRF", "^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$")]
+    public void BeforeAStepsFirstLineASpinnerStandsIn(JobStatus status, string stage, string pattern)
+    {
+        RunEvent[] events =
+        [
+            Started(),
+            Event(RunEventKind.ConversionStarted, count: 1),
+            Progress(JobProgressKind.Header, "[1/1] clip-001.mp4 (1.1 GiB)"),
+            Progress(JobProgressKind.Step, "Already on the worker, checksum verified.")
+        ];
+        var snapshot = Snapshot(
+            open: [Converting(1, status, remote: true)],
+            failed: [],
+            run: new RunSection(BackgroundRun, new RunRequests(false, false, WorkerFateChoice.Delete)),
+            worker: new WorkerSection(true, "hetzner", AWorker()),
+            events: events);
+        var rows = Rows(After(TuiModel.Initial(Now, 140, 40, "jobs.db"), Snap(snapshot), Tick(TimeSpan.Zero, 140, 40)));
+
+        var header = Array.FindIndex(rows, row => row.Contains($"{stage}  clip-001.mp4", StringComparison.Ordinal));
+        rows[header + 1].Split('│')[1].Trim().Should().MatchRegex(pattern);
     }
 
     /// <summary>A log line wider than the pane wraps under its text instead of losing its end.</summary>
@@ -168,7 +197,7 @@ public sealed class TuiViewTests
         Row(rows, "  1  clip-002.mp4").Should().Contain("400.0 MiB");
         Row(rows, "video-optimiser-1  ").Should().Contain("running");
         Row(rows, "Encoding  clip-001.mp4").Should().Contain("on video-optimiser-1");
-        Row(rows, "ab-av1 encode 38%, 46 fps").Should().Contain("about 6m 00s left");
+        Row(rows, "38%, 46 fps").Should().Contain("about 6m 00s left");
         Row(rows, "Background run, started").Should().Contain("(process 4242)");
         // The queue pane is four rows tall here and scrolls to the cursor, so the ready video shows in the review pane.
         Row(rows, "clip-005.mp4").Should().Contain("800.0 MiB").And.Contain("352.0 MiB").And.Contain("-56%");

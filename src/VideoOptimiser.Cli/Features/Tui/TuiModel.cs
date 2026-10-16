@@ -77,13 +77,12 @@ internal sealed record ActivityState(
     int EventsSeen,
     RunEvent? Started,
     string? ProgressText,
-    TimeSpan? ProgressLeft,
     RunPhase Phase,
     bool WaitingForWorker,
     int? ProgressPercent = null,
     DateTimeOffset? LastEventAt = null)
 {
-    public static ActivityState None { get; } = new(0, null, null, null, RunPhase.Preparing, false);
+    public static ActivityState None { get; } = new(0, null, null, RunPhase.Preparing, false);
 }
 
 /// <summary>
