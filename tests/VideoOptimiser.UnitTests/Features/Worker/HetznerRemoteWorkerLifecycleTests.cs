@@ -543,7 +543,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, new SynchronousProgress(messages.Add));
 
-        messages.Should().Contain("Bootstrapping: 60%, building FFmpeg (1m 00s in this step)...");
+        messages.Should().Contain("Bootstrapping: 60%, building FFmpeg (1m 00s in this step).");
     }
 
     [Fact]
@@ -603,7 +603,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         var announcement = messages.FindIndex(message => message.StartsWith("Bootstrapping the worker: it builds libvmaf, SVT-AV1 and FFmpeg from source and installs ab-av1, which takes several minutes.", StringComparison.Ordinal));
         announcement.Should().BeGreaterThan(-1);
-        messages.IndexOf("Bootstrapping: 35%, building SVT-AV1...").Should().BeGreaterThan(announcement);
+        messages.IndexOf("Bootstrapping: 35%, building SVT-AV1.").Should().BeGreaterThan(announcement);
         // The worker is named, never numbered, and "server" stays out: it is a worker from the first line to the last.
         var name = fixture.Settings.Processing.RemoteSsh.Hetzner.ServerNamePrefix;
         messages[0].Should().Be("No Hetzner worker exists yet.");
@@ -822,10 +822,14 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         }
     }
 
-    [Fact]
-    public async Task CheckReadsThePriceForTheServersLocation()
+    /// <summary>Hetzner now names a server's location at the top level; older answers named it under <c>datacenter</c>.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CheckReadsThePriceForTheServersLocation(bool locationUnderDatacenter)
     {
         using var fixture = new Fixture();
+        fixture.Handler.LocationUnderDatacenter = locationUnderDatacenter;
         // The other locations keep the catalogue's EUR 0.031, so only the server's own location gives this price.
         fixture.Handler.Catalogue["cx43"].PriceOverrides["hel1"] = 0.0119m;
         using var lifecycle = fixture.CreateLifecycle();
@@ -1184,6 +1188,9 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         /// <summary>Leaves the <c>prices</c> array out of a server's <c>server_type</c>, as an older API answer might.</summary>
         public bool OmitServerPrices { get; set; }
 
+        /// <summary>Names a server's location under <c>datacenter</c>, as Hetzner did before it moved it to the top level.</summary>
+        public bool LocationUnderDatacenter { get; set; }
+
         public int RequestCount { get; private set; }
         public int DeleteRequests { get; private set; }
 
@@ -1271,7 +1278,9 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                   ?? "\"video-optimiser-managed\":\"true\",\"video-optimiser-controller\":\"placeholder\"";
             var placement = CreatePayload is null
                 ? string.Empty
-                : $",\"server_type\":{{\"name\":\"{CreateServerTypes[^1]}\"{(OmitServerPrices ? string.Empty : $",\"prices\":[{Catalogue[CreateServerTypes[^1]].PricesJson()}]")}}},\"datacenter\":{{\"location\":{{\"name\":\"{CreateLocations[^1]}\"}}}}";
+                : $",\"server_type\":{{\"name\":\"{CreateServerTypes[^1]}\"{(OmitServerPrices ? string.Empty : $",\"prices\":[{Catalogue[CreateServerTypes[^1]].PricesJson()}]")}}}," + (LocationUnderDatacenter
+                    ? $"\"datacenter\":{{\"location\":{{\"name\":\"{CreateLocations[^1]}\"}}}}"
+                    : $"\"location\":{{\"name\":\"{CreateLocations[^1]}\"}}");
             return $"{{\"id\":42,\"name\":\"video-optimiser-test\",\"status\":\"running\",\"created\":\"2026-08-20T00:00:00Z\",\"labels\":{{{labels}}},\"public_net\":{{\"ipv4\":{{\"id\":99,\"ip\":\"203.0.113.42\"}}}}{placement}}}";
         }
 

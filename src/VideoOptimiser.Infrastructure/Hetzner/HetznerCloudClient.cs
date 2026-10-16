@@ -302,11 +302,11 @@ internal sealed class HetznerCloudClient : IDisposable
                          typeElement.TryGetProperty("name", out var typeName) && typeName.ValueKind == JsonValueKind.String
             ? typeName.GetString()!
             : string.Empty;
-        var location = server.TryGetProperty("datacenter", out var datacenter) && datacenter.ValueKind == JsonValueKind.Object &&
-                       datacenter.TryGetProperty("location", out var locationElement) && locationElement.ValueKind == JsonValueKind.Object &&
-                       locationElement.TryGetProperty("name", out var locationName) && locationName.ValueKind == JsonValueKind.String
-            ? locationName.GetString()!
-            : string.Empty;
+        // Hetzner names the location at the top level now; older answers had it only under datacenter. The price is looked up
+        // by it, so a location read as empty leaves the price unknown.
+        var location = LocationName(server) ??
+                       (server.TryGetProperty("datacenter", out var datacenter) && datacenter.ValueKind == JsonValueKind.Object ? LocationName(datacenter) : null) ??
+                       string.Empty;
         return new ServerSnapshot(
             server.GetProperty("id").GetInt64(),
             server.GetProperty("name").GetString() ?? string.Empty,
@@ -319,6 +319,12 @@ internal sealed class HetznerCloudClient : IDisposable
             location,
             ParseHourlyGross(server, location));
     }
+
+    private static string? LocationName(JsonElement holder) =>
+        holder.TryGetProperty("location", out var location) && location.ValueKind == JsonValueKind.Object &&
+        location.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String
+            ? name.GetString()
+            : null;
 
     /// <summary>
     /// The server type's hourly gross price in the server's own location, from the <c>prices</c> array a server carries.
