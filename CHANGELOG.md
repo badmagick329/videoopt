@@ -8,6 +8,7 @@
 - An AV1 that is not smaller than the original (with `savings.requireSmallerOutput` on) or saves less than `savings.minimumBytesSaved` is now skipped as not worth converting, instead of failing. Its AV1 and validation record are deleted, and the original stays.
 - The video packet-count check is gone. It failed variable-frame-rate phone video that was fine.
 - The decode test now also runs on an AV1 that has warnings.
+- The decode test no longer reports `non monotonically increasing dts` on variable-frame-rate phone video. The error came from the test's own throwaway output, and the AV1 was fine.
 - `validate` exits `0` for a pass, a pass with warnings and a video not worth converting, and `7` for a failure.
 - The run's tally counts warned videos in the ready count: `Ready to finalise: 4 (1 to check).` The full-screen view's log says `The run finished: 4 ready to finalise (1 to check).`
 - `queue list --json` and `history --json` have a new `validationWarnings` array, empty when there are none.

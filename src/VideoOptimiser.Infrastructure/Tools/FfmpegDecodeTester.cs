@@ -21,7 +21,10 @@ public sealed class FfmpegDecodeTester(string ffmpegPath, IExternalProcessRunner
         var arguments = new List<string> { "-hide_banner", "-nostdin", "-v", "error", "-xerror" };
         if (window.StartSeconds is { } start) arguments.AddRange(["-ss", Format(start)]);
         if (window.DurationSeconds is { } duration) arguments.AddRange(["-t", Format(duration)]);
-        arguments.AddRange(["-i", path, "-map", "0:v", "-map", "0:a?", "-f", "null", "-"]);
+        // The null output's encoder would otherwise tick at 1/frame rate, so two variable-frame-rate frames closer than one
+        // tick share a dts and the null muxer prints an error about its own output. Keeping the input's time base leaves
+        // only real decode errors on stderr. FFmpeg 9 rejects the -1 its help still lists; demux is the working spelling.
+        arguments.AddRange(["-i", path, "-map", "0:v", "-map", "0:a?", "-enc_time_base:v", "demux", "-f", "null", "-"]);
         return arguments;
     }
 

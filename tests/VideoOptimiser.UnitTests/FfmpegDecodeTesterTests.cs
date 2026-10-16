@@ -29,7 +29,7 @@ public sealed class FfmpegDecodeTesterTests
         runner.Request!.Arguments.Should().Equal(
             "-hide_banner", "-nostdin", "-v", "error", "-xerror",
             "-ss", "68.595", "-t", "10",
-            "-i", "out.mkv", "-map", "0:v", "-map", "0:a?", "-f", "null", "-");
+            "-i", "out.mkv", "-map", "0:v", "-map", "0:a?", "-enc_time_base:v", "demux", "-f", "null", "-");
     }
 
     [Fact]

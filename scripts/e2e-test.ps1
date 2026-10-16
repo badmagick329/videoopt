@@ -85,6 +85,14 @@ try {
         -metadata 'creation_time=2025-05-28T23:51:45.000000Z' -movflags +use_metadata_tags (Join-Path $watchRoot 'd.mov')
     if ($LASTEXITCODE -ne 0) { throw 'ffmpeg failed to generate clip d.' }
 
+    # Clip f has a variable frame rate, as phones record: every tenth frame comes 13 ms after the one before it, closer than
+    # one tick at its nominal 30 fps. Its AV1 must pass the decode test with no warning (VOPT-120).
+    & ffmpeg -hide_banner -v error -f lavfi -i 'testsrc2=size=1920x1080:rate=30:duration=3' `
+        -f lavfi -i 'sine=frequency=440:duration=3:sample_rate=48000' `
+        -vf "setpts='N/30/TB-if(eq(mod(N\,10)\,5)\,0.02/TB\,0)'" -fps_mode passthrough -video_track_timescale 90000 `
+        -c:v libx264 -preset ultrafast -qp 5 -pix_fmt yuv420p -c:a aac -shortest (Join-Path $watchRoot 'f.mp4')
+    if ($LASTEXITCODE -ne 0) { throw 'ffmpeg failed to generate clip f.' }
+
     $config = Join-Path $workDirectory 'video-optimiser.yaml'
     $yamlPath = { param($path) $path.Replace('\', '\\') }
     @"
@@ -130,11 +138,17 @@ validation:
     Invoke-Cli 0 @('config', 'validate') | Out-Null
     Invoke-Cli 0 @('queue', 'add') | Out-Null
     $queued = Get-Jobs 'queue list'
-    Assert ($queued.Count -eq 5) "queue add should queue all five clips; queued $($queued.Count)."
+    Assert ($queued.Count -eq 6) "queue add should queue all six clips; queued $($queued.Count)."
 
     Invoke-Cli 0 @('run') | Out-Null
     $ready = Get-Jobs 'queue list'
-    Assert (@($ready | Where-Object status -eq 'ReadyToFinalize').Count -eq 5) "every job should be ReadyToFinalize; got $(($ready | ForEach-Object status) -join ', ')."
+    Assert (@($ready | Where-Object status -eq 'ReadyToFinalize').Count -eq 6) "every job should be ReadyToFinalize; got $(($ready | ForEach-Object status) -join ', ')."
+    $jobF = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'f.mp4' }
+    Assert (@($jobF.validationWarnings).Count -eq 0) "the variable-frame-rate clip f should pass validation with no warning: $($jobF.validationWarnings -join ' | ')"
+    # Clip f has done its job: reject it, which deletes its AV1, then remove its original and manifest so the counts below
+    # cover clips a to e only.
+    Invoke-Cli 0 @('queue', 'reject', $jobF.id) | Out-Null
+    Remove-Item -LiteralPath $jobF.sourcePath, "$($jobF.outputPath).manifest.json" -Force -ErrorAction SilentlyContinue
     $jobA = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'a.mp4' }
     $jobB = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'b.mp4' }
     $jobC = $ready | Where-Object { [System.IO.Path]::GetFileName($_.sourcePath) -eq 'c.mp4' }
