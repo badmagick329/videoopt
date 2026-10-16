@@ -31,6 +31,8 @@ internal static partial class TuiUpdate
             TuiLogMsg log => TuiStep.Of(AppendLines(m, [new LogLine(log.Kind, log.Text)])),
             WorkerOptionsMsg options => OnWorkerOptions(m, options),
             PreparedMsg prepared => TuiStep.Of(OnPrepared(m, prepared)),
+            FinaliseStartedMsg started => TuiStep.Of(OnFinaliseStarted(m, started)),
+            FinaliseEndedMsg ended => TuiStep.Of(OnFinaliseEnded(m, ended)),
             _ => TuiStep.Of(m)
         };
         return step with { Model = KeepSelectionsValid(step.Model) };
@@ -291,6 +293,8 @@ internal static partial class TuiUpdate
             if (m.Busy.TryGetValue(key, out var working)) return Told(m, working);
             m = m with { Busy = m.Busy.SetItem(key, effect.BusyText ?? "Working.") };
         }
+        // Only an accepted finalise starts a batch: a refused one leaves the batch that is out as it is.
+        if (effect is FinaliseVideos finalise) m = m with { Finalising = new FinaliseBatch([.. finalise.Ids], null, 0, 0, 0) };
         return new TuiStep(m, [effect]);
     }
 

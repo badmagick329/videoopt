@@ -143,16 +143,24 @@ internal sealed class RecordingOpener : IFileOpener
     }
 }
 
-/// <summary>Finalises nothing: it records each job it is given, in order, and answers success unless the test scripts otherwise.</summary>
+/// <summary>
+/// Finalises nothing: it records each job it is given, in order, and answers success unless the test scripts otherwise. A job
+/// given twice is refused, so a loop that retakes one fails instead of hanging.
+/// </summary>
 internal sealed class RecordingFinalizer : IFinalizationService
 {
     public List<Guid> Finalised { get; } = [];
     public Dictionary<Guid, FinalizationResult> Results { get; } = [];
     public Exception? Failure { get; set; }
 
+    /// <summary>Runs as each job is finalised, such as the TUI closing partway through a batch.</summary>
+    public Action<Guid>? During { get; set; }
+
     public Task<FinalizationResult> FinalizeAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default)
     {
+        if (Finalised.Contains(jobId)) throw new InvalidOperationException($"Job {jobId} was given to finalise twice.");
         Finalised.Add(jobId);
+        During?.Invoke(jobId);
         if (Failure is not null) throw Failure;
         return Task.FromResult(Results.TryGetValue(jobId, out var result) ? result : new FinalizationResult(null, ExitCode.Success, "Original deleted; the AV1 is in its place."));
     }

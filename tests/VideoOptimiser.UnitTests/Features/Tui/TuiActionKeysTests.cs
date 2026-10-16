@@ -601,7 +601,44 @@ public sealed class TuiActionKeysTests
         var yes = Update(prepared.Model, Letter('y'));
         yes.Effects.Should().ContainSingle().Which.Should().BeOfType<FinaliseVideos>().Which.Ids.Should().Equal(Id(1), Id(2));
         yes.Model.Busy["finalise"].Should().Be("Finalising.");
-        Notice(Update(yes.Model, Letter('F'))).Should().Be("Finalising.");
+        yes.Model.Finalising.Should().BeEquivalentTo(new FinaliseBatch([Id(1), Id(2)], null, 0, 0, 0), options => options.ComparingByMembers<FinaliseBatch>());
+        // A second finalise refused while the first is out leaves the first one's batch alone.
+        var refused = Update(yes.Model, Letter('F'));
+        Notice(refused).Should().Be("Finalising.");
+        refused.Model.Finalising.Should().Be(yes.Model.Finalising);
+    }
+
+    /// <summary>The batch's progress moves Review's count and its current row; each ended video's line goes in the log as it ends.</summary>
+    [Fact]
+    public void AFinalisesProgressMovesTheCountTheCurrentRowAndTheSavedTotal()
+    {
+        var model = Update(Reviewing(Ready(1), Ready(2), Ready(3)) with { Confirm = new TuiConfirm("Finalise 3 videos?", "details", new FinaliseVideos([Id(1), Id(2), Id(3)])) }, Letter('y')).Model;
+
+        model = After(model, new FinaliseStartedMsg(Id(1)));
+        model.Finalising!.Current.Should().Be(Id(1));
+        (model.Finalising.Position, model.Finalising.IsWaiting(Id(1)), model.Finalising.IsWaiting(Id(2))).Should().Be((1, false, true));
+
+        model = After(model,
+            new FinaliseEndedMsg(Id(1), true, 600, new LogLine(LogKind.Success, "Finalised clip-001.mp4.")),
+            new FinaliseStartedMsg(Id(2)),
+            new FinaliseEndedMsg(Id(2), false, 0, new LogLine(LogKind.Error, "Couldn't finalise clip-002.mp4.")),
+            new FinaliseStartedMsg(Id(3)));
+
+        model.Finalising.Should().BeEquivalentTo(new FinaliseBatch([Id(1), Id(2), Id(3)], Id(3), 2, 1, 600), options => options.ComparingByMembers<FinaliseBatch>());
+        model.Finalising!.Position.Should().Be(3);
+        model.Log.Select(entry => entry.Text).Should().Equal("Finalised clip-001.mp4.", "Couldn't finalise clip-002.mp4.");
+    }
+
+    /// <summary>The batch's end clears it; progress with no batch out has nothing to move and is dropped.</summary>
+    [Fact]
+    public void TheBatchClearsWhenTheFinaliseEnds()
+    {
+        var model = Update(Reviewing(Ready(1), Ready(2)) with { Confirm = new TuiConfirm("Finalise 2 videos?", "details", new FinaliseVideos([Id(1), Id(2)])) }, Letter('y')).Model;
+
+        model = After(model, new FinaliseStartedMsg(Id(1)), new ActionDoneMsg("finalise", new ActionResult([], "Finalised 2 videos.")));
+
+        model.Finalising.Should().BeNull();
+        After(model, new FinaliseStartedMsg(Id(2))).Should().Be(model);
     }
 
     [Fact]

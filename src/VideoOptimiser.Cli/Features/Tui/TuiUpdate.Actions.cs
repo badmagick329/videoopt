@@ -265,11 +265,33 @@ internal static partial class TuiUpdate
     private static TuiStep OnActionDone(TuiModel m, ActionDoneMsg done)
     {
         m = AppendLines(m with { Busy = m.Busy.Remove(done.Key) }, done.Result.Lines);
+        if (done.Key == "finalise") m = m with { Finalising = null };
         if (done.Result.Notice is { } notice) m = Tell(m, notice);
         // What Hetzner said about the worker is stale once an action touched it: forget it, drop an answer still on its way,
         // and ask again at the next tick.
         if (done.Result.RefreshWorker) m = m with { Worker = m.Worker with { Generation = m.Worker.Generation + 1, Check = null, CheckInFlight = false, CheckAskedAt = null } };
         return new TuiStep(m, [new RefreshSnapshot()]);
+    }
+
+    // A finalise's progress. Both are dropped with no batch out: one that comes after the batch's ActionDoneMsg has nothing to move.
+
+    private static TuiModel OnFinaliseStarted(TuiModel m, FinaliseStartedMsg started) =>
+        m.Finalising is { } batch ? m with { Finalising = batch with { Current = started.Id } } : m;
+
+    private static TuiModel OnFinaliseEnded(TuiModel m, FinaliseEndedMsg ended)
+    {
+        if (m.Finalising is not { } batch) return m;
+        m = m with
+        {
+            Finalising = batch with
+            {
+                Current = null,
+                Ended = batch.Ended + 1,
+                Failed = batch.Failed + (ended.Succeeded ? 0 : 1),
+                SavedBytes = batch.SavedBytes + ended.SavedBytes
+            }
+        };
+        return AppendLines(m, [ended.Line]);
     }
 
     private static TuiModel OnPrepared(TuiModel m, PreparedMsg prepared)

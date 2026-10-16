@@ -245,6 +245,36 @@ public sealed class TuiViewTests
         Row(rows, "2 ready to finalise, would save").Should().NotBeNull();
     }
 
+    /// <summary>
+    /// VOPT-122: while a finalise is out both panes tag the video under way <c>finalising</c> and the ones still to come
+    /// <c>queued</c>; an ended one draws as before until the snapshot drops it. Only a batch of two or more counts, in Review's
+    /// title and summary.
+    /// </summary>
+    [Theory]
+    [InlineData(new[] { 5, 6, 8 }, 1, "finalising 2 of 3", "Finalising 2 of 3, 448.0 MiB saved so far.")]
+    [InlineData(new[] { 6 }, 0, "3 ready", "3 ready to finalise, would save")]
+    public void AFinaliseBatchTagsItsVideosInBothPanesAndCountsInReview(int[] batch, int ended, string title, string summary)
+    {
+        var current = batch[ended];
+        var model = After(TuiModel.Initial(Now, 140, 40, "jobs.db"), Snap(Quiet([Ready(5, size: 800 * Mib, av1: 352 * Mib, saved: 56m), Ready(6), Ready(8)])), Tick(TimeSpan.Zero))
+            with { Finalising = new FinaliseBatch([.. batch.Select(Id)], Id(current), ended, 0, ended * 448 * Mib) };
+
+        var rows = Rows(model);
+        Row(rows, "╭─ Review").Should().Contain(title);
+        Row(rows, summary.Split(',')[0]).Should().Contain(summary);
+        rows.Should().NotContain(row => row.Contains(" of 1", StringComparison.Ordinal));
+        rows.Where(row => row.Contains($"clip-{current:000}.mp4", StringComparison.Ordinal)).Should().HaveCount(2).And.OnlyContain(row => row.Contains("finalising"));
+        foreach (var waiting in batch.Skip(ended + 1))
+            rows.Where(row => row.Contains($"clip-{waiting:000}.mp4", StringComparison.Ordinal)).Should().HaveCount(2).And.OnlyContain(row => row.Contains("queued"));
+        // Outside the batch, or ended, a row reads as before.
+        Row(rows, "clip-005.mp4").Should().Contain("saves 56%");
+        rows.Last(row => row.Contains("clip-005.mp4", StringComparison.Ordinal)).Should().Contain("-56%");
+        // The Saved column widens for the tag, so the head still sits over its cells.
+        var head = Row(rows, "Original");
+        var tagged = rows.Single(row => row.Contains($"clip-{current:000}.mp4", StringComparison.Ordinal) && row.IndexOf("finalising", StringComparison.Ordinal) > 77);
+        (head.IndexOf("Saved", StringComparison.Ordinal) + "Saved".Length).Should().Be(tagged.IndexOf("finalising", StringComparison.Ordinal) + "finalising".Length);
+    }
+
     [Fact]
     public void TheFooterListsTheFocusedPanesKeys()
     {

@@ -23,6 +23,7 @@ public sealed class TuiActionTests : IDisposable
     private readonly TuiRig _rig = new();
     private readonly List<(LogKind Kind, string Text)> _progress = [];
     private readonly List<IDisposable> _locks = [];
+    private readonly List<TuiMsg> _posted = [];
 
     public void Dispose()
     {
@@ -624,39 +625,62 @@ public sealed class TuiActionTests : IDisposable
         var first = await _rig.ReadyAsync("clip-a.mp4");
         var second = await _rig.ReadyAsync("clip-b.mp4");
 
-        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id], ["clip-c.mp4", "clip-d.mp4"]), _rig.Settings, default);
+        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id], ["clip-c.mp4", "clip-d.mp4"]), _rig.Settings, _posted.Add, default);
 
-        result.Lines[^2].Should().Be(new LogLine(LogKind.Success, "Finalised 2 videos."));
-        result.Lines[^1].Should().Be(new LogLine(LogKind.Warning, "Left out with validation warnings: clip-c.mp4, clip-d.mp4."));
+        result.Lines.Should().Equal(
+            new LogLine(LogKind.Success, "Finalised 2 videos."),
+            new LogLine(LogKind.Warning, "Left out with validation warnings: clip-c.mp4, clip-d.mp4."));
     }
 
+    /// <summary>
+    /// Each video's start and end are posted as they happen, the end with its log line and what it saved, so Review shows the
+    /// batch's progress; the result keeps only the tally.
+    /// </summary>
     [Fact]
-    public async Task FinaliseHoldsTheFinaliseLockFinalisesEachVideoInOrderAndLogsOneLineEachAndASummary()
+    public async Task FinaliseHoldsTheFinaliseLockAndPostsEachVideosStartAndEndInOrder()
     {
         var first = await _rig.ReadyAsync("clip-a.mp4");
         var second = await _rig.ReadyAsync("clip-b.mp4");
         _rig.Finalizer.Results[second.Id] = new FinalizationResult(null, ExitCode.FinalisationFailure, "The original changed since it was converted.");
 
-        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id]), _rig.Settings, default);
+        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id]), _rig.Settings, _posted.Add, default);
 
         _rig.Finalizer.Finalised.Should().Equal(first.Id, second.Id);
-        result.Lines.Select(line => (line.Kind, line.Text)).Should().Equal(
-            (LogKind.Success, "Finalised clip-a.mp4: Original deleted; the AV1 is in its place."),
-            (LogKind.Error, "Couldn't finalise clip-b.mp4: The original changed since it was converted."),
-            (LogKind.Warning, "Finalised 1; 1 failed."));
+        // The rig's ready jobs are 1000 bytes with a 400-byte AV1.
+        _posted.Should().Equal(
+            new FinaliseStartedMsg(first.Id),
+            new FinaliseEndedMsg(first.Id, true, 600, new LogLine(LogKind.Success, "Finalised clip-a.mp4: Original deleted; the AV1 is in its place.")),
+            new FinaliseStartedMsg(second.Id),
+            new FinaliseEndedMsg(second.Id, false, 0, new LogLine(LogKind.Error, "Couldn't finalise clip-b.mp4: The original changed since it was converted.")));
+        result.Lines.Should().Equal(new LogLine(LogKind.Warning, "Finalised 1; 1 failed."));
         result.Notice.Should().Be("Finalised 1; 1 failed.");
     }
 
     [Fact]
-    public async Task AFinaliseThatThrowsIsALineAndTheNextVideoStillGoes()
+    public async Task AFinaliseThatThrowsEndsThatVideoAsFailedAndTheNextVideoStillGoes()
     {
         var first = await _rig.ReadyAsync("clip-a.mp4");
         _rig.Finalizer.Failure = new IOException("The file is in use.");
 
-        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, Id(99)]), _rig.Settings, default);
+        await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, Id(99)]), _rig.Settings, _posted.Add, default);
 
         _rig.Finalizer.Finalised.Should().HaveCount(2);
-        result.Lines.Should().Contain(line => line.Kind == LogKind.Error && line.Text == "Couldn't finalise clip-a.mp4: The file is in use.");
+        _posted.OfType<FinaliseEndedMsg>().First().Should().Be(new FinaliseEndedMsg(first.Id, false, 0, new LogLine(LogKind.Error, "Couldn't finalise clip-a.mp4: The file is in use.")));
+    }
+
+    /// <summary>The TUI closing cancels the batch: what is posted after that would land in a loop that is gone.</summary>
+    [Fact]
+    public async Task AFinaliseCancelledPartwayPostsNothingMore()
+    {
+        var first = await _rig.ReadyAsync("clip-a.mp4");
+        var second = await _rig.ReadyAsync("clip-b.mp4");
+        using var closing = new CancellationTokenSource();
+        _rig.Finalizer.During = _ => closing.Cancel();
+
+        var finalise = () => _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id]), _rig.Settings, _posted.Add, closing.Token);
+
+        await finalise.Should().ThrowAsync<OperationCanceledException>();
+        _posted.Should().Equal(new FinaliseStartedMsg(first.Id));
     }
 
     [Fact]
@@ -666,9 +690,10 @@ public sealed class TuiActionTests : IDisposable
         var (held, _) = await DatabaseLock.AcquireFinalizeAsync(_rig.DatabasePath, "finalize", default);
         _locks.Add(held!);
 
-        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([ready.Id]), _rig.Settings, default);
+        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([ready.Id]), _rig.Settings, _posted.Add, default);
 
         _rig.Finalizer.Finalised.Should().BeEmpty();
+        _posted.Should().BeEmpty();
         Texts(result).Should().Equal("Another finalise is running on this database, so nothing was finalised. Wait for it to finish.");
     }
 }

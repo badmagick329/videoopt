@@ -162,6 +162,12 @@ internal sealed class TuiSnapshotReader(
 
     private static long? SizeOf(JobRecord job) => job.SourceSizeBytes ?? job.VideoFacts?.SizeBytes;
 
+    /// <summary>
+    /// What finalising a ready job saves, 0 when a size is unknown. It is <see cref="Video.SavedBytes"/> over the sizes
+    /// <see cref="ToVideo"/> takes, so a finalise batch's running total adds up to the <c>would save</c> Review showed before it.
+    /// </summary>
+    internal static long SavedBytesOf(JobRecord job) => SizeOf(job) is { } size && job.OutputSizeBytes is { } av1 ? size - av1 : 0;
+
     private static bool IsRemote(JobRecord job) => string.Equals(job.ExecutionMode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase);
 
     private static string Problem(string what, Exception exception)

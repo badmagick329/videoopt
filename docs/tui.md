@@ -12,10 +12,10 @@ When the output goes to a file or another program, or with `--json`, the same co
 
 | Pane | What it shows |
 | --- | --- |
-| Queue | Videos converting now, waiting in run order, held, and recent failures. |
+| Queue | Videos converting now, waiting in run order, held, ready to finalise, and recent failures. While videos are being finalised, the ready ones carry the same `finalising` and `queued` marks as in Review. |
 | Worker | The Hetzner worker, if you use one: its type, location, age and hourly price, checked with Hetzner every 30 seconds. |
 | Activity | The run going now, or the last one, line by line, as it would print in a terminal. The video converting now has a progress line: a bar for an encode or a transfer, or, while the CRF search runs, the CRF and test clip ab-av1 is on and then each CRF's result. If a remote step has reported nothing for a minute, the line says when the worker last answered, which is normal for a slow test clip; in yellow, it says how long the worker or the run has been silent. Each SSH command sent again after no answer or a lost connection shows in the log. |
-| Review | Videos ready to finalise, with the original's size, the AV1's size and the saving. A video that validation warned about is marked `1 warning` (or `2 warnings`), here and in the Queue pane, and the header counts these videos as `to check`. The selected video's warnings are listed in full at the bottom of the pane. |
+| Review | Videos ready to finalise, with the original's size, the AV1's size and the saving. A video that validation warned about is marked `1 warning` (or `2 warnings`), here and in the Queue pane, and the header counts these videos as `to check`. The selected video's warnings are listed in full at the bottom of the pane. While several videos are being finalised, the pane's title counts through them (`finalising 3 of 8`) and its last line says how much has been saved so far. The video being finalised is marked `finalising` in place of its saving, and the ones still to come are dimmed and marked `queued`. Each finalised video leaves the list, and the keys keep working meanwhile. A single `f` shows only the `finalising` mark. |
 
 `tab` and `shift+tab` move between panes. The screen refreshes about once a second.
 

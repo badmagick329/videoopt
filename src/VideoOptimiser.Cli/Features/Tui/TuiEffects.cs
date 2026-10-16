@@ -84,7 +84,7 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
                 into.TryWrite(await actions.PrepareFinaliseAsync(prepare, Settings, cancellationToken));
                 break;
             case FinaliseVideos finalise:
-                Finish(effect, await actions.FinaliseAsync(finalise, Settings, cancellationToken));
+                Finish(effect, await actions.FinaliseAsync(finalise, Settings, msg => into.TryWrite(msg), cancellationToken));
                 break;
         }
     }

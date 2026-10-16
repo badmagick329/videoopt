@@ -189,7 +189,8 @@ internal static class TuiView
             Pane.Queue => QueueSub(m),
             Pane.Worker => WorkerView.Of(m.Worker).Info?.Status == RemoteWorkerStatuses.Bootstrapping ? "bootstrapping" : string.Empty,
             Pane.Activity => ActivitySub(m),
-            _ => m.Ready() is { Count: > 0 } ready ? $"{ready.Count} ready" : string.Empty
+            _ => m.Finalising is { Counts: true } batch ? $"finalising {batch.Position} of {batch.Ids.Count}"
+                : m.Ready() is { Count: > 0 } ready ? $"{ready.Count} ready" : string.Empty
         };
         return Frame(pane.ToString(), sub, focused, height, rows);
     }
@@ -281,8 +282,8 @@ internal static class TuiView
             var line = new Line()
                 .Left(selected ? "▌" : " ", Theme.Of(focused ? Theme.Accent : Theme.Dim))
                 .Left(video.Group == VideoGroup.Queue ? $" {position,2}  " : "    ", Theme.Of(Theme.Dim))
-                .Flex(video.Name, Theme.Of(video.Group is VideoGroup.Held or VideoGroup.Failed ? Theme.Soft : Theme.Text, bold: selected));
-            QueueRight(line, video);
+                .Flex(video.Name, Theme.Of(Waiting(m, video) ? Theme.Dim : video.Group is VideoGroup.Held or VideoGroup.Failed ? Theme.Soft : Theme.Text, bold: selected));
+            QueueRight(line, video, m);
             all.Add(line.Build(width, background));
         }
 
@@ -290,11 +291,27 @@ internal static class TuiView
         return [.. all.Skip(start).Take(capacity)];
     }
 
-    private static void QueueRight(Line line, Video video)
+    private const string FinalisingTag = "finalising";
+    private const string QueuedTag = "queued";
+
+    /// <summary>A ready video a finalise batch has yet to reach: both panes dim it and tag it <c>queued</c>.</summary>
+    private static bool Waiting(TuiModel m, Video video) => video.Group == VideoGroup.Ready && m.Finalising?.IsWaiting(video.Id) == true;
+
+    /// <summary>A ready video a finalise batch is on now. The batch says so before the snapshot's status catches up.</summary>
+    private static bool FinalisingNow(TuiModel m, Video video) => video.Group == VideoGroup.Ready && m.Finalising?.Current == video.Id;
+
+    private static void QueueRight(Line line, Video video, TuiModel m)
     {
         var size = video.SizeBytes is { } bytes ? TuiText.Size(bytes) : string.Empty;
         switch (video)
         {
+            // The batch's own tags stand over the snapshot's note, which says finalising only once the job's status says so.
+            case { Group: VideoGroup.Ready } when FinalisingNow(m, video):
+                line.Right(FinalisingTag + " ", Theme.Of(Theme.Held));
+                break;
+            case { Group: VideoGroup.Ready } when Waiting(m, video):
+                line.Right(QueuedTag + " ", Theme.Of(Theme.Dim));
+                break;
             case { Group: VideoGroup.ConvertingNow } when StageOf(video.Status) is { } stage:
                 line.Right($"{StageName(stage)} ", Theme.Of(Theme.Converting));
                 break;
@@ -605,10 +622,15 @@ internal static class TuiView
         var warnings = WarningRows(chosen, width, listCapacity - Math.Min(Math.Max(1, ready.Count), ListRowsKept));
         listCapacity -= warnings.Count;
 
+        // While a finalise is out the Saved cell may hold a tag, so it widens to fit one, head and all, and Original and AV1
+        // stay over their figures.
+        var savedWidth = m.Finalising is null ? 6 : 10;
+        string Saved(string text) => text.PadLeft(savedWidth) + " ";
+
         if (showHead)
         {
             var head = new Line().Left("   ", Style.Plain).Flex("Video", Theme.Of(Theme.Dim));
-            head.Right(sizes ? $"{"Original",10} {"AV1",10} {"Saved",6} " : $"{"Saved",6} ", Theme.Of(Theme.Dim));
+            head.Right((sizes ? $"{"Original",10} {"AV1",10} " : string.Empty) + Saved("Saved"), Theme.Of(Theme.Dim));
             rows.Add(head.Build(width));
         }
 
@@ -619,17 +641,20 @@ internal static class TuiView
             var selected = video.Id == m.ReviewSelection;
             if (selected) selectedRow = items.Count;
             Color? background = selected && focused ? Theme.Selection : null;
+            var waiting = Waiting(m, video);
             var line = new Line()
                 .Left(selected ? "▌" : " ", Theme.Of(focused ? Theme.Accent : Theme.Dim))
                 .Left("  ", Style.Plain)
-                .Flex(video.Name, Theme.Of(Theme.Text, bold: selected));
+                .Flex(video.Name, Theme.Of(waiting ? Theme.Dim : Theme.Text, bold: selected));
             if (video.Warnings.Count > 0) line.Right(WarningMark(video) + "  ", Theme.Of(Theme.Held));
             if (sizes)
             {
                 line.Right($"{(video.SizeBytes is { } original ? TuiText.Size(original) : "-"),10} ", Theme.Of(Theme.Dim));
                 line.Right($"{(video.Av1Bytes is { } av1 ? TuiText.Size(av1) : "-"),10} ", Theme.Of(Theme.Soft));
             }
-            line.Right($"{(video.PercentSaved is { } saved ? "-" + TuiText.Percent(saved) : "-"),6} ", Theme.Of(Theme.Ready, bold: true));
+            if (FinalisingNow(m, video)) line.Right(Saved(FinalisingTag), Theme.Of(Theme.Held));
+            else if (waiting) line.Right(Saved(QueuedTag), Theme.Of(Theme.Dim));
+            else line.Right(Saved(video.PercentSaved is { } saved ? "-" + TuiText.Percent(saved) : "-"), Theme.Of(Theme.Ready, bold: true));
             items.Add(line.Build(width, background));
         }
         var start = Bars.WindowStart(items.Count, selectedRow, Math.Max(1, listCapacity));
@@ -643,7 +668,9 @@ internal static class TuiView
         }
         if (showSummary)
         {
-            var summary = ready.Count == 0
+            var summary = m.Finalising is { Counts: true } batch
+                ? $" Finalising {batch.Position} of {batch.Ids.Count}, {TuiText.Size(batch.SavedBytes)} saved so far{(batch.Failed > 0 ? $", {batch.Failed} failed" : string.Empty)}."
+                : ready.Count == 0
                 ? string.Empty
                 : $" {ready.Count} ready to finalise, would save {TuiText.Size(ready.Sum(video => video.SavedBytes ?? 0))}.";
             rows.Add(new Line().Flex(summary, Theme.Of(Theme.Dim)).Build(width));

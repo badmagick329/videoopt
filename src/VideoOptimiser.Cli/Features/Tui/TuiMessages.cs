@@ -37,6 +37,16 @@ internal sealed record ActionDoneMsg(string Key, ActionResult Result) : TuiMsg;
 /// <summary>A line an effect reports while it works (creating or deleting the worker), so a long action shows its progress.</summary>
 internal sealed record TuiLogMsg(LogKind Kind, string Text) : TuiMsg;
 
+/// <summary>A finalise batch started on <paramref name="Id"/>: Review tags its row as the one under way.</summary>
+internal sealed record FinaliseStartedMsg(Guid Id) : TuiMsg;
+
+/// <summary>
+/// A finalise batch ended <paramref name="Id"/>, finalised or not. Its log line comes now rather than with the batch's
+/// <see cref="ActionDoneMsg"/>, so a long batch shows each video as it ends.
+/// </summary>
+/// <param name="SavedBytes">What finalising it saved; 0 when it failed or a size is unknown.</param>
+internal sealed record FinaliseEndedMsg(Guid Id, bool Succeeded, long SavedBytes, LogLine Line) : TuiMsg;
+
 internal enum WorkerOptionsPurpose { Create, Start }
 
 /// <summary>The servers a creation may choose from, or why they could not be listed (<paramref name="Error"/> may hold several lines).</summary>

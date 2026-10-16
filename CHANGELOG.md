@@ -27,6 +27,7 @@
 - A ready video with validation warnings is marked `1 warning` (or `2 warnings`) in the Review and Queue panes, and the header says `2 ready, 1 to check`.
 - The Review pane lists the selected video's warnings in full at its bottom.
 - `f` on a warned video lists its warnings in the question. `F` leaves warned videos out and names them, so each one is finalised with `f`.
+- While several videos are being finalised, the Review pane's title says `finalising 3 of 8` and its last line says `Finalising 3 of 8, 1.2 GiB saved so far.` The video being finalised is marked `finalising`, and the ones still to come are dimmed and marked `queued`, in both the Review and Queue panes. Each video's result goes in the log as it finishes, instead of all at once when the batch ends.
 
 ## [0.11.0] - 2026-10-16
 ### The full-screen view

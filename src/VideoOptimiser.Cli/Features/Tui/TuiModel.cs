@@ -112,6 +112,26 @@ internal sealed record WorkerState(
     public static WorkerState Unknown { get; } = new(false, string.Empty, null, null, false, null, 0, false);
 }
 
+/// <summary>
+/// A finalise that is out, as its progress messages tell it. Finalising a batch takes minutes (each original is checked, then
+/// replaced or uploaded), and the snapshot only shows the one video in status Finalizing, so without this Review could not say
+/// how far the batch is or which videos are still to come. Arrows and the other keys keep working: this is progress, not a lock.
+/// </summary>
+/// <param name="Ids">The videos in the order <see cref="TuiActions.FinaliseAsync"/> takes them.</param>
+/// <param name="Current">The video being finalised now; null between two videos and before the first starts.</param>
+/// <param name="Ended">How many have ended, finalised or failed: the first <paramref name="Ended"/> of <paramref name="Ids"/>.</param>
+/// <param name="SavedBytes">What the finalised ones saved, the same figure Review's <c>would save</c> adds up.</param>
+internal sealed record FinaliseBatch(ImmutableList<Guid> Ids, Guid? Current, int Ended, int Failed, long SavedBytes)
+{
+    /// <summary>A batch of one (<c>f</c>) shows its row's tag and the footer only: <c>1 of 1</c> says nothing.</summary>
+    public bool Counts => Ids.Count > 1;
+
+    /// <summary>The position Review's title and summary show: the video under way, or the last once all have ended.</summary>
+    public int Position => Math.Min(Ended + 1, Ids.Count);
+
+    public bool IsWaiting(Guid id) => id != Current && Ids.Skip(Ended).Contains(id);
+}
+
 internal sealed record TuiModel(
     int Width,
     int Height,
@@ -135,7 +155,8 @@ internal sealed record TuiModel(
     ImmutableDictionary<string, string> Busy,
     Notice? Notice,
     string? ReadProblem,
-    bool Quit)
+    bool Quit,
+    FinaliseBatch? Finalising)
 {
     /// <summary>The queue pane's rows in display order: the open videos by group (a stable sort keeps run order inside one), then the failed.</summary>
     public List<Video> Ordered() => [.. Open.OrderBy(video => video.Group), .. Failed];
@@ -150,7 +171,7 @@ internal sealed record TuiModel(
         width, height, now, subtitle, Pane.Queue, Loaded: false,
         Open: [], Failed: [], QueueSelection: null, ReviewSelection: null,
         Run: null, Requests: null, Worker: WorkerState.Unknown, Activity: ActivityState.None,
-        Log: [], LogScroll: 0, Confirm: null, Choice: null, Help: false, Busy: ImmutableDictionary<string, string>.Empty, Notice: null, ReadProblem: null, Quit: false);
+        Log: [], LogScroll: 0, Confirm: null, Choice: null, Help: false, Busy: ImmutableDictionary<string, string>.Empty, Notice: null, ReadProblem: null, Quit: false, Finalising: null);
 }
 
 /// <summary>The worker as the pane shows it, merged from the state file and Hetzner's answer.</summary>

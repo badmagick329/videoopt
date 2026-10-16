@@ -385,7 +385,12 @@ internal sealed class TuiActions(
         return new PreparedMsg(key, null, message, lines);
     }
 
-    public async Task<ActionResult> FinaliseAsync(FinaliseVideos effect, AppSettings settings, CancellationToken cancellationToken)
+    /// <summary>
+    /// Finalises <paramref name="effect"/>'s videos in order under the finalise lock. Each video's start and end go out through
+    /// <paramref name="post"/> as they happen, its log line with the end, so Review shows the batch's progress; the result keeps
+    /// only the tally and the left-out names. A cancelled token (the TUI closing) ends the batch and posts nothing more.
+    /// </summary>
+    public async Task<ActionResult> FinaliseAsync(FinaliseVideos effect, AppSettings settings, Action<TuiMsg> post, CancellationToken cancellationToken)
     {
         var database = settings.Database.Path;
         // The lock a finalise holds, so a run leaves these videos alone while they are finalised.
@@ -396,20 +401,26 @@ internal sealed class TuiActions(
         var failed = 0;
         foreach (var id in effect.Ids)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var name = id.ToString("N");
+            FinaliseEndedMsg ended;
             try
             {
-                name = (await jobs.GetAsync(database, id, cancellationToken)) is { } job ? FileName(job) : name;
+                var job = await jobs.GetAsync(database, id, cancellationToken);
+                name = job is null ? name : FileName(job);
+                post(new FinaliseStartedMsg(id));
                 var result = await finalizer.FinalizeAsync(database, id, settings, cancellationToken);
                 var succeeded = result.ExitCode == ExitCode.Success;
-                if (!succeeded) failed++;
-                lines.Add(new LogLine(succeeded ? LogKind.Success : LogKind.Error, RunEventWords.Clean($"{(succeeded ? "Finalised" : "Couldn't finalise")} {name}: {result.Message}")));
+                var line = new LogLine(succeeded ? LogKind.Success : LogKind.Error, RunEventWords.Clean($"{(succeeded ? "Finalised" : "Couldn't finalise")} {name}: {result.Message}"));
+                ended = new FinaliseEndedMsg(id, succeeded, succeeded && job is not null ? TuiSnapshotReader.SavedBytesOf(job) : 0, line);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                failed++;
-                lines.Add(new LogLine(LogKind.Error, $"Couldn't finalise {name}: {OneLine(exception)}"));
+                ended = new FinaliseEndedMsg(id, false, 0, new LogLine(LogKind.Error, $"Couldn't finalise {name}: {OneLine(exception)}"));
             }
+            if (!ended.Succeeded) failed++;
+            cancellationToken.ThrowIfCancellationRequested();
+            post(ended);
         }
 
         var finalised = effect.Ids.Count - failed;
