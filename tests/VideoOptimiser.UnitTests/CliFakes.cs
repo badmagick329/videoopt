@@ -477,6 +477,13 @@ internal sealed class RecordingRunObserver : IRunObserver
         return new Sink<JobProgress>(progress => ProgressTaken.Add(progress.Text));
     }
 
+    public IProgress<JobProgress> RecheckStarted(int count)
+    {
+        Events.Add($"RecheckStarted:{count}");
+        return new Sink<JobProgress>(progress => ProgressTaken.Add(progress.Text));
+    }
+
+    public void Rechecked(int ready, int toCheck, int notWorthConverting, int stillFailed) => Events.Add($"Rechecked:{ready},{toCheck},{notWorthConverting},{stillFailed}");
     public void ConversionEnded() => Events.Add("ConversionEnded");
     public void JoiningVideoSkipped(JobRecord job) => Events.Add("JoiningVideoSkipped");
     public void JoiningVideoWaitsForWorker(JobRecord job) => Events.Add("JoiningVideoWaitsForWorker");

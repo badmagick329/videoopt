@@ -17,6 +17,7 @@ internal static class RunRegistration
         .AddSingleton<RunStop>()
         .AddSingleton<RunWorkerState>()
         .AddSingleton<RunFlow>()
+        .AddSingleton<FailedValidationRecheck>()
         .AddSingleton<IRunRequestStore, SqliteRunRequestStore>()
         .AddSingleton<IRunEventLog, RunEventFile>()
         .AddSingleton<IKeepAwake, WindowsKeepAwake>()

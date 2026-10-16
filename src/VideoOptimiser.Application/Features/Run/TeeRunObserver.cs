@@ -49,6 +49,18 @@ public sealed class TeeRunObserver(IRunObserver primary, IRunObserver secondary)
         return new TeeProgress<JobProgress>(first, secondary.ConversionStarted(count, workerUp));
     }
 
+    public IProgress<JobProgress> RecheckStarted(int count)
+    {
+        var first = primary.RecheckStarted(count);
+        return new TeeProgress<JobProgress>(first, secondary.RecheckStarted(count));
+    }
+
+    public void Rechecked(int ready, int toCheck, int notWorthConverting, int stillFailed)
+    {
+        primary.Rechecked(ready, toCheck, notWorthConverting, stillFailed);
+        secondary.Rechecked(ready, toCheck, notWorthConverting, stillFailed);
+    }
+
     public void ConversionEnded()
     {
         primary.ConversionEnded();

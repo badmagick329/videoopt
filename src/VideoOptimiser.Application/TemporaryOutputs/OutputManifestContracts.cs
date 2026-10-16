@@ -49,6 +49,15 @@ public sealed class ValidationReport
     public long OutputSizeBytes { get; set; }
     public decimal PercentageSaved { get; set; }
     public DateTimeOffset ValidatedUtc { get; set; }
+
+    /// <summary>
+    /// The version of validation's rules that wrote this report; bump it when a change to the checks could turn a failure
+    /// into a pass, so the next run checks failed videos again (VOPT-119). No initializer: a record written before this
+    /// change must read as 0, not as the current version.
+    /// </summary>
+    public int RulesVersion { get; set; }
+
+    public const int CurrentRulesVersion = 1;
 }
 
 public interface IOutputManifestStore

@@ -66,7 +66,11 @@ public enum RunEventKind
     WorkerDeleteEnded,
     ManualWorkerUnreachable,
     ManualWorkerReminder,
-    RunFailed
+    RunFailed,
+    /// <summary><see cref="RunEvent.Count"/> videos that failed validation are checked again; their lines follow as <see cref="Progress"/>.</summary>
+    RecheckStarted,
+    /// <summary>The re-check's outcome: <see cref="RunEvent.Ready"/>, <see cref="RunEvent.ToCheck"/>, <see cref="RunEvent.Skipped"/> for not worth converting, and <see cref="RunEvent.Count"/> still failed.</summary>
+    Rechecked
 }
 
 /// <summary>

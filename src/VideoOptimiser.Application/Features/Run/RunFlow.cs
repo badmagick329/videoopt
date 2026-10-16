@@ -20,7 +20,7 @@ namespace VideoOptimiser.Application.Features.Run;
 /// decided, so the worker's events come last. The worker question and the delete run on their own token: the run's is already
 /// cancelled after a stop, and a cancelled delete would leave the worker billing silently.
 /// </remarks>
-public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJobProcessor processor, IRemoteWorkerLifecycle lifecycle, IImmichRestaging restaging)
+public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJobProcessor processor, IRemoteWorkerLifecycle lifecycle, IImmichRestaging restaging, FailedValidationRecheck recheck)
 {
     private bool _started;
     private bool _used;
@@ -64,12 +64,15 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
     /// <summary>
     /// Everything a run does after its banner: prepares the whole queue, readies its Immich videos, and converts it, creating a
     /// managed worker only when there is work for it. With nothing to convert, <see cref="GuardAsync"/> decides the fate.
+    /// Before any worker is asked about or created, and even with nothing queued, videos that failed validation under older
+    /// rules are checked again (<see cref="FailedValidationRecheck"/>, VOPT-119).
     /// </summary>
     /// <param name="modeOverridden">Whether <c>--local</c> or <c>--remote</c> set the mode in <paramref name="settings"/>.</param>
     /// <param name="stopAfterThisVideo">Cancelled by a first stop request: checked between videos, never during one.</param>
     public async Task<ExitCode> ConvertQueueAsync(AppSettings settings, bool modeOverridden, IRunObserver observer, IRunQuestions questions, CancellationToken stopAfterThisVideo, CancellationToken cancellationToken)
     {
         var preparation = await queue.PrepareAsync(settings.Database.Path, settings, sourceKind: null, modeOverridden, cancellationToken);
+        await recheck.RecheckAsync(settings, observer, cancellationToken);
         var (ready, _, failures, workerUnreachable, stopped, workerHandled) = await ProcessPreparedJobsAsync(settings, modeOverridden, observer, questions, preparation, stopAfterThisVideo, cancellationToken);
         return stopped ? ExitCode.Cancelled : !workerHandled ? ExitCode.GeneralFailure : QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
     }

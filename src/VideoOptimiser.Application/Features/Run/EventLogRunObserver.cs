@@ -59,6 +59,16 @@ public sealed class EventLogRunObserver(IRunEventLog log, TimeProvider time) : I
         return new SynchronousProgress<JobProgress>(ReportProgress);
     }
 
+    public IProgress<JobProgress> RecheckStarted(int count)
+    {
+        Write(RunEventKind.RecheckStarted, count: count);
+        lock (_gate) _lastToolOutput = null;
+        return new SynchronousProgress<JobProgress>(ReportProgress);
+    }
+
+    public void Rechecked(int ready, int toCheck, int notWorthConverting, int stillFailed) =>
+        Write(RunEventKind.Rechecked, count: stillFailed, ready: ready, skipped: notWorthConverting, toCheck: toCheck);
+
     public void ConversionEnded() => Write(RunEventKind.ConversionEnded);
 
     public void JoiningVideoSkipped(JobRecord job) => Write(RunEventKind.JoiningVideoSkipped, jobId: job.Id, sourcePath: job.SourcePath);

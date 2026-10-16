@@ -4,7 +4,9 @@ using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Immich;
+using VideoOptimiser.Application.Features.Validate;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Cli;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
@@ -24,6 +26,7 @@ public sealed class RunFlowTests : IDisposable
     private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
     private readonly FakeWorkerLifecycle _lifecycle = new();
     private readonly RecordingRunObserver _observer = new();
+    private readonly ScriptedRecheckValidator _validator = new();
 
     public RunFlowTests() => Directory.CreateDirectory(_directory);
 
@@ -192,11 +195,167 @@ public sealed class RunFlowTests : IDisposable
         public Task SetWorkerFateAsync(string databasePath, WorkerFateChoice fate, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
+    /// <summary>
+    /// VOPT-119: a video that failed validation under older rules is checked again at the start of a run, even with nothing
+    /// queued, and a verdict of ready with warnings readies it. The worker is not asked about, let alone created.
+    /// </summary>
+    [Fact]
+    public async Task AFailedVideoFromOlderRulesIsReadiedWithItsWarningsBeforeAnyWorkerIsTouched()
+    {
+        _lifecycle.Exists = false;
+        var (job, output, _) = await SeedFailedValidationAsync(rulesVersion: 0);
+        _validator.Report = new ValidationReport { Passed = true, Warnings = ["audio lasts 2 s longer"], SourceSizeBytes = 100, OutputSizeBytes = 50, PercentageSaved = 50 };
+
+        var code = await RunAsync(new ScriptedRunProcessor(remote: true), new ScriptedQuestions(new RunWorkerAnswer(false, Pending: false)), CancellationToken.None);
+
+        code.Should().Be((int)ExitCode.Success);
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        stored.Status.Should().Be(JobStatus.ReadyToFinalize);
+        stored.FailureCategory.Should().BeNull();
+        stored.ValidationWarnings.Should().Equal("audio lasts 2 s longer");
+        _observer.Events.Should().ContainInOrder("RecheckStarted:1", "Rechecked:1,1,0,0");
+        _observer.ProgressTaken.Should().Contain(text => text.StartsWith("Checking the output", StringComparison.Ordinal));
+        _lifecycle.EnsureCalls.Should().Be(0);
+        _lifecycle.DeleteCalls.Should().Be(0);
+        (await new OutputManifestStore().LoadAsync(output)).Validation!.RulesVersion.Should().Be(ValidationReport.CurrentRulesVersion);
+    }
+
+    public enum LeftAlone
+    {
+        ALaterJobForTheSameOriginal,
+        Av1Missing,
+        ManifestMissing,
+        OriginalChangedAfterTheEncode,
+        ReportAlreadyAtTheCurrentRules
+    }
+
+    /// <summary>
+    /// A failed video that does not meet every condition is left exactly as it was and the run says nothing: a later job owns
+    /// the original, or there is nothing to check, or the check would not be about the same original, or the current rules
+    /// already failed it (else every run would check it again).
+    /// </summary>
+    [Theory]
+    [InlineData(LeftAlone.ALaterJobForTheSameOriginal)]
+    [InlineData(LeftAlone.Av1Missing)]
+    [InlineData(LeftAlone.ManifestMissing)]
+    [InlineData(LeftAlone.OriginalChangedAfterTheEncode)]
+    [InlineData(LeftAlone.ReportAlreadyAtTheCurrentRules)]
+    public async Task AFailedVideoThatDoesNotQualifyIsLeftAloneAndNothingIsRaised(LeftAlone reason)
+    {
+        _lifecycle.Exists = false;
+        var (job, output, original) = await SeedFailedValidationAsync(reason == LeftAlone.ReportAlreadyAtTheCurrentRules ? ValidationReport.CurrentRulesVersion : 0);
+        switch (reason)
+        {
+            case LeftAlone.ALaterJobForTheSameOriginal:
+                await Task.Delay(5);
+                _ = await _repository.CreateAsync(DatabasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = original, Status = JobStatus.Cancelled });
+                break;
+            case LeftAlone.Av1Missing:
+                File.Delete(output);
+                break;
+            case LeftAlone.ManifestMissing:
+                File.Delete(new OutputManifestStore().GetPath(output));
+                break;
+            case LeftAlone.OriginalChangedAfterTheEncode:
+                await File.WriteAllTextAsync(original, "edited after the encode");
+                break;
+        }
+
+        _ = await RunAsync(new ScriptedRunProcessor(), new ScriptedQuestions(new RunWorkerAnswer(false, Pending: false)), CancellationToken.None);
+
+        (await _repository.GetAsync(DatabasePath, job.Id))!.Status.Should().Be(JobStatus.Failed);
+        _observer.Events.Should().NotContain(entry => entry.StartsWith("Recheck", StringComparison.Ordinal));
+        _validator.Calls.Should().Be(0);
+    }
+
+    /// <summary>The AV1 saves too little to keep under the savings settings: the job ends skipped, as in a run, and the AV1 and its record go.</summary>
+    [Fact]
+    public async Task ARecheckedVideoThatIsNotWorthConvertingEndsSkippedAndItsAv1IsDeleted()
+    {
+        _lifecycle.Exists = false;
+        var (job, output, _) = await SeedFailedValidationAsync(rulesVersion: 0);
+        _validator.Report = new ValidationReport { Passed = false, NotWorthConverting = "It saves 3%, under the 10% minimum.", SourceSizeBytes = 100, OutputSizeBytes = 97, PercentageSaved = 3 };
+
+        _ = await RunAsync(new ScriptedRunProcessor(), new ScriptedQuestions(new RunWorkerAnswer(false, Pending: false)), CancellationToken.None);
+
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Skipped);
+        stored.FailureCategory.Should().Be(FailureCategories.NotWorthConverting);
+        File.Exists(output).Should().BeFalse();
+        File.Exists(new OutputManifestStore().GetPath(output)).Should().BeFalse();
+        _observer.Events.Should().ContainInOrder("RecheckStarted:1", "Rechecked:0,0,1,0");
+    }
+
+    /// <summary>
+    /// A video that fails the current rules too stays failed with the new message, and the record now carries the current
+    /// rules version, so the next run does not check it again.
+    /// </summary>
+    [Fact]
+    public async Task AVideoThatFailsTheCurrentRulesStaysFailedAndIsNotCheckedAgainByTheNextRun()
+    {
+        _lifecycle.Exists = false;
+        var (job, _, _) = await SeedFailedValidationAsync(rulesVersion: 0);
+        _validator.Report = new ValidationReport { Passed = false, Failures = ["The output has no video stream."] };
+        var questions = new ScriptedQuestions(new RunWorkerAnswer(false, Pending: false));
+
+        _ = await RunAsync(new ScriptedRunProcessor(), questions, CancellationToken.None);
+
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Failed);
+        stored.FailureMessage.Should().Be("The output has no video stream.");
+        _observer.Events.Should().ContainInOrder("RecheckStarted:1", "Rechecked:0,0,0,1");
+
+        _observer.Events.Clear();
+        _ = await RunAsync(new ScriptedRunProcessor(), questions, CancellationToken.None);
+
+        _observer.Events.Should().NotContain(entry => entry.StartsWith("Recheck", StringComparison.Ordinal));
+        _validator.Calls.Should().Be(1);
+    }
+
+    /// <summary>A failed validation job with its original, AV1 and record on disk, the record's report written under <paramref name="rulesVersion"/>.</summary>
+    private async Task<(JobRecord Job, string Output, string Original)> SeedFailedValidationAsync(int rulesVersion)
+    {
+        var original = Path.Combine(_directory, "clip.mp4");
+        var output = Path.Combine(_directory, "clip.av1.mp4");
+        await File.WriteAllTextAsync(original, "original");
+        await File.WriteAllTextAsync(output, "av1");
+        var store = new OutputManifestStore();
+        await store.SaveAsync(new OutputManifest
+        {
+            SourcePath = original,
+            SourceFingerprint = await new FileFingerprintService().CreateAsync(original),
+            OutputPath = output,
+            Validation = new ValidationReport { Passed = false, Failures = ["old rule"], RulesVersion = rulesVersion }
+        });
+        var job = await _repository.CreateAsync(DatabasePath, new JobRecord
+        {
+            Id = Guid.NewGuid(),
+            SourcePath = original,
+            OutputPath = output,
+            Status = JobStatus.Failed,
+            FailureCategory = FailureCategories.ValidationFailed,
+            FailureMessage = "old rule"
+        });
+        return (job, output, original);
+    }
+
+    private sealed class ScriptedRecheckValidator : IOutputValidationService
+    {
+        public ValidationReport Report { get; set; } = new() { Passed = true };
+        public int Calls { get; private set; }
+
+        public Task<ValidationReport> ValidateAsync(OutputManifest manifest, AppSettings settings, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(Report);
+        }
+    }
+
     private async Task<int> RunAsync(ScriptedRunProcessor processor, IRunQuestions questions, CancellationToken stopNow, CancellationToken stopAfterThisVideo = default)
     {
         var settings = Settings();
         var locks = new DatabaseLocks();
-        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging());
+        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging(), new FailedValidationRecheck(_repository, new OutputManifestStore(), new FileFingerprintService(), _validator));
         flow.MarkStarted();
         // The same shape as the CLI's: the guard decides the worker's fate for an end the conversion does not decide itself.
         return await flow.GuardAsync(settings, _observer, questions, async () => (int)await flow.ConvertQueueAsync(settings, modeOverridden: false, _observer, questions, stopAfterThisVideo, stopNow));

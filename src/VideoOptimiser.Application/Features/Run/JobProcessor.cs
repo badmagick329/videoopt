@@ -180,8 +180,7 @@ public sealed class JobProcessor(
             job.Status = JobStatus.Validating;
             job.ResumeStatus = null;
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            var decodeTest = string.Equals(settings.Validation.DecodeTest, DecodeTestModes.None, StringComparison.OrdinalIgnoreCase) ? string.Empty : " and decode test";
-            progress?.Report(JobProgress.Step($"Checking the output: streams, duration, savings{decodeTest}."));
+            progress?.Report(JobValidation.CheckingStep(settings));
             manifest.Validation = await validator.ValidateAsync(manifest, settings, cancellationToken);
             // A validation resumed on this PC needs no worker, and this run may have none to reach. The workspace it leaves is
             // removed by the sweep of the workspaces of finished jobs, which a run makes on the worker once this job has ended

@@ -21,6 +21,7 @@ public static class JobValidation
     public static async Task<ValidationVerdict> RecordAsync(JobRecord job, OutputManifest manifest, AppSettings settings, IOutputManifestStore store)
     {
         var report = manifest.Validation ?? throw new InvalidOperationException("The manifest has no validation report to record.");
+        report.RulesVersion = ValidationReport.CurrentRulesVersion;
         var verdict = report.Verdict;
         if (verdict == ValidationVerdict.NotWorthConverting) DeleteAv1(manifest.OutputPath, store);
         else await store.SaveAsync(manifest, CancellationToken.None);
@@ -55,6 +56,13 @@ public static class JobValidation
                 break;
         }
         return verdict;
+    }
+
+    /// <summary>The step line shown before validating, so a run and a re-check word it alike.</summary>
+    public static JobProgress CheckingStep(AppSettings settings)
+    {
+        var decodeTest = string.Equals(settings.Validation.DecodeTest, DecodeTestModes.None, StringComparison.OrdinalIgnoreCase) ? string.Empty : " and decode test";
+        return JobProgress.Step($"Checking the output: streams, duration, savings{decodeTest}.");
     }
 
     /// <summary>

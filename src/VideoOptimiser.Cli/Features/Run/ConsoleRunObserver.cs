@@ -43,6 +43,23 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
         Console.WriteLine(ImmichStayQueued(count, $"Immich can't be used ({unusableReason})"));
     }
 
+    /// <summary>
+    /// Each video's block prints as a converted one's does. No stop scope: nothing converts yet, so Ctrl+C stops the run now,
+    /// and a video whose verdict was not saved stays failed.
+    /// </summary>
+    public IProgress<JobProgress> RecheckStarted(int count)
+    {
+        Console.WriteLine(RecheckWords.Started(count));
+        return new JobProgressConsole(Console.Out, OutputStyle);
+    }
+
+    /// <summary>Set apart from the last video's block, as each block is from the one before.</summary>
+    public void Rechecked(int ready, int toCheck, int notWorthConverting, int stillFailed)
+    {
+        Console.WriteLine();
+        Console.WriteLine(RecheckWords.Tally(ready, toCheck, notWorthConverting, stillFailed, OutputStyle.Tone));
+    }
+
     public void WorkerProgress(string line) => Console.WriteLine(line);
 
     /// <summary>

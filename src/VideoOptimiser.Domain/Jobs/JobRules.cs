@@ -28,10 +28,12 @@ public static class JobStateTransitions
         // A finalisation that stops before completing returns to ready, from Finalizing or after a crash from Interrupted:
         // each Immich step can run again, and a file job returns only when nothing moved (VOPT-70).
         (JobStatus.Finalizing, JobStatus.ReadyToFinalize or JobStatus.Completed or JobStatus.Failed or JobStatus.Interrupted) => true,
-        // Failed is final except for one case (VOPT-85): before VOPT-70 a Ctrl+C during a folder job's finalisation, even before any
-        // file moved, failed it for review. The table sees statuses only, so FinalizationService alone gates this, and only after
-        // it shows that the original and the AV1 are where they started; nothing else may take a failed job back.
-        (JobStatus.Failed, JobStatus.ReadyToFinalize) => true,
+        // Failed is final except for two gated paths. The table sees statuses only, so each gate lives in its own code and
+        // nothing else may take a failed job back. VOPT-85: FinalizationService takes back a folder job that a Ctrl+C during
+        // finalisation failed, only after it shows that the original and the AV1 are where they started. VOPT-119:
+        // FailedValidationRecheck checks again a job that failed validation under older rules, only while its original is
+        // unchanged since the encode; the new verdict makes it ready, or skipped when the AV1 is not worth keeping.
+        (JobStatus.Failed, JobStatus.ReadyToFinalize or JobStatus.Skipped) => true,
         // Skipped from Interrupted: validate finishes a check that was stopped, and finds the AV1 not worth keeping (VOPT-117).
         (JobStatus.Interrupted, JobStatus.ReadyToFinalize or JobStatus.Queued or JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Downloading or JobStatus.Validating or JobStatus.Skipped or JobStatus.Failed or JobStatus.Cancelled) => true,
         _ => false

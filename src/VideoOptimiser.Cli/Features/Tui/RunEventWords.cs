@@ -1,6 +1,7 @@
 using System.Globalization;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 
@@ -87,6 +88,11 @@ internal static class RunEventWords
                 return Say(LogKind.Info, "The worker's lifecycle is manual: delete it yourself once everything is ready; powering it off still bills.");
             case RunEventKind.RunFailed:
                 return Say(LogKind.Error, $"The run failed: {e.Text}");
+            case RunEventKind.RecheckStarted:
+                return new EventEffect(Line(LogKind.Stage, RecheckWords.Started(e.Count ?? 0)), true, null, null, null);
+            case RunEventKind.Rechecked:
+                // The progress line goes: the last video's step is over.
+                return new EventEffect(Line(e.Count is > 0 ? LogKind.Warning : LogKind.Success, RecheckWords.Tally(e.Ready ?? 0, e.ToCheck ?? 0, e.Skipped ?? 0, e.Count ?? 0, (_, part) => part)), true, null, null, null);
             default:
                 return Silent();
         }

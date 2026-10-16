@@ -28,6 +28,17 @@ public interface IRunObserver
     /// <param name="unusableReason">Why Immich can't be used, after a restaging call; null when Immich is not configured at all.</param>
     void ImmichVideosStayQueued(int count, string? unusableReason);
 
+    /// <summary>
+    /// Videos that failed validation under older rules are checked again, before any worker is asked about or created
+    /// (VOPT-119). The returned sink takes each video's lines until <see cref="Rechecked"/>; a stop now raises neither.
+    /// </summary>
+    IProgress<JobProgress> RecheckStarted(int count);
+
+    /// <summary>What the re-check made of the videos <see cref="RecheckStarted"/> counted.</summary>
+    /// <param name="toCheck">Of <paramref name="ready"/>, the videos whose validation left warnings to check before finalising.</param>
+    /// <param name="stillFailed">Videos that fail under the current rules too, or that could not be checked.</param>
+    void Rechecked(int ready, int toCheck, int notWorthConverting, int stillFailed);
+
     /// <summary>A line from creating, bootstrapping or deleting the managed worker.</summary>
     void WorkerProgress(string line);
 

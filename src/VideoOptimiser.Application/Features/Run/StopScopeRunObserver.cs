@@ -23,6 +23,11 @@ public sealed class StopScopeRunObserver(RunStop stop) : IRunObserver
         return NoProgress<JobProgress>.Instance;
     }
 
+    /// <remarks>No scope: Ctrl+C during the re-check is a stop now, and the re-check saves a verdict and its job together.</remarks>
+    public IProgress<JobProgress> RecheckStarted(int count) => NoProgress<JobProgress>.Instance;
+
+    public void Rechecked(int ready, int toCheck, int notWorthConverting, int stillFailed) { }
+
     public void ConversionEnded() => _convertingScope?.Dispose();
 
     public void WorkerDeleting() => _deletingScope = stop.WhileDeleting(() => { });

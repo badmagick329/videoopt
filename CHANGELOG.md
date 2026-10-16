@@ -11,6 +11,7 @@
 - `validate` exits `0` for a pass, a pass with warnings and a video not worth converting, and `7` for a failure.
 - The run's tally counts warned videos in the ready count: `Ready to finalise: 4 (1 to check).` The full-screen view's log says `The run finished: 4 ready to finalise (1 to check).`
 - `queue list --json` and `history --json` have a new `validationWarnings` array, empty when there are none.
+- Videos that failed validation in an earlier version are checked again on the next `run`, `immich run` or background run, under the new rules, before any worker is asked about or created. Nothing is uploaded or encoded again. Each video ends ready to finalise (with its warnings, if any), not worth converting, or still failed. The run prints `Checking the AV1s of 3 videos that failed validation earlier.`, each video's result, then `Checked again: 3 ready to finalise (3 to check).` A video is only checked if its AV1 and validation record are still there and its original hasn't changed since the encode, so don't run `cleanup` or `queue retry` on them first.
 
 ### Finalising
 

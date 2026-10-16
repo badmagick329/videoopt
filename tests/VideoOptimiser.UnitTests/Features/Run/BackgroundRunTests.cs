@@ -191,7 +191,7 @@ public sealed class BackgroundRunTests : IDisposable
         var settings = new AppSettings { Database = new DatabaseSettings { Path = DatabasePath } };
         if (remote) settings.Processing = new ProcessingSettings { Mode = ProcessingModes.RemoteSsh, RemoteSsh = new RemoteSshSettings { Lifecycle = RemoteLifecycleModes.Hetzner } };
         var locks = new DatabaseLocks();
-        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging());
+        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging(), new FailedValidationRecheck(_repository, new OutputManifestStore(), new FileFingerprintService(), new PassingValidator()));
         var start = new RunStart(locks, _requests, _events, _keepAwake, flow, TimeProvider.System);
         var background = new BackgroundRun(flow, start, new RunRequestPoll(_requests, TimeSpan.FromMilliseconds(10)), _stop, _requests, new EventLogRunObserver(_events, TimeProvider.System));
         return background.RunAsync(settings, modeOverridden: false, fate);
