@@ -28,6 +28,7 @@
 - The Review pane lists the selected video's warnings in full at its bottom.
 - `f` on a warned video lists its warnings in the question. `F` leaves warned videos out and names them, so each one is finalised with `f`.
 - While several videos are being finalised, the Review pane's title says `finalising 3 of 8` and its last line says `Finalising 3 of 8, 1.2 GiB saved so far.` The video being finalised is marked `finalising`, and the ones still to come are dimmed and marked `queued`, in both the Review and Queue panes. Each video's result goes in the log as it finishes, instead of all at once when the batch ends.
+- While a finalise is going, `f`, `F` and `r` in Review answer straight away, before any question. They say whether the selected video is being finalised or is queued, or that the key has to wait until the finalise ends. `r` waits on every row, because rejecting needs the lock the finalise holds. The arrow keys, `o` and `a` work as before.
 
 ## [0.11.0] - 2026-10-16
 ### The full-screen view

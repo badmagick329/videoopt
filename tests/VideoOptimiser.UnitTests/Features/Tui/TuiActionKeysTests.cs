@@ -593,6 +593,8 @@ public sealed class TuiActionKeysTests
         var confirm = new TuiConfirm("Finalise 2 videos?", "details", new FinaliseVideos([Id(1), Id(2)]));
         var asked = Update(Reviewing(Ready(1), Ready(2)), Letter('F'));
         asked.Model.Busy["finalise"].Should().Be("Reading what is ready to finalise.");
+        // With no batch out yet, the preparation's key still refuses a second press.
+        Notice(Update(asked.Model, Letter('F'))).Should().Be("Reading what is ready to finalise.");
 
         var prepared = Update(asked.Model, new PreparedMsg("finalise", confirm, null));
         prepared.Model.Confirm.Should().Be(confirm);
@@ -602,10 +604,53 @@ public sealed class TuiActionKeysTests
         yes.Effects.Should().ContainSingle().Which.Should().BeOfType<FinaliseVideos>().Which.Ids.Should().Equal(Id(1), Id(2));
         yes.Model.Busy["finalise"].Should().Be("Finalising.");
         yes.Model.Finalising.Should().BeEquivalentTo(new FinaliseBatch([Id(1), Id(2)], null, 0, 0, 0), options => options.ComparingByMembers<FinaliseBatch>());
-        // A second finalise refused while the first is out leaves the first one's batch alone.
-        var refused = Update(yes.Model, Letter('F'));
-        Notice(refused).Should().Be("Finalising.");
-        refused.Model.Finalising.Should().Be(yes.Model.Finalising);
+    }
+
+    /// <summary>
+    /// VOPT-123: while a batch is out, f, F and r answer at once and ask nothing. A row of the batch says where it is in it;
+    /// any other row says the key waits for the batch, r on every row since rejecting needs the lock the batch holds.
+    /// </summary>
+    [Theory]
+    [InlineData('f', 1, "clip-001.mp4 is being finalised now.")]
+    [InlineData('F', 1, "clip-001.mp4 is being finalised now.")]
+    [InlineData('r', 1, "clip-001.mp4 is being finalised now.")]
+    [InlineData('f', 2, "clip-002.mp4 is queued to be finalised.")]
+    [InlineData('F', 2, "clip-002.mp4 is queued to be finalised.")]
+    [InlineData('r', 2, "clip-002.mp4 is queued to be finalised.")]
+    [InlineData('f', 3, "A finalise is going. You can start another once it ends.")]
+    [InlineData('F', 3, "A finalise is going. You can start another once it ends.")]
+    [InlineData('r', 3, "A finalise is going. You can reject once it ends.")]
+    public void DuringABatchTheFinaliseAndRejectKeysAnswerAtOnce(char key, int selected, string notice)
+    {
+        // clip-001 is being finalised, clip-002 waits for it, clip-003 is outside the batch.
+        var model = Batch(selected);
+
+        var step = Update(model, Letter(key));
+
+        step.Effects.Should().BeEmpty();
+        (step.Model.Confirm, step.Model.Choice).Should().Be((null, null));
+        step.Model.Busy.Should().BeSameAs(model.Busy);
+        step.Model.Finalising.Should().BeSameAs(model.Finalising);
+        Notice(step).Should().Be(notice);
+        if (selected == 3) notice.Should().NotContain("clip-003.mp4");
+    }
+
+    /// <summary>The batch is progress, not a lock: a queued video can still be watched before its turn.</summary>
+    [Fact]
+    public void DuringABatchOAndAStillOpenAQueuedVideo()
+    {
+        var model = Batch(selected: 2);
+
+        Update(model, Letter('o')).Effects.Should().Equal(new OpenFile(Id(2), Original: true, "clip-002.mp4"));
+        Update(model, Letter('a')).Effects.Should().Equal(new OpenFile(Id(2), Original: false, "clip-002.mp4"));
+    }
+
+    /// <summary>Three ready videos with a finalise of the first two out, on clip-001, the cursor on <paramref name="selected"/>.</summary>
+    private static TuiModel Batch(int selected)
+    {
+        var confirm = new TuiConfirm("Finalise 2 videos?", "details", new FinaliseVideos([Id(1), Id(2)]));
+        var model = Update(Reviewing(Ready(1), Ready(2), Ready(3)) with { Confirm = confirm }, Letter('y')).Model;
+        return After(model, new FinaliseStartedMsg(Id(1))) with { ReviewSelection = Id(selected) };
     }
 
     /// <summary>The batch's progress moves Review's count and its current row; each ended video's line goes in the log as it ends.</summary>

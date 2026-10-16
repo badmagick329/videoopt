@@ -219,12 +219,27 @@ internal static partial class TuiUpdate
     private static TuiStep ReviewKey(TuiModel m, char c)
     {
         if (c is not ('o' or 'a' or 'f' or 'F' or 'r')) return TuiStep.Of(m);
+        if (c is 'f' or 'F' or 'r' && m.Finalising is { } batch) return WhileFinalising(m, c, batch);
         var ready = m.Ready();
         if (ready.Count == 0) return Told(m, "Nothing is ready to finalise.");
         if (c == 'F') return Emit(m, new PrepareFinalise(null));
         var video = ready.FirstOrDefault(candidate => candidate.Id == m.ReviewSelection) ?? ready[0];
         if (c == 'r') return RejectKey(m, video);
         return c == 'f' ? Emit(m, new PrepareFinalise(video.Id)) : Emit(m, new OpenFile(video.Id, Original: c == 'o', video.Name));
+    }
+
+    /// <summary>
+    /// <c>f</c>, <c>F</c> and <c>r</c> while a finalise batch is out answer at once, before any question: a second finalise
+    /// could only be refused once its confirmation was answered, and <c>queue reject</c> needs the database-wide finalise lock
+    /// the batch holds, so rejecting waits on every row. A row of the batch says where it is in it.
+    /// </summary>
+    private static TuiStep WhileFinalising(TuiModel m, char c, FinaliseBatch batch)
+    {
+        var ready = m.Ready();
+        var video = ready.FirstOrDefault(candidate => candidate.Id == m.ReviewSelection) ?? ready.FirstOrDefault();
+        if (video is not null && video.Id == batch.Current) return Told(m, $"{video.Name} is being finalised now.");
+        if (video is not null && batch.IsWaiting(video.Id)) return Told(m, $"{video.Name} is queued to be finalised.");
+        return Told(m, c == 'r' ? "A finalise is going. You can reject once it ends." : "A finalise is going. You can start another once it ends.");
     }
 
     /// <summary>
