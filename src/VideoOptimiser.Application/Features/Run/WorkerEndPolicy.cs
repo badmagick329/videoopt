@@ -1,3 +1,5 @@
+using VideoOptimiser.Domain.Jobs;
+
 namespace VideoOptimiser.Application.Features.Run;
 
 /// <summary>How a run ended, for <see cref="WorkerEndPolicy"/>.</summary>
@@ -49,6 +51,14 @@ public static class WorkerEndPolicy
             _ => WorkerFate.Keep
         };
     }
+
+    /// <summary>
+    /// Whether deleting the worker throws away work that exists only there: a CRF search or encode that keeps running after a
+    /// stop now, or a finished encode not yet downloaded.
+    /// </summary>
+    /// <param name="remoteStage">The stage the stopped video was in on the worker, or null when it was not on the worker.</param>
+    public static bool DeleteLosesWork(JobStatus? remoteStage) =>
+        remoteStage is JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Downloading;
 
     public static bool IsAffirmative(string? response) =>
         string.Equals(response?.Trim(), "y", StringComparison.OrdinalIgnoreCase) ||
