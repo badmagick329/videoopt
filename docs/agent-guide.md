@@ -150,10 +150,13 @@ Upload and download lines appear only with a remote worker. Colour appears on a 
 | Outcome line | Job status |
 | --- | --- |
 | `Ready to finalise: ...` | `ReadyToFinalize` |
+| `Ready to finalise: ... Check it before finalising:`, then one line per warning | `ReadyToFinalize`, with `validationWarnings` |
 | `Not worth converting: ...` | `Skipped` |
 | `Failed validation: ...` | `Failed`, `ValidationFailed` |
 | `Failed during the upload`, `the CRF search`, `encoding` or `the download: ...`, then `Full log: <path>` | `Failed`; the ab-av1 log stays at that path |
 | `Worker unreachable: ...` | `Interrupted`, `RemoteUnavailable`; the run stops here |
+
+A warning names something the AV1 check doubted: a shorter or longer video, a different number of audio or subtitle streams, audio that starts at another point relative to the video, audio sync that could not be checked, or a failed decode test. The video is ready all the same; the person watches it and decides whether to finalise or `queue reject` it. The run's tally counts warned videos within the ready ones: `Ready to finalise: 4 (1 to check).`
 
 **Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints progress about every 15 seconds; `about <time> left` appears only after 30 seconds and 5 percentage points. A job that prints nothing new for 15 minutes is stuck: ask for its last lines and `queue list --json`.
 
@@ -178,8 +181,8 @@ Match the job's `status` and `failureCategory` (from `queue list --json` or `his
 | `<file> is left for a later run: it started on ...` | The job started in the other mode, and `--local` or `--remote` chose this one | Nothing is lost. The line ends with the resume command: plain `run`, `run --local` or `run --remote`; or, when the config points at another worker, set `processing.remoteSsh` back (or `workingDirectory`), or `queue drop` the video. A remote resume is paid encoding. |
 | `Interrupted` | Stopped by `Ctrl+C`, a crash or a lost connection. A remote stage keeps running on the worker | Run `run` again. It resumes and follows a running remote stage. |
 | `RemoteUnavailable` | The worker could not be reached. The run stopped at this job and left the rest `Queued`, printing `Stopped: the worker <name> can't be reached, ...` | The `To resume:` command it printed (`run`). A Hetzner worker stays up for it, billed hourly. Its `To delete it instead:` command is a **warn**, and the line names the work deleting loses. |
-| `Skipped`, `NotWorthConverting` | No CRF met both `quality.minimumVmaf` and the video's size cap, the stricter of `quality.maxEncodedPercent` and `savings.minimumBytesSaved`. A video too small to save `savings.minimumBytesSaved` is skipped before its search, with nothing uploaded. Not a failure | Relay `failureMessage`: the setting that ruled it out and the best CRF found. Discovery checks the video again when the file or those settings change. |
-| `ValidationFailed` | The AV1 failed a check, for example it saved less than `savings.minimumBytesSaved` | The original is untouched. Discovery won't queue it again until the file changes. |
+| `Skipped`, `NotWorthConverting` | No CRF met both `quality.minimumVmaf` and the video's size cap, the stricter of `quality.maxEncodedPercent` and `savings.minimumBytesSaved`. A video too small to save `savings.minimumBytesSaved` is skipped before its search, with nothing uploaded. A finished AV1 no smaller than the original (`savings.requireSmallerOutput`) or saving less than `savings.minimumBytesSaved` ends here too, and its AV1 is deleted. Not a failure | Relay `failureMessage`: the setting that ruled it out, and the best CRF found or the AV1's size. Discovery checks the video again when the file or those settings change. |
+| `ValidationFailed` | The AV1 left nothing to review: missing, empty, unreadable by ffprobe, or not AV1 | The original is untouched. Discovery won't queue it again until the file changes; `queue retry <id>` converts it again. |
 | `StagingFailed`, `CrfSearchFailed`, `EncodeFailed`, `DownloadFailed`, `ProcessingFailed` | A step failed | Relay `failureMessage`. After the cause is fixed, `queue retry <id>` queues it again. |
 | `RemoteConfigurationChanged` | The job started under a different processing setup | `queue retry <id>` starts a fresh job under the current setup. |
 | `Cancelled` (shown as Dropped) | `queue drop` dropped it | `queue retry <id>` queues it again. Dropping a video whose remote stage was stopped prints `Its encode may still be running on the worker; the next run on that worker stops it.` (or `Its CRF search ...`): it keeps billing until a later run reaches that worker, or the worker is deleted. |
@@ -206,7 +209,7 @@ Failed, dropped, rejected and skipped jobs stay settled: discovery skips them un
 | `4` | A failed dependency check in `doctor`: a media tool, the Immich server (unreachable, not Immich 3, its key, or its trash off) or the Hetzner API. Also `remote setup` when it cannot run `ssh-keygen` or list or upload the Hetzner key |
 | `5` | `queue add <file>` refused the file: outside the watch roots or the rules (the line gives the `--force` command), too small to save `savings.minimumBytesSaved`, or a file video-optimiser made or archived (`--force` lifts neither) |
 | `6` | Processing failed and nothing is ready; `queue add <file>` on a file that is missing or unreadable; an Immich request failed; ffprobe could not read a file; Hetzner had no server capacity; `validate` or `finalize <job-id>` named a job that does not exist; or `validate` named a job that is not ready to finalise, is held (`queue release` first), or whose original, AV1 or validation record is missing or unreadable |
-| `7` | The output failed validation, including an output ffprobe cannot read (`validate`, `run`), or `finalize <job-id>` named a job that is not ready |
+| `7` | The output failed validation: missing, empty, unreadable by ffprobe, or not AV1 (`validate`, `run`); or `finalize <job-id>` named a job that is not ready. Warnings and a not-worth-converting verdict exit `0` |
 | `8` | `finalize <job-id>` failed, or `immich finalize` failed for every job |
 | `9` | Stopped with `Ctrl+C` |
 | `10` | Partial success: `run` or `immich run` with some failed and some ready, any failure in `finalize --ready`, or `queue add`, `queue add immich`, `immich run`, `cleanup` or `calibrate` hit issues; read the output |
@@ -238,6 +241,7 @@ A held job keeps its status, `Queued` or `Interrupted`; runs pass over it until 
 | `outputPath` | The temporary AV1, or `null` before encoding starts; the file exists once the job reaches `Validating` |
 | `percentageSaved` | Size saving in percent, or `null` |
 | `failureCategory`, `failureMessage` | Why the job failed or was skipped, or what it needs, or `null` |
+| `validationWarnings` | What the last AV1 check asks the person to watch for before finalising, one sentence each; empty when it found nothing |
 | `updatedUtc` | Last change, ISO 8601 |
 
 `status --json` prints the card as one object; every field is present, `null` where it has no value:

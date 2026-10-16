@@ -170,6 +170,7 @@ public sealed class QueueCommandsTests : QueueTestBase
             job.PercentageSaved = 12.5m;
             job.FailureCategory = "EncodingFailed";
             job.FailureMessage = "ab-av1 exited with 1.";
+            job.ValidationWarnings = ["The decode test could not run: ffmpeg is gone"];
         });
 
         var result = await RunAsync(services => services.AddSingleton<IJobRepository>(new ListingRepository(Repository, [file, immich], [])), "queue", "list", "--json");
@@ -189,6 +190,7 @@ public sealed class QueueCommandsTests : QueueTestBase
                 "percentageSaved": null,
                 "failureCategory": null,
                 "failureMessage": null,
+                "validationWarnings": [],
                 "updatedUtc": "2026-03-04T05:06:07+00:00"
               },
               {
@@ -204,6 +206,9 @@ public sealed class QueueCommandsTests : QueueTestBase
                 "percentageSaved": 12.5,
                 "failureCategory": "EncodingFailed",
                 "failureMessage": "ab-av1 exited with 1.",
+                "validationWarnings": [
+                  "The decode test could not run: ffmpeg is gone"
+                ],
                 "updatedUtc": "2026-03-04T05:06:07+00:00"
               }
             ]

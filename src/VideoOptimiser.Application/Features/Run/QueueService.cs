@@ -82,6 +82,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
     public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default)
     {
         var ready = 0;
+        var toCheck = 0;
         var failed = new List<FailedQueueJob>();
         var skipped = new List<SkippedQueueJob>();
         // Tried at most once each: a video that failed, was passed over or left for a later run is not picked up again.
@@ -100,7 +101,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
             // A result, not an exception: the videos finished so far get their summary, and the rest stay queued.
             if (stopAfterThisVideo.IsCancellationRequested && (previous ?? passedOver) is { } last)
             {
-                return new QueueRunResult(ready, failed, skipped, UnreachableWorkerJob: null, NotStarted: waiting.Length, ExitCode.Cancelled, StoppedAfter: last);
+                return new QueueRunResult(ready, failed, skipped, UnreachableWorkerJob: null, NotStarted: waiting.Length, ExitCode.Cancelled, StoppedAfter: last, ToCheck: toCheck);
             }
 
             var job = waiting[0];
@@ -121,12 +122,16 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
             }
 
             done++;
-            if (result.Job.Status == JobStatus.ReadyToFinalize) ready++;
+            if (result.Job.Status == JobStatus.ReadyToFinalize)
+            {
+                ready++;
+                if (result.Job.ValidationWarnings.Count > 0) toCheck++;
+            }
             else if (result.Job.Status == JobStatus.Skipped) skipped.Add(new SkippedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureMessage ?? result.Message));
             else if (result.Job is { Status: JobStatus.Interrupted, FailureCategory: FailureCategories.RemoteUnavailable })
             {
                 // Each later job would retry the dead worker three times and end the same way, so the run stops here.
-                return new QueueRunResult(ready, failed, skipped, result.Job, waiting.Length - 1, QueueExitCode.Calculate(ready, failed.Count, workerUnreachable: true));
+                return new QueueRunResult(ready, failed, skipped, result.Job, waiting.Length - 1, QueueExitCode.Calculate(ready, failed.Count, workerUnreachable: true), ToCheck: toCheck);
             }
             else if (result.ExitCode != ExitCode.Success)
             {
@@ -135,6 +140,6 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
             previous = job;
         }
 
-        return new QueueRunResult(ready, failed, skipped, UnreachableWorkerJob: null, NotStarted: 0, QueueExitCode.Calculate(ready, failed.Count));
+        return new QueueRunResult(ready, failed, skipped, UnreachableWorkerJob: null, NotStarted: 0, QueueExitCode.Calculate(ready, failed.Count), ToCheck: toCheck);
     }
 }

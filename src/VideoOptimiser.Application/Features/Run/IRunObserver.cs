@@ -53,7 +53,8 @@ public interface IRunObserver
     /// <summary>The run's outcome, after the conversion and before the worker's fate.</summary>
     /// <param name="readyTotal">Videos ready to finalise in the queue, those earlier runs left included; never fewer than <paramref name="ready"/>.</param>
     /// <param name="stoppedAfter">The run stopped after a video, with videos left to start.</param>
-    void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter);
+    /// <param name="toCheck">Of <paramref name="ready"/>, the videos whose validation left warnings to check before finalising.</param>
+    void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter, int toCheck);
 
     /// <summary>A stop now with no managed worker recorded.</summary>
     /// <param name="interrupted">The video it stopped, or null when none was converting.</param>

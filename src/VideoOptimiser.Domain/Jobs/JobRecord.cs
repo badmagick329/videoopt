@@ -20,6 +20,11 @@ public sealed class JobRecord
     public string? OutputPath { get; set; }
     public string? ManifestPath { get; set; }
     public bool? ValidationPassed { get; set; }
+    /// <summary>
+    /// What the last validation asked the user to check before finalising (VOPT-116), one line each; empty when it found
+    /// nothing or never ran. Bulk finalise leaves a job with any out.
+    /// </summary>
+    public IReadOnlyList<string> ValidationWarnings { get; set; } = [];
     public long? SourceSizeBytes { get; set; }
     public long? OutputSizeBytes { get; set; }
     public decimal? PercentageSaved { get; set; }

@@ -16,7 +16,6 @@ public sealed record MediaInfo(
 public sealed record MediaTimeline(
     double FirstVideoTimestampSeconds,
     double LastVideoEndTimestampSeconds,
-    long PrimaryVideoPacketCount,
     double? FirstPrimaryAudioTimestampSeconds)
 {
     public double PrimaryVideoDurationSeconds => LastVideoEndTimestampSeconds - FirstVideoTimestampSeconds;

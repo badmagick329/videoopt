@@ -168,7 +168,7 @@ public sealed class ValidateCommandTests : IDisposable
 
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
-        stdout.ReplaceLineEndings("\n").Should().Be("Validation passed: saved 60.0%\n");
+        stdout.ReplaceLineEndings("\n").Should().Be("Validation passed: saved 60.0%.\n");
         var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
         stored.Status.Should().Be(JobStatus.ReadyToFinalize);
         (stored.ValidationPassed, stored.SourceSizeBytes, stored.OutputSizeBytes, stored.PercentageSaved).Should().Be((true, 1000L, 400L, 60m));
@@ -194,6 +194,47 @@ public sealed class ValidateCommandTests : IDisposable
         stored.FailureMessage.Should().Be("Duration differs.; Audio track is missing.");
         stored.CompletedUtc.Should().NotBeNull();
         (await new OutputManifestStore().LoadAsync(job.OutputPath!)).Validation!.Failures.Should().Equal("Duration differs.", "Audio track is missing.");
+    }
+
+    [Fact]
+    public async Task WarningsKeepTheJobReadyPrintEachOneAndStoreThem()
+    {
+        var job = await CreateReadyJobAsync();
+        _validation.Report = new ValidationReport { Passed = true, Warnings = ["The AV1's video is 2 s shorter than the original's.", "The AV1 failed the decode test: bad frame"], SourceSizeBytes = 1000, OutputSizeBytes = 400, PercentageSaved = 60m };
+
+        var (code, stdout, stderr) = await RunAsync(job.Id.ToString("N"));
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be("""
+            Validation passed with warnings: saved 60.0%. Check the AV1 before finalising it:
+              The AV1's video is 2 s shorter than the original's.
+              The AV1 failed the decode test: bad frame
+
+            """.ReplaceLineEndings("\n"));
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        stored.Status.Should().Be(JobStatus.ReadyToFinalize);
+        stored.ValidationWarnings.Should().Equal(_validation.Report.Warnings);
+        (await new OutputManifestStore().LoadAsync(job.OutputPath!)).Validation!.Warnings.Should().Equal(_validation.Report.Warnings);
+    }
+
+    [Fact]
+    public async Task NotWorthConvertingSkipsTheJobDeletesTheAv1AndExitsZero()
+    {
+        var job = await CreateReadyJobAsync();
+        _validation.Report = new ValidationReport { Passed = false, NotWorthConverting = "the AV1 saves only 10 B, less than 1MiB (savings.minimumBytesSaved).", SourceSizeBytes = 1000, OutputSizeBytes = 990 };
+
+        var (code, stdout, stderr) = await RunAsync(job.Id.ToString("N"));
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be("Not worth converting: the AV1 saves only 10 B, less than 1MiB (savings.minimumBytesSaved). The AV1 was deleted; the original stays.\n");
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        (stored.Status, stored.FailureCategory).Should().Be((JobStatus.Skipped, FailureCategories.NotWorthConverting));
+        stored.QualityFingerprint.Should().NotBeNull("discovery checks the video again once the settings change");
+        File.Exists(job.OutputPath).Should().BeFalse();
+        File.Exists(new OutputManifestStore().GetPath(job.OutputPath!)).Should().BeFalse();
+        File.Exists(job.SourcePath).Should().BeTrue();
     }
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(string jobId)

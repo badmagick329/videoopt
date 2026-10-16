@@ -83,7 +83,7 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         preparation = await ReadyImmichVideosAsync(settings, observer, preparation, cancellationToken);
         if (preparation.RunnableJobs.Count == 0)
         {
-            await SummariseAsync(settings, observer, 0, 0, [.. preparation.FailedJobs], stoppedAfter: false);
+            await SummariseAsync(settings, observer, 0, 0, [.. preparation.FailedJobs], stoppedAfter: false, toCheck: 0);
             return (0, 0, [.. preparation.FailedJobs], false, false, true);
         }
 
@@ -116,7 +116,7 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         var failures = preparation.FailedJobs.Concat(joinFailures).Concat(result.FailedJobs).ToArray();
         if (result.UnreachableWorkerJob is not null) observer.StoppedByUnreachableWorker(await WorkerNameAsync(settings), result.NotStarted + 1);
         if (result.StoppedAfter is { } last) observer.StoppedAfter(last, result.NotStarted);
-        await SummariseAsync(settings, observer, result.ReadyToFinalize, result.SkippedJobs.Count, failures, stoppedAfter: result.StoppedAfter is not null);
+        await SummariseAsync(settings, observer, result.ReadyToFinalize, result.SkippedJobs.Count, failures, stoppedAfter: result.StoppedAfter is not null, toCheck: result.ToCheck);
         var end = result.UnreachableWorkerJob is not null ? RunEnd.WorkerUnreachable : result.StoppedAfter is not null ? RunEnd.StoppedAfterVideo : RunEnd.Finished;
         var workerHandled = await ConcludeAsync(settings, observer, questions, end, unreachableJob: result.UnreachableWorkerJob);
         // U3m (VOPT-69): a manual host that stopped answering is neither billed nor deleted by this tool, so the user hears only how to resume.
@@ -131,13 +131,13 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         return (result.ReadyToFinalize, result.SkippedJobs.Count, failures, result.UnreachableWorkerJob is not null, result.StoppedAfter is not null, workerHandled);
     }
 
-    private async Task SummariseAsync(AppSettings settings, IRunObserver observer, int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, bool stoppedAfter)
+    private async Task SummariseAsync(AppSettings settings, IRunObserver observer, int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, bool stoppedAfter, int toCheck)
     {
         // The videos earlier runs left ready count too (VOPT-73 B5): saying "Nothing to finalise." with some waiting is wrong.
         // Read without the run's token, which a second Ctrl+C has cancelled by now, as the worker's name is.
         // Never fewer than this run made, whatever the read says, so a video it just readied is always named.
         var readyTotal = Math.Max(ready, (await discovery.OpenJobsAsync(settings.Database.Path, CancellationToken.None)).Count(entry => entry.Group == OpenJobGroup.ReadyToFinalise));
-        observer.Summary(ready, skipped, failures, readyTotal, stoppedAfter);
+        observer.Summary(ready, skipped, failures, readyTotal, stoppedAfter, toCheck);
     }
 
     /// <summary>

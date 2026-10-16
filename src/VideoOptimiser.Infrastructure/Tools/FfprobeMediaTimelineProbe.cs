@@ -188,7 +188,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
         private double _firstVideoTimestamp = double.PositiveInfinity;
         private double _lastVideoEndTimestamp = double.NegativeInfinity;
         private double _firstAudioTimestamp = double.PositiveInfinity;
-        private long _videoPacketCount;
+        private bool _sawVideo;
 
         public void Add(string line)
         {
@@ -207,7 +207,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
 
                 _firstVideoTimestamp = Math.Min(_firstVideoTimestamp, pts);
                 _lastVideoEndTimestamp = Math.Max(_lastVideoEndTimestamp, pts + duration);
-                _videoPacketCount++;
+                _sawVideo = true;
             }
             else if (streamIndex == streams.AudioIndex)
             {
@@ -222,7 +222,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
 
         public MediaTimeline Build()
         {
-            if (_videoPacketCount == 0 || !double.IsFinite(_firstVideoTimestamp) || !double.IsFinite(_lastVideoEndTimestamp) || _lastVideoEndTimestamp < _firstVideoTimestamp)
+            if (!_sawVideo || !double.IsFinite(_firstVideoTimestamp) || !double.IsFinite(_lastVideoEndTimestamp) || _lastVideoEndTimestamp < _firstVideoTimestamp)
             {
                 throw new MediaProbeException("ffprobe did not report complete primary video packet timing.");
             }
@@ -230,7 +230,6 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
             return new MediaTimeline(
                 _firstVideoTimestamp,
                 _lastVideoEndTimestamp,
-                _videoPacketCount,
                 double.IsFinite(_firstAudioTimestamp) ? _firstAudioTimestamp : null);
         }
 

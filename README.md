@@ -99,7 +99,7 @@ Read [docs/immich.md](docs/immich.md) before the first run. It covers the API ke
 ## Safety
 
 - Originals are only read until you finalise. `finalize` moves the original aside, puts the AV1 in place, and moves the original back if anything fails.
-- Every AV1 is checked before it can be finalised: codec, duration, streams, a decode test, and the real saving.
+- Every AV1 is checked before it can be finalised. A missing, empty, unreadable or non-AV1 file fails. One that saves too little is skipped and deleted. A different length, stream count or audio sync, or a failed decode test, shows as a warning to check before you finalise.
 - A video that failed, was dropped, was rejected or wasn't worth converting isn't queued again until its file changes or you run `queue retry`.
 - The job database (`jobs.db`) tracks every video, so a crash or `Ctrl+C` never loses track of a file. One run uses it at a time.
 - `cleanup` and `queue reject` won't delete an AV1 that may be the only copy of a video.

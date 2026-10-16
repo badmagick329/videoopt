@@ -85,9 +85,9 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
         Console.WriteLine(StoppedRunMessage.StoppedAfter(last.SourcePath, notStarted));
     }
 
-    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter)
+    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter, int toCheck)
     {
-        if (OutcomeSummary.Run(ready, skipped, failures.Count, OutputStyle, othersReady: readyTotal > 0) is { } summary) Console.WriteLine(summary);
+        if (OutcomeSummary.Run(ready, skipped, failures.Count, OutputStyle, othersReady: readyTotal > 0, toCheck) is { } summary) Console.WriteLine(summary);
         PrintFailedJobs(failures);
         beforeNext?.Invoke();
         // finalize --ready finalises every source, so one line serves a queue of folder and Immich videos.

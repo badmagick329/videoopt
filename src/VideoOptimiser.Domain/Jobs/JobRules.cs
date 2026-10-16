@@ -20,9 +20,11 @@ public static class JobStateTransitions
         (JobStatus.CrfSearching, JobStatus.Encoding or JobStatus.Skipped or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Encoding, JobStatus.Downloading or JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
         (JobStatus.Downloading, JobStatus.Validating or JobStatus.Failed or JobStatus.Interrupted) => true,
-        (JobStatus.Validating, JobStatus.ReadyToFinalize or JobStatus.Failed or JobStatus.Interrupted) => true,
+        // Skipped from Validating: the finished AV1 saves less than the savings settings ask (VOPT-117).
+        (JobStatus.Validating, JobStatus.ReadyToFinalize or JobStatus.Skipped or JobStatus.Failed or JobStatus.Interrupted) => true,
         // Rejected only from ready: the user can judge an AV1 only once it has passed validation (VOPT-112).
-        (JobStatus.ReadyToFinalize, JobStatus.Validating or JobStatus.Finalizing or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Rejected) => true,
+        // Skipped from ready: validate checks the AV1 again under savings settings that now find it not worth keeping (VOPT-117).
+        (JobStatus.ReadyToFinalize, JobStatus.Validating or JobStatus.Finalizing or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Rejected or JobStatus.Skipped) => true,
         // A finalisation that stops before completing returns to ready, from Finalizing or after a crash from Interrupted:
         // each Immich step can run again, and a file job returns only when nothing moved (VOPT-70).
         (JobStatus.Finalizing, JobStatus.ReadyToFinalize or JobStatus.Completed or JobStatus.Failed or JobStatus.Interrupted) => true,
@@ -30,7 +32,8 @@ public static class JobStateTransitions
         // file moved, failed it for review. The table sees statuses only, so FinalizationService alone gates this, and only after
         // it shows that the original and the AV1 are where they started; nothing else may take a failed job back.
         (JobStatus.Failed, JobStatus.ReadyToFinalize) => true,
-        (JobStatus.Interrupted, JobStatus.ReadyToFinalize or JobStatus.Queued or JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Downloading or JobStatus.Validating or JobStatus.Failed or JobStatus.Cancelled) => true,
+        // Skipped from Interrupted: validate finishes a check that was stopped, and finds the AV1 not worth keeping (VOPT-117).
+        (JobStatus.Interrupted, JobStatus.ReadyToFinalize or JobStatus.Queued or JobStatus.Staging or JobStatus.CrfSearching or JobStatus.Encoding or JobStatus.Downloading or JobStatus.Validating or JobStatus.Skipped or JobStatus.Failed or JobStatus.Cancelled) => true,
         _ => false
     };
 }
@@ -49,8 +52,17 @@ public static class FailureCategories
     /// <summary>An <see cref="JobStatus.Interrupted"/> job whose worker stopped answering; it resumes from its stage.</summary>
     public const string RemoteUnavailable = "RemoteUnavailable";
 
-    /// <summary>A <see cref="JobStatus.Skipped"/> job: AV1 cannot meet the quality bar and the size cap together.</summary>
+    /// <summary>
+    /// A <see cref="JobStatus.Skipped"/> job: AV1 cannot meet the quality bar and the size cap together, or the finished AV1
+    /// saves less than the savings settings ask.
+    /// </summary>
     public const string NotWorthConverting = "NotWorthConverting";
+
+    /// <summary>
+    /// A <see cref="JobStatus.Failed"/> job whose AV1 left nothing to review: missing, empty, unreadable or not AV1. Before
+    /// VOPT-117 every doubtful check failed a job this way, so a run checks such jobs again while their AV1 is on disk.
+    /// </summary>
+    public const string ValidationFailed = "ValidationFailed";
 
     /// <summary>A <see cref="JobStatus.Rejected"/> job. The status says it all, so no list adds a phrase for it.</summary>
     public const string Rejected = "Rejected";

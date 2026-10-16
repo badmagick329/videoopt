@@ -150,7 +150,7 @@ internal static class RunEventWords
     {
         var failed = e.Failures ?? [];
         var parts = new List<string>();
-        if (e.Ready is > 0) parts.Add($"{e.Ready} ready to finalise");
+        if (e.Ready is > 0) parts.Add(e.ToCheck is > 0 ? $"{e.Ready} ready to finalise ({e.ToCheck} to check)" : $"{e.Ready} ready to finalise");
         if (e.Skipped is > 0) parts.Add($"{e.Skipped} not worth converting");
         if (failed.Count > 0) parts.Add($"{failed.Count} failed");
         var line = parts.Count == 0 ? "The run finished; nothing converted." : $"The run finished: {string.Join(", ", parts)}.";

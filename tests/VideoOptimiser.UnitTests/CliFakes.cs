@@ -482,7 +482,7 @@ internal sealed class RecordingRunObserver : IRunObserver
     public void JoiningVideoWaitsForWorker(JobRecord job) => Events.Add("JoiningVideoWaitsForWorker");
     public void StoppedByUnreachableWorker(string workerName, int notConverted) => Events.Add("StoppedByUnreachableWorker");
     public void StoppedAfter(JobRecord last, int notStarted) => Events.Add("StoppedAfter");
-    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter) => Events.Add($"Summary:ready={ready},total={readyTotal},stoppedAfter={stoppedAfter}");
+    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter, int toCheck) => Events.Add($"Summary:ready={ready},total={readyTotal},stoppedAfter={stoppedAfter}" + (toCheck > 0 ? $",toCheck={toCheck}" : string.Empty));
     public void StoppedWithoutManagedWorker(JobInterruptedException? interrupted, string? manualHost) => Events.Add("StoppedWithoutManagedWorker");
     public void StoppedNow(JobInterruptedException? interrupted, string worker, WorkerFate fate, bool settingUpWorker) => Events.Add($"StoppedNow:{fate}");
     public void WorkerUnreachableAtEnd(JobRecord job, bool questionFollows) => Events.Add("WorkerUnreachableAtEnd");

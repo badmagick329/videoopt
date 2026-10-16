@@ -144,6 +144,8 @@ public sealed partial class ColourOutputTests
         // Earlier runs' ready videos make "Nothing to finalise." false, so a run that made nothing has no tally; one that failed still has.
         OutcomeSummary.Run(0, 0, 0, TerminalStyle.Plain, othersReady: true).Should().BeNull();
         OutcomeSummary.Run(0, 0, 1, TerminalStyle.Plain, othersReady: true).Should().Be("Failed: 1.");
+        // Warned videos count within the ready ones (VOPT-117).
+        OutcomeSummary.Run(4, 0, 0, TerminalStyle.Plain, toCheck: 1).Should().Be("Ready to finalise: 4 (1 to check).");
     }
 
     private static (string Output, string Error) RenderDiscovery(ImmichProgress[] events, TerminalStyle style)

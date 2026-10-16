@@ -40,7 +40,8 @@ public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJob
 /// its stage, so it is not in <paramref name="FailedJobs"/>.</param>
 /// <param name="NotStarted">The jobs after <paramref name="UnreachableWorkerJob"/> or <paramref name="StoppedAfter"/> that the run never started; they stay queued.</param>
 /// <param name="StoppedAfter">The last job of a run that Ctrl+C stopped after it, with jobs left to start, or null.</param>
-public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<SkippedQueueJob> SkippedJobs, JobRecord? UnreachableWorkerJob, int NotStarted, ExitCode ExitCode, JobRecord? StoppedAfter = null)
+/// <param name="ToCheck">Of <paramref name="ReadyToFinalize"/>, the jobs whose validation left warnings for the user to check.</param>
+public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<SkippedQueueJob> SkippedJobs, JobRecord? UnreachableWorkerJob, int NotStarted, ExitCode ExitCode, JobRecord? StoppedAfter = null, int ToCheck = 0)
 {
     public int Failed => FailedJobs.Count;
 }

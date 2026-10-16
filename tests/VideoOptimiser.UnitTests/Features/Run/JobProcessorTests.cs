@@ -464,11 +464,53 @@ public sealed class JobProcessorTests : IDisposable
         var source = await SourceAsync();
         var reported = new List<JobProgress>();
 
-        var result = await Processor(validator: new FailingValidator()).ProcessAsync(DatabasePath, source, Settings(), force: false, new ListProgress(reported));
+        var result = await Processor(validator: new ReportingValidator(new ValidationReport { Passed = false, Failures = ["Output is empty.", "Output video is not AV1."] })).ProcessAsync(DatabasePath, source, Settings(), force: false, new ListProgress(reported));
 
         result.ExitCode.Should().Be(ExitCode.ValidationFailure);
-        Steps(reported).Last().Should().Be("Failed validation: duration differs; no streams");
+        (result.Job.Status, result.Job.FailureCategory).Should().Be((JobStatus.Failed, FailureCategories.ValidationFailed));
+        Steps(reported).Last().Should().Be("Failed validation: Output is empty.; Output video is not AV1.");
         reported.Last().Tone.Should().Be(JobTone.Failure);
+    }
+
+    /// <summary>VOPT-117: a warned AV1 is ready, its warnings stored on the job and shown one per line in the warning tone.</summary>
+    [Fact]
+    public async Task WarningsLeaveTheJobReadyWithTheWarningsStoredAndShown()
+    {
+        var source = await SourceAsync();
+        var reported = new List<JobProgress>();
+        var report = new ValidationReport { Passed = true, Warnings = ["The AV1's video is 2 s shorter than the original's.", "The AV1 failed the decode test: bad frame"], SourceSizeBytes = 100, OutputSizeBytes = 50, PercentageSaved = 50 };
+
+        var result = await Processor(validator: new ReportingValidator(report)).ProcessAsync(DatabasePath, source, Settings(), force: false, new ListProgress(reported));
+
+        result.ExitCode.Should().Be(ExitCode.Success);
+        var stored = (await _repository.GetAsync(DatabasePath, result.Job.Id))!;
+        stored.Status.Should().Be(JobStatus.ReadyToFinalize);
+        stored.ValidationWarnings.Should().Equal(report.Warnings);
+        reported.TakeLast(3).Select(line => (line.Kind, line.Tone, line.Text)).Should().Equal(
+            (JobProgressKind.Step, JobTone.Success, "Ready to finalise: 100 B -> 50 B, 50.0% saved. Check it before finalising:"),
+            (JobProgressKind.Detail, JobTone.Warning, "The AV1's video is 2 s shorter than the original's."),
+            (JobProgressKind.Detail, JobTone.Warning, "The AV1 failed the decode test: bad frame"));
+    }
+
+    /// <summary>VOPT-117: an AV1 that saves too little ends the job as a CRF search with nothing worthwhile does, and is deleted.</summary>
+    [Fact]
+    public async Task AnAv1NotWorthKeepingSkipsTheJobAndIsDeletedWithItsRecord()
+    {
+        var source = await SourceAsync();
+        var settings = Settings();
+        var reported = new List<JobProgress>();
+        var report = new ValidationReport { Passed = false, NotWorthConverting = "the AV1 saves only 10 B, less than 1MiB (savings.minimumBytesSaved).", SourceSizeBytes = 100, OutputSizeBytes = 90 };
+
+        var result = await Processor(validator: new ReportingValidator(report)).ProcessAsync(DatabasePath, source, settings, force: false, new ListProgress(reported));
+
+        result.ExitCode.Should().Be(ExitCode.Success);
+        var stored = (await _repository.GetAsync(DatabasePath, result.Job.Id))!;
+        (stored.Status, stored.FailureCategory, stored.FailureMessage).Should().Be((JobStatus.Skipped, FailureCategories.NotWorthConverting, report.NotWorthConverting));
+        stored.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings));
+        File.Exists(stored.OutputPath).Should().BeFalse();
+        File.Exists(new OutputManifestStore().GetPath(stored.OutputPath!)).Should().BeFalse();
+        Steps(reported).Last().Should().Be("Not worth converting: the AV1 saves only 10 B, less than 1MiB (savings.minimumBytesSaved).");
+        reported.Last().Tone.Should().Be(JobTone.Warning);
     }
 
     /// <summary>
@@ -697,10 +739,9 @@ public sealed class JobProcessorTests : IDisposable
         }
     }
 
-    private sealed class FailingValidator : IOutputValidationService
+    private sealed class ReportingValidator(ValidationReport report) : IOutputValidationService
     {
-        public Task<ValidationReport> ValidateAsync(OutputManifest manifest, AppSettings settings, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ValidationReport { Passed = false, Failures = ["duration differs", "no streams"], ValidatedUtc = DateTimeOffset.UtcNow });
+        public Task<ValidationReport> ValidateAsync(OutputManifest manifest, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(report);
     }
 
     private sealed class UnreadyFiles : IFileReadinessService

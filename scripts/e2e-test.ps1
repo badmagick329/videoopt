@@ -64,8 +64,9 @@ $watchRoot = Join-Path $workDirectory 'videos'
 New-Item -ItemType Directory -Path $watchRoot | Out-Null
 try {
     # Three 1080p H.264 clips: 1080p is the lowest resolution band, and near-lossless H.264 clears any bitrate floor.
-    # Clip a is finalised with archive and clip c with keep; clip b's output is damaged to prove validation rejects it, and
-    # clip e's is truncated: validate refuses a job that already failed, so each damage check needs its own ready clip.
+    # Clip a is finalised with archive and clip c with keep. Clip b's output is damaged mid-file and clip e's truncated, which
+    # only warn; then b's is replaced by a non-video file and e's emptied, which fail. validate refuses a job that already
+    # failed, so each damage check needs its own ready clip.
     # Each carries a phone-style capture date, GPS point and com.android tag, which the output must keep.
     # Clip d is a .mov with PCM audio, as a camera or phone writes: AV1 cannot go in a .mov, so its output must be an .mp4
     # with the PCM re-encoded to FLAC, and it is finalised first, in delete mode.
@@ -147,19 +148,31 @@ validation:
     Assert ((Get-FormatTag $jobA.outputPath 'location') -eq '+51.5074-000.1278/') 'the output should keep the GPS location.'
     Assert ((Get-FormatTag $jobA.outputPath 'com.android.model') -eq 'Pixel 9 Pro') 'the output should keep the phone model.'
 
-    # Overwrite bytes mid-file: the container index and packet counts stay intact, so only the decode test can catch it.
+    # Overwrite bytes mid-file: the container index stays intact, so only the decode test can catch it. A doubtful check
+    # warns rather than fails (VOPT-117): the video stays ready, with the warning stored for the user to look at.
     $bytes = [System.IO.File]::ReadAllBytes($jobB.outputPath)
     $garbage = [byte[]]::new(64KB)
     [System.Random]::new(42).NextBytes($garbage)
     [System.Array]::Copy($garbage, 0, $bytes, [int]($bytes.Length / 2), [System.Math]::Min($garbage.Length, $bytes.Length / 4))
     [System.IO.File]::WriteAllBytes($jobB.outputPath, $bytes)
-    $corrupt = Invoke-Cli 7 @('validate', $jobB.id)
-    Assert ($corrupt -match 'Output failed the decode test') 'a corrupted output should fail the decode test.'
+    $corrupt = Invoke-Cli 0 @('validate', $jobB.id)
+    Assert ($corrupt -match 'The AV1 failed the decode test') "a corrupted output should warn that it failed the decode test: $corrupt"
+    $warnedB = Get-Jobs 'queue list' | Where-Object id -eq $jobB.id
+    Assert ($warnedB.status -eq 'ReadyToFinalize' -and @($warnedB.validationWarnings | Where-Object { $_ -match 'decode test' }).Count -eq 1) "clip b should stay ready with a decode-test warning; got $($warnedB.status): $($warnedB.validationWarnings -join ' | ')"
 
-    # A truncated output, as left by an interrupted transfer, must fail validation too.
+    # A truncated output, as left by an interrupted encode, warns that it is shorter than the original.
     $stream = [System.IO.File]::Open($jobE.outputPath, 'Open', 'ReadWrite')
     try { $stream.SetLength([long]($stream.Length / 2)) } finally { $stream.Dispose() }
-    Invoke-Cli 7 @('validate', $jobE.id) | Out-Null
+    $truncated = Invoke-Cli 0 @('validate', $jobE.id)
+    Assert ($truncated -match "The AV1's video is .* shorter than the original's") "a truncated output should warn that it is shorter: $truncated"
+
+    # Only an AV1 with nothing to review fails: one that is not video at all, or empty.
+    [System.IO.File]::WriteAllText($jobB.outputPath, 'not a video')
+    $unreadable = Invoke-Cli 7 @('validate', $jobB.id)
+    Assert ($unreadable -match 'could not be read by ffprobe') "an output that is not video should fail validation: $unreadable"
+    [System.IO.File]::WriteAllBytes($jobE.outputPath, [byte[]]::new(0))
+    $empty = Invoke-Cli 7 @('validate', $jobE.id)
+    Assert ($empty -match 'Output is empty') "an empty output should fail validation: $empty"
     # A job that failed is not checked again: validate names its status and exits 6.
     $refused = Invoke-Cli 6 @('validate', $jobE.id)
     Assert ($refused -match 'is Failed\.') "validate should refuse a failed job: $refused"

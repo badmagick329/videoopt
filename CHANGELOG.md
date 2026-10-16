@@ -1,6 +1,16 @@
 # Changelog
 
 ## [Unreleased]
+### Checking the AV1
+
+- Only a missing original or AV1, an empty AV1, an AV1 that ffprobe cannot read, or one whose video is not AV1 fails validation now.
+- A different length (beyond `validation.durationToleranceSeconds`), a different audio or subtitle stream count, audio sync that differs or could not be checked, and a failed or skipped decode test no longer fail the video. It stays ready to finalise with a warning. The run prints `Ready to finalise: <sizes>, <x>% saved. Check it before finalising:` and one line per warning. `validate` prints `Validation passed with warnings: saved <x>%. Check the AV1 before finalising it:` and the same lines.
+- An AV1 that is not smaller than the original (with `savings.requireSmallerOutput` on) or saves less than `savings.minimumBytesSaved` is now skipped as not worth converting, instead of failing. Its AV1 and validation record are deleted, and the original stays.
+- The video packet-count check is gone. It failed variable-frame-rate phone video that was fine.
+- The decode test now also runs on an AV1 that has warnings.
+- `validate` exits `0` for a pass, a pass with warnings and a video not worth converting, and `7` for a failure.
+- The run's tally counts warned videos in the ready count: `Ready to finalise: 4 (1 to check).` The full-screen view's log says `The run finished: 4 ready to finalise (1 to check).`
+- `queue list --json` and `history --json` have a new `validationWarnings` array, empty when there are none.
 
 ## [0.11.0] - 2026-10-16
 ### The full-screen view

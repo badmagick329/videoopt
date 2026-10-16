@@ -85,6 +85,7 @@ public enum RunEventKind
 /// <param name="Flag">The event's yes/no: worker up at conversion start, stopped after a video, question follows, answered no, setting up the worker.</param>
 /// <param name="Failures">For <see cref="RunEventKind.Summary"/>: the failed videos.</param>
 /// <param name="Percent">For <see cref="RunEventKind.Progress"/>: <see cref="JobProgress.Percent"/>, on a reading the next one replaces.</param>
+/// <param name="ToCheck">For <see cref="RunEventKind.Summary"/>: of <paramref name="Ready"/>, the videos with validation warnings.</param>
 public sealed record RunEvent(
     DateTimeOffset At,
     RunEventKind Kind,
@@ -102,7 +103,8 @@ public sealed record RunEvent(
     string? Tone = null,
     bool? Flag = null,
     IReadOnlyList<FailedQueueJob>? Failures = null,
-    int? Percent = null);
+    int? Percent = null,
+    int? ToCheck = null);
 
 /// <summary>
 /// The event file beside the database (<c>&lt;db&gt;.run.events</c>), JSON lines: a TUI open in another window follows a run

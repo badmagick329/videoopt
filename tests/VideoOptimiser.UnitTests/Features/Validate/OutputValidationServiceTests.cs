@@ -3,172 +3,156 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Validate;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Application.Tools;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests.Features.Validate;
 
 public sealed class OutputValidationServiceTests : IDisposable
 {
+    private static readonly MediaTimeline Timeline = new(0, 149.069, 2.251);
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
 
     public OutputValidationServiceTests() => Directory.CreateDirectory(_directory);
 
-    /// <summary>
-    /// Each row is a source timeline then an output timeline (first video timestamp, last video end, video packet count, first
-    /// audio timestamp) and the failure it must produce, or none. A shift of both streams by the same amount is no failure.
-    /// </summary>
+    public enum Check
+    {
+        None,
+        /// <summary>Both streams shifted by the same amount: no difference.</summary>
+        BothStreamsShifted,
+        /// <summary>No saving at all passes when neither setting asks for one.</summary>
+        SameSizeAllowed,
+        Missing,
+        Empty,
+        Unreadable,
+        NotAv1,
+        NotSmaller,
+        LargerThanMinimum,
+        SavesTooLittle,
+        Shorter,
+        AudioStreams,
+        SubtitleStreams,
+        AudioTiming,
+        AudioStartUnreadable,
+        TimelineUnreadable,
+        DecodeFails,
+        DecodeCannotRun
+    }
+
+    /// <summary>One row per check (VOPT-117): only a file with nothing to review fails; saving too little is a skip; every other doubt warns.</summary>
     [Theory]
-    [InlineData(1.881, 149.069, 3_577L, 4.132, 0d, 147.188, 3_577L, 2.251, null)]
-    [InlineData(0d, 149.069, 3_577L, 2.251, 0d, 145d, 3_577L, 2.251, "Output duration differs from the original.")]
-    [InlineData(1.881, 149.069, 3_577L, 4.132, 0d, 147.188, 3_577L, 3d, "Output audio timing differs from the original.")]
-    [InlineData(0d, 149.069, 3_577L, 2.251, 0d, 149.069, 3_576L, 2.251, null)]
-    [InlineData(0d, 149.069, 3_577L, 2.251, 0d, 149.069, 3_570L, 2.251, "Output video packet count differs from the original.")]
-    public async Task ValidateAsyncComparesTheTimelinesOfTheOriginalAndTheOutput(
-        double sourceStart, double sourceEnd, long sourcePackets, double sourceAudio,
-        double outputStart, double outputEnd, long outputPackets, double outputAudio, string? expectedFailure)
+    [InlineData(Check.None, ValidationVerdict.Passed, null)]
+    [InlineData(Check.BothStreamsShifted, ValidationVerdict.Passed, null)]
+    [InlineData(Check.SameSizeAllowed, ValidationVerdict.Passed, null)]
+    [InlineData(Check.Missing, ValidationVerdict.Failed, "Original or temporary output is missing.")]
+    [InlineData(Check.Empty, ValidationVerdict.Failed, "Output is empty.")]
+    [InlineData(Check.Unreadable, ValidationVerdict.Failed, "Output 'output.mkv' could not be read by ffprobe: moov atom not found")]
+    [InlineData(Check.NotAv1, ValidationVerdict.Failed, "Output video is not AV1.")]
+    [InlineData(Check.NotSmaller, ValidationVerdict.NotWorthConverting, "the AV1 is 100 B, no smaller than the original's 100 B (savings.requireSmallerOutput).")]
+    [InlineData(Check.LargerThanMinimum, ValidationVerdict.NotWorthConverting, "the AV1 is 120 B, no smaller than the original's 100 B, so it can't save 1B (savings.minimumBytesSaved).")]
+    [InlineData(Check.SavesTooLittle, ValidationVerdict.NotWorthConverting, "the AV1 saves only 50 B, less than 51B (savings.minimumBytesSaved).")]
+    [InlineData(Check.Shorter, ValidationVerdict.Warned, "The AV1's video is 4.069 s shorter than the original's.")]
+    [InlineData(Check.AudioStreams, ValidationVerdict.Warned, "The AV1 has 0 audio streams; the original has 1.")]
+    [InlineData(Check.SubtitleStreams, ValidationVerdict.Warned, "The AV1 has 1 subtitle stream; the original has 0.")]
+    [InlineData(Check.AudioTiming, ValidationVerdict.Warned, "The AV1's audio starts 0.749 s later relative to the video than in the original.")]
+    [InlineData(Check.AudioStartUnreadable, ValidationVerdict.Warned, "The audio's start time could not be read, so audio sync was not checked.")]
+    [InlineData(Check.TimelineUnreadable, ValidationVerdict.Warned, "The length and audio sync could not be checked: Malformed packet timing.")]
+    [InlineData(Check.DecodeFails, ValidationVerdict.Warned, "The AV1 failed the decode test: Error submitting packet to decoder: Invalid data found")]
+    [InlineData(Check.DecodeCannotRun, ValidationVerdict.Warned, "The decode test could not run: ffmpeg is gone")]
+    public async Task EachCheckGivesItsVerdict(Check check, ValidationVerdict expected, string? message)
     {
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(manifest, new MediaTimeline(sourceStart, sourceEnd, sourcePackets, sourceAudio), new MediaTimeline(outputStart, outputEnd, outputPackets, outputAudio));
+        var scenario = new Scenario();
+        switch (check)
+        {
+            case Check.BothStreamsShifted: scenario.Source = new MediaTimeline(1.881, 149.069, 4.132); scenario.Output = new MediaTimeline(0, 147.188, 2.251); break;
+            case Check.SameSizeAllowed: scenario.OutputBytes = 100; scenario.RequireSmallerOutput = false; break;
+            case Check.Missing: scenario.DeleteOutput = true; break;
+            case Check.Empty: scenario.OutputBytes = 0; break;
+            case Check.Unreadable: scenario.OutputProbeError = new MediaProbeException("moov atom not found"); break;
+            case Check.NotAv1: scenario.OutputCodec = "hevc"; break;
+            case Check.NotSmaller: scenario.OutputBytes = 100; break;
+            case Check.LargerThanMinimum: scenario.OutputBytes = 120; scenario.RequireSmallerOutput = false; scenario.MinimumBytesSaved = "1B"; break;
+            case Check.SavesTooLittle: scenario.MinimumBytesSaved = "51B"; break;
+            case Check.Shorter: scenario.Output = new MediaTimeline(0, 145, 2.251); break;
+            case Check.AudioStreams: scenario.OutputAudioStreams = 0; break;
+            case Check.SubtitleStreams: scenario.OutputSubtitleStreams = 1; break;
+            case Check.AudioTiming: scenario.Source = new MediaTimeline(1.881, 149.069, 4.132); scenario.Output = new MediaTimeline(0, 147.188, 3); break;
+            case Check.AudioStartUnreadable: scenario.Output = new MediaTimeline(0, 149.069, null); break;
+            case Check.TimelineUnreadable: scenario.Output = null; break;
+            case Check.DecodeFails: scenario.Decode = new DecodeTestResult(false, "Error submitting packet to decoder: Invalid data found"); break;
+            case Check.DecodeCannotRun: scenario.DecodeError = new IOException("ffmpeg is gone"); break;
+        }
 
-        if (expectedFailure is null) result.Passed.Should().BeTrue();
-        else result.Failures.Should().Contain(expectedFailure);
+        var report = await ValidateAsync(scenario);
+
+        report.Verdict.Should().Be(expected);
+        report.Passed.Should().Be(expected is ValidationVerdict.Passed or ValidationVerdict.Warned);
+        report.Failures.Should().Equal(expected == ValidationVerdict.Failed ? [message!] : []);
+        report.NotWorthConverting.Should().Be(expected == ValidationVerdict.NotWorthConverting ? message : null);
+        report.Warnings.Should().Equal(expected == ValidationVerdict.Warned ? [message!] : []);
     }
 
     [Fact]
-    public async Task ValidateAsyncFailsSafelyWhenTheOutputTimelineCannotBeRead()
+    public async Task AHardFailureBeatsWarningsAndSkipsTheDecodeTest()
     {
-        // The real timeline probe wraps malformed ffprobe JSON in a MediaProbeException, so that is what reaches validation.
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            null);
+        var scenario = new Scenario { OutputCodec = "hevc", Output = new MediaTimeline(0, 145, 2.251) };
 
-        result.Passed.Should().BeFalse();
-        result.Failures.Should().Contain("Output media timeline could not be validated.");
+        var report = await ValidateAsync(scenario);
+
+        report.Verdict.Should().Be(ValidationVerdict.Failed);
+        report.Warnings.Should().BeEmpty();
+        scenario.DecodeWindows.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task ValidateAsyncFailsWhenBytesSavedAreBelowMinimum()
+    public async Task NotWorthConvertingBeatsWarningsAndSkipsTheDecodeTest()
     {
-        var manifest = await CreateManifestAsync();
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            minimumBytesSaved: "51B");
+        var scenario = new Scenario { MinimumBytesSaved = "51B", Output = new MediaTimeline(0, 145, 2.251) };
 
-        result.Passed.Should().BeFalse();
-        result.Failures.Should().Equal("Output saves less than 51B.");
+        var report = await ValidateAsync(scenario);
+
+        report.Verdict.Should().Be(ValidationVerdict.NotWorthConverting);
+        report.Warnings.Should().BeEmpty();
+        scenario.DecodeWindows.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task ValidateAsyncFailsWhenFfprobeCannotReadTheOutput()
+    public async Task AWarnedAv1IsStillDecodedSoADecodeProblemIsListedToo()
     {
-        var manifest = await CreateManifestAsync();
-        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
-        var decodeTester = new RecordingDecodeTester(new DecodeTestResult(true, null));
-        var result = await ValidateAsync(
-            manifest,
-            timeline,
-            timeline,
-            outputProbeError: new MediaProbeException("ffprobe exited with 1: [mov,mp4,m4a,3gp,3g2,mj2 @ 0000] moov atom not found"),
-            decodeTester: decodeTester);
+        var scenario = new Scenario { Output = new MediaTimeline(0, 145, 2.251), Decode = new DecodeTestResult(false, "corrupt frame") };
 
-        result.Passed.Should().BeFalse();
-        result.Failures.Should().Equal($"Output '{Path.GetFileName(manifest.OutputPath)}' could not be read by ffprobe: ffprobe exited with 1: [mov,mp4,m4a,3gp,3g2,mj2 @ 0000] moov atom not found");
-        result.OutputSizeBytes.Should().Be(50);
-        decodeTester.Windows.Should().BeEmpty();
-    }
+        var report = await ValidateAsync(scenario);
 
-    [Fact]
-    public async Task ValidateAsyncFailsWhenOutputIsEmpty()
-    {
-        var manifest = await CreateManifestAsync(outputBytes: 0);
-        var result = await ValidateAsync(manifest, new MediaTimeline(0, 149.069, 3_577, 2.251), null);
-
-        result.Passed.Should().BeFalse();
-        result.Failures.Should().Equal("Output is empty.");
-    }
-
-    [Fact]
-    public async Task ValidateAsyncFailsWhenOutputDoesNotDecode()
-    {
-        var manifest = await CreateManifestAsync();
-        var decodeTester = new RecordingDecodeTester(new DecodeTestResult(false, "Error submitting packet to decoder: Invalid data found"));
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            decodeTester: decodeTester);
-
-        result.Passed.Should().BeFalse();
-        result.Failures.Should().Equal("Output failed the decode test: Error submitting packet to decoder: Invalid data found");
-        decodeTester.Windows.Should().ContainSingle();
+        report.Warnings.Should().Equal("The AV1's video is 4.069 s shorter than the original's.", "The AV1 failed the decode test: corrupt frame");
+        scenario.DecodeWindows.Should().ContainSingle();
     }
 
     [Fact]
     public async Task ValidateAsyncDecodesStartMiddleAndTailOfLongOutput()
     {
-        var manifest = await CreateManifestAsync();
-        var decodeTester = new RecordingDecodeTester(new DecodeTestResult(true, null));
-        var result = await ValidateAsync(
-            manifest,
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            new MediaTimeline(0, 149.069, 3_577, 2.251),
-            decodeTester: decodeTester);
+        var scenario = new Scenario();
 
-        result.Passed.Should().BeTrue();
-        decodeTester.Windows.Should().Equal(
+        var report = await ValidateAsync(scenario);
+
+        report.Verdict.Should().Be(ValidationVerdict.Passed);
+        scenario.DecodeWindows.Should().Equal(
             new DecodeWindow(0, 10),
             new DecodeWindow((147.189 - 10) / 2, 10),
             new DecodeWindow(147.189 - 10, null));
     }
 
-    [Fact]
-    public async Task ValidateAsyncFailsWhenTheOutputVideoIsNotAv1()
-    {
-        var manifest = await CreateManifestAsync();
-        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
-        var decodeTester = new RecordingDecodeTester(new DecodeTestResult(true, null));
-
-        var result = await ValidateAsync(manifest, timeline, timeline, outputCodec: "hevc", decodeTester: decodeTester);
-
-        result.Passed.Should().BeFalse();
-        result.Failures.Should().Equal("Output video is not AV1.");
-        decodeTester.Windows.Should().BeEmpty("a full decode only runs for an output that would otherwise pass");
-    }
-
-    [Fact]
-    public async Task ValidateAsyncFailsWhenTheOutputDropsAnAudioStream()
-    {
-        var manifest = await CreateManifestAsync();
-        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
-
-        var result = await ValidateAsync(manifest, timeline, timeline, outputAudioStreams: 0);
-
-        result.Passed.Should().BeFalse();
-        result.Failures.Should().Equal("Output stream counts differ from the original.");
-    }
-
+    /// <summary>A record written before VOPT-117 has no Warnings and no NotWorthConverting; it must read as it was judged then.</summary>
     [Theory]
-    [InlineData(true, 100, true)]
-    [InlineData(false, 100, false)]
-    public async Task ValidateAsyncRequiresASmallerOutputOnlyWhenTheSettingAsksForIt(bool requireSmallerOutput, int outputBytes, bool expectedFailure)
+    [InlineData("""{"Passed":true,"Failures":[]}""", ValidationVerdict.Passed)]
+    [InlineData("""{"Passed":false,"Failures":["Output duration differs from the original."]}""", ValidationVerdict.Failed)]
+    public async Task ARecordFromBeforeWarningsReadsAsItWasJudged(string validation, ValidationVerdict expected)
     {
-        var manifest = await CreateManifestAsync(outputBytes);
-        var timeline = new MediaTimeline(0, 149.069, 3_577, 2.251);
+        var output = Path.Combine(_directory, "old.mkv");
+        await File.WriteAllTextAsync(output + ".manifest.json", $$"""{"SourcePath":"a.mkv","OutputPath":"{{output.Replace("\\", "\\\\")}}","Validation":{{validation}}}""");
 
-        var result = await ValidateAsync(manifest, timeline, timeline, requireSmallerOutput: requireSmallerOutput);
+        var manifest = await new OutputManifestStore().LoadAsync(output);
 
-        if (expectedFailure)
-        {
-            result.Passed.Should().BeFalse();
-            result.Failures.Should().Contain("Output is not smaller than the original.");
-        }
-        else
-        {
-            result.Failures.Should().NotContain("Output is not smaller than the original.");
-        }
+        manifest.Validation!.Warnings.Should().BeEmpty();
+        manifest.Validation.Verdict.Should().Be(expected);
     }
 
     [Theory]
@@ -185,72 +169,77 @@ public sealed class OutputValidationServiceTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private static async Task<ValidationReport> ValidateAsync(
-        OutputManifest manifest,
-        MediaTimeline sourceTimeline,
-        MediaTimeline? outputTimeline,
-        string minimumBytesSaved = "0B",
-        RecordingDecodeTester? decodeTester = null,
-        Exception? outputProbeError = null,
-        string outputCodec = "av1",
-        int outputAudioStreams = 1,
-        bool requireSmallerOutput = true)
+    private sealed class Scenario
     {
-        decodeTester ??= new RecordingDecodeTester(new DecodeTestResult(true, null));
+        public MediaTimeline Source { get; set; } = Timeline;
+        public MediaTimeline? Output { get; set; } = Timeline;
+        public int OutputBytes { get; set; } = 50;
+        public bool DeleteOutput { get; set; }
+        public string MinimumBytesSaved { get; set; } = "0B";
+        public bool RequireSmallerOutput { get; set; } = true;
+        public Exception? OutputProbeError { get; set; }
+        public string OutputCodec { get; set; } = "av1";
+        public int OutputAudioStreams { get; set; } = 1;
+        public int OutputSubtitleStreams { get; set; }
+        public DecodeTestResult Decode { get; set; } = new(true, null);
+        public Exception? DecodeError { get; set; }
+        public List<DecodeWindow> DecodeWindows { get; } = [];
+    }
+
+    private async Task<ValidationReport> ValidateAsync(Scenario scenario)
+    {
+        var source = Path.Combine(_directory, "source.mkv");
+        var output = Path.Combine(_directory, "output.mkv");
+        await File.WriteAllBytesAsync(source, new byte[100]);
+        await File.WriteAllBytesAsync(output, new byte[scenario.OutputBytes]);
+        if (scenario.DeleteOutput) File.Delete(output);
+        var manifest = new OutputManifest { SourcePath = source, OutputPath = output };
         var service = new OutputValidationService(
-            _ => new StaticMediaProbe(manifest.OutputPath, outputProbeError, outputCodec, outputAudioStreams),
-            _ => new StaticTimelineProbe(manifest.SourcePath, sourceTimeline, outputTimeline),
-            _ => decodeTester);
+            _ => new StaticMediaProbe(output, scenario),
+            _ => new StaticTimelineProbe(source, scenario),
+            _ => new RecordingDecodeTester(scenario));
         return await service.ValidateAsync(manifest, new AppSettings
         {
-            Savings = new SavingsSettings { RequireSmallerOutput = requireSmallerOutput, MinimumBytesSaved = minimumBytesSaved },
+            Savings = new SavingsSettings { RequireSmallerOutput = scenario.RequireSmallerOutput, MinimumBytesSaved = scenario.MinimumBytesSaved },
             Validation = new ValidationSettings { DurationToleranceSeconds = 0.1 }
         });
     }
 
-    private async Task<OutputManifest> CreateManifestAsync(int outputBytes = 50)
+    private sealed class RecordingDecodeTester(Scenario scenario) : IMediaDecodeTester
     {
-        var source = Path.Combine(_directory, $"source-{Guid.NewGuid():N}.mkv");
-        var output = Path.Combine(_directory, $"output-{Guid.NewGuid():N}.mkv");
-        await File.WriteAllBytesAsync(source, new byte[100]);
-        await File.WriteAllBytesAsync(output, new byte[outputBytes]);
-        return new OutputManifest { SourcePath = source, OutputPath = output };
-    }
-
-    private sealed class RecordingDecodeTester(DecodeTestResult result) : IMediaDecodeTester
-    {
-        public List<DecodeWindow> Windows { get; } = [];
-
         public Task<DecodeTestResult> DecodeAsync(string path, DecodeWindow window, CancellationToken cancellationToken = default)
         {
-            Windows.Add(window);
-            return Task.FromResult(result);
+            scenario.DecodeWindows.Add(window);
+            return scenario.DecodeError is { } error ? Task.FromException<DecodeTestResult>(error) : Task.FromResult(scenario.Decode);
         }
     }
 
-    private sealed class StaticMediaProbe(string outputPath, Exception? outputError = null, string outputCodec = "av1", int outputAudioStreams = 1) : IMediaProbe
+    private sealed class StaticMediaProbe(string outputPath, Scenario scenario) : IMediaProbe
     {
-        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
-            path == outputPath && outputError is not null ? Task.FromException<MediaInfo>(outputError) : Task.FromResult(
-            new MediaInfo(
-                path == outputPath ? outputCodec : "h264",
+        public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
+        {
+            var isOutput = path == outputPath;
+            if (isOutput && scenario.OutputProbeError is { } error) return Task.FromException<MediaInfo>(error);
+            return Task.FromResult(new MediaInfo(
+                isOutput ? scenario.OutputCodec : "h264",
                 1,
-                path == outputPath ? outputAudioStreams : 1,
+                isOutput ? scenario.OutputAudioStreams : 1,
+                isOutput ? scenario.OutputSubtitleStreams : 0,
                 0,
-                0,
-                path == outputPath ? 147.189 : 149.069,
+                isOutput ? 147.189 : 149.069,
                 null,
                 1920,
                 1080,
                 10_000_000));
+        }
     }
 
-    private sealed class StaticTimelineProbe(string sourcePath, MediaTimeline sourceTimeline, MediaTimeline? outputTimeline) : IMediaTimelineProbe
+    private sealed class StaticTimelineProbe(string sourcePath, Scenario scenario) : IMediaTimelineProbe
     {
         public Task<MediaTimeline> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
             path == sourcePath
-                ? Task.FromResult(sourceTimeline)
-                : outputTimeline is { } timeline
+                ? Task.FromResult(scenario.Source)
+                : scenario.Output is { } timeline
                     ? Task.FromResult(timeline)
                     : throw new MediaProbeException("Malformed packet timing.");
     }

@@ -41,7 +41,6 @@ public sealed class FfprobeMediaTimelineProbeTests
 
         timeline.FirstVideoTimestampSeconds.Should().Be(1.881);
         timeline.LastVideoEndTimestampSeconds.Should().Be(2.005);
-        timeline.PrimaryVideoPacketCount.Should().Be(2);
         timeline.FirstPrimaryAudioTimestampSeconds.Should().Be(4.132);
     }
 }

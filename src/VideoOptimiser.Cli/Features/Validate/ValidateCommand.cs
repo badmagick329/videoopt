@@ -1,3 +1,4 @@
+using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Validate;
 using VideoOptimiser.Application.Jobs;
@@ -43,17 +44,25 @@ internal sealed class ValidateCommand(IJobRepository repository, IOutputManifest
         }
         manifest.Validation = await validation.ValidateAsync(manifest, configuration.Settings, cancellationToken);
         // From here the record and the job must agree, so Ctrl+C cannot leave one written without the other.
-        await store.SaveAsync(manifest, CancellationToken.None);
-        job.ValidationPassed = manifest.Validation.Passed;
-        job.SourceSizeBytes = manifest.Validation.SourceSizeBytes;
-        job.OutputSizeBytes = manifest.Validation.OutputSizeBytes;
-        job.PercentageSaved = manifest.Validation.PercentageSaved;
-        job.Status = manifest.Validation.Passed ? JobStatus.ReadyToFinalize : JobStatus.Failed;
-        job.ResumeStatus = null;
-        if (manifest.Validation.Passed) { job.FailureCategory = null; job.FailureMessage = null; }
-        else { job.FailureCategory = "ValidationFailed"; job.FailureMessage = string.Join("; ", manifest.Validation.Failures); job.CompletedUtc = DateTimeOffset.UtcNow; }
+        var verdict = await JobValidation.RecordAsync(job, manifest, configuration.Settings, store);
         await repository.UpdateAsync(configuration.Settings.Database.Path, job, CancellationToken.None);
-        Console.WriteLine(manifest.Validation.Passed ? $"Validation passed: saved {manifest.Validation.PercentageSaved:F1}%" : "Validation failed: " + string.Join("; ", manifest.Validation.Failures));
-        return manifest.Validation.Passed ? (int)ExitCode.Success : (int)ExitCode.ValidationFailure;
+        var saved = $"saved {manifest.Validation.PercentageSaved.ToString("F1", CultureInfo.InvariantCulture)}%";
+        switch (verdict)
+        {
+            case ValidationVerdict.Passed:
+                Console.WriteLine($"Validation passed: {saved}.");
+                return (int)ExitCode.Success;
+            case ValidationVerdict.Warned:
+                Console.WriteLine($"Validation passed with warnings: {saved}. Check the AV1 before finalising it:");
+                foreach (var warning in job.ValidationWarnings) Console.WriteLine($"  {OutputStyle.Tone(JobTone.Warning, warning)}");
+                return (int)ExitCode.Success;
+            // A skip is not a failure (RunContracts), so it exits 0 like a run that skips.
+            case ValidationVerdict.NotWorthConverting:
+                Console.WriteLine($"Not worth converting: {job.FailureMessage} The AV1 was deleted; the original stays.");
+                return (int)ExitCode.Success;
+            default:
+                Console.WriteLine($"Validation failed: {job.FailureMessage}");
+                return (int)ExitCode.ValidationFailure;
+        }
     }
 }

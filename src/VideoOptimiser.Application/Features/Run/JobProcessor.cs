@@ -176,32 +176,26 @@ public sealed class JobProcessor(
                 job.ManifestPath = manifests.GetPath(encodedPath);
             }
 
-            stage = "ValidationFailed";
+            stage = FailureCategories.ValidationFailed;
             job.Status = JobStatus.Validating;
             job.ResumeStatus = null;
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
             var decodeTest = string.Equals(settings.Validation.DecodeTest, DecodeTestModes.None, StringComparison.OrdinalIgnoreCase) ? string.Empty : " and decode test";
             progress?.Report(JobProgress.Step($"Checking the output: streams, duration, savings{decodeTest}."));
             manifest.Validation = await validator.ValidateAsync(manifest, settings, cancellationToken);
-            await manifests.SaveAsync(manifest, cancellationToken);
-            job.ValidationPassed = manifest.Validation.Passed;
-            job.SourceSizeBytes = manifest.Validation.SourceSizeBytes;
-            job.OutputSizeBytes = manifest.Validation.OutputSizeBytes;
-            job.PercentageSaved = manifest.Validation.PercentageSaved;
             // A validation resumed on this PC needs no worker, and this run may have none to reach. The workspace it leaves is
             // removed by the sweep of the workspaces of finished jobs, which a run makes on the worker once this job has ended
             // (VOPT-90).
             if (session.IsRemote && !canReuseOutput) await session.CleanupAsync(cancellationToken);
-            if (!manifest.Validation.Passed)
+            var outcome = await JobValidation.RecordAsync(job, manifest, settings, manifests);
+            await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
+            foreach (var line in JobValidation.Describe(job, outcome)) progress?.Report(line);
+            return outcome switch
             {
-                return await FailAsync(job, databasePath, "ValidationFailed", string.Join("; ", manifest.Validation.Failures), ExitCode.ValidationFailure, progress, cancellationToken);
-            }
-
-            job.Status = JobStatus.ReadyToFinalize;
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            // Console output stays ASCII: redirected output and legacy consoles use a code page that drops characters like "→".
-            progress?.Report(JobProgress.Outcome(JobTone.Success, $"Ready to finalise: {HumanReadableValues.FormatSize(job.SourceSizeBytes ?? 0)} -> {HumanReadableValues.FormatSize(job.OutputSizeBytes ?? 0)}, {(job.PercentageSaved ?? 0).ToString("F1", CultureInfo.InvariantCulture)}% saved."));
-            return new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is ready to finalise.");
+                ValidationVerdict.Failed => new JobProcessingResult(job, ExitCode.ValidationFailure, job.FailureMessage!),
+                ValidationVerdict.NotWorthConverting => new JobProcessingResult(job, ExitCode.Success, job.FailureMessage!),
+                _ => new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is ready to finalise.")
+            };
         }
         catch (OperationCanceledException)
         {
@@ -392,7 +386,7 @@ public sealed class JobProcessor(
         await jobs.UpdateAsync(databasePath, job, cancellationToken);
         progress?.Report(JobProgress.Outcome(JobTone.Failure, category switch
         {
-            "ValidationFailed" => $"Failed validation: {message}",
+            FailureCategories.ValidationFailed => $"Failed validation: {message}",
             "StagingFailed" => $"Failed during the upload: {message}",
             "CrfSearchFailed" => $"Failed during the CRF search: {message}",
             "EncodeFailed" => $"Failed during encoding: {message}",

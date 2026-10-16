@@ -30,6 +30,18 @@ public sealed class QueueServiceTests : IDisposable
         result.ExitCode.Should().Be(ExitCode.Success);
     }
 
+    [Fact]
+    public async Task RunAsyncCountsAWarnedReadyJobAsReadyAndToCheck()
+    {
+        var (databasePath, jobs) = await QueuedAsync("a.mp4");
+        var warned = new JobRecord { Id = jobs[0].Id, SourcePath = jobs[0].SourcePath, Status = JobStatus.ReadyToFinalize, ValidationWarnings = ["The decode test could not run: ffmpeg is gone"] };
+        var queue = new QueueService(_repository, new ResultProcessor(new JobProcessingResult(warned, ExitCode.Success, "ready")), new DatabaseLocks(), new CommandHints(null));
+
+        var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
+
+        (result.ReadyToFinalize, result.ToCheck).Should().Be((1, 1));
+    }
+
     /// <summary>
     /// Every later job would retry the dead worker and fail the same way, so the run stops at the first unreachable result.
     /// That job resumes, so it is not a failure, but the exit code counts it as one, as before (VOPT-69).

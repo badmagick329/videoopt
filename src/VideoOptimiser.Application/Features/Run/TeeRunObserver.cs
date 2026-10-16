@@ -79,10 +79,10 @@ public sealed class TeeRunObserver(IRunObserver primary, IRunObserver secondary)
         secondary.StoppedAfter(last, notStarted);
     }
 
-    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter)
+    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter, int toCheck)
     {
-        primary.Summary(ready, skipped, failures, readyTotal, stoppedAfter);
-        secondary.Summary(ready, skipped, failures, readyTotal, stoppedAfter);
+        primary.Summary(ready, skipped, failures, readyTotal, stoppedAfter, toCheck);
+        secondary.Summary(ready, skipped, failures, readyTotal, stoppedAfter, toCheck);
     }
 
     public void StoppedWithoutManagedWorker(JobInterruptedException? interrupted, string? manualHost)

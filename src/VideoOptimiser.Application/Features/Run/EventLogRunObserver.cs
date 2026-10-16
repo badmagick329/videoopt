@@ -69,8 +69,8 @@ public sealed class EventLogRunObserver(IRunEventLog log, TimeProvider time) : I
 
     public void StoppedAfter(JobRecord last, int notStarted) => Write(RunEventKind.StoppedAfter, jobId: last.Id, sourcePath: last.SourcePath, count: notStarted);
 
-    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter) =>
-        Write(RunEventKind.Summary, count: readyTotal, ready: ready, skipped: skipped, flag: stoppedAfter, failures: failures);
+    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter, int toCheck) =>
+        Write(RunEventKind.Summary, count: readyTotal, ready: ready, skipped: skipped, flag: stoppedAfter, failures: failures, toCheck: toCheck);
 
     public void StoppedWithoutManagedWorker(JobInterruptedException? interrupted, string? manualHost) =>
         Write(RunEventKind.StoppedWithoutManagedWorker, jobId: interrupted?.Job.Id, sourcePath: interrupted?.Job.SourcePath, worker: manualHost, stage: interrupted?.Stage.ToString());
@@ -131,8 +131,9 @@ public sealed class EventLogRunObserver(IRunEventLog log, TimeProvider time) : I
         string? tone = null,
         bool? flag = null,
         IReadOnlyList<FailedQueueJob>? failures = null,
-        int? percent = null) =>
-        log.Append(new RunEvent(time.GetUtcNow(), kind, jobId, sourcePath, count, ready, skipped, text, worker, fate, stage, runEnd, progress, tone, flag, failures, percent));
+        int? percent = null,
+        int? toCheck = null) =>
+        log.Append(new RunEvent(time.GetUtcNow(), kind, jobId, sourcePath, count, ready, skipped, text, worker, fate, stage, runEnd, progress, tone, flag, failures, percent, toCheck));
 
     // Progress<T> posts to a thread-pool thread when there is no synchronisation context, which would reorder events the
     // flow raises around them.

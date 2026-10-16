@@ -385,7 +385,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         var jobs = await repository.ListAsync(databasePath, terminal, cancellationToken);
         if (command.Json)
         {
-            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.Held, job.SourcePath, job.SourceKind == JobSourceKind.Immich ? "immich" : "file", job.ImmichAssetId, job.ImmichNewAssetId, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.UpdatedUtc)).ToArray();
+            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.Held, job.SourcePath, job.SourceKind == JobSourceKind.Immich ? "immich" : "file", job.ImmichAssetId, job.ImmichNewAssetId, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.ValidationWarnings, job.UpdatedUtc)).ToArray();
             Console.WriteLine(JsonSerializer.Serialize(output, QueueJsonContext.Default.JobJsonOutputArray));
         }
         else if (jobs.Count == 0)

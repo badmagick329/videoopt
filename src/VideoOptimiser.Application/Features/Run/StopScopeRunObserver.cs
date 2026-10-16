@@ -49,7 +49,7 @@ public sealed class StopScopeRunObserver(RunStop stop) : IRunObserver
 
     public void StoppedAfter(JobRecord last, int notStarted) { }
 
-    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter) { }
+    public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter, int toCheck) { }
 
     public void StoppedWithoutManagedWorker(JobInterruptedException? interrupted, string? manualHost) { }
 

@@ -6,7 +6,7 @@ namespace VideoOptimiser.Infrastructure.Persistence;
 public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
 {
     /// <summary>The newest migration below. <see cref="SqliteSchemaCheck"/> refuses a database without it; raise both together.</summary>
-    public const int CurrentVersion = 11;
+    public const int CurrentVersion = 12;
 
     public async Task InitializeAsync(string databasePath, CancellationToken cancellationToken = default)
     {
@@ -189,6 +189,13 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
             // still settles its original.
             await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN dismissed_utc TEXT NULL;", cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (11, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
+        if (!await HasMigrationAsync(connection, 12, cancellationToken))
+        {
+            // Validation warnings (VOPT-117): what a ready video's check asks the user to look at, one per line. Null on every
+            // earlier job, which validation either passed outright or failed.
+            await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN validation_warnings TEXT NULL;", cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (12, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
         await transaction.CommitAsync(cancellationToken);
     }

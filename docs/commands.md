@@ -68,7 +68,7 @@ A run reads the queue again before each video, so these count from its next vide
 
 | Command | What it does |
 | --- | --- |
-| `validate <job-id>` | Run the checks again on the AV1 of a video that is ready to finalise. |
+| `validate <job-id>` | Run the checks again on the AV1 of a video that is ready to finalise. It exits `0` when the AV1 passes, passes with warnings (length, streams, audio sync or the decode test) or turns out not worth converting, in which case the AV1 is deleted. It exits `7` when the original or AV1 is missing, the AV1 is empty or unreadable, or its video is not AV1. |
 | `finalize <job-id>`, `finalize --ready` | Replace one original, or every ready one, Immich videos included. |
 | `immich finalize` | Finalise only the Immich videos: upload each AV1 to Immich and move the original to Immich's trash. |
 | `queue reject <job-id>` | Reject a video that is ready to finalise: delete its AV1 (and an Immich video's download) now, and keep the original. Later `queue add` and `immich run` pass over it until its file changes. |

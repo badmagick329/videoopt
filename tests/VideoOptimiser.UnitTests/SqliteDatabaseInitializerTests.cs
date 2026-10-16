@@ -147,7 +147,30 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         dismissed.DismissedUtc.Should().NotBeNull();
         dismissed.Status.Should().Be(JobStatus.Failed);
         dismissed.UpdatedUtc.Should().Be(job.UpdatedUtc);
-        SqliteDatabaseInitializer.CurrentVersion.Should().Be(11);
+    }
+
+    [Fact]
+    public async Task MigrationTwelveReadsAnEarlierJobWithNoWarningsAndKeepsNewOnes()
+    {
+        var databasePath = Path.Combine(_directory, "migration-eleven.db");
+        await new SqliteDatabaseInitializer().InitializeAsync(databasePath);
+        var ready = Guid.NewGuid();
+        // A database exactly as migration 11 left it, with a ready video from then.
+        await ExecuteAsync(databasePath, $$"""
+            ALTER TABLE jobs DROP COLUMN validation_warnings;
+            DELETE FROM schema_migrations WHERE version = 12;
+            INSERT INTO jobs (id, source_path, source_fingerprint, status, created_utc, updated_utc) VALUES
+                ('{{ready:N}}', 'C:\Videos\old.mp4', 'f', {{(int)JobStatus.ReadyToFinalize}}, '2026-01-01T00:00:00.0000000+00:00', '2026-01-01T00:00:00.0000000+00:00');
+            """);
+
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var job = (await repository.GetAsync(databasePath, ready))!;
+        job.ValidationWarnings.Should().BeEmpty();
+        job.ValidationWarnings = ["The AV1's video is 1.2 s shorter than the original's.", "The decode test could not run: ffmpeg is gone"];
+        await repository.UpdateAsync(databasePath, job);
+
+        (await repository.GetAsync(databasePath, ready))!.ValidationWarnings.Should().Equal(job.ValidationWarnings);
+        SqliteDatabaseInitializer.CurrentVersion.Should().Be(12);
     }
 
     /// <summary>A database exactly as migration 7 left it: the current schema without migration 8's columns.</summary>
