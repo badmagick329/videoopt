@@ -29,6 +29,29 @@ public sealed class SqliteMediaProbeCacheTests : IDisposable
         entry.MediaInfo.Should().Be(media);
     }
 
+    /// <summary>
+    /// Version 1 read no bitrate for a video stream without its own. Those rows must be probed again; the rest read the
+    /// same under version 2 and stay, so the upgrade does not re-probe a whole library.
+    /// </summary>
+    [Fact]
+    public async Task LoadAllAsyncDropsVersionOneRowsWithoutABitrateOnly()
+    {
+        var cache = Cache();
+        var withBitrate = Path.Combine(_directory, "with.mkv");
+        var withoutBitrate = Path.Combine(_directory, "without.mkv");
+        await cache.StoreAsync(DatabasePath, new MediaProbeCacheEntry(withBitrate, 1, 1, new MediaInfo("h264", 1, 1, 0, 0, 10, 1, 1920, 1080, 9_000_000)));
+        await cache.StoreAsync(DatabasePath, new MediaProbeCacheEntry(withoutBitrate, 1, 1, new MediaInfo("h264", 1, 1, 0, 0, 10, 1, 1920, 1080, null)));
+        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE media_probe_cache SET cache_schema_version = 1;";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        (await cache.LoadAllAsync(DatabasePath)).Select(entry => entry.SourcePath).Should().Equal(withBitrate);
+    }
+
     [Fact]
     public async Task ScanAsyncReusesCachedProbeAndReevaluatesCurrentEligibilityRules()
     {

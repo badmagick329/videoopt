@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixes
+
+- MKV files without a recorded video bitrate (common from ffmpeg and yt-dlp) no longer fail every rule with "video bitrate is unavailable". The whole file's bitrate, audio included, is used instead. The next `queue add` probes those files again; the rest of the library stays cached.
 
 ## [0.12.0] - 2026-10-16
 ### Breaking changes

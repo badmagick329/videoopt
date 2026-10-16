@@ -10,7 +10,10 @@ namespace VideoOptimiser.Infrastructure.Persistence;
 /// </summary>
 public sealed class SqliteMediaProbeCache(IDatabaseInitializer databaseInitializer, SqliteOpenMode mode = SqliteOpenMode.ReadWriteCreate) : IMediaProbeCache
 {
-    public const int CacheSchemaVersion = 1;
+    // Bump when the probe reads a fact differently, so rows cached by the old reading are probed again.
+    // 2: a video stream without its own bitrate takes the whole file's. A version 1 row that has a bitrate reads the same
+    // under 2, so LoadAllAsync keeps it: only the rows without one are probed again, not the whole library.
+    public const int CacheSchemaVersion = 2;
 
     public async Task<IReadOnlyList<MediaProbeCacheEntry>> LoadAllAsync(
         string databasePath,
@@ -23,7 +26,8 @@ public sealed class SqliteMediaProbeCache(IDatabaseInitializer databaseInitializ
                    primary_video_codec, video_stream_count, audio_stream_count, subtitle_stream_count, attachment_count,
                    duration_seconds, size_bytes, primary_video_width, primary_video_height, primary_video_bitrate
             FROM media_probe_cache
-            WHERE cache_schema_version = $cacheSchemaVersion;
+            WHERE cache_schema_version = $cacheSchemaVersion
+               OR (cache_schema_version = 1 AND primary_video_bitrate IS NOT NULL);
             """;
         command.Parameters.AddWithValue("$cacheSchemaVersion", CacheSchemaVersion);
 

@@ -21,7 +21,7 @@ eligibility:
 
 - `codecs` takes any codec name ffprobe reports, such as `h264`, `hevc`, `mpeg4`, `vp9` or `prores`.
 - `resolution` is `1080p-1440p`, `1440p-4k` or `4k+`, measured by total pixels.
-- `minimumVideoBitrate` is the video stream's bitrate as ffprobe reports it. A file without one never matches.
+- `minimumVideoBitrate` is the video stream's bitrate as ffprobe reports it. Many MKV files don't record one, so the whole file's bitrate is used instead. That figure includes the audio, so it reads slightly high.
 - Only files with an extension in `eligibility.extensions` are scanned. The default is `.mkv`, `.mp4`, `.mov` and `.m4v`.
 - `queue add` never queues a video too small to save `savings.minimumBytesSaved` (100 MiB by default), even with `--force`.
 

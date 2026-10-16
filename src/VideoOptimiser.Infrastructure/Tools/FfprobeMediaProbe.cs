@@ -85,9 +85,18 @@ public static class FfprobeJsonParser
             size,
             GetInt(primaryVideo, "width"),
             GetInt(primaryVideo, "height"),
-            GetLong(primaryVideo, "bit_rate"),
+            GetLong(primaryVideo, "bit_rate") ?? OverallBitrate(format, size, duration),
             [.. streams.Where(stream => GetString(stream, "codec_type") == "audio").Select(stream => GetString(stream, "codec_name") ?? "unknown")]);
     }
+
+    /// <summary>
+    /// Stands in for the video stream's bitrate when the container does not record one, as ffmpeg-muxed Matroska does not.
+    /// It counts audio and subtitles as video, so it reads high: usual audio adds well under 1 Mbps, while lossless audio
+    /// can lift a borderline video over a rule's minimum, which costs one CRF search that then finds it not worth converting.
+    /// </summary>
+    private static long? OverallBitrate(JsonElement format, long? size, double? duration) =>
+        (format.ValueKind == JsonValueKind.Object ? GetLong(format, "bit_rate") : null)
+        ?? (size > 0 && duration > 0 ? (long)(size.Value * 8 / duration.Value) : null);
 
     private static bool IsDefaultStream(JsonElement stream) => stream.TryGetProperty("disposition", out var disposition) && disposition.TryGetProperty("default", out var value) && GetInt(value) == 1;
 

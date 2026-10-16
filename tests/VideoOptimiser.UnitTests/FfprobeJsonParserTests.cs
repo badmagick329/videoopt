@@ -35,6 +35,22 @@ public sealed class FfprobeJsonParserTests
         media.PrimaryVideoBitrate.Should().Be(25_000_000);
     }
 
+    [Theory]
+    [InlineData("""{ "duration": "100", "size": "1000000", "bit_rate": "61779628" }""", 61_779_628L)]
+    [InlineData("""{ "duration": "100", "size": "1000000" }""", 80_000L)]
+    [InlineData("""{ "size": "1000000" }""", null)]
+    public void ParseFallsBackToTheWholeFileBitrateWhenTheVideoStreamHasNone(string format, long? expected)
+    {
+        var json = $$"""
+            {
+              "format": {{format}},
+              "streams": [ { "codec_type": "video", "codec_name": "h264", "tags": { "DURATION": "00:01:40.000000000" } } ]
+            }
+            """;
+
+        FfprobeJsonParser.Parse(json).PrimaryVideoBitrate.Should().Be(expected);
+    }
+
     [Fact]
     public void ParseListsTheAudioCodecsInAudioStreamOrder()
     {
