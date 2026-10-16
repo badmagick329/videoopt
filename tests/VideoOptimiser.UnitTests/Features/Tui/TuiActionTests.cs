@@ -625,7 +625,7 @@ public sealed class TuiActionTests : IDisposable
         var first = await _rig.ReadyAsync("clip-a.mp4");
         var second = await _rig.ReadyAsync("clip-b.mp4");
 
-        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id], ["clip-c.mp4", "clip-d.mp4"]), _rig.Settings, _posted.Add, default);
+        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id], ["clip-c.mp4", "clip-d.mp4"]), _rig.Settings, _posted.Add, default, default);
 
         result.Lines.Should().Equal(
             new LogLine(LogKind.Success, "Finalised 2 videos."),
@@ -643,7 +643,7 @@ public sealed class TuiActionTests : IDisposable
         var second = await _rig.ReadyAsync("clip-b.mp4");
         _rig.Finalizer.Results[second.Id] = new FinalizationResult(null, ExitCode.FinalisationFailure, "The original changed since it was converted.");
 
-        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id]), _rig.Settings, _posted.Add, default);
+        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id]), _rig.Settings, _posted.Add, default, default);
 
         _rig.Finalizer.Finalised.Should().Equal(first.Id, second.Id);
         // The rig's ready jobs are 1000 bytes with a 400-byte AV1.
@@ -662,7 +662,7 @@ public sealed class TuiActionTests : IDisposable
         var first = await _rig.ReadyAsync("clip-a.mp4");
         _rig.Finalizer.Failure = new IOException("The file is in use.");
 
-        await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, Id(99)]), _rig.Settings, _posted.Add, default);
+        await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, Id(99)]), _rig.Settings, _posted.Add, default, default);
 
         _rig.Finalizer.Finalised.Should().HaveCount(2);
         _posted.OfType<FinaliseEndedMsg>().First().Should().Be(new FinaliseEndedMsg(first.Id, false, 0, new LogLine(LogKind.Error, "Couldn't finalise clip-a.mp4: The file is in use.")));
@@ -677,10 +677,35 @@ public sealed class TuiActionTests : IDisposable
         using var closing = new CancellationTokenSource();
         _rig.Finalizer.During = _ => closing.Cancel();
 
-        var finalise = () => _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id]), _rig.Settings, _posted.Add, closing.Token);
+        var finalise = () => _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id]), _rig.Settings, _posted.Add, default, closing.Token);
 
         await finalise.Should().ThrowAsync<OperationCanceledException>();
         _posted.Should().Equal(new FinaliseStartedMsg(first.Id));
+    }
+
+    /// <summary>VOPT-124: Esc during a video lets it finish, then the batch ends with the rest still ready and the tally says so.</summary>
+    [Theory]
+    [InlineData(false, "Finalised 1; stopped with 2 still ready.")]
+    [InlineData(true, "Finalised 0, 1 failed; stopped with 2 still ready.")]
+    public async Task AStopAskedDuringAVideoFinishesItAndStartsNoOther(bool firstFails, string tally)
+    {
+        var first = await _rig.ReadyAsync("clip-a.mp4");
+        var second = await _rig.ReadyAsync("clip-b.mp4");
+        var third = await _rig.ReadyAsync("clip-c.mp4");
+        if (firstFails) _rig.Finalizer.Results[first.Id] = new FinalizationResult(null, ExitCode.FinalisationFailure, "The original changed since it was converted.");
+        using var esc = new CancellationTokenSource();
+        _rig.Finalizer.During = _ => esc.Cancel();
+
+        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([first.Id, second.Id, third.Id], ["clip-d.mp4"]), _rig.Settings, _posted.Add, esc.Token, default);
+
+        _rig.Finalizer.Finalised.Should().Equal(first.Id);
+        _posted.Should().HaveCount(2);
+        _posted[0].Should().Be(new FinaliseStartedMsg(first.Id));
+        _posted[1].Should().BeOfType<FinaliseEndedMsg>().Which.Succeeded.Should().Be(!firstFails);
+        result.Lines.Should().Equal(
+            new LogLine(firstFails ? LogKind.Warning : LogKind.Success, tally),
+            new LogLine(LogKind.Warning, "Left out with validation warnings: clip-d.mp4."));
+        result.Notice.Should().Be(tally);
     }
 
     [Fact]
@@ -690,7 +715,7 @@ public sealed class TuiActionTests : IDisposable
         var (held, _) = await DatabaseLock.AcquireFinalizeAsync(_rig.DatabasePath, "finalize", default);
         _locks.Add(held!);
 
-        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([ready.Id]), _rig.Settings, _posted.Add, default);
+        var result = await _rig.Actions.FinaliseAsync(new FinaliseVideos([ready.Id]), _rig.Settings, _posted.Add, default, default);
 
         _rig.Finalizer.Finalised.Should().BeEmpty();
         _posted.Should().BeEmpty();

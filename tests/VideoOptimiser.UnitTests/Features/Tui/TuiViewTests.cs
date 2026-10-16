@@ -251,16 +251,20 @@ public sealed class TuiViewTests
     /// title and summary.
     /// </summary>
     [Theory]
-    [InlineData(new[] { 5, 6, 8 }, 1, "finalising 2 of 3", "Finalising 2 of 3, 448.0 MiB saved so far.")]
-    [InlineData(new[] { 6 }, 0, "3 ready", "3 ready to finalise, would save")]
-    public void AFinaliseBatchTagsItsVideosInBothPanesAndCountsInReview(int[] batch, int ended, string title, string summary)
+    [InlineData(new[] { 5, 6, 8 }, 1, false, "finalising 2 of 3", "Finalising 2 of 3, 448.0 MiB saved so far.")]
+    [InlineData(new[] { 5, 6, 8 }, 1, true, "finalising 2 of 3", "Finalising 2 of 3, stopping after this video.")]
+    [InlineData(new[] { 6 }, 0, false, "3 ready", "3 ready to finalise, would save")]
+    public void AFinaliseBatchTagsItsVideosInBothPanesAndCountsInReview(int[] batch, int ended, bool stopAsked, string title, string summary)
     {
         var current = batch[ended];
         var model = After(TuiModel.Initial(Now, 140, 40, "jobs.db"), Snap(Quiet([Ready(5, size: 800 * Mib, av1: 352 * Mib, saved: 56m), Ready(6), Ready(8)])), Tick(TimeSpan.Zero))
-            with { Finalising = new FinaliseBatch([.. batch.Select(Id)], Id(current), ended, 0, ended * 448 * Mib) };
+            with { Focus = Pane.Review, Finalising = new FinaliseBatch([.. batch.Select(Id)], Id(current), ended, 0, ended * 448 * Mib, stopAsked) };
 
         var rows = Rows(model);
         Row(rows, "╭─ Review").Should().Contain(title);
+        // VOPT-124: Esc is offered only while it would stop something: more than the current video left and no stop asked yet.
+        var offersEsc = batch.Length - ended > 1 && !stopAsked;
+        rows[^1].Contains("esc stop", StringComparison.Ordinal).Should().Be(offersEsc);
         Row(rows, summary.Split(',')[0]).Should().Contain(summary);
         rows.Should().NotContain(row => row.Contains(" of 1", StringComparison.Ordinal));
         rows.Where(row => row.Contains($"clip-{current:000}.mp4", StringComparison.Ordinal)).Should().HaveCount(2).And.OnlyContain(row => row.Contains("finalising"));

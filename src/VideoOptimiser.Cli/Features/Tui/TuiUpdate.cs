@@ -206,6 +206,8 @@ internal static partial class TuiUpdate
         if (m.Choice is { } choice) return OnChoiceKey(m, choice, key.Key);
 
         if (key.KeyChar == '?') return TuiStep.Of(m with { Help = true });
+        // The dialogs above take Esc as cancel; with none open it is the finalise's stop, from every pane like x.
+        if (key.Key == ConsoleKey.Escape) return StopFinaliseKey(m);
 
         switch (key.Key)
         {
@@ -229,6 +231,8 @@ internal static partial class TuiUpdate
         var (question, detail) = going.Length == 1
             ? ($"{going[0]} is still going.", "Quitting now stops it partway. It's better to wait for it to finish.")
             : ($"{going.Length} actions are still going.", $"{string.Join("; ", going)}. Quitting now stops them partway. It's better to wait for them to finish.");
+        // A long batch need not be waited out: Esc ends it cleanly after the video it is on.
+        if (m.Finalising is { CanStop: true }) detail += " " + EscStopsTheFinalise;
         return m with { Choice = null, Confirm = new TuiConfirm(question, detail, new QuitNow()) };
     }
 

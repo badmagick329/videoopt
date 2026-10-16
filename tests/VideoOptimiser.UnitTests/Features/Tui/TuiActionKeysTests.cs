@@ -645,6 +645,52 @@ public sealed class TuiActionKeysTests
         Update(model, Letter('a')).Effects.Should().Equal(new OpenFile(Id(2), Original: false, "clip-002.mp4"));
     }
 
+    /// <summary>
+    /// VOPT-124: Esc stops a batch after the video it is on, from any pane, without asking. A second press, or a batch with only
+    /// that video left, says why nothing more happens; with no batch out Esc does nothing.
+    /// </summary>
+    [Theory]
+    [InlineData("no batch", false, null)]
+    [InlineData("two left", true, "The finalise stops after this video.")]
+    [InlineData("stop asked", false, "A stop is already asked of the finalise.")]
+    [InlineData("one left", false, "Only the video being finalised is left, and it always finishes.")]
+    public void EscStopsAFinaliseBatchAfterTheVideoItIsOn(string state, bool stops, string? notice)
+    {
+        var model = state switch
+        {
+            "no batch" => Reviewing(Ready(1), Ready(2)),
+            "two left" => Batch(selected: 1),
+            "stop asked" => Update(Batch(selected: 1), Press(ConsoleKey.Escape, '\u001b')).Model,
+            _ => After(Batch(selected: 1), new FinaliseEndedMsg(Id(1), true, 0, new LogLine(LogKind.Success, "Finalised clip-001.mp4.")), new FinaliseStartedMsg(Id(2)))
+        } with { Focus = Pane.Activity, Notice = null };
+
+        var step = Update(model, Press(ConsoleKey.Escape, '\u001b'));
+
+        Notice(step).Should().Be(notice);
+        (step.Model.Confirm, step.Model.Choice).Should().Be((null, null));
+        if (!stops)
+        {
+            step.Effects.Should().BeEmpty();
+            step.Model.Finalising.Should().Be(model.Finalising);
+            step.Model.Busy.Should().BeSameAs(model.Busy);
+            return;
+        }
+        step.Effects.Should().Equal(new StopFinalise());
+        step.Model.Finalising!.StopAsked.Should().BeTrue();
+        step.Model.Busy["finalise"].Should().Be("Stopping the finalise after this video.");
+    }
+
+    /// <summary>Quitting mid-batch cuts a video off; while Esc would stop the batch cleanly, the quit dialog says so.</summary>
+    [Fact]
+    public void TheQuitDialogNamesEscWhileItWouldStopTheBatch()
+    {
+        var batch = Batch(selected: 1);
+
+        Update(batch, Letter('q')).Model.Confirm!.Detail.Should().EndWith(TuiUpdate.EscStopsTheFinalise);
+        var stopping = Update(batch, Press(ConsoleKey.Escape, '\u001b')).Model;
+        Update(stopping, Letter('q')).Model.Confirm!.Detail.Should().NotContain("Esc");
+    }
+
     /// <summary>Three ready videos with a finalise of the first two out, on clip-001, the cursor on <paramref name="selected"/>.</summary>
     private static TuiModel Batch(int selected)
     {

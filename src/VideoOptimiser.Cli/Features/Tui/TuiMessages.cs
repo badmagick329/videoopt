@@ -164,6 +164,12 @@ internal sealed record FinaliseVideos(IReadOnlyList<Guid> Ids, IReadOnlyList<str
     public override string BusyText => "Finalising.";
 }
 
+/// <summary>
+/// Esc during a finalise batch: stop before the next video. It holds no key, since it only signals the finalise that holds
+/// <c>finalise</c>; the video being finalised always finishes.
+/// </summary>
+internal sealed record StopFinalise : TuiEffect;
+
 /// <summary>The model after a message, and what it asks to be done.</summary>
 internal readonly record struct TuiStep(TuiModel Model, ImmutableArray<TuiEffect> Effects)
 {

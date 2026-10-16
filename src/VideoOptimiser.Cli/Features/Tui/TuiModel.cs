@@ -121,8 +121,15 @@ internal sealed record WorkerState(
 /// <param name="Current">The video being finalised now; null between two videos and before the first starts.</param>
 /// <param name="Ended">How many have ended, finalised or failed: the first <paramref name="Ended"/> of <paramref name="Ids"/>.</param>
 /// <param name="SavedBytes">What the finalised ones saved, the same figure Review's <c>would save</c> adds up.</param>
-internal sealed record FinaliseBatch(ImmutableList<Guid> Ids, Guid? Current, int Ended, int Failed, long SavedBytes)
+/// <param name="StopAsked">Esc asked the batch to stop after the video it is on; that video always finishes.</param>
+internal sealed record FinaliseBatch(ImmutableList<Guid> Ids, Guid? Current, int Ended, int Failed, long SavedBytes, bool StopAsked = false)
 {
+    /// <summary>The videos not ended yet, the current one included: with one left a stop has nothing to save.</summary>
+    public int Left => Ids.Count - Ended;
+
+    /// <summary>Esc would stop something: more than the current video is left and no stop is asked yet.</summary>
+    public bool CanStop => Left > 1 && !StopAsked;
+
     /// <summary>A batch of one (<c>f</c>) shows its row's tag and the footer only: <c>1 of 1</c> says nothing.</summary>
     public bool Counts => Ids.Count > 1;
 

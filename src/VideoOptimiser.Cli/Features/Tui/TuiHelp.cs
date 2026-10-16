@@ -51,7 +51,8 @@ internal static class TuiHelp
             new("a", "open the AV1"),
             new("f", "finalise the selected video, after asking"),
             new("F", "finalise every ready video without warnings, after asking"),
-            new("r", "reject the selected video, deleting its AV1, after asking")
+            new("r", "reject the selected video, deleting its AV1, after asking"),
+            new("esc", "stop finalising after the video it's on (while several are being finalised)")
         ])
     ];
 }

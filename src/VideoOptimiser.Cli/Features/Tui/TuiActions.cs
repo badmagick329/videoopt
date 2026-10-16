@@ -390,7 +390,11 @@ internal sealed class TuiActions(
     /// <paramref name="post"/> as they happen, its log line with the end, so Review shows the batch's progress; the result keeps
     /// only the tally and the left-out names. A cancelled token (the TUI closing) ends the batch and posts nothing more.
     /// </summary>
-    public async Task<ActionResult> FinaliseAsync(FinaliseVideos effect, AppSettings settings, Action<TuiMsg> post, CancellationToken cancellationToken)
+    /// <param name="stopAfterVideo">
+    /// Esc's stop, read only between videos and never handed to the finalisation: a video once started always finishes, and
+    /// the ones after it stay ready.
+    /// </param>
+    public async Task<ActionResult> FinaliseAsync(FinaliseVideos effect, AppSettings settings, Action<TuiMsg> post, CancellationToken stopAfterVideo, CancellationToken cancellationToken)
     {
         var database = settings.Database.Path;
         // The lock a finalise holds, so a run leaves these videos alone while they are finalised.
@@ -399,11 +403,13 @@ internal sealed class TuiActions(
 
         var lines = new List<LogLine>();
         var failed = 0;
+        var ended = 0;
         foreach (var id in effect.Ids)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (stopAfterVideo.IsCancellationRequested) break;
             var name = id.ToString("N");
-            FinaliseEndedMsg ended;
+            FinaliseEndedMsg done;
             try
             {
                 var job = await jobs.GetAsync(database, id, cancellationToken);
@@ -412,26 +418,32 @@ internal sealed class TuiActions(
                 var result = await finalizer.FinalizeAsync(database, id, settings, cancellationToken);
                 var succeeded = result.ExitCode == ExitCode.Success;
                 var line = new LogLine(succeeded ? LogKind.Success : LogKind.Error, RunEventWords.Clean($"{(succeeded ? "Finalised" : "Couldn't finalise")} {name}: {result.Message}"));
-                ended = new FinaliseEndedMsg(id, succeeded, succeeded && job is not null ? TuiSnapshotReader.SavedBytesOf(job) : 0, line);
+                done = new FinaliseEndedMsg(id, succeeded, succeeded && job is not null ? TuiSnapshotReader.SavedBytesOf(job) : 0, line);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                ended = new FinaliseEndedMsg(id, false, 0, new LogLine(LogKind.Error, $"Couldn't finalise {name}: {OneLine(exception)}"));
+                done = new FinaliseEndedMsg(id, false, 0, new LogLine(LogKind.Error, $"Couldn't finalise {name}: {OneLine(exception)}"));
             }
-            if (!ended.Succeeded) failed++;
+            ended++;
+            if (!done.Succeeded) failed++;
             cancellationToken.ThrowIfCancellationRequested();
-            post(ended);
+            post(done);
         }
 
-        var finalised = effect.Ids.Count - failed;
-        var summary = failed == 0
-            ? finalised == 1 ? "Finalised 1 video." : $"Finalised {finalised.ToString(CultureInfo.InvariantCulture)} videos."
-            : $"Finalised {finalised.ToString(CultureInfo.InvariantCulture)}; {failed.ToString(CultureInfo.InvariantCulture)} failed.";
+        var finalised = ended - failed;
+        var left = effect.Ids.Count - ended;
+        var summary = left > 0
+            ? $"Finalised {Count(finalised)}{(failed > 0 ? $", {Count(failed)} failed" : string.Empty)}; stopped with {Count(left)} still ready."
+            : failed == 0
+            ? finalised == 1 ? "Finalised 1 video." : $"Finalised {Count(finalised)} videos."
+            : $"Finalised {Count(finalised)}; {Count(failed)} failed.";
         if (effect.Ids.Count > 1) lines.Add(new LogLine(failed == 0 ? LogKind.Success : LogKind.Warning, summary));
         // After the tally, so the videos still waiting for a look are the last thing read.
         if (effect.LeftOut is { Count: > 0 } leftOut) lines.Add(new LogLine(LogKind.Warning, $"Left out with validation warnings: {string.Join(", ", leftOut)}."));
         return new ActionResult(lines, summary);
     }
+
+    private static string Count(int count) => count.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>Reports progress lines as they come, on the thread that raised them: a created worker's bootstrap takes minutes.</summary>
     private sealed class LogProgress(Action<LogKind, string> log) : IProgress<string>

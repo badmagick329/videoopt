@@ -125,6 +125,8 @@ internal static class TuiView
     {
         // The stop keys work from every pane, so every footer offers them while a run is going.
         (string Key, string What)[] stop = m.Run is null ? [] : [("x", "stop after"), ("X", "stop now")];
+        // Esc works from every pane, but Review is where the batch shows, so its footer offers it.
+        (string Key, string What)[] stopFinalise = m.Finalising is { CanStop: true } ? [("esc", "stop")] : [];
         (string Key, string What)[] hints = m.Help
             ? [("any key", "close the help")]
             : m.Confirm is not null
@@ -136,7 +138,7 @@ internal static class TuiView
                     Pane.Queue => [("↑↓", "select"), ("h", "hold"), ("r", "release"), ("n", "run next"), ("d", FailedSelected(m) ? "dismiss" : "drop"), ("t", "retry"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
                     Pane.Worker => [("c", "create"), ("d", "delete"), ("r", "check now"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
                     Pane.Activity => [("↑↓", "scroll"), ("w", "worker fate"), .. stop, ("s", "start run"), ("end", "follow"), ("tab", ""), ("?", "help"), ("q", "quit")],
-                    _ => [("↑↓", "select"), ("o", "original"), ("a", "AV1"), ("f", "finalise"), ("F", "all"), ("r", "reject"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")]
+                    _ => [("↑↓", "select"), ("o", "original"), ("a", "AV1"), ("f", "finalise"), ("F", "all"), ("r", "reject"), .. stopFinalise, .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")]
                 };
 
         // A notice says why a key did nothing; a read problem stays until the next read works.
@@ -668,8 +670,15 @@ internal static class TuiView
         }
         if (showSummary)
         {
+            // While stopping, the stop takes the saved total's place: the pane is too narrow for both.
             var summary = m.Finalising is { Counts: true } batch
-                ? $" Finalising {batch.Position} of {batch.Ids.Count}, {TuiText.Size(batch.SavedBytes)} saved so far{(batch.Failed > 0 ? $", {batch.Failed} failed" : string.Empty)}."
+                ? " " + string.Join(", ", new[]
+                {
+                    $"Finalising {batch.Position} of {batch.Ids.Count}",
+                    batch.StopAsked ? null : $"{TuiText.Size(batch.SavedBytes)} saved so far",
+                    batch.Failed > 0 ? $"{batch.Failed} failed" : null,
+                    batch.StopAsked ? "stopping after this video" : null
+                }.OfType<string>()) + "."
                 : ready.Count == 0
                 ? string.Empty
                 : $" {ready.Count} ready to finalise, would save {TuiText.Size(ready.Sum(video => video.SavedBytes ?? 0))}.";

@@ -228,6 +228,28 @@ internal static partial class TuiUpdate
         return c == 'f' ? Emit(m, new PrepareFinalise(video.Id)) : Emit(m, new OpenFile(video.Id, Original: c == 'o', video.Name));
     }
 
+    // ---- stopping a finalise ----------------------------------------------------------------
+
+    /// <summary>What the quit dialog adds while Esc would stop a finalise batch, the clean way out of a long one.</summary>
+    internal const string EscStopsTheFinalise = "To stop the finalise cleanly, cancel this and press Esc. It stops after the video it's on.";
+
+    /// <summary>
+    /// Esc stops a finalise batch after the video it is on, without asking: nothing is lost, since that video always finishes
+    /// and the rest stay ready. Like <c>x</c> on a run, a second press says the stop is asked already.
+    /// </summary>
+    private static TuiStep StopFinaliseKey(TuiModel m)
+    {
+        if (m.Finalising is not { } batch) return TuiStep.Of(m);
+        if (batch.Left <= 1) return Told(m, "Only the video being finalised is left, and it always finishes.");
+        if (batch.StopAsked) return Told(m, "A stop is already asked of the finalise.");
+        m = m with
+        {
+            Finalising = batch with { StopAsked = true },
+            Busy = m.Busy.SetItem("finalise", "Stopping the finalise after this video.")
+        };
+        return new TuiStep(Tell(m, "The finalise stops after this video."), [new StopFinalise()]);
+    }
+
     /// <summary>
     /// <c>f</c>, <c>F</c> and <c>r</c> while a finalise batch is out answer at once, before any question: a second finalise
     /// could only be refused once its confirmation was answered, and <c>queue reject</c> needs the database-wide finalise lock

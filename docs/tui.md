@@ -51,6 +51,7 @@ Each pane adds its own:
 | Review | `o` / `a` | Open the original or the AV1 in Windows' default player. For an Immich video, the original is its download. |
 | Review | `f` / `F` | Finalise the selected video, or every ready one, after the same question `finalize` asks. `f` on a warned video lists its warnings in the question. `F` leaves warned videos out and names them, so you watch each one and finalise it with `f`. While a finalise is going, they ask nothing: they say whether the selected video is being finalised or queued, or that you can start another finalise once this one ends. |
 | Review | `r` | Reject the video, after asking: its AV1 is deleted and the original is kept. See [Rejecting a video](#rejecting-a-video). While a finalise is going, `r` says you can reject once it ends, on every row, because rejecting needs the lock the finalise holds. |
+| Review | `esc` | Stop a finalise of several videos after the video it's on, without asking. That video finishes, and the rest stay ready. Works from any pane. |
 
 The worker keys and `w` do something only with a Hetzner worker (`remoteSsh.lifecycle: "hetzner"`).
 
