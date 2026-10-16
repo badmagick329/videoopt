@@ -447,8 +447,10 @@ internal static class TuiView
     /// The converting video's latest progress line. A reading (an encode, a transfer) gets a bar for its own step only: ab-av1
     /// gives no fraction across stages; its text carries the time left. Before a step's first line a spinner stands in, after
     /// the empty bar of a stage whose lines are readings, so the bar does not move when they arrive. When the run has said
-    /// nothing for <see cref="QuietAfter"/>, the line says how long, so a stalled run is told apart from a slow one: a healthy
-    /// encode or transfer reports every few seconds, a CRF attempt about once a minute.
+    /// nothing for <see cref="QuietAfter"/>, the line says so: for a remote stage, when the worker last answered, since a CRF
+    /// test clip can take minutes on a CPU worker and only the answers tell that from a lost worker. Recent answers are dim (the
+    /// text already says what is running, and the line has no room for more); no answers, or none for a minute, is a warning
+    /// with how long. A lost worker also logs every resend.
     /// </summary>
     private static Line ProgressLine(TuiModel m, Stage stage, int width)
     {
@@ -473,7 +475,15 @@ internal static class TuiView
             line.Flex(SpinnerFrame(m).ToString(), Theme.Of(Theme.Converting));
         }
         if (activity.LastEventAt is { } at && m.Now - at >= QuietAfter)
-            line.Right($"last update {HumanReadableValues.FormatDuration(m.Now - at)} ago", Theme.Of(Theme.Held));
+        {
+            var quiet = HumanReadableValues.FormatDuration(m.Now - at);
+            if (activity.LastAnswerAt is not { } answered || answered < at)
+                line.Right($"no update for {quiet}", Theme.Of(Theme.Held));
+            else if (m.Now - answered < QuietAfter)
+                line.Right($"worker answered {HumanReadableValues.FormatDuration(m.Now - answered)} ago", Theme.Of(Theme.Dim));
+            else
+                line.Right($"no answer from the worker for {HumanReadableValues.FormatDuration(m.Now - answered)}", Theme.Of(Theme.Held));
+        }
         return line;
     }
 

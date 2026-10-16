@@ -31,7 +31,8 @@ public sealed class TuiViewTests
     private static readonly LiveRunHolder BackgroundRun = new(LockHolders.BackgroundRun, Now, 4242);
 
     /// <summary>A run converting clip-001 on a worker, as a TUI that has been open a while would show it, built from messages like the real feed's.</summary>
-    private static TuiModel Busy(int width = 140, int height = 40, Pane focus = Pane.Queue)
+    /// <param name="answers">Events after the reading, such as the worker answering polls.</param>
+    private static TuiModel Busy(int width = 140, int height = 40, Pane focus = Pane.Queue, RunEvent[]? answers = null)
     {
         RunEvent[] events =
         [
@@ -41,7 +42,8 @@ public sealed class TuiViewTests
             Progress(JobProgressKind.Header, "[1/3] clip-001.mp4 (1.1 GiB)"),
             Progress(JobProgressKind.Step, "Uploading to the worker."),
             Progress(JobProgressKind.Step, "CRF 27 chosen, encoding."),
-            Progress(JobProgressKind.Detail, "38%, 46 fps, about 6m 00s left", percent: 38)
+            Progress(JobProgressKind.Detail, "38%, 46 fps, about 6m 00s left", percent: 38),
+            .. answers ?? []
         ];
         var snapshot = Snapshot(
             open: [Converting(1, remote: true), Queued(2), Queued(3), Held(4), Ready(5, size: 800 * Mib, av1: 352 * Mib, saved: 56m), Ready(6, size: 2000 * Mib, av1: 700 * Mib, saved: 65m)],
@@ -94,7 +96,7 @@ public sealed class TuiViewTests
         var rows = Rows(Busy());
 
         Row(rows, "Encoding  clip-001.mp4").Should().Contain("on video-optimiser-1");
-        Row(rows, "38%, 46 fps").Should().Contain("about 6m 00s left").And.NotContain("last update");
+        Row(rows, "38%, 46 fps").Should().Contain("about 6m 00s left").And.NotContain("no update");
         // The reading's own time left is the only one.
         Row(rows, "38%, 46 fps").Split(" left").Should().HaveCount(2);
         // The bar is a quarter of the pane's inner width, 38% of it filled.
@@ -109,13 +111,22 @@ public sealed class TuiViewTests
         rows.Count(row => row.Contains("38%, 46 fps", StringComparison.Ordinal)).Should().Be(1);
     }
 
-    /// <summary>A run that has said nothing for a minute says how long, so a stalled poll is told apart from a slow encode.</summary>
-    [Fact]
-    public void AConvertingVideoThatHasBeenQuietForAMinuteSaysHowLong()
+    /// <summary>
+    /// A run that has said nothing for a minute says how long, and when the worker last answered, so a slow CRF test clip is
+    /// told apart from a lost worker. With no answers to go on (a local run), it says only how long.
+    /// </summary>
+    [Theory]
+    [InlineData(null, "no update for 31m 59s")]
+    [InlineData(1910, "worker answered 10s ago")]
+    [InlineData(120, "no answer from the worker for 30m 00s")]
+    public void AConvertingVideoThatHasBeenQuietForAMinuteSaysHowLongAndWhetherTheWorkerAnswers(int? answeredSecondsAfterNow, string expected)
     {
+        RunEvent[] answers = answeredSecondsAfterNow is { } seconds
+            ? [new(Now.AddSeconds(seconds), RunEventKind.Progress, Text: string.Empty, Progress: nameof(JobProgressKind.WorkerAnswered), Tone: nameof(JobTone.None))]
+            : [];
         // The last event came a second after Now.
-        Row(Rows(After(Busy(), Tick(TimeSpan.FromSeconds(60), 140, 40))), "38%, 46 fps").Should().Contain("about 6m 00s left").And.NotContain("last update");
-        Row(Rows(After(Busy(), Tick(TimeSpan.FromMinutes(32), 140, 40))), "38%, 46 fps").Should().Contain("last update 31m 59s ago");
+        Row(Rows(After(Busy(answers: answers), Tick(TimeSpan.FromSeconds(60), 140, 40))), "38%, 46 fps").Should().Contain("about 6m 00s left").And.NotContain("no update");
+        Row(Rows(After(Busy(answers: answers), Tick(TimeSpan.FromMinutes(32), 140, 40))), "38%, 46 fps").Should().MatchRegex(System.Text.RegularExpressions.Regex.Escape(expected) + @"\s*│");
     }
 
     /// <summary>

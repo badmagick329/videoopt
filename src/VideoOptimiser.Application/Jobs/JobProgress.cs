@@ -16,6 +16,17 @@ public enum JobProgressKind
     /// </summary>
     Detail,
     /// <summary>
+    /// What a step is doing now when that has no measurable end, such as which CRF test clip ab-av1 is encoding. The next
+    /// status, reading or detail replaces it, so a front end that keeps one progress line shows it there; a scrolling console
+    /// drops it, since a few lines per CRF attempt would bury the attempts.
+    /// </summary>
+    Status,
+    /// <summary>
+    /// The worker answered a poll, with nothing to say. It has no text: a front end that shows whether the worker is still
+    /// answering keeps its time, so a step that is slow is told apart from one whose worker is gone.
+    /// </summary>
+    WorkerAnswered,
+    /// <summary>
     /// A raw line from ab-av1, before <c>AbAv1OutputTranslator</c> rewrites it. Only processing sessions report it; anything
     /// that reaches the console this way is a line the translator did not recognise.
     /// </summary>
@@ -63,7 +74,10 @@ public sealed record JobProgress(JobProgressKind Kind, string Text, JobTone Tone
 
     /// <summary>A step that ends the job, or says how it ended, with the <paramref name="tone"/> that outcome deserves.</summary>
     public static JobProgress Outcome(JobTone tone, string text) => new(JobProgressKind.Step, text, tone);
-    public static JobProgress Detail(string text) => new(JobProgressKind.Detail, text);
+    /// <param name="tone">Warning for something going wrong that the run is handling, such as an SSH command sent again.</param>
+    public static JobProgress Detail(string text, JobTone tone = JobTone.None) => new(JobProgressKind.Detail, text, tone);
+    public static JobProgress Status(string text) => new(JobProgressKind.Status, text);
+    public static JobProgress WorkerAnswered { get; } = new(JobProgressKind.WorkerAnswered, string.Empty);
 
     /// <summary>A reading of how far a step has got, which the next reading replaces.</summary>
     public static JobProgress Reading(string text, int percent, TimeSpan? timeLeft = null) => new(JobProgressKind.Detail, text, TimeLeft: timeLeft, Percent: Math.Clamp(percent, 0, 100));

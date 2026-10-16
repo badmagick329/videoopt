@@ -615,11 +615,16 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     {
         var source = await SourceAsync();
         var runner = new QueueRunner(Enumerable.Repeat(new ExternalProcessResult(255, string.Empty, "connection refused"), 3));
+        var progress = new ListProgress();
 
-        var action = async () => await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint");
+        var action = async () => await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", progress);
 
         await action.Should().ThrowAsync<RemoteConnectionException>();
         runner.Requests.Should().HaveCount(3);
+        // Each resend says so, so a run that is recovering does not look stuck.
+        progress.Lines.Should().Equal(
+            JobProgress.Detail("Lost the connection to the worker (connection refused); trying again (try 2 of 3).", JobTone.Warning),
+            JobProgress.Detail("Lost the connection to the worker (connection refused); trying again (try 3 of 3).", JobTone.Warning));
     }
 
     /// <summary>
@@ -632,11 +637,39 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var source = await SourceAsync();
         const string log = "Error: ffmpeg exited with status 1\n";
         var runner = new HangingRunner([null, Ok(AtEnd("completed 1", log)), Ok(log), Ok()]);
+        var progress = new ListProgress();
 
-        var action = async () => await CreateSession(Guid.NewGuid(), runner, source, commandTimeouts: ShortTimeouts).SearchCrfAsync(source, new QualitySettings());
+        var action = async () => await CreateSession(Guid.NewGuid(), runner, source, commandTimeouts: ShortTimeouts).SearchCrfAsync(source, new QualitySettings(), progress);
 
         await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote processing stage failed with exit code 1: ffmpeg exited with status 1");
         runner.Requests.Should().HaveCount(4).And.OnlyContain(request => request.Arguments.Contains("-n"));
+        // The resend and the answer that ends it are both said; the timeout here is 50 ms.
+        progress.Lines.Where(line => line.Kind == JobProgressKind.Detail).Should().Equal(
+            JobProgress.Detail("The worker didn't answer within 0s; asking again (try 2 of 3).", JobTone.Warning),
+            JobProgress.Detail("The worker answered again."));
+    }
+
+    /// <summary>
+    /// ab-av1 can go minutes without a line during a CRF search, so the stage's polls say the worker answered, at most once
+    /// per <see cref="RemoteSshProcessingSession.WorkerAnsweredInterval"/>: each is a line in the event file the TUI rereads.
+    /// </summary>
+    [Fact]
+    public async Task AQuietStagesPollsSayTheWorkerAnsweredAtMostEveryInterval()
+    {
+        var source = await SourceAsync();
+        const string log = "Error: ffmpeg exited with status 1\n";
+        var clock = new FakeClock { TickLength = TimeSpan.FromSeconds(10) };
+        var polls =Enumerable.Repeat(Ok(AtEnd("running", string.Empty)), 7).Append(Ok(AtEnd("completed 1", log))).Append(Ok(log)).Append(Ok());
+        var runner = new QueueRunner(polls);
+        var progress = new ListProgress();
+        // Each poll waits 10 s, as the real one does.
+        var session = new RemoteSshProcessingSession(new JobRecord { Id = Guid.NewGuid(), SourcePath = source }, CreateSettings(), runner, clock.TickAsync, clock.Read);
+
+        var action = async () => await session.SearchCrfAsync(source, new QualitySettings(), progress);
+
+        await action.Should().ThrowAsync<InvalidOperationException>();
+        // The first state read is at 0 s, then polls every 10 s to 70 s, when the stage has ended: answers at 30 s and 60 s.
+        progress.Lines.Count(line => line.Kind == JobProgressKind.WorkerAnswered).Should().Be(2);
     }
 
     [Fact]

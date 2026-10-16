@@ -71,6 +71,8 @@ internal sealed class JobProgressConsole(TextWriter writer, TerminalStyle style)
 
     public void Report(JobProgress value)
     {
+        // Both are for a front end that keeps one progress line (JobProgressKind says why).
+        if (value.Kind is JobProgressKind.Status or JobProgressKind.WorkerAnswered) return;
         lock (_gate)
         {
             if (value.TimeLeft is { } left) _encodeTimeLeft = left;
@@ -92,7 +94,7 @@ internal sealed class JobProgressConsole(TextWriter writer, TerminalStyle style)
                 writer.WriteLine(StepIndent + style.Tone(value.Tone, value.Text));
                 break;
             default:
-                writer.WriteLine(DetailIndent + style.Dim(value.Text));
+                writer.WriteLine(DetailIndent + (value.Tone == JobTone.None ? style.Dim(value.Text) : style.Tone(value.Tone, value.Text)));
                 break;
         }
     }

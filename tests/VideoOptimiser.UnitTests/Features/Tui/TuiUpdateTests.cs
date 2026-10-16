@@ -204,6 +204,34 @@ public sealed class TuiUpdateTests
         model.Log[^1].Kind.Should().Be(LogKind.Success);
     }
 
+    /// <summary>
+    /// A status (the test clip ab-av1 is on) only replaces the progress line; an SSH resend is logged as a warning, since it
+    /// explains a stall; the worker answering a poll is not news, so it logs nothing and does not end a quiet spell.
+    /// </summary>
+    [Fact]
+    public void StatusesStandAsTheProgressLineResendsAreWarningsAndAnswersOnlyKeepTheirTime()
+    {
+        RunEvent[] events =
+        [
+            Started(),
+            Progress(JobProgressKind.Header, "[1/2] clip-001.mp4 (1.1 GiB)"),
+            Progress(JobProgressKind.Step, "Finding the best CRF."),
+            Progress(JobProgressKind.Status, "CRF 34: encoding test clip 1 of 2.", secondsAfterNow: 5),
+            new(Now.AddSeconds(40), RunEventKind.Progress, Text: string.Empty, Progress: nameof(JobProgressKind.WorkerAnswered), Tone: nameof(JobTone.None)),
+        ];
+
+        var model = After(Model(), Snap(Snapshot([], [], new RunSection(null, null), null, events)));
+
+        model.Log[^1].Text.Should().Be("Finding the best CRF.");
+        model.Activity.Should().Match<ActivityState>(state => state.ProgressText == "CRF 34: encoding test clip 1 of 2." && state.ProgressPercent == null
+            && state.LastEventAt == Now.AddSeconds(5) && state.LastAnswerAt == Now.AddSeconds(40));
+
+        RunEvent[] resent = [.. events, Progress(JobProgressKind.Detail, "The worker didn't answer within 30s; asking again (try 2 of 3).", JobTone.Warning, secondsAfterNow: 75)];
+        model = After(model, Snap(Snapshot([], [], new RunSection(null, null), null, resent)));
+        model.Log[^1].Should().Match<LogEntry>(entry => entry.Kind == LogKind.Warning && entry.Text == "The worker didn't answer within 30s; asking again (try 2 of 3).");
+        model.Activity.ProgressText.Should().Be("The worker didn't answer within 30s; asking again (try 2 of 3).");
+    }
+
     [Theory]
     [InlineData(JobTone.Success, "Success")]
     [InlineData(JobTone.Warning, "Warning")]

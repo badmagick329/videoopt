@@ -87,7 +87,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var source = new FileInfo(sourcePath);
         var requiredDisk = CalculateRequiredDisk(source.Length, _settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier);
         var minimumMemory = HumanReadableValues.TryParseSize(_settings.Processing.RemoteSsh.MinimumAvailableMemory, out var parsedMemory) ? parsedMemory : 0;
-        var preflight = await SshAsync($"mkdir -p -- {Quote(RemoteWorkspace!)} && printf '%s %s %s' \"$(nproc)\" \"$(awk '/MemAvailable:/ {{printf \"%.0f\", $2 * 1024}}' /proc/meminfo)\" \"$(df -B1 --output=avail {Quote(RemoteWorkspace!)} | tail -n 1)\"", cancellationToken: cancellationToken);
+        var preflight = await SshAsync($"mkdir -p -- {Quote(RemoteWorkspace!)} && printf '%s %s %s' \"$(nproc)\" \"$(awk '/MemAvailable:/ {{printf \"%.0f\", $2 * 1024}}' /proc/meminfo)\" \"$(df -B1 --output=avail {Quote(RemoteWorkspace!)} | tail -n 1)\"", progress: progress, cancellationToken: cancellationToken);
         var values = preflight.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (values.Length != 3 || !int.TryParse(values[0], CultureInfo.InvariantCulture, out var cpus) || !long.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var memory) || !long.TryParse(values[2], CultureInfo.InvariantCulture, out var disk))
             throw new InvalidDataException("Remote resource preflight returned an unexpected response.");
@@ -95,7 +95,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         if (memory < minimumMemory) throw new InvalidOperationException($"Remote host has {memory} available bytes; {minimumMemory} are required.");
 
         var localHash = await HashFileAsync(sourcePath, "Checking the original's checksum before upload.", progress, cancellationToken);
-        var existing = await SshAsync($"if test -f {Quote(RemoteSourcePath)}; then stat -c '%s' {Quote(RemoteSourcePath)}; sha256sum {Quote(RemoteSourcePath)} | cut -d' ' -f1; fi", cancellationToken: cancellationToken);
+        var existing = await SshAsync($"if test -f {Quote(RemoteSourcePath)}; then stat -c '%s' {Quote(RemoteSourcePath)}; sha256sum {Quote(RemoteSourcePath)} | cut -d' ' -f1; fi", progress: progress, cancellationToken: cancellationToken);
         var existingParts = existing.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (existingParts.Length == 2 && existingParts[0] == source.Length.ToString(CultureInfo.InvariantCulture) && string.Equals(existingParts[1], localHash, StringComparison.OrdinalIgnoreCase))
         {
@@ -123,7 +123,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             var transferCommand = verifiedPartialLength > 0 ? "reput" : "put";
             var transfer = await SftpAsync($"{transferCommand} {SftpQuote(sourcePath)} {SftpQuote(partial)}\n",
                 new TransferMonitor(new ThrottledProgress(progress, _clock, source.Length, verifiedPartialLength, showRate: true), verifiedPartialLength, async token => await RemoteFileSizeAsync(partial, token)),
-                retryLostConnection: false, cancellationToken);
+                retryLostConnection: false, progress, cancellationToken);
             if (transfer.ExitCode == 0) break;
             if (!LostConnection(transfer))
             {
@@ -140,7 +140,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 ? $"Lost the connection to the worker; resuming the upload at {HumanReadableValues.FormatSize(verifiedPartialLength)} of {size}."
                 : $"Lost the connection to the worker; uploading {size} again from the start."));
         }
-        var verify = await SshAsync($"test \"$(stat -c '%s' {Quote(partial)})\" = {source.Length.ToString(CultureInfo.InvariantCulture)} && test \"$(sha256sum {Quote(partial)} | cut -d' ' -f1)\" = {Quote(localHash.ToLowerInvariant())} && mv -f -- {Quote(partial)} {Quote(RemoteSourcePath)}", cancellationToken: cancellationToken);
+        var verify = await SshAsync($"test \"$(stat -c '%s' {Quote(partial)})\" = {source.Length.ToString(CultureInfo.InvariantCulture)} && test \"$(sha256sum {Quote(partial)} | cut -d' ' -f1)\" = {Quote(localHash.ToLowerInvariant())} && mv -f -- {Quote(partial)} {Quote(RemoteSourcePath)}", progress: progress, cancellationToken: cancellationToken);
         EnsureSuccess(verify, "Remote original verification");
         // A complete partial left by an earlier run needed no transfer now, so there is no duration to report.
         progress?.Report(JobProgress.Step(transferred
@@ -155,13 +155,13 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     /// </summary>
     private async Task<long> VerifyPartialUploadAsync(string sourcePath, string partial, long sourceLength, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
-        var state = await SshAsync($"if test -f {Quote(partial)}; then n=$(stat -c '%s' {Quote(partial)}); printf '%s ' \"$n\"; head -c \"$n\" {Quote(partial)} | sha256sum | cut -d' ' -f1; fi", cancellationToken: cancellationToken);
+        var state = await SshAsync($"if test -f {Quote(partial)}; then n=$(stat -c '%s' {Quote(partial)}); printf '%s ' \"$n\"; head -c \"$n\" {Quote(partial)} | sha256sum | cut -d' ' -f1; fi", progress: progress, cancellationToken: cancellationToken);
         var parts = state.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length == 0) return 0;
         if (parts.Length == 2 && long.TryParse(parts[0], CultureInfo.InvariantCulture, out var length) && length > 0 && length <= sourceLength
             && string.Equals(await HashFilePrefixAsync(sourcePath, length, "Checking the part of the original already uploaded.", progress, cancellationToken), parts[1], StringComparison.OrdinalIgnoreCase))
             return length;
-        _ = await SshAsync($"rm -f -- {Quote(partial)}", cancellationToken: cancellationToken);
+        _ = await SshAsync($"rm -f -- {Quote(partial)}", progress: progress, cancellationToken: cancellationToken);
         return 0;
     }
 
@@ -184,7 +184,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var elapsed = Stopwatch.StartNew();
         _ = await RunStageAsync(directory, "encode", arguments, sourcePath, progress, cancellationToken);
         elapsed.Stop();
-        var check = await SshAsync($"test -s {Quote(remoteOutput)}", cancellationToken: cancellationToken);
+        var check = await SshAsync($"test -s {Quote(remoteOutput)}", progress: progress, cancellationToken: cancellationToken);
         EnsureSuccess(check, "Remote encoded output verification");
         return new ProcessingStageResult(outputPath, elapsed.Elapsed);
     }
@@ -206,7 +206,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     public async Task RetrieveOutputAsync(string outputPath, int attempt, IProgress<JobProgress>? progress, CancellationToken cancellationToken = default)
     {
         var remoteOutput = $"{EncodeDirectory(attempt)}/output{Path.GetExtension(outputPath).ToLowerInvariant()}";
-        var hashResult = await SshAsync($"stat -c '%s' {Quote(remoteOutput)}; sha256sum {Quote(remoteOutput)} | cut -d' ' -f1", cancellationToken: cancellationToken);
+        var hashResult = await SshAsync($"stat -c '%s' {Quote(remoteOutput)}; sha256sum {Quote(remoteOutput)} | cut -d' ' -f1", progress: progress, cancellationToken: cancellationToken);
         EnsureSuccess(hashResult, "Remote output checksum");
         var hashParts = hashResult.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (hashParts.Length == 0) throw new InvalidDataException("Remote output checksum was missing.");
@@ -254,7 +254,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     private async Task DownloadAsync(string remoteOutput, string partial, long outputLength, long partialStart, IProgress<JobProgress>? progress, CancellationToken cancellationToken) =>
         await SftpAsync($"reget {SftpQuote(remoteOutput)} {SftpQuote(partial)}\n",
             new TransferMonitor(new ThrottledProgress(progress, _clock, outputLength, partialStart, showRate: true), partialStart, _ => Task.FromResult(File.Exists(partial) ? new FileInfo(partial).Length : 0)),
-            retryLostConnection: true, cancellationToken);
+            retryLostConnection: true, progress, cancellationToken);
 
     public async Task CleanupAsync(CancellationToken cancellationToken = default)
     {
@@ -299,7 +299,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             "rm -rf -- \"$workspace\"",
             "done"
         ]);
-        var removal = await SshAsync(stopAndRemove, string.Join("\n", finished) + "\n", cancellationToken);
+        var removal = await SshAsync(stopAndRemove, string.Join("\n", finished) + "\n", cancellationToken: cancellationToken);
         EnsureSuccess(removal, "Remote workspace removal");
     }
 
@@ -321,7 +321,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     /// or returns null to keep the generic one.</param>
     private async Task<StageRun> RunStageAsync(string stageDirectory, string name, IReadOnlyList<string> arguments, string sourcePath, IProgress<JobProgress>? progress, CancellationToken cancellationToken, Func<string, Exception?>? interpretFailure = null)
     {
-        var state = await GetStageStateAsync(stageDirectory, FromTheEnd, cancellationToken);
+        var state = await GetStageStateAsync(stageDirectory, FromTheEnd, progress, cancellationToken);
         var useCurrentState = true;
         var reattached = state.Running || state.ExitCode is not null;
         if (state.Running)
@@ -337,6 +337,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         }
         var offset = state.Offset;
         var startingPolls = 0;
+        var lastAnswerReport = _clock();
         if (state.ExitCode is null && !state.Running)
         {
             var launchId = Guid.NewGuid().ToString("N");
@@ -344,9 +345,9 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             var cacheDirectory = $"{stageDirectory}/cache";
             var command = string.Join(" ", new[] { Quote("/usr/bin/time"), Quote("-v"), Quote("ab-av1") }.Concat(arguments.Select(Quote)));
             var script = $"#!/usr/bin/env bash\nset +e\numask 077\nmkdir -p -- {Quote(cacheDirectory)}\nexport XDG_CACHE_HOME={Quote(cacheDirectory)}\nprintf '%s\\n' \"$$\" > pid.partial\nmv -f pid.partial pid\n{command} > log 2>&1\ncode=$?\nprintf '%s\\n' \"$code\" > exit-code.partial\nmv -f exit-code.partial exit-code\nexit 0\n";
-            var create = await SshAsync($"mkdir -p -- {Quote(stageDirectory)} && umask 077 && cat > {Quote(scriptPath)} && chmod 700 {Quote(scriptPath)}", script, cancellationToken: cancellationToken);
+            var create = await SshAsync($"mkdir -p -- {Quote(stageDirectory)} && umask 077 && cat > {Quote(scriptPath)} && chmod 700 {Quote(scriptPath)}", script, progress: progress, cancellationToken: cancellationToken);
             EnsureSuccess(create, "Remote stage script upload");
-            var launch = await SshAsync(BuildLaunchCommand(stageDirectory, scriptPath, $"launch-{launchId}"), cancellationToken: cancellationToken);
+            var launch = await SshAsync(BuildLaunchCommand(stageDirectory, scriptPath, $"launch-{launchId}"), progress: progress, cancellationToken: cancellationToken);
             EnsureSuccess(launch, "Remote stage launch");
             useCurrentState = false;
             startingPolls = StartingPolls;
@@ -357,12 +358,21 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!useCurrentState) state = await GetStageStateAsync(stageDirectory, offset, cancellationToken);
+            if (!useCurrentState)
+            {
+                state = await GetStageStateAsync(stageDirectory, offset, progress, cancellationToken);
+                // ab-av1 can go minutes without a line (one CRF test clip on a CPU worker), so the polls say the worker answered.
+                if (_clock() - lastAnswerReport >= WorkerAnsweredInterval)
+                {
+                    progress?.Report(JobProgress.WorkerAnswered);
+                    lastAnswerReport = _clock();
+                }
+            }
             useCurrentState = false;
             offset = ReportNewLines(state, progress);
             if (state.ExitCode is { } exitCode)
             {
-                var (logPath, log) = await RetainLogAsync(stageDirectory, sourcePath, cancellationToken);
+                var (logPath, log) = await RetainLogAsync(stageDirectory, sourcePath, progress, cancellationToken);
                 if (exitCode != 0)
                 {
                     await CleanupAsync(CancellationToken.None);
@@ -393,6 +403,13 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         return state.Offset + Encoding.UTF8.GetByteCount(text);
     }
 
+    /// <summary>
+    /// How often a stage's polls report <see cref="JobProgress.WorkerAnswered"/>. Every report is a line in the run's event file,
+    /// which the TUI rereads whole each second, so not every 10-second poll reports; half a minute is still well inside the
+    /// minute after which the TUI calls a step quiet.
+    /// </summary>
+    internal static readonly TimeSpan WorkerAnsweredInterval = TimeSpan.FromSeconds(30);
+
     /// <summary>How many polls a stage this call launched may read as missing before it counts as dead.</summary>
     private const int StartingPolls = 3;
 
@@ -420,7 +437,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     /// log, so a stage that reads as ended has its final lines in the chunk. An offset past the log's end means ab-av1 started the
     /// log again, and it is read from the start.
     /// </summary>
-    private async Task<StageState> GetStageStateAsync(string stageDirectory, long offset, CancellationToken cancellationToken)
+    private async Task<StageState> GetStageStateAsync(string stageDirectory, long offset, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         var exitCode = Quote(stageDirectory + "/exit-code");
         var pid = Quote(stageDirectory + "/pid");
@@ -428,7 +445,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var command = $"if test -s {exitCode}; then printf 'completed '; cat {exitCode}; elif test -s {pid} && kill -0 \"$(cat {pid})\" 2>/dev/null; then printf 'running\\n'; else printf 'missing\\n'; fi; printf '\\036'; "
             + $"n=0; test ! -f {log} || n=$(stat -c '%s' {log}); off={offset.ToString(CultureInfo.InvariantCulture)}; if test \"$off\" -lt 0; then off=$n; elif test \"$off\" -gt \"$n\"; then off=0; fi; "
             + $"printf '%s\\036%s\\036' \"$off\" \"$n\"; if test \"$n\" -gt \"$off\"; then tail -c +$((off+1)) {log} | head -c $((n-off)); fi";
-        var result = await SshAsync(command, cancellationToken: cancellationToken);
+        var result = await SshAsync(command, progress: progress, cancellationToken: cancellationToken);
         var output = result.StandardOutput;
         var first = output.IndexOf('\x1e');
         var second = first < 0 ? -1 : output.IndexOf('\x1e', first + 1);
@@ -445,11 +462,11 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         Path.Combine(Path.GetDirectoryName(sourcePath)!, TemporaryOutputClassifier.FolderName, $"{_job.Id:N}.{Path.GetFileName(stageDirectory)}.remote.log");
 
     /// <summary>Keeps the stage's whole log beside the original and returns it with its path.</summary>
-    private async Task<(string Path, string Text)> RetainLogAsync(string stageDirectory, string sourcePath, CancellationToken cancellationToken)
+    private async Task<(string Path, string Text)> RetainLogAsync(string stageDirectory, string sourcePath, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         var destination = RetainedLogPath(stageDirectory, sourcePath);
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        var result = await SshAsync($"test ! -f {Quote(stageDirectory + "/log")} || cat {Quote(stageDirectory + "/log")}", cancellationToken: cancellationToken);
+        var result = await SshAsync($"test ! -f {Quote(stageDirectory + "/log")} || cat {Quote(stageDirectory + "/log")}", progress: progress, cancellationToken: cancellationToken);
         await File.WriteAllTextAsync(destination, result.StandardOutput, cancellationToken);
         return (destination, result.StandardOutput);
     }
@@ -457,12 +474,16 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     /// <summary>
     /// Runs one command on the worker, resending it after a lost connection: exit 255, or no reply within the command timeout,
     /// which ends that ssh. The resend is safe because every command is idempotent or guarded (<see cref="BuildLaunchCommand"/>).
+    /// <para>Each resend, and the answer that ends them, is a line on <paramref name="progress"/>: a resend takes 30 seconds or
+    /// more, and without the lines a run that is recovering looks the same as one that is stuck.</para>
     /// </summary>
-    private async Task<ExternalProcessResult> SshAsync(string command, string? standardInput = null, CancellationToken cancellationToken = default)
+    private async Task<ExternalProcessResult> SshAsync(string command, string? standardInput = null, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var attempts = _commandTimeouts.Count;
         for (var attempt = 1; ; attempt++)
         {
+            if (attempt > 1) await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            var nextTry = $"try {(attempt + 1).ToString(CultureInfo.InvariantCulture)} of {attempts.ToString(CultureInfo.InvariantCulture)}";
             ExternalProcessResult result;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(_commandTimeouts[attempt - 1]);
@@ -479,6 +500,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 if (attempt >= attempts) throw new RemoteConnectionException($"The worker did not answer an SSH command {attempts} times in a row, {HumanReadableValues.FormatDuration(_commandTimeouts.Aggregate(TimeSpan.Zero, (sum, wait) => sum + wait))} in all.");
+                progress?.Report(JobProgress.Detail($"The worker didn't answer within {HumanReadableValues.FormatDuration(_commandTimeouts[attempt - 1])}; asking again ({nextTry}).", JobTone.Warning));
                 continue;
             }
             catch (Exception exception) when (exception is not OperationCanceledException && attempt >= attempts)
@@ -487,21 +509,28 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                progress?.Report(JobProgress.Detail($"Couldn't run ssh ({FirstLine(exception.Message)}); trying again ({nextTry}).", JobTone.Warning));
                 continue;
             }
-            if (result.ExitCode != 255) return result;
+            if (result.ExitCode != 255)
+            {
+                if (attempt > 1) progress?.Report(JobProgress.Detail("The worker answered again."));
+                return result;
+            }
             if (attempt >= attempts) throw new RemoteConnectionException($"SSH connection failed: {FirstLine(result.StandardError)}");
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            progress?.Report(JobProgress.Detail($"Lost the connection to the worker ({FirstLine(result.StandardError)}); trying again ({nextTry}).", JobTone.Warning));
         }
     }
 
     private const int TransferAttempts = 3;
 
+    private static string NextTry(int failedAttempt) =>
+        string.Create(CultureInfo.InvariantCulture, $"try {failedAttempt + 1} of {TransferAttempts}");
+
     /// <param name="retryLostConnection">False returns any failed exit to the caller instead of resending the same batch or throwing.</param>
-    private async Task<ExternalProcessResult> SftpAsync(string batch, TransferMonitor monitor, bool retryLostConnection, CancellationToken cancellationToken)
+    private async Task<ExternalProcessResult> SftpAsync(string batch, TransferMonitor monitor, bool retryLostConnection, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
-        var transfer = SftpCoreAsync(batch, retryLostConnection, cancellationToken);
+        var transfer = SftpCoreAsync(batch, retryLostConnection, progress, cancellationToken);
         try
         {
             while (!transfer.IsCompleted)
@@ -523,7 +552,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         }
     }
 
-    private async Task<ExternalProcessResult> SftpCoreAsync(string batch, bool retryLostConnection, CancellationToken cancellationToken)
+    private async Task<ExternalProcessResult> SftpCoreAsync(string batch, bool retryLostConnection, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
         {
@@ -542,12 +571,14 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
+                progress?.Report(JobProgress.Detail($"Couldn't run sftp ({FirstLine(exception.Message)}); trying again ({NextTry(attempt)}).", JobTone.Warning));
                 await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
                 continue;
             }
             if (result.ExitCode == 0 || !retryLostConnection) return result;
             if (!LostConnection(result)) throw SftpTransferFailed(result);
             if (attempt >= TransferAttempts) throw LostSftpConnection(result);
+            progress?.Report(JobProgress.Detail($"Lost the connection to the worker ({FirstLine(result.StandardError)}); resuming the transfer ({NextTry(attempt)}).", JobTone.Warning));
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
     }

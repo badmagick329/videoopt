@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### The full-screen view
+
+- During a CRF search, the progress line says which CRF and test clip ab-av1 is on, such as `CRF 34: encoding test clip 1 of 2.` A single CRF can take minutes on a worker, and before this the line said nothing until it was done.
+- When a remote step has reported nothing for a minute, the progress line now says when the worker last answered (`worker answered 10s ago`), so a slow step reads differently from a lost worker. If the worker stops answering, it says for how long, in yellow.
+
+### Remote workers
+
+- Each time an SSH command to the worker gets no answer or loses its connection and is sent again, the log says so, with the try number (`asking again (try 2 of 3)`). Once the worker answers, the log says that too. A lost connection during a download is reported the same way.
 
 ## [0.10.0] - 2026-10-16
 ### Converting

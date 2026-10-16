@@ -73,6 +73,7 @@ internal enum RunPhase { Preparing, Converting, Ending }
 /// <param name="ProgressPercent">The progress line's reading, for its bar; null when it is not a reading.</param>
 /// <param name="WaitingForWorker">The run reported creating or bootstrapping the worker and has not started converting.</param>
 /// <param name="LastEventAt">When the run last reported anything: a converting video that has been quiet for long shows how long.</param>
+/// <param name="LastAnswerAt">When the worker last answered a poll of a quiet stage, which tells a slow step from a lost worker.</param>
 internal sealed record ActivityState(
     int EventsSeen,
     RunEvent? Started,
@@ -80,7 +81,8 @@ internal sealed record ActivityState(
     RunPhase Phase,
     bool WaitingForWorker,
     int? ProgressPercent = null,
-    DateTimeOffset? LastEventAt = null)
+    DateTimeOffset? LastEventAt = null,
+    DateTimeOffset? LastAnswerAt = null)
 {
     public static ActivityState None { get; } = new(0, null, null, RunPhase.Preparing, false);
 }

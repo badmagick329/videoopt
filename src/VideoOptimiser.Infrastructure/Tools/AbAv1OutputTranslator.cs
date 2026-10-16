@@ -16,8 +16,9 @@ public sealed class AbAv1ProgressTranslator : IAbAv1ProgressTranslator
 
 /// <summary>
 /// Rewrites ab-av1's log, from a local process or a remote stage log alike, as the job's progress lines: one line per CRF
-/// attempt with its verdict, and encode progress at most every <see cref="ProgressInterval"/>. Timestamps, module paths,
-/// per-sample lines and the remote <c>/usr/bin/time -v</c> report are dropped. Any line it does not recognise passes through,
+/// attempt with its verdict, and encode progress at most every <see cref="ProgressInterval"/>. Each test clip's encode and
+/// VMAF become a <see cref="JobProgressKind.Status"/>, since one attempt can take minutes with nothing else to show (a 4K clip
+/// on a CPU worker). Timestamps, module paths, per-clip scores and the remote <c>/usr/bin/time -v</c> report are dropped. Any line it does not recognise passes through,
 /// so an error or a future ab-av1 format still reaches the user. The raw log is kept elsewhere; this only shapes the console.
 /// </summary>
 public sealed partial class AbAv1OutputTranslator
@@ -42,6 +43,9 @@ public sealed partial class AbAv1OutputTranslator
     private (int Percent, TimeSpan At)? _firstProgress;
     private bool _inTimeReport;
     private bool _reattached;
+    // The test clip ab-av1 is on, from its last "encoding sample" line: its VMAF line names files, not the clip or the CRF.
+    private string? _sample;
+    private string? _sampleCrf;
 
     public AbAv1OutputTranslator(AbAv1Stage stage, double minimumVmaf, int maxEncodedPercent)
         : this(stage, minimumVmaf, maxEncodedPercent, StartClock())
@@ -85,10 +89,17 @@ public sealed partial class AbAv1OutputTranslator
         {
             if (PredictionLine().Match(message) is { Success: true } prediction)
                 _predictions[prediction.Groups["crf"].Value] = new Prediction(double.Parse(prediction.Groups["vmaf"].Value, CultureInfo.InvariantCulture), int.Parse(prediction.Groups["percent"].Value, CultureInfo.InvariantCulture));
+            if (SampleStartLine().Match(message) is { Success: true } sample)
+            {
+                _sample = $"test clip {sample.Groups["number"].Value} of {sample.Groups["count"].Value}";
+                _sampleCrf = sample.Groups["crf"].Value;
+                return [JobProgress.Status($"CRF {_sampleCrf}: encoding {_sample}.")];
+            }
             return [];
         }
         if (module.EndsWith("::encode", StringComparison.Ordinal)) return TranslateEncode(message);
-        if (module.EndsWith("::vmaf", StringComparison.Ordinal)) return [];
+        if (module.EndsWith("::vmaf", StringComparison.Ordinal))
+            return _sample is null ? [] : [JobProgress.Status($"CRF {_sampleCrf}: measuring the VMAF of {_sample}.")];
         return [JobProgress.Detail(message)];
     }
 
@@ -194,6 +205,9 @@ public sealed partial class AbAv1OutputTranslator
     // A repeated search reuses earlier samples and marks those lines "(cache)".
     [GeneratedRegex(@"^crf (?<crf>\d+(?:\.\d+)?) VMAF (?<vmaf>\d+(?:\.\d+)?) \((?<percent>\d+)%\)(?: \(cache\))?$", RegexOptions.CultureInvariant)]
     private static partial Regex AttemptLine();
+
+    [GeneratedRegex(@"^encoding sample (?<number>\d+)/(?<count>\d+) crf (?<crf>\d+(?:\.\d+)?)$", RegexOptions.CultureInvariant)]
+    private static partial Regex SampleStartLine();
 
     [GeneratedRegex(@"^crf (?<crf>\d+(?:\.\d+)?) successful$", RegexOptions.CultureInvariant)]
     private static partial Regex ChosenLine();

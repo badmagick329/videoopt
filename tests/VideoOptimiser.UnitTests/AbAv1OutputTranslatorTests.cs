@@ -14,12 +14,27 @@ public sealed class AbAv1OutputTranslatorTests
     {
         // The error line is left to the job's outcome, which says why the video is not worth converting. The log's last line,
         // "Command exited with non-zero status 1", is the remote stage's own exit report and is dropped too.
-        Translate(AbAv1Stage.CrfSearch, "remote-crf-not-worth-converting.log", minimumVmaf: 97, maxEncodedPercent: 80).Should().Equal(
+        Translate(AbAv1Stage.CrfSearch, "remote-crf-not-worth-converting.log", minimumVmaf: 97, maxEncodedPercent: 80).Where(line => line.Kind != JobProgressKind.Status).Should().Equal(
             JobProgress.Detail("CRF 34   VMAF 95.35   size  71%   below target"),
             JobProgress.Detail("CRF 18   VMAF 99.75   size 239%   passes, file too big"),
             JobProgress.Detail("CRF 28   VMAF 98.47   size 122%   passes, file too big"),
             JobProgress.Detail("CRF 31   VMAF 97.31   size  95%   passes, file too big"),
             JobProgress.Detail("CRF 32   VMAF 96.64   size  86%   below target"));
+    }
+
+    /// <summary>
+    /// One attempt can take minutes on a CPU worker, so each test clip's encode and VMAF say what ab-av1 is on. The VMAF line
+    /// names only files, so it takes the clip and CRF from the encode line before it; the per-clip score says nothing new.
+    /// </summary>
+    [Fact]
+    public void EachTestClipsEncodeAndVmafBecomeAStatusLine()
+    {
+        Translate(AbAv1Stage.CrfSearch, "local-crf-search.stderr.log").Skip(6).Take(5).Should().Equal(
+            JobProgress.Status("CRF 33: encoding test clip 1 of 2."),
+            JobProgress.Status("CRF 33: measuring the VMAF of test clip 1 of 2."),
+            JobProgress.Status("CRF 33: encoding test clip 2 of 2."),
+            JobProgress.Status("CRF 33: measuring the VMAF of test clip 2 of 2."),
+            JobProgress.Detail("CRF 33   VMAF 92.81   size  50%   below target"));
     }
 
     [Fact]

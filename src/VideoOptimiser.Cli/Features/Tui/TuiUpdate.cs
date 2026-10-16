@@ -157,6 +157,11 @@ internal static partial class TuiUpdate
         for (var index = activity.EventsSeen; index < events.Count; index++)
         {
             var effect = RunEventWords.Of(events[index], m.Worker.Managed);
+            if (effect.WorkerAnswered)
+            {
+                activity = activity with { LastAnswerAt = events[index].At };
+                continue;
+            }
             added.AddRange(effect.Lines);
             if (effect.Phase is { } phase) activity = activity with { Phase = phase };
             if (effect.SetProgress) activity = activity with { ProgressText = effect.ProgressText, ProgressPercent = effect.ProgressPercent };

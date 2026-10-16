@@ -9,7 +9,8 @@ namespace VideoOptimiser.Cli.Features.Tui;
 /// <summary>What one event becomes on screen: log lines, and a change to the current video's progress line.</summary>
 /// <param name="ProgressText">Replaces the progress line when <paramref name="SetProgress"/>; null clears it.</param>
 /// <param name="ProgressPercent">The progress line's reading, for its bar; null when the line is not a reading.</param>
-internal sealed record EventEffect(IReadOnlyList<LogEntry> Lines, bool SetProgress, string? ProgressText, RunPhase? Phase, bool? WaitingForWorker, int? ProgressPercent = null);
+/// <param name="WorkerAnswered">The event only says the worker answered a poll: it is not news, so it does not end a quiet spell.</param>
+internal sealed record EventEffect(IReadOnlyList<LogEntry> Lines, bool SetProgress, string? ProgressText, RunPhase? Phase, bool? WaitingForWorker, int? ProgressPercent = null, bool WorkerAnswered = false);
 
 /// <summary>
 /// Words for the run's events: the facts <see cref="RunEvent"/> carries, in the console's meaning and shorter, since the log is a
@@ -95,8 +96,9 @@ internal static class RunEventWords
     /// Header, step and outcome lines are the log. A reading (a detail line with a percent: an encode's or a transfer's progress)
     /// repeats every few seconds, so the latest one stands as the video's progress line, with its bar and time left, and never
     /// reaches the log. Any other detail line, such as a CRF attempt and its verdict, is a fact the user wants to read back, so
-    /// it goes to the log and stands as the progress line until the next. Raw tool lines repeat like readings. A step starts new
-    /// work, so the previous step's progress line goes.
+    /// it goes to the log and stands as the progress line until the next; one with a tone, such as an SSH command sent again,
+    /// is logged in that tone. A status (which test clip ab-av1 is on) stands as the progress line like a reading, without a bar.
+    /// Raw tool lines repeat like readings. A step starts new work, so the previous step's progress line goes.
     /// </summary>
     private static EventEffect OfProgress(RunEvent e)
     {
@@ -104,23 +106,26 @@ internal static class RunEventWords
         var tone = Enum.TryParse<JobTone>(e.Tone, out var parsedTone) ? parsedTone : JobTone.None;
         switch (Enum.TryParse<JobProgressKind>(e.Progress, out var kind) ? kind : JobProgressKind.Step)
         {
+            case JobProgressKind.WorkerAnswered:
+                return new EventEffect([], false, null, null, null, WorkerAnswered: true);
             case JobProgressKind.Detail when e.Percent is null:
-                return new EventEffect([new LogEntry(e.At, LogKind.Detail, text)], true, text, null, null);
-            case JobProgressKind.Detail or JobProgressKind.ToolOutput:
+                return new EventEffect([new LogEntry(e.At, tone == JobTone.None ? LogKind.Detail : LogKindOf(tone), text)], true, text, null, null);
+            case JobProgressKind.Detail or JobProgressKind.ToolOutput or JobProgressKind.Status:
                 return new EventEffect([], true, text, null, null, e.Percent);
             case JobProgressKind.Header:
                 return new EventEffect([new LogEntry(e.At, LogKind.Stage, text)], true, null, null, null);
             default:
-                var logKind = tone switch
-                {
-                    JobTone.Success => LogKind.Success,
-                    JobTone.Warning => LogKind.Warning,
-                    JobTone.Failure => LogKind.Error,
-                    _ => LogKind.Info
-                };
-                return new EventEffect([new LogEntry(e.At, logKind, text)], true, null, null, null);
+                return new EventEffect([new LogEntry(e.At, LogKindOf(tone), text)], true, null, null, null);
         }
     }
+
+    private static LogKind LogKindOf(JobTone tone) => tone switch
+    {
+        JobTone.Success => LogKind.Success,
+        JobTone.Warning => LogKind.Warning,
+        JobTone.Failure => LogKind.Error,
+        _ => LogKind.Info
+    };
 
     private static string Started(RunEvent e, bool showFate)
     {
