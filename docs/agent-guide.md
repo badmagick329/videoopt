@@ -76,7 +76,7 @@ Tuning the rules, when they ask why videos are not converted: `calibrate` writes
 
 A bare `video-optimiser` in a terminal opens the full-screen view (the TUI; [tui.md](tui.md) is the person's page). It reads the same database as the commands, refreshes about once a second, and follows any run, foreground or background. Quitting (`q`, `Ctrl+C`) never stops a run; with an action of theirs still going it asks first. You cannot see the screen: ask the person what a pane or the footer says. `?` lists every key.
 
-Panes, switched with `tab` / `shift+tab`: **Queue** (converting, waiting in run order, held, recent failures), **Worker** (the Hetzner worker, checked every 30 seconds), **Activity** (the run's log, the same lines a terminal run prints), **Review** (ready videos with sizes and saving).
+Panes, switched with `tab` / `shift+tab`: **Queue** (converting, waiting in run order, held, ready to finalise, recent failures), **Worker** (the Hetzner worker, checked every 30 seconds), **Activity** (the run's log, the same lines a terminal run prints), **Review** (ready videos with sizes and saving).
 
 Each key is the command of the same name, with the same rules and refusals; classify it as that command when the person asks what it does:
 
@@ -93,6 +93,9 @@ Each key is the command of the same name, with the same rules and refusals; clas
 | `o`, `a` | Review | opens the original (an Immich video's download) or the AV1 in the default app | Read-only |
 | `f`, `F` | Review | `finalize <job-id>`, `finalize --ready`; same question first, `f` listing a warned video's warnings; `F` leaves warned videos out | **Warn** |
 | `r` | Review | `queue reject <job-id>`; asks first | **Warn** |
+| `esc` | any | stops a finalise of several videos after the one in progress, which always finishes; the rest stay ready. Asks nothing | Job database |
+
+**While `f` or `F` finalises.** Review's title reads `finalising 3 of 8` and its last line `Finalising 3 of 8, 1.2 GiB saved so far.` (batches of two or more). Both Review and Queue tag the video in progress `finalising` and the waiting ones `queued`. Each video's result reaches the log as it ends. Until the batch ends, `f`, `F` and `r` give a footer notice and open no question. `r` waits on every row, since `queue reject` needs the finalise lock the batch holds. `o`, `a` and the arrows keep working. After `esc`, the tally reads `Finalised 3; stopped with 5 still ready.`; finalise those later with `f`/`F` or `finalize --ready`.
 
 The same letter means different things per pane (`r` is release, check-worker or reject), so name the pane with the key.
 
