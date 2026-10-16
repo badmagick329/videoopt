@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-10-16
 ### Converting
 
 - Phone videos with a variable frame rate no longer fail validation with `Output video packet count differs from the original.` FFmpeg was converting them to the fixed rate in their header, which can be slightly off, and dropped frames to fit: one in 117 for a 3-minute video. Every frame now keeps its original timing. Retry those videos with `t` in the Queue pane or `queue retry <job-id>`.
