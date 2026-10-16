@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-10-16
 ### The full-screen view
 
 - During a CRF search, the progress line says which CRF and test clip ab-av1 is on, such as `CRF 34: encoding test clip 1 of 2.` A single CRF can take minutes on a worker, and before this the line said nothing until it was done.
