@@ -55,6 +55,33 @@ internal static class TuiText
         }
         return cut.Append('…').ToString();
     }
+
+    /// <summary>
+    /// Breaks <paramref name="text"/> into rows of at most <paramref name="width"/> cells, at spaces where it can; a word wider
+    /// than a row (a long path) is split mid-word rather than cut.
+    /// </summary>
+    public static List<string> Wrap(string text, int width)
+    {
+        var rows = new List<string>();
+        if (width <= 0) return rows;
+        var row = new StringBuilder();
+        var used = 0;
+        foreach (var word in text.Split(' '))
+        {
+            var cells = Cells(word);
+            if (used > 0 && used + 1 + cells <= width) { row.Append(' ').Append(word); used += 1 + cells; continue; }
+            if (used > 0) { rows.Add(row.ToString()); row.Clear(); used = 0; }
+            foreach (var rune in word.EnumerateRunes())
+            {
+                var runeCells = Cells(rune.ToString());
+                if (used + runeCells > width && used > 0) { rows.Add(row.ToString()); row.Clear(); used = 0; }
+                row.Append(rune.ToString());
+                used += runeCells;
+            }
+        }
+        rows.Add(row.ToString());
+        return rows;
+    }
 }
 
 /// <summary>

@@ -77,8 +77,7 @@ internal static partial class TuiUpdate
         {
             case 'r':
                 if (!m.Worker.Managed) return Told(m, "There is no managed worker to check.");
-                if (m.Worker.CheckInFlight) return Told(m, "Already asking Hetzner.");
-                return AskHetzner(Tell(m, AskingHetzner));
+                return AskHetznerByHand(m);
             case 'c':
                 if (!m.Worker.Managed) return Told(m, NoManagedWorker);
                 if (WorkerView.Of(m.Worker).Info is { } up) return Told(m, $"The worker {up.Name} is already up.");

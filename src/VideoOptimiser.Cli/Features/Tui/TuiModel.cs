@@ -88,6 +88,7 @@ internal sealed record ActivityState(
 /// <param name="Lifecycle">The configured <c>processing.remoteSsh.lifecycle</c>.</param>
 /// <param name="Generation">Counts the times the recorded worker changed; an answer to an older question is dropped.</param>
 /// <param name="CheckAskedAt">When the latest question went out; null asks again at the next tick.</param>
+/// <param name="AskedByHand">The person pressed <c>r</c> and the footer owes them the answer, however long Hetzner takes.</param>
 internal sealed record WorkerState(
     bool Managed,
     string Lifecycle,
@@ -95,9 +96,10 @@ internal sealed record WorkerState(
     WorkerCheck? Check,
     bool CheckInFlight,
     DateTimeOffset? CheckAskedAt,
-    int Generation)
+    int Generation,
+    bool AskedByHand)
 {
-    public static WorkerState Unknown { get; } = new(false, string.Empty, null, null, false, null, 0);
+    public static WorkerState Unknown { get; } = new(false, string.Empty, null, null, false, null, 0, false);
 }
 
 internal sealed record TuiModel(

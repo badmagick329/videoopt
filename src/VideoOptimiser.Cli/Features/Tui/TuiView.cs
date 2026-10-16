@@ -435,13 +435,24 @@ internal static class TuiView
         rule.Append(new string('─', Math.Max(0, width - 7)), Theme.Of(Theme.Faint));
         rows.Add(rule);
 
-        var logCapacity = Math.Max(0, capacity - rows.Count);
-        var end = m.Log.Count - m.LogScroll;
-        var start = Math.Max(0, end - logCapacity);
-        for (var i = start; i < end; i++)
+        rows.AddRange(LogRows(m, width, Math.Max(0, capacity - rows.Count)));
+        return rows;
+    }
+
+    private const int LogStampCells = 10;
+
+    /// <summary>
+    /// The newest entries that fit, each wrapped under its text so a long line is read whole. Scrolling still moves by entry.
+    /// An entry taller than the whole space keeps its first rows.
+    /// </summary>
+    private static List<IRenderable> LogRows(TuiModel m, int width, int capacity)
+    {
+        var shown = new List<List<IRenderable>>();
+        var used = 0;
+        for (var i = m.Log.Count - m.LogScroll - 1; i >= 0 && used < capacity; i--)
         {
             var entry = m.Log[i];
-            var color = entry.Kind switch
+            var style = Theme.Of(entry.Kind switch
             {
                 LogKind.Stage => Theme.Converting,
                 LogKind.Success => Theme.Ready,
@@ -449,13 +460,18 @@ internal static class TuiView
                 LogKind.Error => Theme.Failed,
                 LogKind.Action => Theme.Text,
                 _ => Theme.Dim
-            };
-            rows.Add(new Line()
-                .Left(entry.At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) + "  ", Theme.Of(Theme.Dim))
-                .Flex(entry.Text, Theme.Of(color))
-                .Build(width));
+            });
+            var text = TuiText.Wrap(entry.Text, Math.Max(1, width - LogStampCells));
+            if (used + text.Count > capacity && shown.Count > 0) break;
+            var stamp = entry.At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) + "  ";
+            var entryRows = text.Take(capacity - used)
+                .Select((part, at) => new Line().Left(at == 0 ? stamp : new string(' ', LogStampCells), Theme.Of(Theme.Dim)).Flex(part, style).Build(width))
+                .ToList();
+            shown.Add(entryRows);
+            used += entryRows.Count;
         }
-        return rows;
+        shown.Reverse();
+        return [.. shown.SelectMany(entryRows => entryRows)];
     }
 
     /// <summary>

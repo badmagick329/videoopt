@@ -4,7 +4,8 @@
 ### Fixes
 
 - In the full-screen view, creating or deleting a Hetzner worker, and starting a run on a new server, failed with "The remote SSH lifecycle is not configured for Hetzner" when `processing.mode` is `local`. They now work in any mode, as the `worker` commands do.
-- `r` in the Worker pane now says when Hetzner has answered, or why it couldn't be asked.
+- `r` in the Worker pane now says when Hetzner has answered, or why it couldn't be asked, however long Hetzner takes.
+- Long lines in the Activity log wrap instead of being cut off with `…`.
 
 ## [0.9.0] - 2026-10-16
 ### The full-screen view

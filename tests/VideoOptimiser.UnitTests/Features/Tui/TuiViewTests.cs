@@ -103,6 +103,20 @@ public sealed class TuiViewTests
         rows.Count(row => row.Contains("ab-av1 encode 38%", StringComparison.Ordinal)).Should().Be(1);
     }
 
+    /// <summary>A log line wider than the pane wraps under its text instead of losing its end.</summary>
+    [Fact]
+    public void ALongLogLineWrapsSoItsEndIsShown()
+    {
+        var words = string.Join(' ', Enumerable.Range(1, 40).Select(n => $"word{n}"));
+        var rows = Rows(After(Busy(), new TuiLogMsg(LogKind.Success, words)));
+
+        Row(rows, "word1 word2").Should().NotContain("…");
+        Row(rows, "word40").Should().NotBeNull();
+        var logRows = rows.Where(row => row.Contains("word", StringComparison.Ordinal)).ToArray();
+        logRows.Should().HaveCountGreaterThan(1);
+        string.Join(' ', logRows.Select(row => row.Split('│')[1].Trim())).Should().EndWith(words);
+    }
+
     [Fact]
     public void TheReviewPaneShowsOriginalAv1AndSavedPerVideoAndTheTotal()
     {
