@@ -1,38 +1,34 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.12.0] - 2026-10-16
+### Breaking changes
+
+- `finalize --ready` and `immich finalize` now leave out videos with validation warnings and name each one. Watch it, then finalise it alone with `finalize <job-id>`. A finalisation that stopped partway still resumes, warnings or not.
+
 ### Checking the AV1
 
-- Only a missing original or AV1, an empty AV1, an AV1 that ffprobe cannot read, or one whose video is not AV1 fails validation now.
-- A different length (beyond `validation.durationToleranceSeconds`), a different audio or subtitle stream count, audio sync that differs or could not be checked, and a failed or skipped decode test no longer fail the video. It stays ready to finalise with a warning. The run prints `Ready to finalise: <sizes>, <x>% saved. Check it before finalising:` and one line per warning. `validate` prints `Validation passed with warnings: saved <x>%. Check the AV1 before finalising it:` and the same lines.
-- An AV1 that is not smaller than the original (with `savings.requireSmallerOutput` on) or saves less than `savings.minimumBytesSaved` is now skipped as not worth converting, instead of failing. Its AV1 and validation record are deleted, and the original stays.
-- The decode test now also runs on an AV1 that has warnings.
+- Validation now fails an AV1 only when it is missing, empty, unreadable or not AV1. A different length, stream count or audio sync, or a failed decode test, leaves the video ready to finalise with a warning to check. The run, `validate` and `queue list` print each warning, and `queue list --json` and `history --json` have a new `validationWarnings` array.
+- An AV1 that saves too little is skipped as not worth converting instead of failing. Its AV1 is deleted and the original stays.
 - `validate` exits `0` for a pass, a pass with warnings and a video not worth converting, and `7` for a failure.
-- The run's tally counts warned videos in the ready count: `Ready to finalise: 4 (1 to check).` The full-screen view's log says `The run finished: 4 ready to finalise (1 to check).`
-- `queue list --json` and `history --json` have a new `validationWarnings` array, empty when there are none.
-- Videos that failed validation in an earlier version are checked again on the next `run`, `immich run` or background run, under the new rules, before any worker is asked about or created. Nothing is uploaded or encoded again. Each video ends ready to finalise (with its warnings, if any), not worth converting, or still failed. The run prints `Checking the AV1s of 3 videos that failed validation earlier.`, each video's result, then `Checked again: 3 ready to finalise (3 to check).` A video is only checked if its AV1 and validation record are still there and its original hasn't changed since the encode, so don't run `cleanup` or `queue retry` on them first.
+- The next run checks again the videos an earlier version failed, under the new rules, without uploading or encoding anything. Leave `cleanup` and `queue retry` alone until then: both delete the AV1 that check needs.
 
 ### Finalising
 
-- `finalize --ready` and `immich finalize` leave out videos with validation warnings. The question and the last lines name each one with the `finalize <job-id>` that finalises it alone. When every ready video has warnings, they say there is nothing to finalise in bulk and list them.
-- `finalize <job-id>` on a video with warnings lists them and asks `y/N` first. A video without warnings is still finalised without a question.
-- A finalisation that stopped partway is still resumed by `finalize --ready` and `immich finalize`, warnings or not.
-- The status card counts warned videos, as in `Queue: 2 ready to finalise (1 to check).`, and suggests `queue list` to read their warnings. `status --json` has a new `queue.toCheck` count.
-- `queue list` prints a warned video's warnings on its line.
+- `finalize <job-id>` on a warned video lists its warnings and asks first.
+- The status card and the run's tally count warned videos, as in `2 ready to finalise (1 to check)`. `status --json` has a new `queue.toCheck` count.
 
 ### The full-screen view
 
-- A ready video with validation warnings is marked `1 warning` (or `2 warnings`) in the Review and Queue panes, and the header says `2 ready, 1 to check`.
-- The Review pane lists the selected video's warnings in full at its bottom.
-- `f` on a warned video lists its warnings in the question. `F` leaves warned videos out and names them, so each one is finalised with `f`.
-- While several videos are being finalised, the Review pane's title says `finalising 3 of 8` and its last line says `Finalising 3 of 8, 1.2 GiB saved so far.` The video being finalised is marked `finalising`, and the ones still to come are dimmed and marked `queued`, in both the Review and Queue panes. Each video's result goes in the log as it finishes, instead of all at once when the batch ends.
-- While a finalise is going, `f`, `F` and `r` in Review answer straight away, before any question. They say whether the selected video is being finalised or is queued, or that the key has to wait until the finalise ends. `r` waits on every row, because rejecting needs the lock the finalise holds. The arrow keys, `o` and `a` work as before.
-- `Esc` stops a finalise of several videos after the video it's on, without asking. That video always finishes, and the rest stay ready to finalise. The Review pane says it's stopping, and the log's tally says how many are still ready, as in `Finalised 3; stopped with 5 still ready.`
+- Warned videos are marked in Review and Queue, and Review lists the selected video's warnings in full. `f` shows them in its question; `F` leaves warned videos out.
+- While several videos are being finalised, Review counts through them (`finalising 3 of 8`) and shows how much has been saved so far. The video being finalised and the ones still to come are tagged in Review and Queue, and each video's result reaches the log as it finishes.
+- During a finalise, `f`, `F` and `r` answer at once in the footer instead of opening a question.
+- `Esc` stops a finalise after the video it's on. That video finishes, and the rest stay ready.
 
 ### Fixes
 
-- The video packet-count check is gone. It failed variable-frame-rate phone video that was fine.
-- The decode test no longer reports `non monotonically increasing dts` on variable-frame-rate phone video. The error came from the test's own throwaway output, and the AV1 was fine.
+- Validation no longer fails good variable-frame-rate phone video. The packet-count check is gone, and the decode test no longer reports a false `non monotonically increasing dts`.
 
 ## [0.11.0] - 2026-10-16
 ### The full-screen view
