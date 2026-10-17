@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Cost;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Immich;
@@ -429,6 +430,16 @@ internal sealed class ManualTime(DateTimeOffset start) : TimeProvider
     public override DateTimeOffset GetUtcNow() => _now;
 
     public void Advance(TimeSpan by) => _now += by;
+}
+
+/// <summary>Answers every read with <see cref="Report"/>, or throws <see cref="Failure"/>.</summary>
+internal sealed class ScriptedCostReport : ICostReport
+{
+    public CostReport Report { get; set; } = new(new CostLifetime(0, 0, 0, null, 0, false, false, false), []);
+    public Exception? Failure { get; set; }
+
+    public Task<CostReport> ReadAsync(string databasePath, CancellationToken cancellationToken = default) =>
+        Failure is null ? Task.FromResult(Report) : Task.FromException<CostReport>(Failure);
 }
 
 /// <summary>For a run whose queue holds no Immich video: restaging one is a bug in the test.</summary>

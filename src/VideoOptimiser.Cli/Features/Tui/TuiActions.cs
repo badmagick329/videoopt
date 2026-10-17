@@ -1,5 +1,6 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Cost;
 using VideoOptimiser.Application.Features.Finalize;
 using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Features.Run;
@@ -30,7 +31,8 @@ internal sealed class TuiActions(
     IRunRequestStore requests,
     IFinalizationService finalizer,
     IDatabaseLocks locks,
-    IFileOpener opener)
+    IFileOpener opener,
+    ICostReport cost)
 {
     private static ActionResult Done(LogKind kind, string text, bool refreshWorker = false) => ActionResult.Say(kind, text, refreshWorker);
 
@@ -239,6 +241,22 @@ internal sealed class TuiActions(
             return new ActionResult(
                 [new LogLine(LogKind.Error, $"Couldn't delete the worker: {OneLine(exception)}"), new LogLine(LogKind.Warning, "If it is still up, it bills hourly until it is deleted.")],
                 "Couldn't delete the worker.", RefreshWorker: true);
+        }
+    }
+
+    // ---- the cost page ---------------------------------------------------------------------
+
+    /// <summary>The report <c>cost</c> prints. A failure is the page's one-line notice, worded as a snapshot section's is.</summary>
+    public async Task<CostReadMsg> ReadCostAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return new CostReadMsg(await cost.ReadAsync(settings.Database.Path, cancellationToken), null);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            var why = OneLine(exception);
+            return new CostReadMsg(null, $"Couldn't read the cost: {why}{(why.EndsWith('.') ? string.Empty : ".")}");
         }
     }
 

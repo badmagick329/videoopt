@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Cost;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
@@ -47,6 +48,9 @@ internal sealed record FinaliseStartedMsg(Guid Id) : TuiMsg;
 /// <param name="SavedBytes">What finalising it saved; 0 when it failed or a size is unknown.</param>
 internal sealed record FinaliseEndedMsg(Guid Id, bool Succeeded, long SavedBytes, LogLine Line) : TuiMsg;
 
+/// <summary>The cost report <see cref="ReadCost"/> read, or why it could not be read (<paramref name="Report"/> null).</summary>
+internal sealed record CostReadMsg(CostReport? Report, string? Problem) : TuiMsg;
+
 internal enum WorkerOptionsPurpose { Create, Start }
 
 /// <summary>The servers a creation may choose from, or why they could not be listed (<paramref name="Error"/> may hold several lines).</summary>
@@ -80,6 +84,12 @@ internal sealed record RefreshWorkerCheck(int Generation) : TuiEffect;
 
 /// <summary>Read the snapshot now, after an action changed something, instead of waiting for the feed's next second.</summary>
 internal sealed record RefreshSnapshot : TuiEffect;
+
+/// <summary>
+/// Read the cost report for the cost page. A read like the snapshot: it holds no busy key, so it never makes quitting ask, and
+/// a failure comes back as <see cref="CostReadMsg.Problem"/> instead of an error line in the log.
+/// </summary>
+internal sealed record ReadCost : TuiEffect;
 
 internal enum QueueAction { Hold, Release, Next, Drop, Retry, Reject, Dismiss }
 

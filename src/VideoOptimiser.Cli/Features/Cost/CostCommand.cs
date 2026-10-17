@@ -34,9 +34,7 @@ internal sealed class CostCommand(ICostReport report)
 
         var lifetime = cost.Lifetime;
         yield return $"All time: {LifetimeFigure(lifetime)} {Bill(lifetime)}";
-        if (lifetime.StillBilling) yield return "A worker is still up: its bill counts to now and grows until the worker is deleted.";
-        if (lifetime.EndEstimated) yield return "A worker was deleted outside video-optimiser, so its bill ends when it was last seen up.";
-        if (lifetime.PriceMissing) yield return "Hetzner listed no price for a worker, so its bill and its videos are left out.";
+        foreach (var note in Notes(lifetime)) yield return note;
         if (cost.Runs.Count == 0) yield break;
 
         yield return "Runs, newest first:";
@@ -46,10 +44,20 @@ internal sealed class CostCommand(ICostReport report)
         yield return $"For each video's figures, run '{command.Hint("cost --json")}'.";
     }
 
-    private static string LifetimeFigure(CostLifetime lifetime) =>
+    // The lifetime's sentences are shared with the TUI's cost page, so the two say the same thing about the same figures.
+
+    internal static string LifetimeFigure(CostLifetime lifetime) =>
         lifetime.EurPerTerabyte is { } perTerabyte ? $"{CostPrice.PerTerabyte(perTerabyte)} freed." : "nothing freed yet.";
 
-    private static string Bill(CostLifetime lifetime)
+    /// <summary>Why the lifetime figure is not final or not whole, one sentence each, in the order the flags are listed.</summary>
+    internal static IEnumerable<string> Notes(CostLifetime lifetime)
+    {
+        if (lifetime.StillBilling) yield return "A worker is still up: its bill counts to now and grows until the worker is deleted.";
+        if (lifetime.EndEstimated) yield return "A worker was deleted outside video-optimiser, so its bill ends when it was last seen up.";
+        if (lifetime.PriceMissing) yield return "Hetzner listed no price for a worker, so its bill and its videos are left out.";
+    }
+
+    internal static string Bill(CostLifetime lifetime)
     {
         var workers = lifetime.Workers == 1 ? "1 worker" : $"{lifetime.Workers.ToString(CultureInfo.InvariantCulture)} workers";
         var bill = $"Hetzner billed {CostPrice.Amount(lifetime.BilledEur)} for {workers}";

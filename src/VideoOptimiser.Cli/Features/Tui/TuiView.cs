@@ -13,7 +13,7 @@ namespace VideoOptimiser.Cli.Features.Tui;
 /// <c>View(model)</c>: a pure function from the model to Spectre renderables. Wide windows get two columns of two panes; narrow
 /// ones stack the four panes and, when the height is short, collapse the unfocused ones to a single summary row.
 /// </summary>
-internal static class TuiView
+internal static partial class TuiView
 {
     public const int WideFrom = 100;
     private const string Spinner = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -26,7 +26,9 @@ internal static class TuiView
             return new Paragraph($"Window too small: {m.Width}x{m.Height}. Needs 40x10.", Theme.Of(Theme.Held));
 
         var bodyHeight = m.Height - 2;
-        var body = m.Width >= WideFrom ? Wide(m, bodyHeight) : Stacked(m, bodyHeight);
+        // The cost page stands in for the panes; the header's counts stay, since a run goes on underneath.
+        var body = m.Cost is { } page ? new Layout("body").Update(CostPageView(m, page, bodyHeight))
+            : m.Width >= WideFrom ? Wide(m, bodyHeight) : Stacked(m, bodyHeight);
         return new Layout("root").SplitRows(
             new Layout("header").Size(1).Update(Header(m)),
             body,
@@ -133,6 +135,9 @@ internal static class TuiView
             ? [("y", "confirm"), ("any other key", "cancel")]
             : m.Choice is not null
                 ? [("↑↓", "move"), ("enter", "choose"), ("esc", "cancel")]
+                : m.Cost is { } page
+                ? [.. page.Report is { Runs.Count: > 0 } ? [("↑↓", "select a run"), ("pgup pgdn", "scroll its videos")] : Array.Empty<(string, string)>(),
+                    (TuiKeys.Name(TuiKeys.CostPage) + " / esc", "close"), ("ctrl+c", "quit")]
                 : m.Focus switch
                 {
                     Pane.Queue => [("↑↓", "select"), ("h", "hold"), ("r", "release"), ("n", "run next"), ("d", FailedSelected(m) ? "dismiss" : "drop"), ("t", "retry"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
@@ -148,7 +153,7 @@ internal static class TuiView
         var used = 1;
         if (m.Confirm is null && m.Choice is null)
         {
-            var name = m.Focus + "  ";
+            var name = (m.Cost is null ? m.Focus.ToString() : "Cost") + "  ";
             line.Left(" " + name, Theme.Of(Theme.Accent, bold: true));
             used += name.Length;
         }
@@ -754,7 +759,8 @@ internal static class TuiView
     /// </summary>
     private static Panel HelpDialog(TuiModel m)
     {
-        var width = Math.Clamp(m.Width - 6, 30, 82);
+        // Wide enough for the longest key row, the stop keys' shared one, to read whole in a wide window.
+        var width = Math.Clamp(m.Width - 6, 30, 94);
         var inner = width - 6;
         var room = Math.Max(1, m.Height - 4);
         const string closing = "Any key closes this.";

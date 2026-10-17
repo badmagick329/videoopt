@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using VideoOptimiser.Application.Features.Cost;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
@@ -139,6 +140,36 @@ internal sealed record FinaliseBatch(ImmutableList<Guid> Ids, Guid? Current, int
     public bool IsWaiting(Guid id) => id != Current && Ids.Skip(Ended).Contains(id);
 }
 
+/// <summary>
+/// The cost page (<see cref="TuiKeys.CostPage"/>) while it is open. It takes the keys as the key guide does, while runs,
+/// finalising and the feed go on updating the rest of the model underneath. Its report is read only while it is open, never by
+/// the once-a-second snapshot: the cost reads every run record, and nobody needs it while converting.
+/// </summary>
+/// <param name="Report">The last report read; null until the first read answers.</param>
+/// <param name="Run">The selected run's ID, so the cursor stays on it when a new report adds a run above it.</param>
+/// <param name="VideoScroll">How many of the selected run's videos are scrolled past.</param>
+/// <param name="Reading">A read is out; the next waits for it.</param>
+/// <param name="AskedAt">When the latest read went out, which spaces the reads.</param>
+/// <param name="Problem">Why the latest read failed; the last report stays, as a snapshot section's does.</param>
+internal sealed record CostPage(CostReport? Report, Guid? Run, int VideoScroll, bool Reading, DateTimeOffset AskedAt, string? Problem)
+{
+    /// <summary>The selected run's row; the newest when none is selected or the selected one is gone.</summary>
+    public int Selected
+    {
+        get
+        {
+            var runs = Report?.Runs ?? [];
+            for (var at = 0; at < runs.Count; at++)
+            {
+                if (runs[at].Id == Run) return at;
+            }
+            return 0;
+        }
+    }
+
+    public CostRun? SelectedRun => Report is { Runs.Count: > 0 } report ? report.Runs[Selected] : null;
+}
+
 internal sealed record TuiModel(
     int Width,
     int Height,
@@ -163,7 +194,8 @@ internal sealed record TuiModel(
     Notice? Notice,
     string? ReadProblem,
     bool Quit,
-    FinaliseBatch? Finalising)
+    FinaliseBatch? Finalising,
+    CostPage? Cost = null)
 {
     /// <summary>The queue pane's rows in display order: the open videos by group (a stable sort keeps run order inside one), then the failed.</summary>
     public List<Video> Ordered() => [.. Open.OrderBy(video => video.Group), .. Failed];

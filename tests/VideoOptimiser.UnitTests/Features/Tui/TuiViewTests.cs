@@ -1,7 +1,9 @@
 using FluentAssertions;
+using VideoOptimiser.Application.Features.Cost;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Cli.Features.Cost;
 using VideoOptimiser.Cli.Features.Tui;
 using VideoOptimiser.Domain.Jobs;
 using static VideoOptimiser.UnitTests.Features.Tui.TuiTestData;
@@ -611,5 +613,53 @@ public sealed class TuiViewTests
 
         rows.Should().OnlyContain(row => TuiText.Cells(row) == 140);
         Row(rows, "休日").Should().Contain("400.0 MiB");
+    }
+
+    // ---- the cost page ----------------------------------------------------------------------
+
+    /// <summary>The page over a run going on: the header still counts the queue, and the panes are gone until it closes.</summary>
+    private static TuiModel CostPage(CostReport report) => After(Busy(), Dollar, new CostReadMsg(report, null));
+
+    [Fact]
+    public void ThePageShowsTheAllTimeFigureTheRunsAndTheSelectedRunsVideos()
+    {
+        var rows = Rows(CostPage(ACostReport()));
+
+        rows.Should().HaveCount(40).And.OnlyContain(row => TuiText.Cells(row) == 140);
+        rows.Should().NotContain(row => PaneTitles.Any(title => row.Contains($"╭─ {title}", StringComparison.Ordinal)));
+        Row(rows, "1 converting").Should().Contain("2 ready");
+        Row(rows, "All time:").Should().Contain("EUR 8.11 per TB freed.").And.NotContain("still billing");
+        Row(rows, "Hetzner billed").Should().Contain("Hetzner billed EUR 0.0381 for 2 workers, which freed 4.4 GiB; 762.9 MiB more is waiting for review.");
+        Row(rows, "Runs, newest first").Should().Contain("2");
+        Row(rows, "When").Should().MatchRegex(@"Worker\s+EUR\s+Freed\s+Waiting for review\s+EUR per TB");
+        var newest = Row(rows, "▌");
+        newest.Should().Contain(CostCommand.When(Now.AddMinutes(-120), Now.AddMinutes(-30))).And.MatchRegex(@"video-optimiser-1\s+EUR 0\.019\s+3\.0 GiB\s+762\.9 MiB\s+EUR 5\.95 per TB");
+        Row(rows, "Videos in this run").Should().Contain("4");
+        Row(rows, "holiday.mp4").Should().MatchRegex(@"40m 00s\s+EUR 0\.0085\s+1\.9 GiB freed\s+EUR 4\.23 per TB");
+        Row(rows, "party.mov").Should().MatchRegex(@"EUR 0\.0025\s+nothing saved: failed\s+-");
+        Row(rows, "beach.mp4").Should().Contain("762.9 MiB waiting for review");
+        rows.Should().NotContain(row => row.Contains("birthday.mp4", StringComparison.Ordinal));
+        rows[^3].Should().Contain(TuiView.CostFootnote);
+        rows[^1].Should().Contain("Cost").And.Contain("↑↓ select a run").And.Contain("$ / esc close");
+
+        Row(Rows(After(CostPage(ACostReport()), Press(ConsoleKey.DownArrow))), "birthday.mp4").Should().Contain("EUR 6.33 per TB");
+    }
+
+    [Fact]
+    public void WithNoRecordsThePageSaysItFillsInAfterARunOnAHetznerWorker()
+    {
+        var rows = Rows(CostPage(new CostReport(new CostLifetime(0, 0, 0, null, 0, false, false, false), [])));
+
+        Row(rows, "Nothing to show yet").Should().Contain(TuiView.CostEmpty);
+        rows.Should().NotContain(row => row.Contains("All time", StringComparison.Ordinal) || row.Contains("Runs", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AWorkerStillUpIsMarkedAsStillBilling()
+    {
+        var rows = Rows(CostPage(ACostReport(stillBilling: true)));
+
+        Row(rows, "All time:").Should().Contain("still billing");
+        Row(rows, "A worker is still up").Should().Contain("its bill counts to now and grows until the worker is deleted.");
     }
 }

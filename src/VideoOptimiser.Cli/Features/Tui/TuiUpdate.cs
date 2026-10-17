@@ -33,6 +33,7 @@ internal static partial class TuiUpdate
             PreparedMsg prepared => TuiStep.Of(OnPrepared(m, prepared)),
             FinaliseStartedMsg started => TuiStep.Of(OnFinaliseStarted(m, started)),
             FinaliseEndedMsg ended => TuiStep.Of(OnFinaliseEnded(m, ended)),
+            CostReadMsg cost => TuiStep.Of(OnCostRead(m, cost)),
             _ => TuiStep.Of(m)
         };
         return step with { Model = KeepSelectionsValid(step.Model) };
@@ -44,7 +45,9 @@ internal static partial class TuiUpdate
     {
         m = m with { Now = tick.Now, Width = tick.Width, Height = tick.Height };
         if (m.Notice is { } notice && tick.Now >= notice.Until) m = m with { Notice = null };
-        return AskHetznerWhenDue(m);
+        var hetzner = AskHetznerWhenDue(m);
+        var cost = ReadCostWhenDue(hetzner.Model);
+        return new TuiStep(cost.Model, hetzner.Effects.AddRange(cost.Effects));
     }
 
     private static TuiStep AskHetznerWhenDue(TuiModel m)
@@ -204,6 +207,10 @@ internal static partial class TuiUpdate
             return confirm.OnYes is QuitNow ? TuiStep.Of(m with { Quit = true }) : Emit(m, confirm.OnYes);
         }
         if (m.Choice is { } choice) return OnChoiceKey(m, choice, key.Key);
+
+        // The cost page takes the keys after the dialogs, which an effect may open over it (the quit question among them).
+        if (m.Cost is { } page) return CostKey(m, page, key);
+        if (TuiKeys.CostPage.Contains(key.KeyChar)) return OpenCost(m);
 
         if (key.KeyChar == '?') return TuiStep.Of(m with { Help = true });
         // The dialogs above take Esc as cancel; with none open it is the finalise's stop, from every pane like x.

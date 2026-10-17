@@ -102,12 +102,15 @@ Each key is the command of the same name, with the same rules and refusals; clas
 | `f`, `F` | Review | `finalize <job-id>`, `finalize --ready`; same question first, `f` listing a warned video's warnings; `F` leaves warned videos out | **Warn** |
 | `r` | Review | `queue reject <job-id>`; asks first | **Warn** |
 | `esc` | any | stops a finalise of several videos after the one in progress, which always finishes; the rest stay ready. Asks nothing | Job database |
+| `$` | any | `cost`, as a page (below) | Read-only |
 
 **While `f` or `F` finalises.** Review's title reads `finalising 3 of 8` and its last line `Finalising 3 of 8, 1.2 GiB saved so far.` (batches of two or more). Both Review and Queue tag the video in progress `finalising` and the waiting ones `queued`. Each video's result reaches the log as it ends. Until the batch ends, `f`, `F` and `r` give a footer notice and open no question. `r` waits on every row, since `queue reject` needs the finalise lock the batch holds. `o`, `a` and the arrows keep working. After `esc`, the tally reads `Finalised 3; stopped with 5 still ready.`; finalise those later with `f`/`F` or `finalize --ready`.
 
 The same letter means different things per pane (`r` is release, check-worker or reject), so name the pane with the key.
 
 **Starting a run with `s`.** It launches a background run, which survives closing the terminal and is shown by `status` as `Run: background run, ...`. Without `remoteSsh.lifecycle: "hetzner"` it starts at once, encoding where the config says. With it, two lists come first: which worker converts (`Use <worker>` when one is up; otherwise the servers with hourly prices incl. VAT; always `No worker: convert on this PC`), then `When the run ends`: `Delete the worker` or `Keep the worker`. A server picked from the list is created before the run starts and bills from then; if the create fails, no run starts. The background run asks nothing afterwards. `x` / `X` and `run stop [--now]` stop only a background run; a run started with `run` in a terminal stops only with `Ctrl+C` in its window.
+
+**The cost page (`$`).** It replaces the panes with `cost`'s figures: the all-time line and its notes (`still billing`, `end estimated` tags), the runs newest first (when, worker, EUR, freed, waiting for review, EUR per TB), and the selected run's videos (worker time, EUR, saved or `nothing saved: <why>`, EUR per TB). `↑`/`↓` select a run, `pgup`/`pgdn` scroll its videos, `$` or `esc` closes it, and every other key does nothing while it is open (`Ctrl+C` still quits). It rereads the report every 5 seconds while open; runs and finalising go on underneath. `Nothing to show yet: this page fills in after a run on a Hetzner worker.` is `cost`'s nothing-recorded case. `Couldn't read the cost: ...` on its first line keeps the last figures below it.
 
 **What it does not do.** It does not add videos; the person uses `queue add` or `queue add immich` in a terminal and the view shows them within a second.
 

@@ -465,4 +465,48 @@ public sealed class TuiUpdateTests
         After(model, Letter('y')).Should().Be(model);
         After(model, Letter('z')).Should().Be(model);
     }
+
+    // ---- the cost page ----------------------------------------------------------------------
+
+    /// <summary>
+    /// The page reads the report when it opens, then again every few seconds while it is open, one read at a time, and never
+    /// once it is closed; the snapshot's once-a-second feed never reads it.
+    /// </summary>
+    [Fact]
+    public void AnOpenPageReadsTheReportEveryFewSecondsOneAtATimeAndAClosedOneNever()
+    {
+        var open = After(Model(), Dollar, new CostReadMsg(ACostReport(), null));
+
+        Update(open, Tick(TuiUpdate.CostEvery - TimeSpan.FromSeconds(1))).Effects.Should().BeEmpty();
+        var due = Update(open, Tick(TuiUpdate.CostEvery));
+        due.Effects.Should().Equal(new ReadCost());
+        Update(due.Model, Tick(TuiUpdate.CostEvery * 3)).Effects.Should().BeEmpty();
+
+        var closed = After(open, Dollar);
+        Update(closed, Tick(TuiUpdate.CostEvery * 3)).Effects.Should().BeEmpty();
+        Update(closed, Snap(Quiet([Queued(1)]))).Effects.Should().BeEmpty();
+    }
+
+    /// <summary>A failed read says why and keeps the last report; an answer for a page closed since is dropped.</summary>
+    [Fact]
+    public void AFailedReadKeepsTheLastReportAndAnAnswerAfterClosingIsDropped()
+    {
+        var report = ACostReport();
+        var open = After(Model(), Dollar, new CostReadMsg(report, null), Tick(TuiUpdate.CostEvery));
+
+        var failed = After(open, new CostReadMsg(null, "Couldn't read the cost: database is locked.")).Cost!;
+
+        (failed.Report, failed.Problem, failed.Reading).Should().Be((report, "Couldn't read the cost: database is locked.", false));
+        After(open, Dollar, new CostReadMsg(report, null)).Cost.Should().BeNull();
+    }
+
+    /// <summary>The page hides the panes but not the model: the feed keeps updating them underneath.</summary>
+    [Fact]
+    public void ASnapshotStillUpdatesTheModelWhileThePageIsOpen()
+    {
+        var model = After(Model(), Dollar, Snap(Quiet([Queued(1), Ready(2)])));
+
+        model.Cost.Should().NotBeNull();
+        model.Ordered().Select(video => video.Id).Should().Equal(Id(1), Id(2));
+    }
 }

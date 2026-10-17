@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using VideoOptimiser.Application.Features.Cost;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
@@ -76,6 +77,32 @@ internal static class TuiTestData
 
     public static RunEvent Progress(JobProgressKind kind, string text, JobTone tone = JobTone.None, int secondsAfterNow = 1, int? percent = null) =>
         new(Now.AddSeconds(secondsAfterNow), RunEventKind.Progress, Text: text, Progress: kind.ToString(), Tone: tone.ToString(), Percent: percent);
+
+    // ---- the cost page ---------------------------------------------------------------------
+
+    public static TuiMsg Dollar => Press(ConsoleKey.D4, '$', ConsoleModifiers.Shift);
+
+    public const long GB = 1_000_000_000;
+
+    public static CostVideo CostVideo(string name, int minutes, decimal eur, CostVideoState state, JobStatus status, long saved = 0, decimal? perTerabyte = null) =>
+        new(Guid.NewGuid(), name, TimeSpan.FromMinutes(minutes), eur, saved, state, status, perTerabyte, PriceMissing: false);
+
+    public static CostRun CostRun(int number, int startedMinutesAgo, int minutes, decimal eur, long freed, long waiting, decimal? perTerabyte, params CostVideo[] videos) =>
+        new(Id(number), Now.AddMinutes(-startedMinutesAgo), Now.AddMinutes(minutes - startedMinutesAgo), 42, "video-optimiser-1", 0.0127m,
+            TimeSpan.FromMinutes(minutes), eur, freed, waiting, perTerabyte, videos);
+
+    /// <summary>Two runs on a cx43 at EUR 0.0127 an hour, the newest with a video of each kind; the figures are the report's, not recomputed here.</summary>
+    public static CostReport ACostReport(bool stillBilling = false) => new(
+        new CostLifetime(0.0381m, 47 * GB / 10, 8 * GB / 10, 8.11m, 2, stillBilling, EndEstimated: false, PriceMissing: false),
+        [
+            CostRun(2, 120, 90, 0.019m, 32 * GB / 10, 8 * GB / 10, 5.95m,
+                CostVideo("holiday.mp4", 40, 0.0085m, CostVideoState.Freed, JobStatus.Completed, 2 * GB, 4.23m),
+                CostVideo("garden.mp4", 25, 0.0053m, CostVideoState.Freed, JobStatus.Completed, 12 * GB / 10, 4.41m),
+                CostVideo("party.mov", 12, 0.0025m, CostVideoState.NothingSaved, JobStatus.Failed),
+                CostVideo("beach.mp4", 8, 0.0017m, CostVideoState.WaitingForReview, JobStatus.ReadyToFinalize, 8 * GB / 10)),
+            CostRun(1, 1500, 60, 0.0127m, 15 * GB / 10, 0, 8.47m,
+                CostVideo("birthday.mp4", 45, 0.0095m, CostVideoState.Freed, JobStatus.Completed, 15 * GB / 10, 6.33m))
+        ]);
 
     public static RemoteWorkerInfo AWorker(long id = 42, string name = "video-optimiser-1", string status = RemoteWorkerStatuses.Recorded, DateTimeOffset? created = null) =>
         new(id, name, "203.0.113.10", status, created ?? Now - TimeSpan.FromMinutes(72), "cx43", "hel1");

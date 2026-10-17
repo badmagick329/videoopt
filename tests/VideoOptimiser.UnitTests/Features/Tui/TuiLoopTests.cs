@@ -187,6 +187,21 @@ public sealed class TuiLoopTests
         (await FirstAsync(channel.Reader)).Should().BeOfType<SnapshotMsg>().Which.Snapshot.Open.Should().ContainSingle();
     }
 
+    /// <summary>The cost page's read posts <c>cost</c>'s own report, or the one-line reason it failed, never an error in the log.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ACostReadPostsTheReportOrWhyItFailed(bool fails)
+    {
+        var cost = new ScriptedCostReport { Report = ACostReport(), Failure = fails ? new InvalidOperationException("database is locked") : null };
+        using var rig = new TuiRig(services => services.AddSingleton<Application.Features.Cost.ICostReport>(cost));
+        var channel = NewChannel();
+
+        new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, channel.Writer).Run(new ReadCost(), CancellationToken.None);
+
+        (await FirstAsync(channel.Reader)).Should().Be(fails ? new CostReadMsg(null, "Couldn't read the cost: database is locked.") : new CostReadMsg(cost.Report, null));
+    }
+
     private sealed class ThrowingVerbs(Exception failure) : IQueueVerbs
     {
         public Task<QueueVerbOutcome> HoldAsync(string databasePath, JobRecord job, CancellationToken cancellationToken) => Task.FromException<QueueVerbOutcome>(failure);

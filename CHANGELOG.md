@@ -7,6 +7,10 @@
 - A video counts as freed once it is finalised, archived and kept originals included. A ready video's saving shows as waiting for review until then.
 - The three levels don't add up, because each counts different time: a video counts only its own conversion, a run counts all the time its worker was up during it (setup and gaps between videos included), and the all-time figure is what Hetzner billed, which rounds each worker up to whole hours.
 
+### The full-screen view
+
+- `$` opens a page with the same figures as `cost`: the all-time figure at the top, the runs newest first, and the selected run's videos below them. It refreshes every few seconds while open, and `$` or `Esc` closes it. Runs and finalising carry on underneath.
+
 ### Fixes
 
 - MKV files without a recorded video bitrate (common from ffmpeg and yt-dlp) no longer fail every rule with "video bitrate is unavailable". The whole file's bitrate, audio included, is used instead. The next `queue add` probes those files again; the rest of the library stays cached.

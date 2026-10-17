@@ -88,6 +88,9 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
             case RefreshSnapshot:
                 into.TryWrite(new SnapshotMsg(await reader.ReadAsync(Settings, cancellationToken)));
                 break;
+            case ReadCost:
+                into.TryWrite(await actions.ReadCostAsync(Settings, cancellationToken));
+                break;
             case QueueActionEffect queue:
                 Finish(effect, await actions.QueueAsync(queue, Settings, cancellationToken));
                 break;

@@ -18,8 +18,9 @@ internal static class TuiHelp
         [
             new("tab / shift+tab", "next or previous pane"),
             new("s", "start a run (when none is going and videos are waiting)"),
-            new("x", "stop the run after this video (while a run is going)"),
-            new("X", "stop the run now, after asking (while a run is going)"),
+            // One row for both stop keys keeps every group in a 40-row window.
+            new("x / X", "stop the run after this video, or now after asking (while a run is going)"),
+            new(TuiKeys.Name(TuiKeys.CostPage), "what the freed space cost on Hetzner workers"),
             new("?", "this help"),
             new("q / Ctrl+C", "quit; asks first if an action is still going")
         ]),

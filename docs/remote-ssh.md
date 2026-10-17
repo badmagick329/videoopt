@@ -251,7 +251,7 @@ The delete command verifies the exact server ID and ownership labels. It refuses
 
 `status`, and a bare `video-optimiser` whose output is redirected, print a card that shows a billing worker too, with its type, location, age and hourly price, checked against Hetzner. It takes no lock, so it answers while a run is creating the worker. When Hetzner can't be asked (no API token, no answer within 15 seconds), it shows the worker recorded on this PC and says why it wasn't checked. The card says `Worker: none.` when Hetzner has no worker for this database, and `Worker: <name> is gone from Hetzner, but its IPv4 address still bills.` when only the IPv4 address is left; `worker delete` removes it. The card also lists the next commands worth running, and `worker delete` is one of them when a worker bills and no run is going.
 
-`cost` shows what the space freed on Hetzner workers cost, in EUR per TB freed, for all time and for each run. See [commands.md](commands.md#workers-and-what-they-cost).
+`cost` shows what the space freed on Hetzner workers cost, in EUR per TB freed, for all time and for each run, and `$` in the full-screen view shows the same. See [commands.md](commands.md#workers-and-what-they-cost).
 
 The `worker` commands follow `lifecycle` alone, so they still work after you set `mode` back to `"local"`, and they take no `--local` or `--remote`. With any other `lifecycle`, `worker create` and `worker delete` exit `3` and `worker status` exits `0`; each names the setting and its current value.
 

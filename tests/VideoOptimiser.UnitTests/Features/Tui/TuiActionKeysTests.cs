@@ -977,4 +977,97 @@ public sealed class TuiActionKeysTests
         // Ctrl+C still quits.
         Choose(model, Press(ConsoleKey.C, '\u0003', ConsoleModifiers.Control)).Model.Quit.Should().BeTrue();
     }
+
+    // ---- the cost page ----------------------------------------------------------------------
+
+    private static TuiModel CostOpen(Pane pane = Pane.Queue) =>
+        After(Focused(After(Model(), Snap(Quiet([Queued(1)]))), pane), Dollar, new CostReadMsg(ACostReport(), null));
+
+    [Theory]
+    [InlineData("Queue")]
+    [InlineData("Worker")]
+    [InlineData("Activity")]
+    [InlineData("Review")]
+    public void DollarOpensTheCostPageFromEveryPaneAndReadsTheReport(string pane)
+    {
+        var step = Update(Focused(After(Model(), Snap(Quiet([Queued(1)]))), Enum.Parse<Pane>(pane)), Dollar);
+
+        step.Model.Cost.Should().Be(new CostPage(null, null, 0, Reading: true, AskedAt: Now, Problem: null));
+        step.Effects.Should().Equal(new ReadCost());
+    }
+
+    /// <summary>A dialog takes the key first: <c>$</c> answers a question as any key but y does, and moves nothing in a list.</summary>
+    [Fact]
+    public void DollarDoesNotOpenThePageWhileADialogIsOpen()
+    {
+        var confirmStep = Update(Update(Queue(1, Queued(1)), Letter('d')).Model, Dollar);
+        (confirmStep.Model.Cost, confirmStep.Model.Confirm).Should().Be((null, null));
+        confirmStep.Effects.Should().BeEmpty();
+
+        var choiceStep = Update(Update(Startable(AWorker()), Letter('s')).Model, Dollar);
+        choiceStep.Model.Cost.Should().BeNull();
+        choiceStep.Model.Choice.Should().NotBeNull();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void DollarOrEscClosesThePage(bool escape)
+    {
+        var step = Update(CostOpen(), escape ? Press(ConsoleKey.Escape, '') : Dollar);
+
+        step.Model.Cost.Should().BeNull();
+        step.Effects.Should().BeEmpty();
+    }
+
+    /// <summary>The page takes the keys: h would hold the video, q would quit, s would start a run, tab would move.</summary>
+    [Theory]
+    [InlineData('h')]
+    [InlineData('q')]
+    [InlineData('s')]
+    [InlineData('x')]
+    [InlineData('?')]
+    [InlineData('	')]
+    public void KeysOtherThanNavigationDoNothingOnThePage(char key)
+    {
+        var open = CostOpen();
+
+        var step = Update(open, key == '	' ? Press(ConsoleKey.Tab, '	') : Letter(key));
+
+        step.Model.Should().Be(open);
+        step.Effects.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CtrlCStillQuitsFromThePage() =>
+        Update(CostOpen(), Press(ConsoleKey.C, '', ConsoleModifiers.Control)).Model.Quit.Should().BeTrue();
+
+    /// <summary>Arrows select a run and stop at the ends; the page keys scroll that run's videos, and another run starts at its top.</summary>
+    [Fact]
+    public void ArrowsSelectARunAndPageKeysScrollItsVideos()
+    {
+        var open = CostOpen();
+        open.Cost!.SelectedRun!.Id.Should().Be(Id(2));
+
+        var scrolled = After(open, Press(ConsoleKey.PageDown));
+        scrolled.Cost!.VideoScroll.Should().Be(3);
+        After(scrolled, Press(ConsoleKey.PageUp)).Cost!.VideoScroll.Should().Be(0);
+
+        var older = After(scrolled, Press(ConsoleKey.DownArrow), Press(ConsoleKey.DownArrow));
+        (older.Cost!.SelectedRun!.Id, older.Cost.VideoScroll).Should().Be((Id(1), 0));
+        After(older, Press(ConsoleKey.Home)).Cost!.SelectedRun!.Id.Should().Be(Id(2));
+    }
+
+    /// <summary>The page's keys are one set, which the key handler and the guide both read: a key added to it works and is listed.</summary>
+    [Fact]
+    public void TheCostKeySetDrivesTheKeysAndTheGuide()
+    {
+        foreach (var key in TuiKeys.CostPage)
+        {
+            var open = Update(Model(), Letter(key)).Model;
+            open.Cost.Should().NotBeNull(key.ToString());
+            Update(open, Letter(key)).Model.Cost.Should().BeNull(key.ToString());
+        }
+        TuiHelp.Groups.Single(group => group.Title == "Anywhere").Keys.Should().Contain(help => help.Key == TuiKeys.Name(TuiKeys.CostPage));
+    }
 }
