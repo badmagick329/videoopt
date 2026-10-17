@@ -72,12 +72,12 @@ To stop a background run from a terminal, use `run stop` (after this video) or `
 `$` opens a page with what the space freed on Hetzner workers cost, in EUR per TB freed. These are the figures `cost` prints (see [commands.md](commands.md#workers-and-what-they-cost)), plus each run's videos:
 
 - At the top, the all-time figure: what Hetzner billed, how much it freed, and how much is waiting for review. While a worker is still up, it's marked `still billing`, and its bill counts to now. A worker deleted outside video-optimiser is marked `end estimated`.
-- In the middle, one row per run, newest first: when it ran, the worker, what it cost, what it freed and the EUR per TB. `↑` and `↓` select a run.
-- At the bottom, the selected run's videos: worker time, cost, what each saved and its EUR per TB. A video that saved nothing says why, such as `failed`, because its worker time still counts. `pgup` and `pgdn` scroll a long list.
+- In the middle, one row per run, newest first: when it ran, the worker, what it cost, what it freed and the EUR per TB. When any run has videos waiting for review, a column shows how much. `↑` and `↓` select a run; `home` and `end` jump to the first and the last.
+- At the bottom, the selected run's videos, each with its worker time, cost, what it saved and its EUR per TB. A video that saved nothing says why, such as `nothing saved: failed`, because its worker time still counts. `pgup` and `pgdn` scroll a long list.
 
-The three levels don't add up. A video counts only its own conversion time and a run counts all the time its worker was up during it, but the all-time figure is what Hetzner billed, in started hours, idle time included.
+The line at the foot of the page is a reminder that the three levels don't add up. [commands.md](commands.md#workers-and-what-they-cost) explains why.
 
-The page refreshes every few seconds while it's open. The run, a finalise and the worker check carry on underneath. `$` or `esc` closes it, and the other keys do nothing until then. Before your first run on a Hetzner worker, the page says it fills in after one.
+The page refreshes every few seconds while it's open. The run, a finalise and the worker check carry on underneath. `$` or `esc` closes it. Until then the other keys do nothing, except `Ctrl+C`, which quits as usual. Before your first run on a Hetzner worker, the page says it fills in after one.
 
 ## Rejecting a video
 

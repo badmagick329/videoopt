@@ -4,7 +4,7 @@
 ### What the freed space cost
 
 - New `cost` command: what the space freed on Hetzner workers cost, in EUR per TB freed, for all time and for each run. `cost --json` adds each video's figures. Only workers video-optimiser created count, and recording starts with this version, so earlier runs and runs on this PC or your own SSH host don't appear.
-- A video counts as freed once it is finalised, archived and kept originals included. A ready video's saving shows as waiting for review until then.
+- A video counts as freed once it is finalised, whether its original was deleted, archived or kept. Until then, a ready video's saving shows as waiting for review.
 - The three levels don't add up, because each counts different time: a video counts only its own conversion, a run counts all the time its worker was up during it (setup and gaps between videos included), and the all-time figure is what Hetzner billed, which rounds each worker up to whole hours.
 
 ### The full-screen view

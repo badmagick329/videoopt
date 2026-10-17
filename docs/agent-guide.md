@@ -50,11 +50,11 @@ A run that finishes follows `deleteAfterRun` alone, failed videos included. A ke
 
 ### What the freed space cost
 
-`cost` answers "what did the savings cost?" as EUR per TB freed (TB = 10^12 bytes), for all time and per run, newest first; `cost --json` adds each video. It writes nothing and always exits `0`. Only Hetzner workers VideoOptimiser created count: runs on this PC or a manual SSH host are left out, and runs before this version were never recorded. `Nothing to show yet: ...` means no worker is recorded.
+`cost` answers "what did the savings cost?" as EUR per TB freed (TB = 10^12 bytes), for all time and per run, newest first; `cost --json` adds each video. It always exits `0` and writes nothing, apart from upgrading a database an older version wrote, as every command does. Only Hetzner workers VideoOptimiser created count: runs on this PC or a manual SSH host are left out, and runs before this version were never recorded. `Nothing to show yet: ...` means no worker is recorded.
 
 - Freed means finalised (`Completed`), archived and kept originals included. A ready video's saving is *waiting for review* and is not in the figure until it is finalised. Failed, skipped, rejected and dropped videos add their time and no bytes.
 - The three levels do not add up, by design: a video pays only its own conversion time, a run pays every minute it overlapped its worker (bootstrap and gaps between videos), and all time is what Hetzner billed (each worker rounded up to whole hours).
-- `-` in place of a price means nothing was freed yet. The lines `A worker is still up: ...` (its bill counts to now), `A worker was deleted outside video-optimiser, ...` (its end is the last time it was seen) and `Hetzner listed no price for a worker, ...` (its bill and videos are left out; its runs say `no price`) qualify the all-time figure.
+- `-` in place of EUR per TB means nothing was freed yet, or the worker has no price. The lines `A worker is still up: ...` (its bill counts to now), `A worker was deleted outside video-optimiser, ...` (its end is the last time it was seen) and `Hetzner listed no price for a worker, ...` (its bill and videos are left out; its runs say `no price`) qualify the all-time figure.
 
 ## Setup
 
@@ -110,7 +110,7 @@ The same letter means different things per pane (`r` is release, check-worker or
 
 **Starting a run with `s`.** It launches a background run, which survives closing the terminal and is shown by `status` as `Run: background run, ...`. Without `remoteSsh.lifecycle: "hetzner"` it starts at once, encoding where the config says. With it, two lists come first: which worker converts (`Use <worker>` when one is up; otherwise the servers with hourly prices incl. VAT; always `No worker: convert on this PC`), then `When the run ends`: `Delete the worker` or `Keep the worker`. A server picked from the list is created before the run starts and bills from then; if the create fails, no run starts. The background run asks nothing afterwards. `x` / `X` and `run stop [--now]` stop only a background run; a run started with `run` in a terminal stops only with `Ctrl+C` in its window.
 
-**The cost page (`$`).** It replaces the panes with `cost`'s figures: the all-time line and its notes (`still billing`, `end estimated` tags), the runs newest first (when, worker, EUR, freed, waiting for review, EUR per TB), and the selected run's videos (worker time, EUR, saved or `nothing saved: <why>`, EUR per TB). `↑`/`↓` select a run, `pgup`/`pgdn` scroll its videos, `$` or `esc` closes it, and every other key does nothing while it is open (`Ctrl+C` still quits). It rereads the report every 5 seconds while open; runs and finalising go on underneath. `Nothing to show yet: this page fills in after a run on a Hetzner worker.` is `cost`'s nothing-recorded case. `Couldn't read the cost: ...` on its first line keeps the last figures below it.
+**The cost page (`$`).** It replaces the panes with `cost`'s figures: the all-time line and its notes (`still billing`, `end estimated` tags), the runs newest first (when, worker, EUR, freed, waiting for review, EUR per TB), and the selected run's videos (worker time, EUR, saved or `nothing saved: <why>`, EUR per TB). `↑`/`↓` (or `home`/`end`) select a run, `pgup`/`pgdn` scroll its videos, `$` or `esc` closes it, and every other key does nothing while it is open (`Ctrl+C` still quits). It rereads the report every 5 seconds while open; runs and finalising go on underneath. `Nothing to show yet: this page fills in after a run on a Hetzner worker.` is `cost`'s nothing-recorded case. `Couldn't read the cost: ...` on its first line keeps the last figures below it.
 
 **What it does not do.** It does not add videos; the person uses `queue add` or `queue add immich` in a terminal and the view shows them within a second.
 
@@ -123,7 +123,7 @@ The same letter means different things per pane (`r` is release, check-worker or
 ```text
 Queue: 1 converting, 2 waiting, 1 held, 3 ready to finalise.
 Run: video-optimiser run, started 14:02 (process 1234), converting clip.mp4.
-Worker: video-optimiser-1 (cpx42 in hel1), up 1h 12m, billing EUR 0.134/h incl. VAT.
+Worker: video-optimiser-4f1c9a2e7b30 (cpx42 in hel1), up 1h 12m, billing EUR 0.134/h incl. VAT.
 Next:
   video-optimiser finalize --ready   finalises the 3 ready videos; review them first
 ```
