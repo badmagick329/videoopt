@@ -16,13 +16,13 @@ internal sealed class DoctorCommand(IDoctorService doctor)
                 configuration.Path,
                 (int)report.ExitCode,
                 report.Diagnostics.Select(diagnostic => new DoctorJsonDiagnostic(diagnostic.Category.ToString(), diagnostic.Status.ToString(), diagnostic.Code, diagnostic.Message)).ToArray());
-            Console.WriteLine(JsonSerializer.Serialize(output, DoctorJsonContext.Default.DoctorJsonOutput));
+            CliConsole.WriteLine(JsonSerializer.Serialize(output, DoctorJsonContext.Default.DoctorJsonOutput));
         }
         else
         {
             foreach (var diagnostic in report.Diagnostics)
             {
-                Console.WriteLine($"{diagnostic.Status,-7} {diagnostic.Category,-13} {diagnostic.Message}");
+                CliConsole.WriteLine($"{diagnostic.Status,-7} {diagnostic.Category,-13} {diagnostic.Message}");
             }
         }
 

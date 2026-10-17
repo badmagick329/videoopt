@@ -9,7 +9,6 @@ using VideoOptimiser.Domain;
 namespace VideoOptimiser.UnitTests.Features.Doctor;
 
 /// <summary>What <c>doctor</c> prints, for people and for <c>--json</c>; agents parse the JSON, so its shape must hold.</summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class DoctorCommandTests : IDisposable
 {
     private static readonly DoctorReport Report = new([

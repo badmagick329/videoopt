@@ -701,7 +701,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Requests.Should().HaveCount(9, "each of the three commands is cut off twice and answers on its third try");
     }
 
-    private static readonly IReadOnlyList<TimeSpan> ShortTimeouts = [TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(5)];
+    private static readonly IReadOnlyList<TimeSpan> ShortTimeouts = [TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(1)];
 
     [Fact]
     public async Task CtrlCDuringAStageLeavesItRunningOnTheWorker()
@@ -884,7 +884,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     private static RemoteSshProcessingSession CreateSession(Guid id, IExternalProcessRunner runner, string sourcePath = "C:\\Videos\\movie.mkv", FakeClock? clock = null, IReadOnlyList<TimeSpan>? commandTimeouts = null)
     {
         clock ??= new FakeClock();
-        return new RemoteSshProcessingSession(new JobRecord { Id = id, SourcePath = sourcePath }, CreateSettings(), runner, _ => Task.CompletedTask, clock.Read, clock.TickAsync, commandTimeouts);
+        return new RemoteSshProcessingSession(new JobRecord { Id = id, SourcePath = sourcePath }, CreateSettings(), runner, _ => Task.CompletedTask, clock.Read, clock.TickAsync, commandTimeouts, _ => Task.CompletedTask);
     }
 
     private static AppSettings CreateSettings() => new()

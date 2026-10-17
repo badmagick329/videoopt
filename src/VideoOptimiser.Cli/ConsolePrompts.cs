@@ -15,13 +15,13 @@ internal static class ConsolePrompts
 
     public static Task<bool> ConfirmAsync(string prompt, CancellationToken cancellationToken)
     {
-        Console.Write(prompt);
+        CliConsole.Write(prompt);
         string? response;
-        try { response = Console.ReadLine(); }
+        try { response = CliConsole.ReadLine(); }
         catch (IOException) { response = null; }
         // Ctrl+C at the prompt ends the read with no answer; report it as a cancellation, not a decline.
         cancellationToken.ThrowIfCancellationRequested();
-        if (response is null) Console.WriteLine();
+        if (response is null) CliConsole.WriteLine();
         return Task.FromResult(WorkerEndPolicy.IsAffirmative(response));
     }
 }

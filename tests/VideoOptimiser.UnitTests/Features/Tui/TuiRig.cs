@@ -63,12 +63,12 @@ internal sealed class TuiRig : IDisposable
         return path;
     }
 
-    /// <summary>A queued job for a file that exists; the pause keeps run order the order of the calls.</summary>
+    /// <summary>A queued job for a file that exists; run order is the order of the calls.</summary>
     public async Task<JobRecord> QueuedAsync(string name, bool create = true)
     {
         var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = create ? File(name) : Path.Combine(Folder, name), SourceFingerprint = "original", Status = JobStatus.Queued, SourceSizeBytes = 1000 };
         await Repository.CreateAsync(DatabasePath, job);
-        await Task.Delay(5);
+        RunCli.AfterCreate(job);
         return job;
     }
 

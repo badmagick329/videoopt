@@ -37,6 +37,18 @@ public sealed class SqliteJobRepositoryTests : IDisposable
         await action.Should().ThrowAsync<InvalidOperationException>();
     }
 
+    /// <summary>Guards the per-open schema check: a repository that remembered a path as initialised would find no tables in a file replaced under it.</summary>
+    [Fact]
+    public async Task CreatesTheSchemaAgainInADatabaseDeletedAndReplacedAtTheSamePath()
+    {
+        await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        foreach (var file in Directory.GetFiles(_directory)) File.Delete(file);
+
+        var created = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued, "C:\\Videos\\other.mp4"));
+
+        (await _repository.GetAsync(_databasePath, created.Id)).Should().NotBeNull();
+    }
+
     [Fact]
     public async Task FindsTheOpenJobForAnImmichAssetOnly()
     {

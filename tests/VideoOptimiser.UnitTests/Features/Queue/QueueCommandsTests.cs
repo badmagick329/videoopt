@@ -14,7 +14,6 @@ namespace VideoOptimiser.UnitTests.Features.Queue;
 /// <c>history</c>, with <c>--json</c> byte for byte), <c>queue drop --all</c> beside a live run or finalise and after a lost
 /// race, and <c>queue retry</c> refusals.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class QueueCommandsTests : QueueTestBase
 {
     private static readonly DateTimeOffset Moment = new(2026, 3, 4, 5, 6, 7, TimeSpan.Zero);

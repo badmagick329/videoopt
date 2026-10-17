@@ -11,7 +11,6 @@ namespace VideoOptimiser.UnitTests.Features.Tui;
 /// status card exactly as before; <c>StatusCommandTests.TheBareCommandPrintsTheCard</c> pins that line by line through the real
 /// terminal check, which is false under the test host, and these pin that the choice is the terminal's alone.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class TuiEntryTests : QueueTestBase
 {
     private readonly FakeScreen _screen = new();

@@ -50,18 +50,18 @@ internal sealed class ValidateCommand(IJobRepository repository, IOutputManifest
         switch (verdict)
         {
             case ValidationVerdict.Passed:
-                Console.WriteLine($"Validation passed: {saved}.");
+                CliConsole.WriteLine($"Validation passed: {saved}.");
                 return (int)ExitCode.Success;
             case ValidationVerdict.Warned:
-                Console.WriteLine($"Validation passed with warnings: {saved}. Check the AV1 before finalising it:");
-                foreach (var warning in job.ValidationWarnings) Console.WriteLine($"  {OutputStyle.Tone(JobTone.Warning, warning)}");
+                CliConsole.WriteLine($"Validation passed with warnings: {saved}. Check the AV1 before finalising it:");
+                foreach (var warning in job.ValidationWarnings) CliConsole.WriteLine($"  {OutputStyle.Tone(JobTone.Warning, warning)}");
                 return (int)ExitCode.Success;
             // A skip is not a failure (RunContracts), so it exits 0 like a run that skips.
             case ValidationVerdict.NotWorthConverting:
-                Console.WriteLine($"Not worth converting: {job.FailureMessage} The AV1 was deleted; the original stays.");
+                CliConsole.WriteLine($"Not worth converting: {job.FailureMessage} The AV1 was deleted; the original stays.");
                 return (int)ExitCode.Success;
             default:
-                Console.WriteLine($"Validation failed: {job.FailureMessage}");
+                CliConsole.WriteLine($"Validation failed: {job.FailureMessage}");
                 return (int)ExitCode.ValidationFailure;
         }
     }

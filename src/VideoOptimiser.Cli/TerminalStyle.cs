@@ -54,11 +54,11 @@ internal sealed class TerminalStyle
     internal static bool IsColourWanted(bool redirected, string? noColor, string? term, bool json) =>
         !json && !redirected && string.IsNullOrEmpty(noColor) && !string.Equals(term, "dumb", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>The style for standard output, from the real console and environment.</summary>
-    public static TerminalStyle ForOutput(bool json) => Detect(Console.IsOutputRedirected, VirtualTerminal.StandardOutput, json);
+    /// <summary>The style for standard output, from the console and environment; a stream a run has replaced is plain.</summary>
+    public static TerminalStyle ForOutput(bool json) => Detect(CliConsole.IsOutputRedirected, VirtualTerminal.StandardOutput, json);
 
     /// <summary>The style for standard error; it can be a terminal while standard output is a file, or the reverse.</summary>
-    public static TerminalStyle ForError(bool json) => Detect(Console.IsErrorRedirected, VirtualTerminal.StandardError, json);
+    public static TerminalStyle ForError(bool json) => Detect(CliConsole.IsErrorRedirected, VirtualTerminal.StandardError, json);
 
     private static TerminalStyle Detect(bool redirected, int streamHandle, bool json) =>
         IsColourWanted(redirected, Environment.GetEnvironmentVariable("NO_COLOR"), Environment.GetEnvironmentVariable("TERM"), json) &&

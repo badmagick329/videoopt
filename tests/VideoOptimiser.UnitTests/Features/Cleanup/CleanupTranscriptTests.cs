@@ -11,7 +11,6 @@ namespace VideoOptimiser.UnitTests.Features.Cleanup;
 /// <c>cleanup</c> run for real against a database and files on disk, so what it finds, keeps and prints is read from the
 /// transcript. The Immich staging folder is the one <see cref="QueueTestBase"/> writes into the config.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class CleanupTranscriptTests : QueueTestBase
 {
     private const string StagedNote = "Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.";

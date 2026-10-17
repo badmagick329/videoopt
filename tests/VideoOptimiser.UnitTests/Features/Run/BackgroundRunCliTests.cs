@@ -14,7 +14,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// foreground <c>run</c> now has too. The run's own behaviour is <see cref="BackgroundRunTests"/>'; the refusal that names
 /// <c>run stop</c> is in <see cref="RunLockTests"/>.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class BackgroundRunCliTests : QueueTestBase
 {
     private readonly FakeKeepAwake _keepAwake = new();

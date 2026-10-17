@@ -21,26 +21,26 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
     private IDisposable? _convertingScope;
     private IDisposable? _deletingScope;
 
-    public void VideoSkipped(JobRecord job) => Console.WriteLine(SkippedJobMessage.Line(job, configuration, command));
+    public void VideoSkipped(JobRecord job) => CliConsole.WriteLine(SkippedJobMessage.Line(job, configuration, command));
 
     public void FinalisationInterrupted(JobRecord job) =>
-        Console.WriteLine($"{Path.GetFileName(job.SourcePath)} was interrupted while being finalised. Run '{command.Hint("finalize --ready")}' to finish it.");
+        CliConsole.WriteLine($"{Path.GetFileName(job.SourcePath)} was interrupted while being finalised. Run '{command.Hint("finalize --ready")}' to finish it.");
 
     public void VideosHeld(int count) =>
-        Console.WriteLine(count == 1 ? "1 video is held; runs pass over it until it's released." : $"{count} videos are held; runs pass over them until they're released.");
+        CliConsole.WriteLine(count == 1 ? "1 video is held; runs pass over it until it's released." : $"{count} videos are held; runs pass over them until they're released.");
 
-    public IProgress<ImmichProgress> ImmichRestaging() => _restaging = new ImmichDiscoveryConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
+    public IProgress<ImmichProgress> ImmichRestaging() => _restaging = new ImmichDiscoveryConsole(CliConsole.Out, OutputStyle, CliConsole.Error, ErrorStyle);
 
     public void ImmichVideosStayQueued(int count, string? unusableReason)
     {
         if (unusableReason is null)
         {
-            Console.WriteLine(ImmichStayQueued(count, "immich.baseUrl isn't set"));
+            CliConsole.WriteLine(ImmichStayQueued(count, "immich.baseUrl isn't set"));
             return;
         }
         // A download that stopped answering leaves its line open.
         _restaging?.FinishLine();
-        Console.WriteLine(ImmichStayQueued(count, $"Immich can't be used ({unusableReason})"));
+        CliConsole.WriteLine(ImmichStayQueued(count, $"Immich can't be used ({unusableReason})"));
     }
 
     /// <summary>
@@ -49,18 +49,18 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
     /// </summary>
     public IProgress<JobProgress> RecheckStarted(int count)
     {
-        Console.WriteLine(RecheckWords.Started(count));
-        return new JobProgressConsole(Console.Out, OutputStyle);
+        CliConsole.WriteLine(RecheckWords.Started(count));
+        return new JobProgressConsole(CliConsole.Out, OutputStyle);
     }
 
     /// <summary>Set apart from the last video's block, as each block is from the one before.</summary>
     public void Rechecked(int ready, int toCheck, int notWorthConverting, int stillFailed)
     {
-        Console.WriteLine();
-        Console.WriteLine(RecheckWords.Tally(ready, toCheck, notWorthConverting, stillFailed, OutputStyle.Tone));
+        CliConsole.WriteLine();
+        CliConsole.WriteLine(RecheckWords.Tally(ready, toCheck, notWorthConverting, stillFailed, OutputStyle.Tone));
     }
 
-    public void WorkerProgress(string line) => Console.WriteLine(line);
+    public void WorkerProgress(string line) => CliConsole.WriteLine(line);
 
     /// <summary>
     /// While a video converts, the first Ctrl+C stops after it (<see cref="RunStop"/>): the line says so, with the encode's
@@ -69,8 +69,8 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
     /// </summary>
     public IProgress<JobProgress> ConversionStarted(int count, bool workerUp)
     {
-        Console.WriteLine($"Converting {count} {(count == 1 ? "video" : "videos")}.");
-        var progress = _progress = new JobProgressConsole(Console.Out, OutputStyle);
+        CliConsole.WriteLine($"Converting {count} {(count == 1 ? "video" : "videos")}.");
+        var progress = _progress = new JobProgressConsole(CliConsole.Out, OutputStyle);
         _convertingScope = stop.WhileConverting(() =>
         {
             progress.WriteNote(StoppedRunMessage.StoppingAfterThisVideo(progress.EncodeTimeLeft));
@@ -92,24 +92,24 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
 
     public void StoppedByUnreachableWorker(string workerName, int notConverted)
     {
-        Console.WriteLine();
-        Console.WriteLine(UnreachableWorkerMessage.Stopped(workerName, notConverted));
+        CliConsole.WriteLine();
+        CliConsole.WriteLine(UnreachableWorkerMessage.Stopped(workerName, notConverted));
     }
 
     public void StoppedAfter(JobRecord last, int notStarted)
     {
-        Console.WriteLine();
-        Console.WriteLine(StoppedRunMessage.StoppedAfter(last.SourcePath, notStarted));
+        CliConsole.WriteLine();
+        CliConsole.WriteLine(StoppedRunMessage.StoppedAfter(last.SourcePath, notStarted));
     }
 
     public void Summary(int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, int readyTotal, bool stoppedAfter, int toCheck)
     {
-        if (OutcomeSummary.Run(ready, skipped, failures.Count, OutputStyle, othersReady: readyTotal > 0, toCheck) is { } summary) Console.WriteLine(summary);
+        if (OutcomeSummary.Run(ready, skipped, failures.Count, OutputStyle, othersReady: readyTotal > 0, toCheck) is { } summary) CliConsole.WriteLine(summary);
         PrintFailedJobs(failures);
         beforeNext?.Invoke();
         // finalize --ready finalises every source, so one line serves a queue of folder and Immich videos.
-        if (readyTotal > 0) Console.WriteLine(NextSteps.ReadyToFinaliseLine(readyTotal, command));
-        if (stoppedAfter) Console.WriteLine(StoppedRunMessage.ConvertTheRest(command));
+        if (readyTotal > 0) CliConsole.WriteLine(NextSteps.ReadyToFinaliseLine(readyTotal, command));
+        if (stoppedAfter) CliConsole.WriteLine(StoppedRunMessage.ConvertTheRest(command));
     }
 
     /// <summary>
@@ -121,13 +121,13 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
         IReadOnlyList<string> lines = manualHost is null ? [] : StoppedRunMessage.Lines(interrupted, manualHost, managed: false, command);
         if (lines.Count == 0) lines = StoppedRunMessage.StoppedNow(interrupted, command);
         // Sets the lines apart from the job's block, and ends a creation prompt that Ctrl+C left open.
-        Console.WriteLine();
+        CliConsole.WriteLine();
         PrintLines(lines);
     }
 
     public void StoppedNow(JobInterruptedException? interrupted, string worker, WorkerFate fate, bool settingUpWorker)
     {
-        Console.WriteLine();
+        CliConsole.WriteLine();
         PrintLines(fate switch
         {
             // Nothing to lose, and the user said y: the video resumes on a new worker.
@@ -139,7 +139,7 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
 
     public void WorkerUnreachableAtEnd(JobRecord job, bool questionFollows)
     {
-        Console.WriteLine();
+        CliConsole.WriteLine();
         var lines = UnreachableWorkerMessage.Lines(job, managed: true, command);
         PrintLines(questionFollows ? lines.SkipLast(1) : lines);
     }
@@ -149,13 +149,13 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
         if (runEnd is RunEnd.StoppedNow or RunEnd.WorkerUnreachable)
         {
             // A stop's lines and U3 already say the worker stays and how to delete it; only the answer N adds the later command.
-            if (answeredNo) Console.WriteLine(StoppedRunMessage.DeleteLater(remoteStage, command));
+            if (answeredNo) CliConsole.WriteLine(StoppedRunMessage.DeleteLater(remoteStage, command));
             return;
         }
         PrintLines(WorkerKeepLines.For(worker, command));
     }
 
-    public void WorkerDeleting() => _deletingScope = stop.WhileDeleting(() => Console.WriteLine(WorkerEndMessage.DeletingPress));
+    public void WorkerDeleting() => _deletingScope = stop.WhileDeleting(() => CliConsole.WriteLine(WorkerEndMessage.DeletingPress));
 
     public void WorkerDeleteFailed(string worker, string message)
     {
@@ -167,12 +167,12 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
     /// <summary>U3m (VOPT-69): a manual host that stopped answering is neither billed nor deleted by this tool, so the user hears only how to resume.</summary>
     public void ManualWorkerUnreachable(JobRecord job)
     {
-        Console.WriteLine();
+        CliConsole.WriteLine();
         PrintLines(UnreachableWorkerMessage.Lines(job, managed: false, command));
     }
 
     public void ManualWorkerReminder() =>
-        Console.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the worker; powering it off still bills.");
+        CliConsole.WriteLine("Remote worker lifecycle is manual: after confirming all expected outputs are ready to finalise, delete the worker; powering it off still bills.");
 
     public int RunFailed(Exception exception) => ReportFailure(exception);
 
@@ -182,17 +182,17 @@ internal sealed class ConsoleRunObserver(LoadedConfiguration configuration, CliC
     private static void PrintFailedJobs(IReadOnlyList<FailedQueueJob> failedJobs)
     {
         if (failedJobs.Count == 0) return;
-        Console.WriteLine();
-        Console.WriteLine(OutputStyle.Red("Failed jobs:"));
+        CliConsole.WriteLine();
+        CliConsole.WriteLine(OutputStyle.Red("Failed jobs:"));
         foreach (var job in failedJobs)
         {
-            Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
-            Console.WriteLine(FailureWords.Describe(job.FailureCategory, job.FailureMessage, sentence: true) ?? job.FailureMessage);
+            CliConsole.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}");
+            CliConsole.WriteLine(FailureWords.Describe(job.FailureCategory, job.FailureMessage, sentence: true) ?? job.FailureMessage);
         }
     }
 
     private static void PrintLines(IEnumerable<string> lines)
     {
-        foreach (var line in lines) Console.WriteLine(line);
+        foreach (var line in lines) CliConsole.WriteLine(line);
     }
 }

@@ -14,7 +14,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// advice used to be "run without --local/--remote" every time, which fails the video as a changed configuration when the
 /// config's mode or worker differs from the one the video started on.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class SkippedJobRunTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

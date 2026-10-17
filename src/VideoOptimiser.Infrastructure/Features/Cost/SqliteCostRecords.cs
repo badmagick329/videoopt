@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using VideoOptimiser.Application.Features.Cost;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain.Jobs;
+using VideoOptimiser.Infrastructure.Persistence;
 
 namespace VideoOptimiser.Infrastructure.Features.Cost;
 
@@ -16,10 +17,8 @@ public sealed class SqliteCostRecords(IDatabaseInitializer databaseInitializer) 
     public async Task<CostRecords> ReadAsync(string databasePath, CancellationToken cancellationToken)
     {
         if (!File.Exists(databasePath)) return CostRecords.None;
-        await databaseInitializer.InitializeAsync(databasePath, cancellationToken);
-        var builder = new SqliteConnectionStringBuilder { DataSource = Path.GetFullPath(databasePath), Mode = SqliteOpenMode.ReadOnly, Pooling = false };
-        await using var connection = new SqliteConnection(builder.ToString());
-        await connection.OpenAsync(cancellationToken);
+        var builder = new SqliteConnectionStringBuilder { Mode = SqliteOpenMode.ReadOnly, Pooling = false };
+        await using var connection = await SqliteStoreConnection.OpenAsync(databaseInitializer, databasePath, builder, cancellationToken);
 
         var workers = await ReadAsync(connection, "SELECT server_id, name, hourly_gross, created_utc, deleted_utc, end_estimated FROM workers;", reader => new CostWorkerRow(
             reader.GetInt64(0), reader.GetString(1),

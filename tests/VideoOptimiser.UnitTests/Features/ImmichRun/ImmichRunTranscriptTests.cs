@@ -17,7 +17,6 @@ namespace VideoOptimiser.UnitTests.Features.ImmichRun;
 /// transcript per run state: the limit counts new videos only, a rerun leaves the open ones alone, and <c>immich run</c>
 /// converts the whole queue as <c>run</c> does.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class ImmichRunTranscriptTests : QueueTestBase
 {
     // Older than the 90-day age gate whenever the suite runs.

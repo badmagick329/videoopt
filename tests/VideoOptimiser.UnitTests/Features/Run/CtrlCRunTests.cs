@@ -18,7 +18,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// Two-press Ctrl+C on a run on this PC (VOPT-54 step 3, approved wording). The real CLI runs with a processor that presses
 /// Ctrl+C partway through a video, as <see cref="RunStop"/> hears it from the console.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class CtrlCRunTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

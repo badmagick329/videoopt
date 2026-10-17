@@ -20,7 +20,6 @@ namespace VideoOptimiser.UnitTests.Features.ImmichRun;
 /// <c>ImmichRunTests</c> and the queue tests. The run lock and Ctrl+C during discovery are pinned by <c>RunLockTests</c> and
 /// <c>CtrlCRunTests</c>.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class ImmichRunCommandTests : IDisposable
 {
     private static readonly DateTime Taken = new(2026, 3, 4, 5, 6, 7);

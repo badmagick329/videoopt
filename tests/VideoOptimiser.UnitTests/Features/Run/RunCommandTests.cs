@@ -18,7 +18,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// downloaded copy back or leaves it queued with a line, and names itself in the run lock. Restaging is the real
 /// <c>ImmichDiscoveryService</c> against a fake Immich that serves <see cref="Content"/>.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class RunCommandTests : IDisposable
 {
     private const string Content = "immich original";

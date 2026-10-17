@@ -45,10 +45,8 @@ public sealed class SqliteWorkerBillStore(IDatabaseInitializer databaseInitializ
 
     private async Task<int> ExecuteAsync(string databasePath, string sql, CancellationToken cancellationToken, params (string Name, object? Value)[] parameters)
     {
-        await databaseInitializer.InitializeAsync(databasePath, cancellationToken);
-        var builder = new SqliteConnectionStringBuilder { DataSource = Path.GetFullPath(databasePath), Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false };
-        await using var connection = new SqliteConnection(builder.ToString());
-        await connection.OpenAsync(cancellationToken);
+        var builder = new SqliteConnectionStringBuilder { Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false };
+        await using var connection = await SqliteStoreConnection.OpenAsync(databaseInitializer, databasePath, builder, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
         foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);

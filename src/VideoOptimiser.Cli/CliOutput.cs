@@ -9,13 +9,26 @@ using VideoOptimiser.Domain.Jobs;
 /// <summary>What every command prints with: the console styles, errors, and how a failure that ended a command reads.</summary>
 internal static class CliOutput
 {
-    // Chosen once from the real console before the command runs, because it depends on how this process was started
+    // Chosen once from the console before the command runs, because it depends on how this process was started
     // (terminal or redirected, per stream) and on --json. The writers take them as arguments so tests can pick their own.
-    internal static TerminalStyle OutputStyle { get; set; } = TerminalStyle.Plain;
-    internal static TerminalStyle ErrorStyle { get; set; } = TerminalStyle.Plain;
+    // Async-local like CliConsole, since --json differs from run to run and parallel runs must not overwrite each other's.
+    private static readonly AsyncLocal<TerminalStyle?> OutputStyleValue = new();
+    private static readonly AsyncLocal<TerminalStyle?> ErrorStyleValue = new();
+
+    internal static TerminalStyle OutputStyle
+    {
+        get => OutputStyleValue.Value ?? TerminalStyle.Plain;
+        set => OutputStyleValue.Value = value;
+    }
+
+    internal static TerminalStyle ErrorStyle
+    {
+        get => ErrorStyleValue.Value ?? TerminalStyle.Plain;
+        set => ErrorStyleValue.Value = value;
+    }
 
     /// <summary>An error or a refusal, in red on a terminal. Usage text and other help are written as they are.</summary>
-    internal static void WriteError(string? text) => Console.Error.WriteLine(ErrorStyle.Red(text ?? string.Empty));
+    internal static void WriteError(string? text) => CliConsole.Error.WriteLine(ErrorStyle.Red(text ?? string.Empty));
 
     /// <summary>Prints each problem the settings have, as an error, and says whether there were any.</summary>
     internal static bool ReportInvalidSettings(ISettingsValidator validator, LoadedConfiguration configuration)
@@ -62,7 +75,7 @@ internal static class CliOutput
                 return (int)ExitCode.GeneralFailure;
             case RemoteWorkerCreationDeclinedException:
                 // A declined price is the user's choice, as with a declined finalize, not a failure. Jobs stay as they were.
-                Console.WriteLine(exception.Message);
+                CliConsole.WriteLine(exception.Message);
                 return (int)ExitCode.Success;
             case RemoteWorkerCapacityUnavailableException:
                 WriteError(exception.Message);

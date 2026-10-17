@@ -30,10 +30,10 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             case VerbRefused refused:
                 return Refuse(RefusalText(refused, command, verb: "hold", notWaitingAction: "be held"));
             case JobAlreadyHeld:
-                Console.WriteLine($"{name} is already held.");
+                CliConsole.WriteLine($"{name} is already held.");
                 return (int)ExitCode.Success;
             default:
-                Console.WriteLine($"Held {name}. Runs pass over it until '{command.Hint($"queue release {outcome.Job.Id:N}")}'.");
+                CliConsole.WriteLine($"Held {name}. Runs pass over it until '{command.Hint($"queue release {outcome.Job.Id:N}")}'.");
                 return (int)ExitCode.Success;
         }
     }
@@ -43,7 +43,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         if (await FindJobAsync(configuration, command, cancellationToken) is not { } job) return (int)ExitCode.InvalidArguments;
         var outcome = await verbs.ReleaseAsync(configuration.Settings.Database.Path, job, cancellationToken);
         var name = Path.GetFileName(outcome.Job.SourcePath);
-        Console.WriteLine(outcome is JobNotHeld ? $"{name} isn't held." : $"Released {name}; runs take it again.");
+        CliConsole.WriteLine(outcome is JobNotHeld ? $"{name} isn't held." : $"Released {name}; runs take it again.");
         return (int)ExitCode.Success;
     }
 
@@ -55,12 +55,12 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         switch (outcome)
         {
             case VerbRefused { Reason: VerbRefusal.ConvertingNow }:
-                Console.WriteLine($"{name} is converting now.");
+                CliConsole.WriteLine($"{name} is converting now.");
                 return (int)ExitCode.Success;
             case VerbRefused refused:
                 return Refuse(RefusalText(refused, command, verb: "run next", notWaitingAction: "run next"));
             case JobMovedNext moved:
-                Console.WriteLine($"{name} {(moved.RunTakesIt ? "runs next" : "is now first in the queue")}{(moved.WasHeld ? "; it's no longer held" : string.Empty)}.");
+                CliConsole.WriteLine($"{name} {(moved.RunTakesIt ? "runs next" : "is now first in the queue")}{(moved.WasHeld ? "; it's no longer held" : string.Empty)}.");
                 return (int)ExitCode.Success;
             default:
                 throw new InvalidOperationException($"queue next cannot end as {outcome.GetType().Name}.");
@@ -86,10 +86,10 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             case OnlyCopyAtRisk onlyCopy:
                 return Refuse(OnlyCopyText(onlyCopy, "drop"));
             case JobDropped dropped:
-                Console.WriteLine($"Dropped {name}.");
-                if (dropped.RemoteStage is { } remote) Console.WriteLine(RemoteStageLine(remote));
-                if (await verbs.LeftFilesAsync(configuration.Settings, dropped.Job, dropped.HadFinishedAv1, cancellationToken) is { } files) Console.WriteLine(LeftFilesLine(files, command));
-                if (dropped.UploadedAssetId is { } uploaded) Console.WriteLine($"The AV1 already uploaded to Immich as asset {uploaded} stays there; delete it in Immich if you do not want it.");
+                CliConsole.WriteLine($"Dropped {name}.");
+                if (dropped.RemoteStage is { } remote) CliConsole.WriteLine(RemoteStageLine(remote));
+                if (await verbs.LeftFilesAsync(configuration.Settings, dropped.Job, dropped.HadFinishedAv1, cancellationToken) is { } files) CliConsole.WriteLine(LeftFilesLine(files, command));
+                if (dropped.UploadedAssetId is { } uploaded) CliConsole.WriteLine($"The AV1 already uploaded to Immich as asset {uploaded} stays there; delete it in Immich if you do not want it.");
                 return (int)ExitCode.Success;
             default:
                 throw new InvalidOperationException($"queue drop cannot end as {outcome.GetType().Name}.");
@@ -119,10 +119,10 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                 return Refuse(OnlyCopyText(onlyCopy, "reject"));
             case JobRejected rejected:
                 var immich = rejected.Job.SourceKind == JobSourceKind.Immich;
-                Console.WriteLine($"Rejected {name}. The original{(immich ? " in Immich" : string.Empty)} is untouched.");
-                if (rejected.Deleted.Any) Console.WriteLine($"Deleted its {FilesPhrase(rejected.Deleted)}.");
-                if (rejected.LeftForCleanup is { } left) Console.WriteLine(LeftForCleanupLine(left, command));
-                Console.WriteLine($"To try it again: {command.Hint($"queue retry {rejected.Job.Id:N}")}");
+                CliConsole.WriteLine($"Rejected {name}. The original{(immich ? " in Immich" : string.Empty)} is untouched.");
+                if (rejected.Deleted.Any) CliConsole.WriteLine($"Deleted its {FilesPhrase(rejected.Deleted)}.");
+                if (rejected.LeftForCleanup is { } left) CliConsole.WriteLine(LeftForCleanupLine(left, command));
+                CliConsole.WriteLine($"To try it again: {command.Hint($"queue retry {rejected.Job.Id:N}")}");
                 return (int)ExitCode.Success;
             default:
                 throw new InvalidOperationException($"queue reject cannot end as {outcome.GetType().Name}.");
@@ -140,7 +140,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         {
             var count = await verbs.DismissAllAsync(database, cancellationToken);
             var history = command.Hint("history");
-            Console.WriteLine(count switch
+            CliConsole.WriteLine(count switch
             {
                 0 => "No failures to dismiss.",
                 1 => $"Dismissed 1 failure. Its original stays skipped; '{history}' still lists it.",
@@ -156,10 +156,10 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             case VerbRefused refused:
                 return Refuse($"Only a failed video can be dismissed; {name} {StatusPhrase(refused.Job)}.");
             case JobAlreadyDismissed:
-                Console.WriteLine($"{name} is already dismissed.");
+                CliConsole.WriteLine($"{name} is already dismissed.");
                 return (int)ExitCode.Success;
             case JobDismissed:
-                Console.WriteLine($"Dismissed {name}. Its original stays skipped. To try it again: {command.Hint($"queue retry {job.Id:N}")}");
+                CliConsole.WriteLine($"Dismissed {name}. Its original stays skipped. To try it again: {command.Hint($"queue retry {job.Id:N}")}");
                 return (int)ExitCode.Success;
             default:
                 throw new InvalidOperationException($"queue dismiss cannot end as {outcome.GetType().Name}.");
@@ -182,21 +182,21 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             switch (step)
             {
                 case NothingToDrop:
-                    Console.WriteLine("Nothing to drop: the queue is empty.");
+                    CliConsole.WriteLine("Nothing to drop: the queue is empty.");
                     return (int)ExitCode.Success;
                 case ChangedUnderDropAll changed:
                     WriteError(new JobChangedException(changed.JobId).Message);
                     exitCode = ExitCode.GeneralFailure;
                     break;
                 case DroppedInBulk dropped:
-                    Console.WriteLine($"Dropped {Path.GetFileName(dropped.Job.SourcePath)}.");
-                    if (dropped.RemoteStage is { } remote) Console.WriteLine(RemoteStageLine(remote));
+                    CliConsole.WriteLine($"Dropped {Path.GetFileName(dropped.Job.SourcePath)}.");
+                    if (dropped.RemoteStage is { } remote) CliConsole.WriteLine(RemoteStageLine(remote));
                     break;
                 case LeftStoppedFinalising left:
-                    Console.WriteLine($"Left 1 video stopped while being finalised; '{command.Hint($"finalize {left.Job.Id:N}")}' checks and resumes it.");
+                    CliConsole.WriteLine($"Left 1 video stopped while being finalised; '{command.Hint($"finalize {left.Job.Id:N}")}' checks and resumes it.");
                     break;
                 case LeftStoppedChecking left:
-                    Console.WriteLine($"Left 1 video stopped while its AV1 was checked; to drop it: {command.Hint($"queue drop {left.Job.Id:N}")}");
+                    CliConsole.WriteLine($"Left 1 video stopped while its AV1 was checked; to drop it: {command.Hint($"queue drop {left.Job.Id:N}")}");
                     break;
             }
         }
@@ -287,11 +287,11 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             return (int)ExitCode.InvalidConfiguration;
         }
 
-        Console.WriteLine($"Scanning {OutputWords.Count(settings.Watch.Roots.Count, "watch root", "watch roots")} for videos to convert; files not seen before are probed with ffprobe.");
-        var result = await discovery.DiscoverAsync(settings.Database.Path, settings, command.First, new QueueDiscoverConsole(Console.Out), cancellationToken);
-        QueueDiscoverConsole.WriteSummary(Console.Out, result, command);
-        if (result.QueuedPaths.Count + result.AlreadyQueued > 0) Console.WriteLine(NextRunLine(discovery.NextRun(settings.Database.Path), command));
-        if (result.ReadyToFinalize > 0) Console.WriteLine(NextSteps.ReadyToFinaliseLine(result.ReadyToFinalize, command));
+        CliConsole.WriteLine($"Scanning {OutputWords.Count(settings.Watch.Roots.Count, "watch root", "watch roots")} for videos to convert; files not seen before are probed with ffprobe.");
+        var result = await discovery.DiscoverAsync(settings.Database.Path, settings, command.First, new QueueDiscoverConsole(CliConsole.Out), cancellationToken);
+        QueueDiscoverConsole.WriteSummary(CliConsole.Out, result, command);
+        if (result.QueuedPaths.Count + result.AlreadyQueued > 0) CliConsole.WriteLine(NextRunLine(discovery.NextRun(settings.Database.Path), command));
+        if (result.ReadyToFinalize > 0) CliConsole.WriteLine(NextSteps.ReadyToFinaliseLine(result.ReadyToFinalize, command));
         return result.Issues == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
     }
 
@@ -305,9 +305,9 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         switch (result.Outcome)
         {
             case QueueAddOutcome.Queued:
-                Console.WriteLine($"Queued {name} as job {job!.Id:N}{(result.OutsideRules ? ", outside your rules (--force)" : string.Empty)}.");
+                CliConsole.WriteLine($"Queued {name} as job {job!.Id:N}{(result.OutsideRules ? ", outside your rules (--force)" : string.Empty)}.");
                 var ahead = await discovery.AheadOfAsync(settings.Database.Path, job, cancellationToken);
-                Console.WriteLine(ahead == 0 ? NextRunLine(discovery.NextRun(settings.Database.Path), command)
+                CliConsole.WriteLine(ahead == 0 ? NextRunLine(discovery.NextRun(settings.Database.Path), command)
                     : $"{(ahead == 1 ? "1 video is" : $"{ahead} videos are")} ahead of it; '{command.Hint($"queue next {job.Id:N}")}' puts it first.");
                 return (int)ExitCode.Success;
             case QueueAddOutcome.Missing:
@@ -320,12 +320,12 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                 WriteError($"{path} is an original video-optimiser archived, so it can't be queued.");
                 return (int)ExitCode.NoEligibleFiles;
             case QueueAddOutcome.OpenJob:
-                Console.WriteLine(result.OpenState == OpenJobState.LastFinaliseFailed
+                CliConsole.WriteLine(result.OpenState == OpenJobState.LastFinaliseFailed
                     ? $"{name}'s last finalise failed (job {job!.Id:N}): {job.FailureMessage}"
                     : $"{name} already has job {job!.Id:N} ({OpenStatusPhrase(job, result.OpenState!.Value)}).");
                 return (int)ExitCode.Success;
             case QueueAddOutcome.Settled:
-                Console.WriteLine(job!.Status switch
+                CliConsole.WriteLine(job!.Status switch
                 {
                     JobStatus.Completed => $"{name} was already converted (job {job.Id:N}).",
                     JobStatus.Cancelled => $"{name} was dropped before (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}",
@@ -365,9 +365,9 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         }
 
         var replacement = result.Replacement!;
-        Console.WriteLine($"Queued {Path.GetFileName(replacement.SourcePath)} again as job {replacement.Id:N}.");
-        if (result.DownloadedCopyGone) Console.WriteLine($"Its downloaded copy is gone; '{command.Hint("run")}' downloads it again first.");
-        Console.WriteLine(NextRunLine(discovery.NextRun(configuration.Settings.Database.Path), command));
+        CliConsole.WriteLine($"Queued {Path.GetFileName(replacement.SourcePath)} again as job {replacement.Id:N}.");
+        if (result.DownloadedCopyGone) CliConsole.WriteLine($"Its downloaded copy is gone; '{command.Hint("run")}' downloads it again first.");
+        CliConsole.WriteLine(NextRunLine(discovery.NextRun(configuration.Settings.Database.Path), command));
         return (int)ExitCode.Success;
     }
 
@@ -378,7 +378,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         if (!terminal && !command.Json)
         {
             var open = await discovery.OpenJobsAsync(databasePath, cancellationToken);
-            foreach (var line in open.Count == 0 ? ["Nothing is queued or ready to finalise."] : OpenJobLines(open, command)) Console.WriteLine(line);
+            foreach (var line in open.Count == 0 ? ["Nothing is queued or ready to finalise."] : OpenJobLines(open, command)) CliConsole.WriteLine(line);
             return (int)ExitCode.Success;
         }
 
@@ -386,11 +386,11 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         if (command.Json)
         {
             var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.Held, job.SourcePath, job.SourceKind == JobSourceKind.Immich ? "immich" : "file", job.ImmichAssetId, job.ImmichNewAssetId, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.ValidationWarnings, job.UpdatedUtc)).ToArray();
-            Console.WriteLine(JsonSerializer.Serialize(output, QueueJsonContext.Default.JobJsonOutputArray));
+            CliConsole.WriteLine(JsonSerializer.Serialize(output, QueueJsonContext.Default.JobJsonOutputArray));
         }
         else if (jobs.Count == 0)
         {
-            Console.WriteLine("No job history.");
+            CliConsole.WriteLine("No job history.");
         }
         else
         {
@@ -400,7 +400,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                 var savings = job.PercentageSaved is null ? string.Empty : $" {job.PercentageSaved:F1}% saved";
                 // An Immich job's file name is the original's in Immich; the asset IDs find it there.
                 var immich = job.ImmichAssetId is { } asset ? $" Immich {asset}{(job.ImmichNewAssetId is { } av1 ? $" -> {av1}" : string.Empty)}" : string.Empty;
-                Console.WriteLine($"{job.Id:N}  {StatusName(job.Status),-20} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}");
+                CliConsole.WriteLine($"{job.Id:N}  {StatusName(job.Status),-20} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}");
             }
         }
 

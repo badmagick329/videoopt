@@ -13,7 +13,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// What <c>run</c> prints when the worker stops answering (VOPT-69, wording U2, U3, U3m). The real CLI
 /// runs with a fake worker and a processor that reports the first job interrupted by an unreachable worker, at the encode stage.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class UnreachableWorkerRunTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

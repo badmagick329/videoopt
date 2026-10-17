@@ -63,12 +63,18 @@ internal static class RunCli
         var jobs = new List<JobRecord>();
         for (var index = 1; index <= count; index++)
         {
-            jobs.Add(await repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(Path.GetDirectoryName(databasePath)!, $"{index}.mp4"), Status = JobStatus.Queued }));
-            // Run order is by creation time.
-            await Task.Delay(5);
+            var job = await repository.CreateAsync(databasePath, new JobRecord { Id = Guid.NewGuid(), SourcePath = Path.Combine(Path.GetDirectoryName(databasePath)!, $"{index}.mp4"), Status = JobStatus.Queued });
+            AfterCreate(job);
+            jobs.Add(job);
         }
         return [.. jobs];
     }
+
+    /// <summary>
+    /// Run order is by creation time, and the repository stamps it from the clock. Spins until the clock has passed the stamp,
+    /// so the next job created gets a later one and the order of the calls is the run order, without a sleep.
+    /// </summary>
+    public static void AfterCreate(JobRecord created) => SpinWait.SpinUntil(() => DateTimeOffset.UtcNow > created.CreatedUtc);
 
     public static async Task<JobStatus[]> StatusesAsync(IJobRepository repository, string databasePath, IEnumerable<JobRecord> jobs)
     {

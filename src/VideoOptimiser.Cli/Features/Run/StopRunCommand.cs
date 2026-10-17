@@ -18,14 +18,14 @@ internal sealed class StopRunCommand(StopRunRequest stopRequest)
         switch (result.Outcome)
         {
             case StopRunOutcome.NoRun:
-                Console.WriteLine("No run is going.");
+                CliConsole.WriteLine("No run is going.");
                 return (int)ExitCode.Success;
             case StopRunOutcome.Foreground:
                 WriteError($"The run going now is in a terminal (process {result.Holder!.ProcessId}): stop it with Ctrl+C in its window.");
                 return (int)ExitCode.GeneralFailure;
             default:
-                Console.WriteLine(command.StopNow ? "Asked the run to stop now." : "Asked the run to stop after this video.");
-                Console.WriteLine($"'{command.Hint("status")}' shows when it has stopped.");
+                CliConsole.WriteLine(command.StopNow ? "Asked the run to stop now." : "Asked the run to stop after this video.");
+                CliConsole.WriteLine($"'{command.Hint("status")}' shows when it has stopped.");
                 return (int)ExitCode.Success;
         }
     }

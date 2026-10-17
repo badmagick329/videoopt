@@ -21,8 +21,8 @@ internal sealed class BackgroundCommands(ISettingsValidator settingsValidator, B
         switch (result.Outcome)
         {
             case BackgroundLaunchOutcome.Started:
-                Console.WriteLine($"Started a background run (process {result.ProcessId}).");
-                Console.WriteLine($"'{command.Hint("status")}' shows how it is going; '{command.Hint("run stop")}' stops it.");
+                CliConsole.WriteLine($"Started a background run (process {result.ProcessId}).");
+                CliConsole.WriteLine($"'{command.Hint("status")}' shows how it is going; '{command.Hint("run stop")}' stops it.");
                 return (int)ExitCode.Success;
             case BackgroundLaunchOutcome.AlreadyRunning:
                 RunWorkerEnd.WriteRefusal(result.Holder, command);

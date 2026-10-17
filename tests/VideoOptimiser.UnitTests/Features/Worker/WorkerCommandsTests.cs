@@ -11,7 +11,6 @@ namespace VideoOptimiser.UnitTests.Features.Worker;
 /// What <c>worker create</c>, <c>status</c> and <c>delete</c> print and return once the lifecycle gate is passed. A fake
 /// lifecycle stands in for Hetzner, so no test can create a server.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class WorkerCommandsTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

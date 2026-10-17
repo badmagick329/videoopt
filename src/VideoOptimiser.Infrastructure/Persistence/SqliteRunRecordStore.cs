@@ -49,12 +49,9 @@ public sealed class SqliteRunRecordStore(IDatabaseInitializer databaseInitialize
         _ = await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private async Task<SqliteConnection> OpenAsync(string databasePath, CancellationToken cancellationToken)
+    private Task<SqliteConnection> OpenAsync(string databasePath, CancellationToken cancellationToken)
     {
-        await databaseInitializer.InitializeAsync(databasePath, cancellationToken);
-        var builder = new SqliteConnectionStringBuilder { DataSource = Path.GetFullPath(databasePath), Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false };
-        var connection = new SqliteConnection(builder.ToString());
-        await connection.OpenAsync(cancellationToken);
-        return connection;
+        var builder = new SqliteConnectionStringBuilder { Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false };
+        return SqliteStoreConnection.OpenAsync(databaseInitializer, databasePath, builder, cancellationToken);
     }
 }

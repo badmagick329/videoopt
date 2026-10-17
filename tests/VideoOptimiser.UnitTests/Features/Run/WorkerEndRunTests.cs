@@ -17,7 +17,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// Ctrl+C, the end question, and the fate of every other end. The real CLI runs with a fake worker, scripted input, and a
 /// processor that presses Ctrl+C partway through a video.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class WorkerEndRunTests : IDisposable
 {
     private const string Worker = "video-optimiser-1";

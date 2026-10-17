@@ -15,7 +15,6 @@ namespace VideoOptimiser.UnitTests.Features.Queue;
 /// line, whole, with its exit code. ffprobe and the readiness check are faked by file name: <c>hevc</c> probes as HEVC,
 /// <c>broken</c> fails to probe, <c>locked</c> cannot be opened.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class QueueAddTests : QueueTestBase
 {
     public QueueAddTests() => Directory.CreateDirectory(Elsewhere);

@@ -37,20 +37,20 @@ internal static class CliApplication
             ErrorStyle = TerminalStyle.ForError(command.Json);
             if (command.ShowHelp)
             {
-                Console.WriteLine(CliCommand.Usage);
+                CliConsole.WriteLine(CliCommand.Usage);
                 return (int)ExitCode.Success;
             }
 
             if (command.Kind == CliCommandKind.Version)
             {
-                Console.WriteLine($"video-optimiser {GetVersion()}");
+                CliConsole.WriteLine($"video-optimiser {GetVersion()}");
                 return (int)ExitCode.Success;
             }
 
             if (!command.IsValid)
             {
                 WriteError(command.Error);
-                Console.Error.WriteLine(CliCommand.Usage);
+                CliConsole.Error.WriteLine(CliCommand.Usage);
                 return (int)ExitCode.InvalidArguments;
             }
 
@@ -62,7 +62,8 @@ internal static class CliApplication
                 stop.Press();
             };
             // The detached runner has no console to press Ctrl+C in; its stop requests come from the database.
-            var hasConsole = command.Kind != CliCommandKind.BackgroundRunner;
+            // A run whose streams are replaced (a test) has no terminal either, and the handler is process-wide.
+            var hasConsole = command.Kind != CliCommandKind.BackgroundRunner && !CliConsole.IsReplaced;
             if (hasConsole) Console.CancelKeyPress += cancelHandler;
             try
             {

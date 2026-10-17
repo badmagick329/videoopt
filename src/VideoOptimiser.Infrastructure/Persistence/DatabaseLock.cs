@@ -58,6 +58,13 @@ public sealed class DatabaseLock : IDisposable
     /// <param name="Command">What holds it, such as <c>video-optimiser run</c>.</param>
     public sealed record Holder(string Command, DateTimeOffset StartedUtc, int ProcessId);
 
+    /// <summary>
+    /// How long one attempt at the finalise lock waits for another finalise before refusing. A seam for tests: the CLI takes the
+    /// lock through the static <see cref="AcquireFinalizeAsync"/>, so a test that wants a refusal without paying the wait
+    /// shortens it here once, for the whole process.
+    /// </summary>
+    internal static TimeSpan FinalizeWait { get; set; } = TimeSpan.FromSeconds(5);
+
     /// <summary>How a run names itself while it holds the finalise lock to prepare, which takes moments.</summary>
     public const string RunPreparing = "run preparing";
 
@@ -139,13 +146,13 @@ public sealed class DatabaseLock : IDisposable
     /// however long it takes and gives up only on another finalise, whose holder it returns. One place for the loop, so the
     /// CLI's finalize (which words the refusal from the holder) and the queue verbs wait alike.
     /// </summary>
-    public static async Task<(DatabaseLock? Lock, Holder? Holder)> AcquireFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken)
+    public static async Task<(DatabaseLock? Lock, Holder? Holder)> AcquireFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken, TimeSpan? wait = null)
     {
         DatabaseLock? taken;
         Holder? holder;
         do
         {
-            (taken, holder) = await AcquireAsync(FinalizePath(databasePath), command, TimeSpan.FromSeconds(5), cancellationToken);
+            (taken, holder) = await AcquireAsync(FinalizePath(databasePath), command, wait ?? FinalizeWait, cancellationToken);
         }
         while (taken is null && holder?.Command == RunPreparing);
         return (taken, holder);

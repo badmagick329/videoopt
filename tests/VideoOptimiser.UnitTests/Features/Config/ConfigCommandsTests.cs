@@ -6,7 +6,6 @@ using VideoOptimiser.Domain;
 namespace VideoOptimiser.UnitTests.Features.Config;
 
 /// <summary>What <c>config init</c>, <c>config show</c> and <c>config validate</c> print and return.</summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class ConfigCommandsTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

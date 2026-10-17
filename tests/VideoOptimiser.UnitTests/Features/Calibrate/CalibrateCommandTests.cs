@@ -12,7 +12,6 @@ using VideoOptimiser.Domain;
 namespace VideoOptimiser.UnitTests.Features.Calibrate;
 
 /// <summary>What <c>calibrate</c> prints and returns, for people and for <c>--json</c>; agents parse the JSON, so its shape must hold.</summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class CalibrateCommandTests : IDisposable
 {
     private const long GiB = 1L << 30;

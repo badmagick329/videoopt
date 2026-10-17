@@ -16,7 +16,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// (VOPT-74 B21). It used to end the whole run as a configuration error (exit 3) and leave the videos after it unconverted.
 /// The real CLI runs the real processor with a fingerprint service that fails for <c>a.mp4</c>.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class UnreadableOriginalRunTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

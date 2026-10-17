@@ -12,7 +12,6 @@ namespace VideoOptimiser.UnitTests.Features.RemoteSetup;
 /// and that the Next line carries <c>--config</c> only when it was typed. The prompt is the shared
 /// <c>ConsolePrompts.ConfirmAsync</c>, whose end-of-input path <c>WorkerCommandsTests</c> pins.
 ///</summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class RemoteSetupCommandTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

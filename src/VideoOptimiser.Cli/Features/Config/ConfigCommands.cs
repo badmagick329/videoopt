@@ -16,10 +16,10 @@ internal sealed class ConfigCommands(IConfigurationTemplateWriter writer, ISetti
             // Refuse before asking, so nobody answers a question for a file that will not be written.
             var target = writer.GetDestination(command.ConfigurationPath);
             if (File.Exists(target)) throw IConfigurationTemplateWriter.RefuseOverwrite(target);
-            var quality = ConfigInitQuestion.Choose(command.Quality, input.IsInteractive, Console.In, Console.Out);
+            var quality = ConfigInitQuestion.Choose(command.Quality, input.IsInteractive, CliConsole.In, CliConsole.Out);
             var destination = await writer.WriteAsync(command.ConfigurationPath, quality, cancellationToken);
-            Console.WriteLine($"Created editable configuration template: {destination}");
-            Console.WriteLine($"Add watch.roots, then run '{command.Hint("config validate")}'.");
+            CliConsole.WriteLine($"Created editable configuration template: {destination}");
+            CliConsole.WriteLine($"Add watch.roots, then run '{command.Hint("config validate")}'.");
             return (int)ExitCode.Success;
         }
         catch (InvalidOperationException exception)
@@ -31,9 +31,9 @@ internal sealed class ConfigCommands(IConfigurationTemplateWriter writer, ISetti
 
     public static int Show(LoadedConfiguration configuration)
     {
-        Console.WriteLine($"Configuration path: {configuration.Path}");
-        Console.WriteLine();
-        Console.Write(configuration.RawYaml ?? "# Configuration content is not available.\n");
+        CliConsole.WriteLine($"Configuration path: {configuration.Path}");
+        CliConsole.WriteLine();
+        CliConsole.Write(configuration.RawYaml ?? "# Configuration content is not available.\n");
         return (int)ExitCode.Success;
     }
 
@@ -42,7 +42,7 @@ internal sealed class ConfigCommands(IConfigurationTemplateWriter writer, ISetti
         var diagnostics = validator.Validate(configuration.Settings);
         if (diagnostics.Count == 0)
         {
-            Console.WriteLine($"Valid configuration: {configuration.Path}");
+            CliConsole.WriteLine($"Valid configuration: {configuration.Path}");
             return (int)ExitCode.Success;
         }
 

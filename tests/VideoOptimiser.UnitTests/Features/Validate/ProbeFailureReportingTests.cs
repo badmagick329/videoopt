@@ -13,7 +13,6 @@ namespace VideoOptimiser.UnitTests.Features.Validate;
 /// A fake ffprobe stands in for the real one: it prints a valid H.264 probe for any path, and fails with
 /// ffprobe's own "moov atom not found" for a path containing "truncated". Windows-only, like the tool itself.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class ProbeFailureReportingTests : IDisposable
 {
     private const string MoovAtomMessage = "[mov,mp4,m4a,3gp,3g2,mj2 @ 000001] moov atom not found";

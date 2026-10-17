@@ -6,7 +6,6 @@ namespace VideoOptimiser.UnitTests.Features.Worker;
 /// The worker commands decide on <c>processing.remoteSsh.lifecycle</c> alone (VOPT-56): with <c>mode: local</c> a billing
 /// server must still be deletable. Runs the real CLI against a temporary config; no test reaches Hetzner.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class WorkerLifecycleGateTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

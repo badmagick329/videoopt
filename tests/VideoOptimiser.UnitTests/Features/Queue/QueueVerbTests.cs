@@ -16,7 +16,6 @@ namespace VideoOptimiser.UnitTests.Features.Queue;
 /// whole, with its exit code, and what each leaves in the database. A run is "going" when its lock is held, which these tests
 /// do in-process with <see cref="DatabaseLock"/>.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class QueueVerbTests : QueueTestBase
 {
     private readonly FakeImmich _immich = new();

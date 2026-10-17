@@ -18,8 +18,8 @@ internal sealed class CalibrateCommand(ICalibrationService calibration, ISetting
     {
         if (ReportInvalidSettings(validator, configuration)) return (int)ExitCode.InvalidConfiguration;
         // With --json, stdout carries the JSON alone; an agent has no use for progress lines.
-        var scanProgress = json ? null : new QueueDiscoverConsole(Console.Out);
-        var immichProgress = json ? null : new ImmichSearchConsole(Console.Out);
+        var scanProgress = json ? null : new QueueDiscoverConsole(CliConsole.Out);
+        var immichProgress = json ? null : new ImmichSearchConsole(CliConsole.Out);
         CalibrationRun run;
         try
         {
@@ -33,12 +33,12 @@ internal sealed class CalibrateCommand(ICalibrationService calibration, ISetting
 
         if (json)
         {
-            Console.WriteLine(JsonSerializer.Serialize(CalibrateConsole.ToJson(run.Report, hints), CalibrateJsonContext.Default.CalibrationJsonOutput));
+            CliConsole.WriteLine(JsonSerializer.Serialize(CalibrateConsole.ToJson(run.Report, hints), CalibrateJsonContext.Default.CalibrationJsonOutput));
         }
         else
         {
-            if (scanProgress!.WroteLines || immichProgress!.WroteLines) Console.WriteLine();
-            CalibrateConsole.Write(Console.Out, run.Report, hints);
+            if (scanProgress!.WroteLines || immichProgress!.WroteLines) CliConsole.WriteLine();
+            CalibrateConsole.Write(CliConsole.Out, run.Report, hints);
         }
 
         if (run.ImmichFailure is { } failure)

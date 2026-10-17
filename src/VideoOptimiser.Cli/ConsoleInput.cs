@@ -19,14 +19,14 @@ internal sealed class ConsoleInput : IConsoleInput
     {
         get
         {
-            try { return !Console.IsInputRedirected; }
+            try { return !CliConsole.IsInputRedirected; }
             catch (IOException) { return false; }
         }
     }
 
     public string? ReadLine()
     {
-        try { return Console.ReadLine(); }
+        try { return CliConsole.ReadLine(); }
         catch (IOException) { return null; }
     }
 }

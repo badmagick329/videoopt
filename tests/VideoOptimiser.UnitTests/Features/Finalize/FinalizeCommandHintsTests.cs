@@ -13,7 +13,6 @@ namespace VideoOptimiser.UnitTests.Features.Finalize;
 /// The commands that <c>finalize</c> and <c>immich finalize</c> suggest, through the real CLI. The services word them, not the
 /// CLI, so these pin that the <c>--config</c> the user typed reaches the application layer. Every run here types one.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class FinalizeCommandHintsTests : QueueTestBase
 {
     private readonly LockedFolderImmich _immich = new();

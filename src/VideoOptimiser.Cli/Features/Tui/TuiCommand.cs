@@ -27,15 +27,16 @@ internal sealed class TuiCommand(TuiSnapshotReader reader, TimeProvider time)
         using var renderer = new FrameRenderer();
         var frame = renderer.Frame(model)!;
         // The frame's box glyphs are not in the console's default code page when stdout is a pipe or a file.
+        // A replaced writer has its own encoding, and the code page is process-wide, so parallel runs would race to set it.
         try
         {
-            Console.OutputEncoding = new UTF8Encoding(false);
+            if (!CliConsole.IsReplaced) Console.OutputEncoding = new UTF8Encoding(false);
         }
         catch (IOException)
         {
             // No console to set a code page on: the writer's own encoding stands.
         }
-        foreach (var row in FrameRenderer.Plain(frame).Split('\n')) Console.Out.WriteLine(row.TrimEnd());
+        foreach (var row in FrameRenderer.Plain(frame).Split('\n')) CliConsole.Out.WriteLine(row.TrimEnd());
         return (int)ExitCode.Success;
     }
 }

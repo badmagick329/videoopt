@@ -19,8 +19,8 @@ internal sealed class CostCommand(ICostReport report)
     public async Task<int> RunAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         var cost = await report.ReadAsync(configuration.Settings.Database.Path, cancellationToken);
-        if (command.Json) Console.WriteLine(JsonSerializer.Serialize(ToJson(cost), CostJsonContext.Default.CostJsonOutput));
-        else foreach (var line in Lines(cost, command)) Console.WriteLine(line);
+        if (command.Json) CliConsole.WriteLine(JsonSerializer.Serialize(ToJson(cost), CostJsonContext.Default.CostJsonOutput));
+        else foreach (var line in Lines(cost, command)) CliConsole.WriteLine(line);
         return (int)ExitCode.Success;
     }
 

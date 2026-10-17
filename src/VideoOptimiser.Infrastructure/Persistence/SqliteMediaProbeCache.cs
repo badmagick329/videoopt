@@ -103,19 +103,10 @@ public sealed class SqliteMediaProbeCache(IDatabaseInitializer databaseInitializ
         _ = await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private async Task<SqliteConnection> OpenAsync(string databasePath, CancellationToken cancellationToken)
+    private Task<SqliteConnection> OpenAsync(string databasePath, CancellationToken cancellationToken)
     {
-        await databaseInitializer.InitializeAsync(databasePath, cancellationToken);
-        var builder = new SqliteConnectionStringBuilder
-        {
-            DataSource = Path.GetFullPath(databasePath),
-            Mode = mode,
-            ForeignKeys = true,
-            Pooling = false
-        };
-        var connection = new SqliteConnection(builder.ToString());
-        await connection.OpenAsync(cancellationToken);
-        return connection;
+        var builder = new SqliteConnectionStringBuilder { Mode = mode, ForeignKeys = true, Pooling = false };
+        return SqliteStoreConnection.OpenAsync(databaseInitializer, databasePath, builder, cancellationToken);
     }
 
     private static void Add(SqliteCommand command, string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);

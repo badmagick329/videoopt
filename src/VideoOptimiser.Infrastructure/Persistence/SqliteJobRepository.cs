@@ -248,13 +248,10 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         _ = await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private async Task<SqliteConnection> OpenAsync(string databasePath, CancellationToken cancellationToken)
+    private Task<SqliteConnection> OpenAsync(string databasePath, CancellationToken cancellationToken)
     {
-        await databaseInitializer.InitializeAsync(databasePath, cancellationToken);
-        var builder = new SqliteConnectionStringBuilder { DataSource = Path.GetFullPath(databasePath), Mode = mode, ForeignKeys = true, Pooling = false };
-        var connection = new SqliteConnection(builder.ToString());
-        await connection.OpenAsync(cancellationToken);
-        return connection;
+        var builder = new SqliteConnectionStringBuilder { Mode = mode, ForeignKeys = true, Pooling = false };
+        return SqliteStoreConnection.OpenAsync(databaseInitializer, databasePath, builder, cancellationToken);
     }
 
     /// <returns>The rows written: 0 when an open job blocked the insert, or the update lost its compare-and-swap.</returns>

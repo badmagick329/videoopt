@@ -25,8 +25,8 @@ internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IIm
     {
         if (!RequireImmich(configuration, command) || ReportInvalidSettings(settingsValidator, configuration)) return (int)ExitCode.InvalidConfiguration;
         var (guard, discovery) = await QueueNewVideosAsync(configuration, command, command.Limit, cancellationToken);
-        if (discovery.Queued.Count + discovery.AlreadyQueued > 0) Console.WriteLine(NextRunLine(queueDiscovery.NextRun(configuration.Settings.Database.Path), command));
-        if (discovery.ReadyToFinalize > 0) Console.WriteLine(NextSteps.ReadyToFinaliseLine(discovery.ReadyToFinalize, command));
+        if (discovery.Queued.Count + discovery.AlreadyQueued > 0) CliConsole.WriteLine(NextRunLine(queueDiscovery.NextRun(configuration.Settings.Database.Path), command));
+        if (discovery.ReadyToFinalize > 0) CliConsole.WriteLine(NextSteps.ReadyToFinaliseLine(discovery.ReadyToFinalize, command));
         return (int)(NeedsLook(guard, discovery) ? ExitCode.PartialSuccess : ExitCode.Success);
     }
 
@@ -69,9 +69,9 @@ internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IIm
         var guardProgress = new InlineProgress<ScanProgress>(update =>
         {
             guardReports.Add(update);
-            Console.WriteLine(ReuploadGuardReport.FormatProgress(update));
+            CliConsole.WriteLine(ReuploadGuardReport.FormatProgress(update));
         });
-        var discoveryProgress = new ImmichDiscoveryConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
+        var discoveryProgress = new ImmichDiscoveryConsole(CliConsole.Out, OutputStyle, CliConsole.Error, ErrorStyle);
 
         ImmichQueueAddition added;
         try
@@ -83,17 +83,17 @@ internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IIm
             // A download that Ctrl+C or an error cut short leaves its line open; the message that follows needs its own.
             discoveryProgress.FinishLine();
             if (guardReports.Count == 0) throw;
-            Console.WriteLine();
-            Console.WriteLine("Before the run ended, the re-upload guard reported:");
-            foreach (var report in guardReports) Console.WriteLine(ReuploadGuardReport.FormatProgress(report));
+            CliConsole.WriteLine();
+            CliConsole.WriteLine("Before the run ended, the re-upload guard reported:");
+            foreach (var report in guardReports) CliConsole.WriteLine(ReuploadGuardReport.FormatProgress(report));
             throw;
         }
 
         var (guard, discovery) = (added.Guard, added.Discovery);
-        if (ReuploadGuardReport.Summary(guard) is { } guardLine) Console.WriteLine(guardLine);
-        foreach (var line in ImmichDiscoveryConsole.Summary(discovery, limit)) Console.WriteLine(line);
+        if (ReuploadGuardReport.Summary(guard) is { } guardLine) CliConsole.WriteLine(guardLine);
+        foreach (var line in ImmichDiscoveryConsole.Summary(discovery, limit)) CliConsole.WriteLine(line);
         if (discovery.Excluded > 0) WriteError($"Immich's search returned {OutputWords.Count(discovery.Excluded, "video", "videos")} it should have left out. They were left alone, but this Immich version's search may behave differently: check before running again.");
-        QueueDiscoverConsole.WriteCounts(Console.Out, new QueueDiscoveryResult([.. discovery.Queued.Select(job => job.SourcePath)], discovery.AlreadyQueued, Issues: 0, Held: discovery.Held, ReadyToFinalize: discovery.ReadyToFinalize), command);
+        QueueDiscoverConsole.WriteCounts(CliConsole.Out, new QueueDiscoveryResult([.. discovery.Queued.Select(job => job.SourcePath)], discovery.AlreadyQueued, Issues: 0, Held: discovery.Held, ReadyToFinalize: discovery.ReadyToFinalize), command);
         return (guard, discovery);
     }
 
@@ -101,23 +101,23 @@ internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IIm
     {
         if (guard.Trashed.Count > 0)
         {
-            Console.WriteLine();
-            Console.WriteLine("The phone uploaded these converted originals again. They are back in Immich's trash; delete them from the phone:");
-            foreach (var hit in guard.Trashed) Console.WriteLine($"  {hit.OriginalFileName}  taken {hit.TakenLocal:yyyy-MM-dd HH:mm}");
+            CliConsole.WriteLine();
+            CliConsole.WriteLine("The phone uploaded these converted originals again. They are back in Immich's trash; delete them from the phone:");
+            foreach (var hit in guard.Trashed) CliConsole.WriteLine($"  {hit.OriginalFileName}  taken {hit.TakenLocal:yyyy-MM-dd HH:mm}");
         }
 
         if (guard.Restored.Count > 0)
         {
-            Console.WriteLine();
-            Console.WriteLine("These converted originals are out of Immich's trash, so both versions exist. The guard left them alone:");
-            foreach (var hit in guard.Restored) Console.WriteLine($"  {hit.OriginalFileName}  taken {hit.TakenLocal:yyyy-MM-dd HH:mm}");
+            CliConsole.WriteLine();
+            CliConsole.WriteLine("These converted originals are out of Immich's trash, so both versions exist. The guard left them alone:");
+            foreach (var hit in guard.Restored) CliConsole.WriteLine($"  {hit.OriginalFileName}  taken {hit.TakenLocal:yyyy-MM-dd HH:mm}");
         }
 
         if (guard.Issues.Count > 0)
         {
-            Console.WriteLine();
-            Console.WriteLine("Re-upload guard issues:");
-            foreach (var issue in guard.Issues) Console.WriteLine($"  {issue.Reason}");
+            CliConsole.WriteLine();
+            CliConsole.WriteLine("Re-upload guard issues:");
+            foreach (var issue in guard.Issues) CliConsole.WriteLine($"  {issue.Reason}");
         }
     }
 }

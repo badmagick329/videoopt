@@ -27,27 +27,27 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
             if (await repository.GetAsync(configuration.Settings.Database.Path, id, cancellationToken) is { } warned && FinalizationRules.IsLeftForReview(warned)
                 && !ConfirmWarned(warned, configuration.Settings.Original))
             {
-                Console.WriteLine("Finalisation cancelled.");
+                CliConsole.WriteLine("Finalisation cancelled.");
                 return (int)ExitCode.Success;
             }
             var result = await finalizer.FinalizeAsync(configuration.Settings.Database.Path, id, configuration.Settings, cancellationToken);
-            if (result.ExitCode == ExitCode.Success) Console.WriteLine(result.Message);
+            if (result.ExitCode == ExitCode.Success) CliConsole.WriteLine(result.Message);
             else WriteError(result.Message);
             return (int)result.ExitCode;
         }
 
         var finalisable = (await repository.ListAsync(configuration.Settings.Database.Path, terminal: false, cancellationToken)).Where(FinalizationRules.IsFinalisable).ToArray();
-        if (finalisable.Length == 0) { Console.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
+        if (finalisable.Length == 0) { CliConsole.WriteLine("No jobs are ready to finalise."); return (int)ExitCode.Success; }
         var ready = finalisable.Where(FinalizationRules.IsBulkFinalisable).ToArray();
         var leftOut = finalisable.Where(FinalizationRules.IsLeftForReview).ToArray();
         if (ready.Length == 0) return OnlyWarned("every ready video has validation warnings", leftOut, command);
-        foreach (var job in ready) Console.WriteLine(FinalizationConsole.DescribeReady(job));
-        if (ready.Where(job => job.SourceKind == JobSourceKind.File).ToArray() is { Length: > 0 } fileJobs) Console.WriteLine(FinalizationConsole.DescribeOriginalAction(configuration.Settings.Original, fileJobs));
-        if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) Console.WriteLine(ImmichTrashLine);
+        foreach (var job in ready) CliConsole.WriteLine(FinalizationConsole.DescribeReady(job));
+        if (ready.Where(job => job.SourceKind == JobSourceKind.File).ToArray() is { Length: > 0 } fileJobs) CliConsole.WriteLine(FinalizationConsole.DescribeOriginalAction(configuration.Settings.Original, fileJobs));
+        if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) CliConsole.WriteLine(ImmichTrashLine);
         WriteLeftOut("Left out because validation warned about them. Watch each one, then finalise it on its own:", leftOut, command);
-        Console.Write("Finalise these jobs? [y/N] ");
-        if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
-        var report = new FinalizationConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
+        CliConsole.Write("Finalise these jobs? [y/N] ");
+        if (!string.Equals(CliConsole.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { CliConsole.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
+        var report = new FinalizationConsole(CliConsole.Out, OutputStyle, CliConsole.Error, ErrorStyle);
         var failed = 0;
         foreach (var job in ready)
         {
@@ -68,14 +68,14 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
     /// </summary>
     private static bool ConfirmWarned(JobRecord job, OriginalSettings original)
     {
-        Console.WriteLine(FinalizationConsole.DescribeReady(job));
+        CliConsole.WriteLine(FinalizationConsole.DescribeReady(job));
         var warnings = FinalizationConsole.DescribeWarnings(job);
-        Console.WriteLine(warnings[0]);
+        CliConsole.WriteLine(warnings[0]);
         // The sentences are coloured as validate colours them; the header and indent stay plain.
-        foreach (var line in warnings.Skip(1)) Console.WriteLine($"  {OutputStyle.Tone(JobTone.Warning, line.TrimStart())}");
-        Console.WriteLine(job.SourceKind == JobSourceKind.Immich ? ImmichTrashLine : FinalizationConsole.DescribeOriginalAction(original, [job]));
-        Console.Write("Finalise it? [y/N] ");
-        return string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase);
+        foreach (var line in warnings.Skip(1)) CliConsole.WriteLine($"  {OutputStyle.Tone(JobTone.Warning, line.TrimStart())}");
+        CliConsole.WriteLine(job.SourceKind == JobSourceKind.Immich ? ImmichTrashLine : FinalizationConsole.DescribeOriginalAction(original, [job]));
+        CliConsole.Write("Finalise it? [y/N] ");
+        return string.Equals(CliConsole.ReadLine(), "y", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -92,8 +92,8 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
     private static void WriteLeftOut(string header, IReadOnlyList<JobRecord> leftOut, CliCommand command)
     {
         if (leftOut.Count == 0) return;
-        Console.WriteLine(header);
-        foreach (var job in leftOut) Console.WriteLine($"  {Path.GetFileName(job.SourcePath)}  {command.Hint($"finalize {job.Id:N}")}");
+        CliConsole.WriteLine(header);
+        foreach (var job in leftOut) CliConsole.WriteLine($"  {Path.GetFileName(job.SourcePath)}  {command.Hint($"finalize {job.Id:N}")}");
     }
 
     public async Task<int> ImmichFinalizeAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
@@ -105,7 +105,7 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         var finalisable = (await repository.ListAsync(settings.Database.Path, terminal: false, cancellationToken))
             .Where(job => job.SourceKind == JobSourceKind.Immich && FinalizationRules.IsFinalisable(job))
             .ToArray();
-        if (finalisable.Length == 0) { Console.WriteLine("No Immich jobs are ready to finalise."); return (int)ExitCode.Success; }
+        if (finalisable.Length == 0) { CliConsole.WriteLine("No Immich jobs are ready to finalise."); return (int)ExitCode.Success; }
         var ready = finalisable.Where(FinalizationRules.IsBulkFinalisable).ToArray();
         var leftOut = finalisable.Where(FinalizationRules.IsLeftForReview).ToArray();
         // Says "Immich video": clean file videos may be ready too, and this command does not take them.
@@ -130,19 +130,19 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
 
             var sizes = job is { SourceSizeBytes: { } before, OutputSizeBytes: { } after } ? $"{HumanReadableValues.FormatSize(before)} -> {HumanReadableValues.FormatSize(after)}" : "sizes unknown";
             var saved = job.PercentageSaved is { } percentage ? $", {percentage:F1}% saved" : string.Empty;
-            Console.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}  {taken}  {sizes}{saved}");
-            if (job.FailureCategory == FailureCategories.FinalizationIncomplete) Console.WriteLine($"    Resumes after: {job.FailureMessage}");
+            CliConsole.WriteLine($"{job.Id:N}  {Path.GetFileName(job.SourcePath)}  {taken}  {sizes}{saved}");
+            if (job.FailureCategory == FailureCategories.FinalizationIncomplete) CliConsole.WriteLine($"    Resumes after: {job.FailureMessage}");
         }
 
         var totalBefore = ready.Sum(job => job.SourceSizeBytes ?? 0);
         var totalAfter = ready.Sum(job => job.OutputSizeBytes ?? 0);
-        Console.WriteLine($"{OutputWords.Count(ready.Length, "video", "videos")}: {HumanReadableValues.FormatSize(totalBefore)} -> {HumanReadableValues.FormatSize(totalAfter)}, saving {HumanReadableValues.FormatSize(totalBefore - totalAfter)}.");
-        Console.WriteLine("Each AV1 is uploaded as a new asset with the original's albums, tags, favourite and other relations; then the original goes to Immich's trash.");
+        CliConsole.WriteLine($"{OutputWords.Count(ready.Length, "video", "videos")}: {HumanReadableValues.FormatSize(totalBefore)} -> {HumanReadableValues.FormatSize(totalAfter)}, saving {HumanReadableValues.FormatSize(totalBefore - totalAfter)}.");
+        CliConsole.WriteLine("Each AV1 is uploaded as a new asset with the original's albums, tags, favourite and other relations; then the original goes to Immich's trash.");
         WriteLeftOut("Left out because validation warned about them. Watch each one, then finalise it on its own:", leftOut, command);
-        Console.Write("Finalise these jobs? [y/N] ");
-        if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { Console.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
+        CliConsole.Write("Finalise these jobs? [y/N] ");
+        if (!string.Equals(CliConsole.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { CliConsole.WriteLine("Finalisation cancelled."); return (int)ExitCode.Success; }
 
-        var report = new FinalizationConsole(Console.Out, OutputStyle, Console.Error, ErrorStyle);
+        var report = new FinalizationConsole(CliConsole.Out, OutputStyle, CliConsole.Error, ErrorStyle);
         var failed = 0;
         foreach (var job in ready)
         {
@@ -168,7 +168,7 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         try
         {
             var trash = await client.GetTrashSettingsAsync(cancellationToken);
-            Console.WriteLine($"Immich keeps the originals in its trash for {OutputWords.Count(trash.Days, "day", "days")}; space comes back when it empties.");
+            CliConsole.WriteLine($"Immich keeps the originals in its trash for {OutputWords.Count(trash.Days, "day", "days")}; space comes back when it empties.");
         }
         catch (ImmichApiException exception) when (exception.Code == "ImmichRequestFailed")
         {

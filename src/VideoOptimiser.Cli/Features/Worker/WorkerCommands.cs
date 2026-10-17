@@ -28,7 +28,7 @@ internal sealed class WorkerCommands(IRemoteWorkerLifecycle lifecycle, ISettings
         // worker status is a read-only question, so "not managed" is an answer on stdout, as it has always been.
         if (kind == CliCommandKind.WorkerStatus)
         {
-            Console.WriteLine(message);
+            CliConsole.WriteLine(message);
             return (int)ExitCode.Success;
         }
         WriteError(message);
@@ -41,8 +41,8 @@ internal sealed class WorkerCommands(IRemoteWorkerLifecycle lifecycle, ISettings
         var databasePath = configuration.Settings.Database.Path;
         try
         {
-            var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, databasePath, new InlineProgress<string>(Console.WriteLine), ConsolePrompts.ConfirmWorkerCreationAsync, cancellationToken);
-            Console.WriteLine($"Worker ready: {worker.Name} {worker.Address}{DescribePlacement(worker)}");
+            var worker = await lifecycle.EnsureReadyAsync(configuration.Settings, databasePath, new InlineProgress<string>(CliConsole.WriteLine), ConsolePrompts.ConfirmWorkerCreationAsync, cancellationToken);
+            CliConsole.WriteLine($"Worker ready: {worker.Name} {worker.Address}{DescribePlacement(worker)}");
             return (int)ExitCode.Success;
         }
         catch (OperationCanceledException)
@@ -50,7 +50,7 @@ internal sealed class WorkerCommands(IRemoteWorkerLifecycle lifecycle, ISettings
             // The state file is written the moment the server exists, so a record means a server that bills from now on. A
             // press before that (the price prompt, the lock wait) leaves nothing, and stays silent as every stop there does.
             if (await lifecycle.ReadRecordedAsync(databasePath, CancellationToken.None) is not { } worker) throw;
-            foreach (var line in WorkerKeepLines.For(worker.Name, command)) Console.WriteLine(line);
+            foreach (var line in WorkerKeepLines.For(worker.Name, command)) CliConsole.WriteLine(line);
             return (int)ExitCode.Cancelled;
         }
     }
@@ -65,9 +65,9 @@ internal sealed class WorkerCommands(IRemoteWorkerLifecycle lifecycle, ISettings
         var check = await lifecycle.CheckAsync(configuration.Settings, configuration.Settings.Database.Path, cancellationToken);
         var worker = check.Worker;
         var asked = check.NotCheckedReason is null;
-        if (worker is not null) Console.WriteLine($"{worker.Name}  {RemoteWorkerStatuses.Describe(worker.Status)}  {worker.Address}{DescribePlacement(worker)}");
-        else Console.WriteLine(asked ? "No Hetzner worker exists." : "No Hetzner worker is recorded on this PC.");
-        if (!asked) Console.WriteLine($"Hetzner wasn't checked: {check.NotCheckedReason!.TrimEnd('.')}.");
+        if (worker is not null) CliConsole.WriteLine($"{worker.Name}  {RemoteWorkerStatuses.Describe(worker.Status)}  {worker.Address}{DescribePlacement(worker)}");
+        else CliConsole.WriteLine(asked ? "No Hetzner worker exists." : "No Hetzner worker is recorded on this PC.");
+        if (!asked) CliConsole.WriteLine($"Hetzner wasn't checked: {check.NotCheckedReason!.TrimEnd('.')}.");
         return (int)ExitCode.Success;
     }
 
@@ -79,8 +79,8 @@ internal sealed class WorkerCommands(IRemoteWorkerLifecycle lifecycle, ISettings
 
     public async Task<int> DeleteAsync(LoadedConfiguration configuration, CancellationToken cancellationToken)
     {
-        var deleted = await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(Console.WriteLine), cancellationToken);
-        if (!deleted) Console.WriteLine("No Hetzner worker exists.");
+        var deleted = await lifecycle.DeleteAsync(configuration.Settings, configuration.Settings.Database.Path, new InlineProgress<string>(CliConsole.WriteLine), cancellationToken);
+        if (!deleted) CliConsole.WriteLine("No Hetzner worker exists.");
         return (int)ExitCode.Success;
     }
 }

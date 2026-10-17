@@ -18,8 +18,8 @@ internal sealed class StatusCommand(IStatusCard card)
     public async Task<int> RunAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         var report = await card.ReadAsync(configuration.Settings, cancellationToken);
-        if (command.Json) Console.WriteLine(JsonSerializer.Serialize(ToJson(report, command), StatusJsonContext.Default.StatusJsonOutput));
-        else foreach (var line in Lines(report, command)) Console.WriteLine(line);
+        if (command.Json) CliConsole.WriteLine(JsonSerializer.Serialize(ToJson(report, command), StatusJsonContext.Default.StatusJsonOutput));
+        else foreach (var line in Lines(report, command)) CliConsole.WriteLine(line);
         return (int)ExitCode.Success;
     }
 

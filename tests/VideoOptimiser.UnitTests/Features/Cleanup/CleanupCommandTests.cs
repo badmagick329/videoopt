@@ -8,7 +8,6 @@ using VideoOptimiser.Domain;
 namespace VideoOptimiser.UnitTests.Features.Cleanup;
 
 /// <summary>What <c>cleanup</c> prints and returns: the plan, the prompt, and how a delete that fails ends.</summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class CleanupCommandTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

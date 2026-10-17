@@ -13,7 +13,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// The run lock and the finalise lock (VOPT-54 step 3). Without the run lock a second run marks the first one's active job
 /// interrupted; without the finalise lock a run sets a live finalisation back, and finalize's last write then fails the job.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class RunLockTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
@@ -109,7 +108,7 @@ public sealed class RunLockTests : IDisposable
 
         code.Should().Be((int)ExitCode.GeneralFailure);
         output.Should().BeEmpty();
-        // The refusal comes after a 5 s wait, which can cross midnight; the time then carries its date.
+        // The refusal can come after midnight; the time then carries its date.
         var started = DateTime.Today == today ? "00:01" : $"{today:yyyy-MM-dd} 00:01";
         error.Should().Be($"Another finalise is running on this database, started {started} (process 4321). Wait for it to finish.{Environment.NewLine}");
     }
@@ -120,13 +119,54 @@ public sealed class RunLockTests : IDisposable
     {
         var config = await WriteConfigAsync();
         var preparing = HoldLock(DatabaseLock.FinalizePath(DatabasePath), DatabaseLock.RunPreparing, DateTimeOffset.Now);
-        _ = Task.Delay(TimeSpan.FromSeconds(6)).ContinueWith(_ => preparing.Dispose(), TaskScheduler.Default);
+        // Several times the (shortened) wait of one attempt, so finalize must keep waiting past it.
+        _ = Task.Delay(TimeSpan.FromMilliseconds(400)).ContinueWith(_ => preparing.Dispose(), TaskScheduler.Default);
 
         var (code, output, error) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, "finalize", "--ready", "--config", config);
 
         error.Should().BeEmpty();
         output.Should().Be($"No jobs are ready to finalise.{Environment.NewLine}");
         code.Should().Be((int)ExitCode.Success);
+    }
+
+    /// <summary>The real wait, with the production length shortened: another finalise is waited for, then refused with its holder.</summary>
+    [Fact]
+    public async Task AFinaliseLockHeldByAnotherFinaliseIsWaitedForThenRefusedNamingIt()
+    {
+        using var other = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(DatabasePath), "finalize", out _);
+        var wait = TimeSpan.FromMilliseconds(300);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        var (taken, holder) = await DatabaseLock.AcquireFinalizeAsync(DatabasePath, "finalize", default, wait);
+
+        watch.Elapsed.Should().BeGreaterThanOrEqualTo(wait - TimeSpan.FromMilliseconds(50));
+        taken.Should().BeNull();
+        holder!.Command.Should().Be("finalize");
+    }
+
+    /// <summary>A holder that lets go within the wait is not a refusal: the waiter takes the lock.</summary>
+    [Fact]
+    public async Task AFinaliseLockReleasedWithinTheWaitIsTaken()
+    {
+        var other = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(DatabasePath), "finalize", out _);
+        _ = Task.Delay(TimeSpan.FromMilliseconds(200)).ContinueWith(_ => other!.Dispose(), TaskScheduler.Default);
+
+        var (taken, holder) = await DatabaseLock.AcquireFinalizeAsync(DatabasePath, "finalize", default, TimeSpan.FromSeconds(10));
+
+        using (taken) taken.Should().NotBeNull();
+        holder.Should().BeNull();
+    }
+
+    /// <summary>A preparing run is waited out however long it takes, past the wait of any one attempt.</summary>
+    [Fact]
+    public async Task AFinaliseLockHeldByAPreparingRunIsWaitedForPastTheWait()
+    {
+        var preparing = DatabaseLock.TryAcquire(DatabaseLock.FinalizePath(DatabasePath), DatabaseLock.RunPreparing, out _);
+        _ = Task.Delay(TimeSpan.FromMilliseconds(400)).ContinueWith(_ => preparing!.Dispose(), TaskScheduler.Default);
+
+        var (taken, _) = await DatabaseLock.AcquireFinalizeAsync(DatabasePath, "finalize", default, TimeSpan.FromMilliseconds(50));
+
+        using (taken) taken.Should().NotBeNull();
     }
 
     [Fact]

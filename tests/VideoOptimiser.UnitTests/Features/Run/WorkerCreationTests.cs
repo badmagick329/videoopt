@@ -13,7 +13,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// A server bills from the moment it exists, so a run creates it only when a job will reach a remote stage (VOPT-68). The real
 /// CLI runs with a fake worker and a processor whose jobs either need the worker or fail a local check first.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class WorkerCreationTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

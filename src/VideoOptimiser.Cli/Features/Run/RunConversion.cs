@@ -22,7 +22,7 @@ internal sealed class RunConversion(IRemoteWorkerLifecycle lifecycle, RunFlow fl
         var worker = lifecycle.IsManaged(configuration.Settings)
             ? await lifecycle.ReadRecordedAsync(configuration.Settings.Database.Path, cancellationToken)
             : null;
-        Console.WriteLine(RunBanner.Describe(configuration.Settings, worker, modeOverride?.Flag));
+        CliConsole.WriteLine(RunBanner.Describe(configuration.Settings, worker, modeOverride?.Flag));
     }
 
     /// <summary>

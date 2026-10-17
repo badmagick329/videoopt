@@ -60,13 +60,13 @@ public abstract class QueueTestBase : IDisposable
         return path;
     }
 
-    /// <summary>A queued job for a new file in the watch folder; the pause keeps run order the order of the calls.</summary>
+    /// <summary>A queued job for a new file in the watch folder; run order is the order of the calls.</summary>
     protected async Task<JobRecord> QueuedAsync(string name, Action<JobRecord>? configure = null)
     {
         var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = await FileAsync(Root, name), SourceFingerprint = "original", Status = JobStatus.Queued };
         configure?.Invoke(job);
         await Repository.CreateAsync(DatabasePath, job);
-        await Task.Delay(5);
+        RunCli.AfterCreate(job);
         return job;
     }
 

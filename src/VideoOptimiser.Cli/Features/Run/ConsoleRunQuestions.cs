@@ -25,10 +25,10 @@ internal sealed class ConsoleRunQuestions(RunWorkerState state) : IRunQuestions
     public async Task<bool> AskToDeleteWorkerAsync(RunEnd runEnd, JobStatus? remoteStage)
     {
         var stopLike = runEnd is RunEnd.StoppedNow or RunEnd.WorkerUnreachable;
-        Console.Write(stopLike ? StoppedRunMessage.DeleteNowQuestion(remoteStage) : WorkerEndMessage.QuestionAtEnd);
+        CliConsole.Write(stopLike ? StoppedRunMessage.DeleteNowQuestion(remoteStage) : WorkerEndMessage.QuestionAtEnd);
         // A read left from the first press may have been ended by the second press rather than by the user.
         var response = state.Question.TakeOver().Pending is { } pending ? await pending ?? await state.Question.ReadAsync() : await state.Question.ReadAsync();
-        if (response is null) Console.WriteLine();
+        if (response is null) CliConsole.WriteLine();
         return WorkerEndPolicy.IsAffirmative(response);
     }
 }

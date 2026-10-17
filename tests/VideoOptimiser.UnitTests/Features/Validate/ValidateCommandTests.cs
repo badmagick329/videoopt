@@ -16,7 +16,6 @@ namespace VideoOptimiser.UnitTests.Features.Validate;
 /// faked throughout, because what these pin is what validate prints, returns and records around it. Each refusal also asserts
 /// the fake was never called, so a refused job is never judged. The checks themselves are <c>OutputValidationServiceTests</c>.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class ValidateCommandTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

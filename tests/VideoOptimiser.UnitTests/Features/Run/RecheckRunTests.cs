@@ -14,7 +14,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// What <c>run</c> prints when it checks a video again that failed validation under older rules (VOPT-119), through the real
 /// CLI: the lines come between the banner and the summary, with nothing queued.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class RecheckRunTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

@@ -37,6 +37,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     private readonly Func<TimeSpan> _clock;
     private readonly Func<CancellationToken, Task> _transferPollDelay;
     private readonly IReadOnlyList<TimeSpan> _commandTimeouts;
+    private readonly Func<CancellationToken, Task> _retryDelay;
     private readonly string _root;
 
     public RemoteSshProcessingSession(JobRecord job, AppSettings settings, IExternalProcessRunner processes)
@@ -48,7 +49,8 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     /// <param name="clock">Elapsed time, for timing transfers and deciding when a progress line is due; tests advance it by hand.</param>
     /// <param name="transferPollDelay">The wait between checks of a running transfer; each due check of an upload is an SSH connection.</param>
     /// <param name="commandTimeouts">How long each try of one SSH command may take; <see cref="DefaultCommandTimeouts"/> unless a test shortens them.</param>
-    internal RemoteSshProcessingSession(JobRecord job, AppSettings settings, IExternalProcessRunner processes, Func<CancellationToken, Task> pollDelay, Func<TimeSpan>? clock = null, Func<CancellationToken, Task>? transferPollDelay = null, IReadOnlyList<TimeSpan>? commandTimeouts = null)
+    /// <param name="retryDelay">The pause before another try of an SSH command or an sftp transfer; a second unless a test removes it.</param>
+    internal RemoteSshProcessingSession(JobRecord job, AppSettings settings, IExternalProcessRunner processes, Func<CancellationToken, Task> pollDelay, Func<TimeSpan>? clock = null, Func<CancellationToken, Task>? transferPollDelay = null, IReadOnlyList<TimeSpan>? commandTimeouts = null, Func<CancellationToken, Task>? retryDelay = null)
     {
         _job = job;
         _settings = settings;
@@ -57,6 +59,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         _clock = clock ?? StartClock();
         _transferPollDelay = transferPollDelay ?? (cancellationToken => Task.Delay(TimeSpan.FromSeconds(5), cancellationToken));
         _commandTimeouts = commandTimeouts ?? DefaultCommandTimeouts;
+        _retryDelay = retryDelay ?? (cancellationToken => Task.Delay(TimeSpan.FromSeconds(1), cancellationToken));
         _root = settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/');
         RemoteWorkspace = $"{_root}/{job.Id:N}";
         if (!GuidWorkspacePattern().IsMatch(RemoteWorkspace)) throw new InvalidOperationException("The generated remote workspace is not a safe GUID workspace.");
@@ -482,7 +485,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var attempts = _commandTimeouts.Count;
         for (var attempt = 1; ; attempt++)
         {
-            if (attempt > 1) await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            if (attempt > 1) await _retryDelay(cancellationToken);
             var nextTry = $"try {(attempt + 1).ToString(CultureInfo.InvariantCulture)} of {attempts.ToString(CultureInfo.InvariantCulture)}";
             ExternalProcessResult result;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -572,14 +575,14 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 progress?.Report(JobProgress.Detail($"Couldn't run sftp ({FirstLine(exception.Message)}); trying again ({NextTry(attempt)}).", JobTone.Warning));
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                await _retryDelay(cancellationToken);
                 continue;
             }
             if (result.ExitCode == 0 || !retryLostConnection) return result;
             if (!LostConnection(result)) throw SftpTransferFailed(result);
             if (attempt >= TransferAttempts) throw LostSftpConnection(result);
             progress?.Report(JobProgress.Detail($"Lost the connection to the worker ({FirstLine(result.StandardError)}); resuming the transfer ({NextTry(attempt)}).", JobTone.Warning));
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            await _retryDelay(cancellationToken);
         }
     }
 

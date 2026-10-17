@@ -15,7 +15,6 @@ namespace VideoOptimiser.UnitTests.Features.Status;
 /// what bills, and the next commands in the order they matter. The worker, the clock and the locks are the only fakes; the
 /// queue is the real database. <c>queue list</c> keeps the job list, so none of these lists a job except the ones converting.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class StatusCommandTests : QueueTestBase
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);

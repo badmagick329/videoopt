@@ -19,7 +19,6 @@ namespace VideoOptimiser.UnitTests.Features.Run;
 /// <c>run</c> resuming a job that an earlier run stopped on a managed worker, through the real CLI and the real
 /// <see cref="JobProcessor"/> over a fake worker session: what a resume asks of the worker, and what a stop in it says.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class RemoteResumeRunTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");

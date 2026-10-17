@@ -12,7 +12,6 @@ namespace VideoOptimiser.UnitTests.Features.Cost;
 /// <c>cost</c> through the real CLI over a database holding the run records as VOPT-127's stores write them. The clock is the
 /// only fake. The figures' branches are <see cref="CostReportTests"/>'; these check the read, the wording and the JSON shape.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class CostCommandTests : QueueTestBase
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 17, 12, 0, 0, TimeSpan.Zero);

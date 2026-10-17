@@ -14,7 +14,6 @@ namespace VideoOptimiser.UnitTests.Features.Finalize;
 /// What <c>finalize</c> and <c>immich finalize</c> print and return, with the finalisation service, the job list and Immich
 /// faked: the early returns, the prompt, and how a batch ends. The services' own behaviour is in their own tests.
 /// </summary>
-[Collection(ConsoleCapture.Collection)]
 public sealed class FinalizeCommandsTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
