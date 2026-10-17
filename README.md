@@ -67,7 +67,7 @@ queue add  →  run  →  you review  →  finalize
 
 ## The full-screen view
 
-`video-optimiser` with no command opens a view of the queue, the worker, the run's log and the videos ready to finalise. From it you can start a run in the background, stop it, hold or drop videos, and review, finalise or reject each AV1. Press `?` for every key. Quitting never stops a run. See [docs/tui.md](docs/tui.md).
+`video-optimiser` with no command opens a view of the queue, the worker, the run's log and the videos ready to finalise. From it you can start a run in the background, stop it, hold or drop videos, and review, finalise or reject each AV1. Press `?` for the main keys. Quitting never stops a run. See [docs/tui.md](docs/tui.md).
 
 If you prefer plain commands, every action has one, and `status` prints a short summary of where things stand.
 
@@ -83,7 +83,7 @@ In a terminal, press `Ctrl+C` once to stop after the video converting now, and a
 | Hetzner, managed | `processing.mode: "remoteSsh"`, `remoteSsh.lifecycle: "hetzner"` | Large batches |
 | Your own Linux server | `processing.mode: "remoteSsh"`, `remoteSsh.lifecycle: "manual"` | A spare machine you already run |
 
-A Hetzner server bills by the hour. `run` shows the price and asks before it creates one, and deletes it when the run ends unless you say otherwise. `--local` or `--remote` on `run` switches the mode for one run. See [docs/remote-ssh.md](docs/remote-ssh.md).
+A Hetzner worker bills by the hour. `run` shows the price and asks before it creates one, and deletes it when the run ends unless you say otherwise. `--local` or `--remote` on `run` switches the mode for one run. `cost` shows what the freed space cost, in EUR per TB. See [docs/remote-ssh.md](docs/remote-ssh.md).
 
 ## Immich
 
@@ -100,7 +100,7 @@ Read [docs/immich.md](docs/immich.md) before the first run. It covers the API ke
 
 - Originals are only read until you finalise. `finalize` moves the original aside, puts the AV1 in place, and moves the original back if anything fails.
 - Every AV1 is checked before it can be finalised. A missing, empty, unreadable or non-AV1 file fails. One that saves too little is skipped and deleted. A different length, stream count or audio sync, or a failed decode test, shows as a warning to check before you finalise.
-- A video that failed, was dropped, was rejected or wasn't worth converting isn't queued again until its file changes or you run `queue retry`.
+- A video that failed, was dropped, was rejected or wasn't worth converting isn't queued again until its file changes or you run `queue retry`. One that wasn't worth converting also comes back when you change the quality settings.
 - The job database (`jobs.db`) tracks every video, so a crash or `Ctrl+C` never loses track of a file. One run uses it at a time.
 - `cleanup` and `queue reject` won't delete an AV1 that may be the only copy of a video.
 - The Hetzner token and Immich API key load from environment variables or a `.env` file, never from the YAML. Copy `.env.example` to `.env` to start.

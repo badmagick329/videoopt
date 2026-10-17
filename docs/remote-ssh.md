@@ -1,6 +1,6 @@
 # Remote SSH processing
 
-Remote SSH mode keeps VideoOptimiser and its job database on Windows while a Linux worker performs CRF search and AV1 encoding. Validation, review, and finalisation remain local. The recommended Hetzner lifecycle creates a worker when a video first needs one, using the first server type on your list that Hetzner has in stock, once you approve its hourly price. When the run ends it deletes the worker if `deleteAfterRun` is true, which is the default.
+In remote SSH mode, VideoOptimiser and its job database stay on Windows while a Linux worker runs the CRF search and the AV1 encode. Validation, review and finalisation stay on this PC. The recommended Hetzner lifecycle creates a worker when a video first needs one, using the first server type on your list that Hetzner has in stock, once you approve its hourly price. When the run ends it deletes the worker if `deleteAfterRun` is true, which is the default.
 
 Setup is one-time: create a Hetzner API token and run `remote setup`. Do **not** create a server in the Hetzner console; VideoOptimiser creates the worker through the API.
 
@@ -43,11 +43,11 @@ It creates the password-disabled, non-sudo `videoopt` SSH user and the `/var/tmp
 
 Running it again is safe: it finds the same key file and the same Hetzner entry.
 
-`.env` is already excluded by `.gitignore`, and the controller loads it automatically. The token is never copied into YAML, the job database, recovery state, or command output. Do not commit or share `.env`. For CI or a temporary override, an existing `VIDEO_OPTIMISER_HETZNER_TOKEN` environment variable takes precedence over the file.
+`.gitignore` already excludes `.env`, and VideoOptimiser loads it by itself. The token is never copied into YAML, the job database, recovery state, or command output. Do not commit or share `.env`. For CI or a temporary override, an existing `VIDEO_OPTIMISER_HETZNER_TOKEN` environment variable takes precedence over the file.
 
 VideoOptimiser sends the key's Hetzner name in each create request. Hetzner installs the public key for `root`; the cloud-init bootstrap copies it to the restricted `videoopt` account, and Windows connects as `videoopt` with the private key. Deleting a worker does not delete the project's SSH key, so later workers reuse it.
 
-The image must be Ubuntu 24.04 x86-64; the bootstrap intentionally rejects Ubuntu 26.04. The controller enables public IPv4, disables IPv6, marks the IPv4 address for automatic deletion, and applies ownership labels before it will reuse or delete a worker.
+The image must be Ubuntu 24.04 x86-64; the bootstrap refuses Ubuntu 26.04. VideoOptimiser gives the worker a public IPv4 address and no IPv6, marks the IPv4 address for automatic deletion, and labels the worker as its own; it reuses or deletes only a worker with those labels.
 
 ### How the worker is chosen
 
@@ -68,12 +68,12 @@ If that placement fails, a fallback may cost up to EUR 0.266/h (ccx33 in hel1).
 Create the worker? [y/N]
 ```
 
-- **The first line** is the first type and location left after the checks above.
-- **The second line** is the most expensive one left. It appears only when that one costs more than the first.
-- **Fallbacks:** availability is only an indicator, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`). The next type and location is then tried without asking again: one `y` approves every candidate up to the second line's price.
-- **Declining:** any answer other than `y` or `yes`, or no input at all, creates nothing. The command prints `No worker was created.`, exits `0`, and leaves the jobs queued.
-- **Scripts** approve by piping the answer: `'y' | .\video-optimiser.exe run --config .\video-optimiser.yaml`.
-- **A worker that's already running** is reused without asking; it is already billing.
+- The first line is the first type and location left after the checks above.
+- The second line is the most expensive one left. It appears only when that one costs more than the first.
+- Hetzner's availability is only a hint, so a create request can still fail with HTTP 412 (`resource_unavailable` or `placement_unavailable`). The next type and location is then tried without asking again: one `y` approves every candidate up to the second line's price.
+- Any answer other than `y` or `yes`, or no input at all, creates nothing. The command prints `No worker was created.`, exits `0`, and leaves the jobs queued.
+- A script approves by piping the answer: `'y' | .\video-optimiser.exe run --config .\video-optimiser.yaml`.
+- A worker that's already running is reused without asking; it is already billing.
 
 Before each create request it prints the type, location and price, such as `Creating Hetzner cpx42 in hel1 (EUR 0.134/h incl. VAT).` If nothing can be created, the error lists every type, the locations tried for it, and why each failed. No worker is left running.
 
@@ -156,7 +156,7 @@ The worker's type and location show in `worker status`.
 
 ## 3. Optional preflight
 
-Normal processing creates the worker once you approve its price. To create it early and wait for the full toolchain build:
+A run creates the worker once you approve its price. To create it early and wait for bootstrapping to finish:
 
 ```powershell
 .\video-optimiser.exe worker create --config .\video-optimiser.yaml
@@ -168,9 +168,9 @@ Normal processing creates the worker once you approve its price. To create it ea
 
 The first SSH connection uses a dedicated known-hosts file and OpenSSH's `accept-new` behavior. Every later connection requires that exact recorded host key. VideoOptimiser does not modify the user's global OpenSSH configuration.
 
-During the first build, the controller prints phase-based bootstrapping percentages for dependency installation, libvmaf, SVT-AV1, FFmpeg, ab-av1, SSH configuration, and final verification. Long unchanged phases emit an elapsed-time heartbeat every minute. Each SSH readiness check is independently bounded, so a stalled OpenSSH session is terminated and retried instead of leaving the command frozen indefinitely. Every other SSH and SFTP connection sends a keepalive after 15 seconds with nothing received, so one to a worker that stops answering ends within about a minute instead of hanging. An SSH command that gets no answer, even over a live connection, is ended after 30 seconds and sent again, then given 60 and 90 seconds; after the third try the worker counts as unreachable.
+While a new worker bootstraps, VideoOptimiser prints a percentage at each stage: installing dependencies, libvmaf, SVT-AV1, FFmpeg, ab-av1, SSH configuration and the final check. A stage that runs long prints the time spent in it every minute. Each SSH readiness check has its own time limit, so a stalled OpenSSH session is ended and tried again instead of freezing the command. Every other SSH and SFTP connection sends a keepalive after 15 seconds with nothing received, so one to a worker that stops answering ends within about a minute instead of hanging. An SSH command that gets no answer, even over a live connection, is ended after 30 seconds and sent again, then given 60 and 90 seconds; after the third try the worker counts as unreachable.
 
-`worker create` deliberately leaves the worker running. Delete it explicitly if no processing command will use it:
+`worker create` leaves the worker running. If no run will use it, delete it:
 
 ```powershell
 .\video-optimiser.exe worker delete --config .\video-optimiser.yaml
@@ -209,7 +209,7 @@ When a run finishes, failed videos included, `deleteAfterRun: true` deletes the 
 
 If the delete fails, the run prints `Couldn't delete the worker <name>: <reason>` and `It's still billing hourly.` with the `worker delete` command, and exits `1` (`9` after `Ctrl+C`).
 
-When it creates a worker, the command says bootstrapping takes several minutes and prints a `Bootstrapping: 35%, building SVT-AV1.` line at each stage, with the time spent in a stage if it runs long. SSH refusals while the worker boots are expected and stay silent for the first 3 minutes; after that `Still waiting for the worker's SSH` appears at most once a minute. `Worker ready after 7m 36s.` ends the wait. While an original is staged, the command reports local hashing, remote capacity checks, resumable upload bytes/percentage, and checksum verification. Downloads report the same resumable bytes/percentage and verification phases. A step that runs longer than 10 seconds prints a progress line at most every 10 seconds: a transfer gives its percentage, rate and time left, and local hashing gives `Checking the checksum: N% of <size>` under a line that names what is being checked, such as `Checking the original's checksum before upload.`, so an upload or download does not stay silent.
+When it creates a worker, the command says bootstrapping takes several minutes and prints a `Bootstrapping: 35%, building SVT-AV1.` line at each stage, with the time spent in a stage if it runs long. SSH refusals while the worker boots are expected and stay silent for the first 3 minutes; after that `Still waiting for the worker's SSH` appears at most once a minute. `Worker ready after 7m 36s.` ends the wait. While an original is uploaded, the command reports the checksum taken on this PC, the worker's capacity check, the upload's bytes and percentage, and the checksum check on the worker. A download reports its bytes, percentage and checksum check the same way, and both resume where they stopped. A step that runs longer than 10 seconds prints a progress line at most every 10 seconds: a transfer gives its percentage, rate and time left, and local hashing gives `Checking the checksum: N% of <size>` under a line that names what is being checked, such as `Checking the original's checksum before upload.`, so an upload or download does not stay silent.
 
 ### When the worker stops answering
 
@@ -234,7 +234,7 @@ The rerun follows a stage that is still running: it prints `Picked up the encode
 
 ### Background runs
 
-A run started with `s` in the [full-screen view](tui.md) runs in the background, so closing the terminal doesn't stop it. Before it starts, it asks which worker converts (the one that is up, a new server from a list with hourly prices, or this PC) and whether to delete or keep the worker when the run ends. A new server is created before the run starts. Nothing is asked once it runs: change the worker's fate with `w` in the Activity pane, and stop the run with `x` or `X` there, or with `run stop` or `run stop --now`. A stop never cuts off the worker's delete.
+A run started with `s` in the [full-screen view](tui.md) runs in the background, so closing the terminal doesn't stop it. Before it starts, it asks which worker converts (the one that is up, a new server from a list with hourly prices, or this PC) and, unless you picked this PC, whether to delete or keep the worker when the run ends. A new server is created before the run starts. Nothing is asked once it runs: change the worker's fate with `w` in the Activity pane, and stop the run with `x` or `X` there, or with `run stop` or `run stop --now`. A stop never cuts off the worker's delete.
 
 ### Kept workers
 
@@ -257,7 +257,7 @@ The `worker` commands follow `lifecycle` alone, so they still work after you set
 
 ## Failed videos and kept workers
 
-A run creates the managed worker only once a job will use it. Each job is first checked on this PC (the original exists, sits under a watch root, passes the eligibility rules and can save `savings.minimumBytesSaved`); a run in which every job fails those checks, or is already ready to finalise, creates no server and prints nothing about one. A file still being written, or one ffprobe cannot read yet, counts as needing the server, since it may be fine by the time its job runs. A video stopped while its AV1 was being checked, with the AV1 still on this PC, is checked here and needs no server. Before creating a managed worker, `run` checks each queued or resumable job against the current processing mode, remote identity, and deterministic workspace. A never-started queued job adopts the current configuration. A partially processed or interrupted job with a different configuration fails before provisioning. Under `--local` or `--remote`, which set the mode for one run, a job started in the other mode is left for a later run instead and printed as `<file> is left for a later run: it started on ...`, with the command that resumes it: a plain `run` when the config matches where the video started, `run --local` or `run --remote` when the config uses the other mode, and when the config points at another worker (or the same worker under another `workingDirectory`), a line to set `processing.remoteSsh` back or to `queue drop` the video.
+A run creates the managed worker only once a job will use it. Each job is first checked on this PC (the original exists, sits under a watch root, passes the eligibility rules and can save `savings.minimumBytesSaved`); a run in which every job fails those checks, or is already ready to finalise, creates no server and prints nothing about one. A file still being written, or one ffprobe cannot read yet, counts as needing the server, since it may be fine by the time its job runs. A video stopped while its AV1 was being checked, with the AV1 still on this PC, is checked here and needs no server. Before it creates a managed worker, `run` checks that each queued or stopped job matches the current processing mode, worker and workspace. A job that never started takes the current settings. A job that started under other settings fails before any worker is created. Under `--local` or `--remote`, which set the mode for one run, a job started in the other mode is left for a later run instead and printed as `<file> is left for a later run: it started on ...`, with the command that resumes it: a plain `run` when the config matches where the video started, `run --local` or `run --remote` when the config uses the other mode, and when the config points at another worker (or the same worker under another `workingDirectory`), a line to set `processing.remoteSsh` back or to `queue drop` the video.
 
 A video that joins a run after it started (released with `queue release`, moved up with `queue next`, or queued from another terminal) is checked the same way when its turn comes. If it needs the worker and the run created none, it waits for the next run: `<file> waits for the next run: it needs a worker, and this run has none.`
 
@@ -283,7 +283,7 @@ The original videos remain untouched until finalisation succeeds.
 
 ## Manual SSH lifecycle
 
-To keep managing a pre-existing worker yourself, use `lifecycle: "manual"` and an OpenSSH config alias:
+To use a Linux server you manage yourself, use `lifecycle: "manual"` and an OpenSSH config alias:
 
 ```yaml
 processing:

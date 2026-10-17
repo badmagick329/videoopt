@@ -23,7 +23,7 @@ The view reads the same database as every other command, so it follows a run sta
 
 ## Keys
 
-Press `?` at any time to see every key. Anything that can lose work or cost money asks `y/N` first.
+Press `?` for a guide to the main keys; the tables below have them all. Anything that can lose work or cost money asks `y/N` first.
 
 These work from any pane:
 
@@ -33,7 +33,7 @@ These work from any pane:
 | `x` | Stop the run after the video converting now. |
 | `X` | Stop the run now, after asking. The video converting now starts again from its last finished step on the next run. |
 | `$` | Show what the freed space cost. See [What the freed space cost](#what-the-freed-space-cost). |
-| `?` | Show every key. Any key closes it. |
+| `?` | Show the key guide. Any key closes it. |
 | `q`, `Ctrl+C` | Quit. If an action you started is still going, it asks first, because quitting would cut it off. |
 
 Each pane adds its own:
@@ -47,7 +47,7 @@ Each pane adds its own:
 | Worker | `c` | Create a worker. It lists the servers you can have, with their hourly prices. |
 | Worker | `d` | Delete the worker, after asking. It stops billing at once. |
 | Worker | `r` | Check the worker with Hetzner now. |
-| Activity | `↑` `↓` `pgup` `pgdn`, `end` | Scroll the log, or follow it again. |
+| Activity | `↑` `↓` `pgup` `pgdn`, `home`, `end` | Scroll the log, jump to its start, or follow it again. |
 | Activity | `w` | Change what happens to the worker when the background run ends. |
 | Review | `o` / `a` | Open the original or the AV1 in Windows' default player. For an Immich video, the original is its download. |
 | Review | `f` / `F` | Finalise the selected video, or every ready one, after the same question `finalize` asks. `f` on a warned video lists its warnings in the question. `F` leaves warned videos out and names them, so you watch each one and finalise it with `f`. While a finalise is going, they ask nothing: they say whether the selected video is being finalised or queued, or that you can start another finalise once this one ends. |
@@ -60,10 +60,10 @@ The worker keys and `w` do something only with a Hetzner worker (`remoteSsh.life
 
 `s` starts a background run: it keeps going after you quit the view or close the terminal, and Windows doesn't sleep while it converts.
 
-Without a Hetzner worker (`remoteSsh.lifecycle: "hetzner"`), it starts at once and encodes where the config says. With one, it asks two questions first:
+Without a Hetzner worker (`remoteSsh.lifecycle: "hetzner"`), it starts at once and encodes where the config says. With one, it asks first:
 
-1. Which worker converts. With a worker up, use it or convert on this PC instead. With none, pick a server from the list with its hourly price, or convert on this PC. A server you pick is created before the run starts; if Hetzner can't create it, no run starts.
-2. What happens to the worker when the run ends: delete it, or keep it up, billed hourly. You can change this while the run goes with `w` in the Activity pane.
+1. Which worker converts. With a worker up, use it or convert on this PC instead. With none, pick a server from the list with its hourly price, or convert on this PC. Converting on this PC starts the run straight away. A server you pick is created before the run starts; if Hetzner can't create it, no run starts.
+2. If you picked a worker, what happens to it when the run ends: delete it, or keep it up, billed hourly. You can change this while the run goes with `w` in the Activity pane.
 
 To stop a background run from a terminal, use `run stop` (after this video) or `run stop --now`. A run started with `run` in a terminal is stopped only with `Ctrl+C` in its own window; `x` and `X` say so.
 

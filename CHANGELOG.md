@@ -3,13 +3,11 @@
 ## [Unreleased]
 ### What the freed space cost
 
-- New `cost` command: what the space freed on Hetzner workers cost, in EUR per TB freed, for all time and for each run. `cost --json` adds each video's figures. Only workers video-optimiser created count, and recording starts with this version, so earlier runs and runs on this PC or your own SSH host don't appear.
-- A video counts as freed once it is finalised, whether its original was deleted, archived or kept. Until then, a ready video's saving shows as waiting for review.
-- The three levels don't add up, because each counts different time: a video counts only its own conversion, a run counts all the time its worker was up during it (setup and gaps between videos included), and the all-time figure is what Hetzner billed, which rounds each worker up to whole hours.
-
-### The full-screen view
-
-- `$` opens a page with the same figures as `cost`: the all-time figure at the top, the runs newest first, and the selected run's videos below them. It refreshes every few seconds while open, and `$` or `Esc` closes it. Runs and finalising carry on underneath.
+- New `cost` command: what the space freed on Hetzner workers cost, in EUR per TB freed, for all time and for each run. `cost --json` adds each video's figures.
+- `$` in the full-screen view opens a page with the same figures and the selected run's videos. `$` or `Esc` closes it.
+- A video counts as freed once it is finalised, whether its original was deleted, archived or kept. Until then, its saving shows as waiting for review.
+- Only workers video-optimiser created count, and recording starts with this version, so earlier runs, runs on this PC and runs on your own SSH host don't appear.
+- The figures for a video, a run and all time don't add up, because each counts different time. `docs/commands.md` explains why.
 
 ### Fixes
 

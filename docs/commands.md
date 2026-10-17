@@ -51,7 +51,7 @@ The card shows the queue's counts, the run going now, the Hetzner worker if you 
 | Command | What it does |
 | --- | --- |
 | `run [--local \| --remote]` | Convert every queued video, folder and Immich alike. It stops before replacing anything. `--local` or `--remote` picks where to encode for this run only. First it checks again the AV1s of videos that failed validation in an earlier version, without encoding them again or using a worker, so they can become ready to finalise. |
-| `immich run [--first \| --limit <n>]` | `queue add immich`, then `run`. `--limit` counts new videos only. |
+| `immich run [--first \| --limit <n>] [--local \| --remote]` | `queue add immich`, then `run`. `--limit` counts new videos only. |
 | `run stop [--now]` | Stop a background run after this video, or now. A run in a terminal stops with `Ctrl+C` instead. |
 
 ## Changing the queue
@@ -83,9 +83,9 @@ A run reads the queue again before each video, so these count from its next vide
 | Command | What it does |
 | --- | --- |
 | `worker create`, `worker status`, `worker delete` | Manage the Hetzner worker by hand. |
-| `cost [--json]` | Show what the space freed on Hetzner workers cost, in EUR per TB freed: first for all time, then one line per run. `--json` adds each video. It changes nothing. |
+| `cost [--json]` | Show what the space freed on Hetzner workers cost, in EUR per TB freed: first for all time, then one line per run. `--json` adds each video. It only reads, though like every command it first upgrades a database an older version wrote. |
 
-`cost` counts only workers that video-optimiser created, and only since the version that added `cost`. Earlier runs, runs on this PC and runs on your own SSH host don't appear. A worker's bill is its server's hourly price plus its IPv4 address's, which Hetzner prices separately. If Hetzner listed no price for a worker, `cost` says so and leaves out that worker's bill and its videos.
+`cost` counts only workers that video-optimiser created, and only since version 0.13.0. Earlier runs, runs on this PC and runs on your own SSH host don't appear. A worker's bill is its server's hourly price plus its IPv4 address's, which Hetzner prices separately. If Hetzner listed no price for a worker, `cost` says so and leaves out that worker's bill and its videos.
 
 A video counts as freed once it is finalised, whether its original was deleted, archived or kept. Until then, a ready video's saving shows as waiting for review. A TB here is 10^12 bytes, as drives are sold.
 
