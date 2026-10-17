@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.13.0] - 2026-10-17
 ### What the freed space cost
 
 - New `cost` command: what the space freed on Hetzner workers cost, in EUR per TB freed, for all time and for each run. `cost --json` adds each video's figures.
