@@ -23,7 +23,7 @@ eligibility:
 - `resolution` is `1080p-1440p`, `1440p-4k` or `4k+`, measured by total pixels.
 - `minimumVideoBitrate` is the video stream's bitrate as ffprobe reports it. Many MKV files don't record one, so the whole file's bitrate is used instead. That figure includes the audio, so it reads slightly high.
 - Only files with an extension in `eligibility.extensions` are scanned. The default is `.mkv`, `.mp4`, `.mov` and `.m4v`.
-- `queue add` never queues a video too small to save `savings.minimumBytesSaved` (100 MiB by default), even with `--force`.
+- `queue add` never queues a video too small to save `savings.minimumBytesSaved` (1 MiB by default), even with `--force`.
 
 `queue add` scans the watch folders. `queue add <file>` queues one file after the same checks. A file outside your watch roots or rules is refused with exit `5`, and the message gives the command to queue it anyway with `--force`. `--force` skips only those two checks, and `queue retry` keeps it.
 
@@ -56,7 +56,7 @@ If Immich cannot be searched, the report still covers your watch folders. `calib
 Each video gets a size cap, whichever of these is stricter:
 
 - keep at most `quality.maxEncodedPercent` of its size (default `80`);
-- save at least `savings.minimumBytesSaved` (default `100MiB`).
+- save at least `savings.minimumBytesSaved` (default `1MiB`).
 
 When no quality setting meets both your VMAF target and the cap, the video ends as `Not worth converting: <why>` and the reason names the best setting it found. That counts as a normal outcome: the run still exits `0`, and a Hetzner worker is handled as after any finished run. A video too small to save `minimumBytesSaved` is skipped before its CRF search, so it is never uploaded or searched. `history` lists these videos.
 

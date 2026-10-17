@@ -144,7 +144,7 @@ quality:
   pixelFormat: "yuv420p10le"
   crfSearch:
     # Inclusive CRF search range.
-    minCrf: 18
+    minCrf: 8
     maxCrf: 50
     # Maximum samples; short videos automatically use fewer.
     sampleCount: 5
@@ -156,7 +156,7 @@ savings:
   requireSmallerOutput: true
   # Minimum saving per video. A video too small to save this much is never searched, and the
   # CRF search rejects any CRF that would save less. The encode is checked against it again.
-  minimumBytesSaved: "100MiB"
+  minimumBytesSaved: "1MiB"
 
 original:
   # What finalize does with the original: delete, archive (move it to archiveDirectory),

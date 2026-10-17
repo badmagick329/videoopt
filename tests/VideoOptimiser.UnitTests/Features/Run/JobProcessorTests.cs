@@ -401,7 +401,7 @@ public sealed class JobProcessorTests : IDisposable
     public async Task WhenTheMinimumSavingSetsTheCapTheSearchGetsItAndEveryLineNamesTheSaving()
     {
         var source = await SourceAsync("capped.mp4");
-        var settings = Settings(new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 }, minimum: null);
+        var settings = Settings(new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 }, minimum: "100MiB");
         var search = new NothingWorthwhileCrfSearch();
         var reported = new List<JobProgress>();
 
@@ -683,12 +683,12 @@ public sealed class JobProcessorTests : IDisposable
         return source;
     }
 
-    /// <param name="minimum">savings.minimumBytesSaved; null leaves the default.</param>
+    /// <param name="minimum">savings.minimumBytesSaved.</param>
     /// <param name="root">The one watch root; null is the test's directory.</param>
-    private AppSettings Settings(QualitySettings? quality = null, bool remote = false, string? minimum = "0B", string? root = null) => new()
+    private AppSettings Settings(QualitySettings? quality = null, bool remote = false, string minimum = "0B", string? root = null) => new()
     {
         Database = new DatabaseSettings { Path = DatabasePath },
-        Savings = minimum is null ? new SavingsSettings() : new SavingsSettings { MinimumBytesSaved = minimum },
+        Savings = new SavingsSettings { MinimumBytesSaved = minimum },
         Watch = new WatchSettings { Roots = [new WatchRootSettings { Path = root ?? _directory }] },
         Eligibility = new EligibilitySettings { Rules = [new EligibilityRuleSettings { Codecs = ["h264"], Resolution = "1080p-1440p", MinimumVideoBitrate = "1Mbps", MinimumFileSize = "1B" }] },
         Quality = quality ?? new QualitySettings(),

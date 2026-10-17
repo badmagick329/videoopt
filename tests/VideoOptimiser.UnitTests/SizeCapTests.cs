@@ -39,7 +39,7 @@ public sealed class SizeCapTests
     [Theory]
     [InlineData(true, 30, 97.2, 79.2, "AV1 would save about 62.4 MiB at the best quality-passing setting (CRF 30, VMAF 97.2); the minimum is 100MiB (savings.minimumBytesSaved).")]
     [InlineData(true, 30, 96.1, 25d, "No CRF reached VMAF 97 while saving 100MiB (savings.minimumBytesSaved).")]
-    [InlineData(true, 18, 96.3, 70d, "No CRF reached VMAF 97; even CRF 18, the lowest allowed (quality.crfSearch.minCrf), scored 96.3.")]
+    [InlineData(true, 8, 96.3, 70d, "No CRF reached VMAF 97; even CRF 8, the lowest allowed (quality.crfSearch.minCrf), scored 96.3.")]
     [InlineData(false, 30, 96.1, 85d, "No CRF reached VMAF 97 within 80% of the original's size (quality.maxEncodedPercent).")]
     public void TheSkipReasonNamesTheLimitThatStoppedTheSearch(bool bytesCap, int crf, double vmaf, double encodedPercent, string reason)
     {

@@ -219,7 +219,7 @@ public sealed class QualitySettings
 [YamlSerializable]
 public sealed class CrfSearchSettings
 {
-    [YamlMember(Alias = "minCrf")] public int MinCrf { get; set; } = 18;
+    [YamlMember(Alias = "minCrf")] public int MinCrf { get; set; } = 8;
     [YamlMember(Alias = "maxCrf")] public int MaxCrf { get; set; } = 50;
     [YamlMember(Alias = "sampleCount")] public int SampleCount { get; set; } = 5;
     [YamlMember(Alias = "sampleDuration")] public string SampleDuration { get; set; } = "20s";
@@ -236,7 +236,7 @@ public sealed class CrfSearchSettings
 public sealed class SavingsSettings
 {
     [YamlMember(Alias = "requireSmallerOutput")] public bool RequireSmallerOutput { get; set; } = true;
-    [YamlMember(Alias = "minimumBytesSaved")] public string MinimumBytesSaved { get; set; } = "100MiB";
+    [YamlMember(Alias = "minimumBytesSaved")] public string MinimumBytesSaved { get; set; } = "1MiB";
 }
 
 [YamlSerializable]

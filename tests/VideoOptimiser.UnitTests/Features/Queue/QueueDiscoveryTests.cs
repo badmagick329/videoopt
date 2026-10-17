@@ -168,7 +168,7 @@ public sealed class QueueDiscoveryTests : IDisposable
         {
             case "sampleCount": _settings.Quality.CrfSearch.SampleCount = 9; break;
             case "minimumBytesSaved": _settings.Savings.MinimumBytesSaved = "50MiB"; break;
-            case "minimumBytesSavedRespelled": _settings.Savings.MinimumBytesSaved = "100 MiB"; break;
+            case "minimumBytesSavedRespelled": _settings.Savings.MinimumBytesSaved = "1 MiB"; break;
         }
 
         var result = await DiscoverAsync(new FixedScanner(source));

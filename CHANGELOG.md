@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Defaults
+
+- `savings.minimumBytesSaved` now defaults to `1MiB` instead of `100MiB`, so `quality.maxEncodedPercent` decides whether a video is worth converting.
+- `quality.crfSearch.minCrf` now defaults to `8` instead of `18`. A video that needs a CRF below 18 to reach the VMAF target can now be converted.
+- If your config leaves either setting out, the next run checks the videos it skipped as not worth converting again. A config written by `config init` sets both, so change them there to get the new values.
 
 ## [0.13.0] - 2026-10-17
 ### What the freed space cost
