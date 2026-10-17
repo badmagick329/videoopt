@@ -109,6 +109,16 @@ public static class HourlyPrice
     public static string Format(decimal price) => $"EUR {price.ToString("0.000", CultureInfo.InvariantCulture)}/h";
 }
 
+/// <summary>The one way the cost of the freed space is printed (<c>cost</c>, the TUI's cost page), with "EUR" for the reason <see cref="HourlyPrice"/> gives.</summary>
+public static class CostPrice
+{
+    /// <summary><c>EUR 2.25 per TB</c>, or a dash when nothing was freed or the price is unknown.</summary>
+    public static string PerTerabyte(decimal? eur) => eur is { } amount ? $"EUR {amount.ToString("0.00", CultureInfo.InvariantCulture)} per TB" : "-";
+
+    /// <summary>Two decimals, and up to two more for the fractions of a cent one video on a cheap server costs.</summary>
+    public static string Amount(decimal eur) => $"EUR {eur.ToString("0.00##", CultureInfo.InvariantCulture)}";
+}
+
 /// <summary>The user declined <see cref="RemoteWorkerCreationQuote"/>, so nothing was created and nothing bills.</summary>
 public sealed class RemoteWorkerCreationDeclinedException() : Exception("No worker was created.");
 

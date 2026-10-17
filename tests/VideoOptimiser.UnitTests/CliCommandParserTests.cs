@@ -37,7 +37,7 @@ public sealed class CliCommandParserTests
         command.JobId.Should().Be("3f2a");
         CliCommand.Parse(["queue", "reject"]).Error.Should().Be("Unknown or incomplete command.");
         CliCommand.Parse(["queue", "reject", "--all"]).Error.Should().Be("Unknown or incomplete command.");
-        CliCommand.Parse(["queue", "reject", "3f2a", "--json"]).Error.Should().Be("--json is only supported by doctor, queue list, status, history and calibrate.");
+        CliCommand.Parse(["queue", "reject", "3f2a", "--json"]).Error.Should().Be("--json is only supported by doctor, queue list, status, history, calibrate and cost.");
         CliCommand.Usage.Should().Contain("video-optimiser queue reject <job-id> [--config <path>]");
     }
 
@@ -92,7 +92,7 @@ public sealed class CliCommandParserTests
     [InlineData("Unknown or incomplete command.", "immich", "run", "extra")]
     [InlineData("--first is only supported by queue add, queue add immich and immich run.", "immich", "finalize", "--first")]
     [InlineData("--ready is only supported by finalize.", "immich", "finalize", "--ready")]
-    [InlineData("--json is only supported by doctor, queue list, status, history and calibrate.", "immich", "run", "--json")]
+    [InlineData("--json is only supported by doctor, queue list, status, history, calibrate and cost.", "immich", "run", "--json")]
     [InlineData("--force is only supported by queue add <file>.", "queue", "add", "--force")]
     [InlineData("--dry-run is only supported by cleanup.", "run", "--dry-run")]
     [InlineData("--local and --remote cannot be used together.", "run", "--local", "--remote")]
@@ -108,7 +108,7 @@ public sealed class CliCommandParserTests
     [InlineData("background runner requires --worker-fate delete or keep.", "background", "runner")]
     [InlineData("--local and --remote cannot be used together.", "background", "start", "--local", "--remote")]
     [InlineData("--local is only supported by run and immich run.", "run", "stop", "--local")]
-    [InlineData("--json is only supported by doctor, queue list, status, history and calibrate.", "run", "stop", "--json")]
+    [InlineData("--json is only supported by doctor, queue list, status, history, calibrate and cost.", "run", "stop", "--json")]
     public void RejectsWithTheReason(string error, params string[] args)
     {
         var command = CliCommand.Parse(args);
@@ -165,7 +165,7 @@ public sealed class CliCommandParserTests
     [InlineData("--size requires WIDTHxHEIGHT, such as 140x40.", "tui", "--snapshot", "--size", "wide")]
     [InlineData("--size requires WIDTHxHEIGHT, such as 140x40.", "tui", "--snapshot", "--size", "0x40")]
     [InlineData("--size requires WIDTHxHEIGHT, such as 140x40.", "tui", "--snapshot", "--size", "80x-1")]
-    [InlineData("--json is only supported by doctor, queue list, status, history and calibrate.", "tui", "--snapshot", "--json")]
+    [InlineData("--json is only supported by doctor, queue list, status, history, calibrate and cost.", "tui", "--snapshot", "--json")]
     public void TheTuiSnapshotVerbRefusesWhatItCannotUse(string error, params string[] args)
     {
         var command = CliCommand.Parse(args);

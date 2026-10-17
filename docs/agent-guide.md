@@ -8,7 +8,7 @@ Originals change only in `finalize`, `finalize --ready` and `immich finalize`. E
 
 | Class | Commands | What you tell the person |
 | --- | --- | --- |
-| Read-only | `status` (or no command with output redirected; in a terminal it opens the [full-screen view](#the-full-screen-view), whose keys act), `history`, `queue list`, `calibrate`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `doctor` | Safe to run. `--json` is offered on the ones that list. `doctor` may create the job database and the Immich staging folder. |
+| Read-only | `status` (or no command with output redirected; in a terminal it opens the [full-screen view](#the-full-screen-view), whose keys act), `history`, `queue list`, `calibrate`, `cost`, `config show`, `config validate`, `version`, `worker status`, `cleanup --dry-run`, `doctor` | Safe to run. `--json` is offered on the ones that list. `doctor` may create the job database and the Immich staging folder. |
 | Job database and temporary files | `config init`, `queue add`, `queue add immich`, `run`, `immich run`, `run stop`, `validate`, `queue hold`, `queue release`, `queue next`, `queue drop`, `queue retry`, `queue dismiss` | Nothing of theirs is lost. `config init` writes a new config and never replaces one. `queue add immich` and `immich run` download videos to the staging folder, so they need disk space and bandwidth. Their re-upload guard moves converted originals that the phone uploaded again back to Immich's trash, which is intended. |
 | **Warn** | `finalize`, `immich finalize`, `queue reject`, `cleanup`, `worker create`, `worker delete`, `remote setup` | Say what it does first. They replace originals, delete files, create or delete a paid server, or upload an SSH key to Hetzner and rewrite the config. |
 
@@ -47,6 +47,14 @@ Create the worker? [y/N]
 A worker left up keeps billing. When the person presses `Ctrl+C` during a run with a Hetzner worker up, the run asks `Delete the worker when the run stops? [y/N]` at once, while the video keeps converting. `y` deletes the worker after the video is done (they keep the window open until it says so); `N` keeps it. Stopping at once asks `Delete the worker now?` and names what deleting loses. Redirected input is never asked and keeps the worker.
 
 A run that finishes follows `deleteAfterRun` alone, failed videos included. A kept worker ends the run with `The worker <name> stays up, billed hourly, until it is deleted.` and the `worker delete` command. `status` and `worker status` show a kept worker whatever `processing.mode` says; `doctor` warns (`ManagedWorkerBilling`) about one left up.
+
+### What the freed space cost
+
+`cost` answers "what did the savings cost?" as EUR per TB freed (TB = 10^12 bytes), for all time and per run, newest first; `cost --json` adds each video. It writes nothing and always exits `0`. Only Hetzner workers VideoOptimiser created count: runs on this PC or a manual SSH host are left out, and runs before this version were never recorded. `Nothing to show yet: ...` means no worker is recorded.
+
+- Freed means finalised (`Completed`), archived and kept originals included. A ready video's saving is *waiting for review* and is not in the figure until it is finalised. Failed, skipped, rejected and dropped videos add their time and no bytes.
+- The three levels do not add up, by design: a video pays only its own conversion time, a run pays every minute it overlapped its worker (bootstrap and gaps between videos), and all time is what Hetzner billed (each worker rounded up to whole hours).
+- `-` in place of a price means nothing was freed yet. The lines `A worker is still up: ...` (its bill counts to now), `A worker was deleted outside video-optimiser, ...` (its end is the last time it was seen) and `Hetzner listed no price for a worker, ...` (its bill and videos are left out; its runs say `no price`) qualify the all-time figure.
 
 ## Setup
 
@@ -274,5 +282,13 @@ A held job keeps its status, `Queued` or `Interrupted`; runs pass over it until 
 | `noSuggestions` | `null` when `suggestions` has entries; otherwise `{ reason, text }`. `reason` is `noVideos`, `allAlreadyAv1`, `noResultsAllAdmitted`, `noResultsNothingTestable`, `tooFewResults` or `resultsNeedNoChange` |
 
 A rule's or group's `history` is `null` when nothing was tried, or `{ converted, convertedBitrateMbps, savedPercent, notWorthIt, notWorthItBitrateMbps }` with each range `{ min, max }` or `null`; it counts only completed and skipped jobs whose quality settings match the current config.
+
+`cost --json` prints `{ lifetime, runs }`. Bytes are integers, EUR are decimals rounded to 4 places and include VAT, times are ISO 8601 UTC, and `eurPerTb` is `null` where the text shows `-`.
+
+| Field | Value |
+| --- | --- |
+| `lifetime` | `{ billedEur, freedBytes, waitingBytes, eurPerTb, workers, stillBilling, endEstimated, priceMissing }`. `billedEur` is every priced worker's started hours × its hourly price; `freedBytes` and `waitingBytes` count videos converted on those workers; `workers` counts every recorded worker; `stillBilling` is true while one is up, `endEstimated` when one was deleted outside VideoOptimiser, `priceMissing` when one has no price and is left out |
+| `runs` | Runs that used a worker, newest first: `{ id, startedUtc, endUtc, workerServerId, workerName, hourlyGrossEur, workerSeconds, eur, freedBytes, waitingBytes, eurPerTb, videoCount, videos }`. `endUtc` is the last video's end when the run never recorded its own. `workerSeconds` is the run's overlap with the worker, and `eur` is that × `hourlyGrossEur`, `null` with no price. A video resumed in a later run belongs to the later run, with all its time |
+| `runs[].videos` | `{ jobId, file, workerSeconds, eur, savedBytes, state, status, eurPerTb, priceMissing }`. `state` is `freed`, `waitingForReview` or `nothingSaved`; `status` is the job status; `savedBytes` is original minus AV1, `0` for `nothingSaved`; `eur` is its own time × the price, not rounded to the hour |
 
 If Immich cannot be searched, `calibrate` still prints the report for the watch folders (the JSON too), then writes `Immich couldn't be searched, so its videos are not in this report: ...` to stderr and exits with the Immich failure's code (`3` for an API key problem, `6` otherwise). Treat that report as partial.

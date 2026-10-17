@@ -3,8 +3,8 @@ using Microsoft.Data.Sqlite;
 namespace VideoOptimiser.UnitTests;
 
 /// <summary>
-/// Reads the run records (migration 13) straight from a test database. This subtask only writes them; their reading port
-/// comes with the cost report, so the tests read the tables as they are stored.
+/// Reads the run records (migration 13) straight from a test database, as they are stored: the cost report's port
+/// (<c>ICostRecords</c>) leaves out columns the writers' tests check, such as a run's holder name.
 /// </summary>
 internal static class RecordRows
 {

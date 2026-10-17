@@ -8,6 +8,7 @@ using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Cli.Features.Calibrate;
 using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
+using VideoOptimiser.Cli.Features.Cost;
 using VideoOptimiser.Cli.Features.Doctor;
 using VideoOptimiser.Cli.Features.Finalize;
 using VideoOptimiser.Cli.Features.ImmichRun;
@@ -47,6 +48,7 @@ internal static class ServiceRegistration
         .AddFinalize()
         .AddCleanup()
         .AddCalibrate()
+        .AddCost()
         .AddTui();
 
     public static IServiceCollection AddSharedKernel(this IServiceCollection services)

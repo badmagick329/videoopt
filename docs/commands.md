@@ -78,11 +78,22 @@ A run reads the queue again before each video, so these count from its next vide
 
 `queue drop`, `queue reject` and `cleanup` refuse to delete an AV1 that may be the only copy of a video, for example when its original is missing or gone from Immich.
 
-## Workers
+## Workers and what they cost
 
 | Command | What it does |
 | --- | --- |
 | `worker create`, `worker status`, `worker delete` | Manage the Hetzner worker by hand. |
+| `cost [--json]` | Show what the space freed on Hetzner workers cost, in EUR per TB freed: first for all time, then one line per run. `--json` adds each video. It changes nothing. |
+
+`cost` counts only workers that video-optimiser created, from this version on; runs on this PC or your own SSH host don't appear. A video counts as freed once it is finalised, even if its original was archived or kept, and a ready video's saving shows as waiting for review until then. The three figures don't add up: a video counts only its own conversion time, a run counts all the time its worker was up during it, setup and gaps between videos included, and the all-time figure is what Hetzner billed, in whole hours per worker. A TB here is 10^12 bytes, as drives are sold.
+
+```text
+All time: EUR 192.86 per TB freed. Hetzner billed EUR 0.27 for 1 worker, which freed 1.3 GiB; 572.2 MiB more is waiting for review.
+A worker is still up: its bill counts to now and grows until the worker is deleted.
+Runs, newest first:
+  2026-10-17 11:10 to 12:40  video-optimiser-1  1h 20m  2 videos  EUR 0.18  1.3 GiB freed, 572.2 MiB waiting for review  EUR 128.57 per TB
+For each video's figures, run 'video-optimiser cost --json'.
+```
 
 ## Other
 

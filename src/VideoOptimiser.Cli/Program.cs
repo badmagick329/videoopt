@@ -8,6 +8,7 @@ using VideoOptimiser.Cli;
 using VideoOptimiser.Cli.Features.Calibrate;
 using VideoOptimiser.Cli.Features.Cleanup;
 using VideoOptimiser.Cli.Features.Config;
+using VideoOptimiser.Cli.Features.Cost;
 using VideoOptimiser.Cli.Features.Doctor;
 using VideoOptimiser.Cli.Features.Finalize;
 using VideoOptimiser.Cli.Features.ImmichRun;
@@ -153,6 +154,7 @@ internal static class CliApplication
             CliCommandKind.ImmichFinalize => await services.GetRequiredService<FinalizeCommands>().ImmichFinalizeAsync(configuration, command, cancellationToken),
             CliCommandKind.TuiSnapshot => await services.GetRequiredService<TuiCommand>().SnapshotAsync(configuration, command, cancellationToken),
             CliCommandKind.Calibrate => await services.GetRequiredService<CalibrateCommand>().RunAsync(configuration, command.Json, cancellationToken),
+            CliCommandKind.Cost => await services.GetRequiredService<CostCommand>().RunAsync(configuration, command, cancellationToken),
             _ => (int)ExitCode.InvalidArguments
         };
     }

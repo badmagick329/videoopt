@@ -38,6 +38,7 @@ internal enum CliCommandKind
     ImmichRun,
     ImmichFinalize,
     Calibrate,
+    Cost,
     StopRun,
     /// <summary>Hidden: the launcher that starts a background run (not in <see cref="CliCommand.Usage"/>; users start one from the TUI).</summary>
     BackgroundStart,
@@ -84,6 +85,7 @@ Usage:
   video-optimiser status [--config <path>] [--json]
   video-optimiser history [--config <path>] [--json]
   video-optimiser calibrate [--config <path>] [--json]
+  video-optimiser cost [--config <path>] [--json]
   video-optimiser validate <job-id> [--config <path>]
   video-optimiser finalize <job-id> [--config <path>]
   video-optimiser finalize --ready [--config <path>]
@@ -227,6 +229,7 @@ Usage:
             ["status"] => CliCommandKind.Status,
             ["history"] => CliCommandKind.History,
             ["calibrate"] => CliCommandKind.Calibrate,
+            ["cost"] => CliCommandKind.Cost,
             ["validate", _] => CliCommandKind.Validate,
             ["finalize"] or ["finalize", _] => CliCommandKind.Finalize,
             ["cleanup"] => CliCommandKind.Cleanup,
@@ -248,9 +251,9 @@ Usage:
             });
         }
 
-        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.QueueList or CliCommandKind.Status or CliCommandKind.History or CliCommandKind.Calibrate))
+        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.QueueList or CliCommandKind.Status or CliCommandKind.History or CliCommandKind.Calibrate or CliCommandKind.Cost))
         {
-            return Invalid("--json is only supported by doctor, queue list, status, history and calibrate.");
+            return Invalid("--json is only supported by doctor, queue list, status, history, calibrate and cost.");
         }
 
         if (first && kind is not (CliCommandKind.QueueAdd or CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue add, queue add immich and immich run.");
