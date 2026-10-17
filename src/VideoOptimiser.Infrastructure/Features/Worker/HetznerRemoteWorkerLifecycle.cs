@@ -5,6 +5,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Hetzner;
+using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.Infrastructure.Features.Worker;
@@ -13,23 +14,28 @@ namespace VideoOptimiser.Infrastructure.Features.Worker;
 /// The worker's lifecycle: finds, creates, waits for and deletes the one managed Hetzner server, and decides in what order.
 /// What each step does lives in its own class: <see cref="HetznerCloudClient"/> talks to Hetzner,
 /// <see cref="HetznerPlacement"/> chooses where, <see cref="WorkerReadiness"/> waits for bootstrap and
-/// <see cref="WorkerStateStore"/> keeps the local record.
+/// <see cref="WorkerStateStore"/> keeps the local record. The worker's bill (<see cref="SqliteWorkerBillStore"/>) is written
+/// here too, at each step that sees the server created, up or gone, because nothing else sees them; <see cref="CheckAsync"/>
+/// writes nothing, the bill included.
 /// </summary>
 public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisposable
 {
     private readonly HetznerCloudClient _cloud;
     private readonly HetznerPlacement _placement;
     private readonly WorkerReadiness _readiness;
+    private readonly SqliteWorkerBillStore _bills;
+    private readonly Func<DateTimeOffset> _utcNow;
     private readonly TimeSpan _checkTimeout;
     private const string MoreThanOneServerMessage = "More than one Hetzner worker has this controller label; refusing to choose or delete either one.";
 
-    public HetznerRemoteWorkerLifecycle(IExternalProcessRunner processes)
-        : this(processes, new HttpClient { BaseAddress = new Uri(HetznerHttp.ApiBase) }, Task.Delay, ownsHttpClient: true)
+    public HetznerRemoteWorkerLifecycle(IExternalProcessRunner processes, SqliteWorkerBillStore bills)
+        : this(processes, bills, new HttpClient { BaseAddress = new Uri(HetznerHttp.ApiBase) }, Task.Delay, ownsHttpClient: true)
     {
     }
 
     internal HetznerRemoteWorkerLifecycle(
         IExternalProcessRunner processes,
+        SqliteWorkerBillStore bills,
         HttpClient http,
         Func<TimeSpan, CancellationToken, Task> delay,
         bool ownsHttpClient = false,
@@ -39,6 +45,8 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         TimeSpan? checkTimeout = null)
     {
         _checkTimeout = checkTimeout ?? TimeSpan.FromSeconds(15);
+        _bills = bills;
+        _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _cloud = new HetznerCloudClient(http, ownsHttpClient, delay);
         _placement = new HetznerPlacement(_cloud);
         _readiness = new WorkerReadiness(processes, delay, readinessProbeTimeout, progressHeartbeatInterval, utcNow);
@@ -60,7 +68,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         var token = GetToken(settings);
         var controller = ControllerId(databasePath);
         var statePath = WorkerStateStore.StatePath(databasePath);
-        var state = await ResolveStateAsync(token, controller, statePath, cancellationToken);
+        var state = await ResolveStateAsync(token, controller, databasePath, statePath, cancellationToken);
         if (state is null)
         {
             _ = await _cloud.DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
@@ -71,7 +79,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             // asks again: the quote already named the most it can cost.
             if (confirmCreation is not null && !await confirmCreation(HetznerPlacement.Quote(candidates), cancellationToken))
                 throw new RemoteWorkerCreationDeclinedException();
-            state = await PlaceAsync(token, settings, controller, statePath, script, candidates, reports, progress, cancellationToken);
+            state = await PlaceAsync(token, settings, controller, databasePath, statePath, script, candidates, reports, progress, cancellationToken);
             progress?.Report($"Created the Hetzner worker {state.Name}; it is bootstrapping.");
             progress?.Report("Bootstrapping the worker: it builds libvmaf, SVT-AV1 and FFmpeg from source and installs ab-av1, which takes several minutes. Progress follows.");
         }
@@ -108,7 +116,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         var statePath = WorkerStateStore.StatePath(databasePath);
         // The dialog's list can be minutes old, or another command can have created the worker since: never a second server.
         // Whether the existing one finished bootstrapping isn't known here, so its status is the record's.
-        if (await ResolveStateAsync(token, controller, statePath, cancellationToken) is { } existing)
+        if (await ResolveStateAsync(token, controller, databasePath, statePath, cancellationToken) is { } existing)
             return existing.ToInfo(RemoteWorkerStatuses.Recorded);
 
         _ = await _cloud.DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
@@ -129,7 +137,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             throw new RemoteWorkerCapacityUnavailableException([new RemoteWorkerTypeOutcome(placement.ServerType, [placement.Location], reason)]);
         }
 
-        var state = await PlaceAsync(token, settings, controller, statePath, script, chosen, chosenReports, progress, cancellationToken);
+        var state = await PlaceAsync(token, settings, controller, databasePath, statePath, script, chosen, chosenReports, progress, cancellationToken);
         progress?.Report($"Created the Hetzner worker {state.Name}; it is bootstrapping.");
         return state.ToInfo(RemoteWorkerStatuses.Bootstrapping);
     }
@@ -220,7 +228,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         var token = GetToken(settings);
         var controller = ControllerId(databasePath);
         var statePath = WorkerStateStore.StatePath(databasePath);
-        var state = await ResolveStateAsync(token, controller, statePath, cancellationToken, retainStateWhenServerMissing: true);
+        var state = await ResolveStateAsync(token, controller, databasePath, statePath, cancellationToken, retainStateWhenServerMissing: true);
         if (state is null)
         {
             var deletedOrphans = await _cloud.DeleteOrphanedPrimaryIpsAsync(token, controller, cancellationToken);
@@ -240,6 +248,11 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             var actionId = await _cloud.DeleteServerAsync(token, state.ServerId, cancellationToken);
             if (actionId is not null) await _cloud.WaitForActionAsync(token, actionId.Value, cancellationToken);
             await _cloud.WaitForServerDeletionAsync(token, state.ServerId, cancellationToken);
+            await _bills.DeletedAsync(databasePath, state.ServerId, _utcNow(), CancellationToken.None);
+        }
+        else
+        {
+            await _bills.GoneAsync(databasePath, state.ServerId, CancellationToken.None);
         }
 
         if (state.PrimaryIpv4Id > 0 && await _cloud.PrimaryIpExistsAsync(token, state.PrimaryIpv4Id, cancellationToken))
@@ -254,7 +267,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         return true;
     }
 
-    private async Task<WorkerState?> ResolveStateAsync(string token, string controller, string statePath, CancellationToken cancellationToken, bool retainStateWhenServerMissing = false)
+    private async Task<WorkerState?> ResolveStateAsync(string token, string controller, string databasePath, string statePath, CancellationToken cancellationToken, bool retainStateWhenServerMissing = false)
     {
         var state = await WorkerStateStore.ReadStateAsync(statePath, cancellationToken);
         if (state is not null)
@@ -265,8 +278,11 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                 HetznerCloudClient.VerifyOwnership(server.Value, controller);
                 var refreshed = Refreshed(state, server.Value);
                 await WorkerStateStore.WriteStateAsync(statePath, refreshed, cancellationToken);
+                await RecordSeenAsync(token, databasePath, server.Value, cancellationToken);
                 return refreshed;
             }
+            // Deleted in the Hetzner console: when is unknown, so the bill ends at the last time it was seen up.
+            await _bills.GoneAsync(databasePath, state.ServerId, CancellationToken.None);
             if (retainStateWhenServerMissing) return state;
             if (state.PrimaryIpv4Id > 0 && await _cloud.PrimaryIpExistsAsync(token, state.PrimaryIpv4Id, cancellationToken))
                 await _cloud.DeletePrimaryIpAsync(token, state.PrimaryIpv4Id, cancellationToken);
@@ -284,11 +300,43 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             servers[0].Address,
             servers[0].Location,
             servers[0].ServerType,
-            WorkerStateStore.KnownHostsPath(databasePath: Path.GetFullPath(statePath[..^".hetzner-worker.json".Length]), servers[0].Id),
+            WorkerStateStore.KnownHostsPath(databasePath, servers[0].Id),
             controller,
             servers[0].CreatedUtc);
         await WorkerStateStore.WriteStateAsync(statePath, recovered, cancellationToken);
+        await RecordSeenAsync(token, databasePath, servers[0], cancellationToken);
         return recovered;
+    }
+
+    /// <summary>
+    /// A live server moves its bill's last-seen time to now. One with no bill yet (created before migration 13, or recovered
+    /// by its label) gets one from what Hetzner says now, so the worker up when this version arrived is counted too.
+    /// </summary>
+    private async Task RecordSeenAsync(string token, string databasePath, ServerSnapshot server, CancellationToken cancellationToken)
+    {
+        var now = _utcNow();
+        if (await _bills.SeenAsync(databasePath, server.Id, now, CancellationToken.None)) return;
+        var hourly = await WorkerHourlyGrossAsync(token, server.HourlyGross, server.Location, cancellationToken);
+        await _bills.AddAsync(databasePath, new WorkerBillEntry(server.Id, server.Name, server.ServerType, server.Location, hourly, server.CreatedUtc ?? now), now, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// What the worker bills per hour: the server type's gross plus the Primary IPv4's in that location, which Hetzner prices
+    /// apart. The IPv4 adds nothing when Hetzner lists no price for it there, or when the pricing read fails or is stopped:
+    /// by then the server exists and bills, so the read must never fail what called it, nor keep its bill from being written.
+    /// A stop still lands at the caller's next Hetzner call.
+    /// </summary>
+    private async Task<decimal?> WorkerHourlyGrossAsync(string token, decimal? serverHourlyGross, string location, CancellationToken cancellationToken)
+    {
+        if (serverHourlyGross is not { } server) return null;
+        try
+        {
+            return server + (await _cloud.GetPrimaryIpv4HourlyGrossAsync(token, location, cancellationToken) ?? 0m);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return server;
+        }
     }
 
     /// <summary>The record with what Hetzner says now; a type or location it didn't report keeps the recorded one.</summary>
@@ -318,6 +366,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         string token,
         AppSettings settings,
         string controller,
+        string databasePath,
         string statePath,
         string bootstrapScript,
         IReadOnlyList<PlacementCandidate> candidates,
@@ -362,6 +411,11 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
 
                 // A failed POST never reaches this point, so no local state is left for a failed placement attempt.
                 await WorkerStateStore.WriteStateAsync(statePath, state, cancellationToken);
+                // Its bill starts now, whatever happens next. Written on no token: a stop here must not leave a billing server
+                // without a row (a later resolve would backfill it, but only if one comes).
+                var now = _utcNow();
+                var hourly = await WorkerHourlyGrossAsync(token, candidate.HourlyGross, candidate.Location, cancellationToken);
+                await _bills.AddAsync(databasePath, new WorkerBillEntry(server.Id, server.Name, candidate.ServerType, candidate.Location, hourly, server.CreatedUtc ?? now), now, CancellationToken.None);
 
                 try
                 {
@@ -379,7 +433,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                     reports[candidate.ServerType].Notes.Add($"provisioning failed in {candidate.Location} ({reason})");
                     lastPlacementFailure = exception;
                     progress?.Report($"Hetzner {candidate} provisioning failed ({reason}); cleaning up before fallback.");
-                    await CleanupFailedCreateAsync(token, statePath, state, cancellationToken);
+                    await CleanupFailedCreateAsync(token, databasePath, statePath, state, cancellationToken);
                     if (candidateIndex + 1 < candidates.Count)
                     {
                         progress?.Report($"Hetzner {candidate} cleaned up; falling back to {candidates[candidateIndex + 1]}.");
@@ -397,7 +451,8 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             lastPlacementFailure);
     }
 
-    private async Task CleanupFailedCreateAsync(string token, string statePath, WorkerState state, CancellationToken cancellationToken)
+    /// <remarks>The server existed, so Hetzner bills its started hour: its bill ends now rather than disappearing.</remarks>
+    private async Task CleanupFailedCreateAsync(string token, string databasePath, string statePath, WorkerState state, CancellationToken cancellationToken)
     {
         // A failed placement action can race with Hetzner removing the server. Check first so
         // cleanup remains safe when the server has already disappeared.
@@ -409,6 +464,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             if (actionId is not null) await _cloud.WaitForActionAsync(token, actionId.Value, cancellationToken);
             await _cloud.WaitForServerDeletionAsync(token, state.ServerId, cancellationToken);
         }
+        await _bills.DeletedAsync(databasePath, state.ServerId, _utcNow(), CancellationToken.None);
         if (state.PrimaryIpv4Id > 0 && await _cloud.PrimaryIpExistsAsync(token, state.PrimaryIpv4Id, cancellationToken))
             await _cloud.DeletePrimaryIpAsync(token, state.PrimaryIpv4Id, cancellationToken);
         WorkerStateStore.DeleteLocalState(statePath, state.KnownHostsFile);

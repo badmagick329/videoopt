@@ -19,7 +19,7 @@ internal sealed class RunWorkerEnd(RunFlow flow, RunStart start, RunWorkerState 
     /// it starts the run (<see cref="RunStart"/>): from then on every end decides the worker's fate (<see cref="GuardAsync"/>).
     /// </summary>
     /// <param name="holderName">How the refusal names this run to a later one, such as <c>video-optimiser run</c>.</param>
-    public async Task<IDisposable?> TakeRunLockAsync(LoadedConfiguration configuration, CliCommand command, string holderName, CancellationToken cancellationToken)
+    public async Task<IAsyncDisposable?> TakeRunLockAsync(LoadedConfiguration configuration, CliCommand command, string holderName, CancellationToken cancellationToken)
     {
         var started = await start.TryStartAsync(configuration.Settings, holderName, fate: null, cancellationToken);
         if (started.Session is not null) return started.Session;

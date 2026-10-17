@@ -17,7 +17,7 @@ internal sealed class RunCommand(ISettingsValidator settingsValidator, RunConver
     private async Task<int> ExecuteAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         if (ReportInvalidSettings(settingsValidator, configuration)) return (int)ExitCode.InvalidConfiguration;
-        using var runLock = await workerEnd.TakeRunLockAsync(configuration, command, LockHolders.Run, cancellationToken);
+        await using var runLock = await workerEnd.TakeRunLockAsync(configuration, command, LockHolders.Run, cancellationToken);
         if (runLock is null) return (int)ExitCode.GeneralFailure;
         await conversion.PrintBannerAsync(configuration, command.ModeOverride, cancellationToken);
         return (int)await conversion.ConvertQueueAsync(configuration, command, beforeNext: null, cancellationToken);

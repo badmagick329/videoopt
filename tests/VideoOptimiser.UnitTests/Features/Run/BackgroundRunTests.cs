@@ -23,6 +23,7 @@ public sealed class BackgroundRunTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
     private readonly SqliteJobRepository _repository = new(new SqliteDatabaseInitializer());
     private readonly WatchedRequests _requests = new(new SqliteRunRequestStore(new SqliteDatabaseInitializer()));
+    private readonly SqliteRunRecordStore _records = new(new SqliteDatabaseInitializer());
     private readonly FakeWorkerLifecycle _lifecycle = new();
     private readonly FakeKeepAwake _keepAwake = new();
     private readonly RunEventFile _events = new();
@@ -151,6 +152,27 @@ public sealed class BackgroundRunTests : IDisposable
         (started.Kind, started.Text, started.Count, started.Fate).Should().Be((RunEventKind.RunStarted, LockHolders.BackgroundRun, Environment.ProcessId, "Keep"));
     }
 
+    /// <summary>
+    /// A run leaves its row with its start and end, and one closed conversion span per video against it. Both name the worker
+    /// only when the run used a managed one: the cost report counts managed workers alone.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARunRecordsItselfAndASpanPerVideoNamingTheWorkerOnlyWhenManaged(bool remote)
+    {
+        var jobs = await RunCli.QueueJobsAsync(_repository, DatabasePath, 2);
+
+        var code = await RunAsync(new ScriptedRunProcessor(remote), remote: remote);
+
+        code.Should().Be((int)ExitCode.Success);
+        long? worker = remote ? CliFakes.Worker.ServerId : null;
+        var run = (await RecordRows.QueryAsync(DatabasePath, "SELECT id, holder_name, worker_server_id, started_utc <= ended_utc FROM runs;")).Should().ContainSingle().Subject;
+        (run[1], run[2], run[3]).Should().Be(((object?)LockHolders.BackgroundRun, (object?)worker, (object?)1L));
+        var spans = await RecordRows.QueryAsync(DatabasePath, "SELECT job_id, run_id, worker_server_id, started_utc <= ended_utc FROM conversion_spans ORDER BY id;");
+        spans.Select(span => (span[0], span[1], span[2], span[3])).Should().Equal(jobs.Select(job => ((object?)job.Id.ToString("N"), run[0], (object?)worker, (object?)1L)));
+    }
+
     /// <summary>A run refused by the lock leaves the running one's requests and event file untouched: it must not clear a stop request meant for the run that holds the lock.</summary>
     [Fact]
     public async Task ARunTheLockRefusesTouchesNothing()
@@ -191,8 +213,8 @@ public sealed class BackgroundRunTests : IDisposable
         var settings = new AppSettings { Database = new DatabaseSettings { Path = DatabasePath } };
         if (remote) settings.Processing = new ProcessingSettings { Mode = ProcessingModes.RemoteSsh, RemoteSsh = new RemoteSshSettings { Lifecycle = RemoteLifecycleModes.Hetzner } };
         var locks = new DatabaseLocks();
-        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging(), new FailedValidationRecheck(_repository, new OutputManifestStore(), new FileFingerprintService(), new PassingValidator()));
-        var start = new RunStart(locks, _requests, _events, _keepAwake, flow, TimeProvider.System);
+        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging(), new FailedValidationRecheck(_repository, new OutputManifestStore(), new FileFingerprintService(), new PassingValidator()), _records, TimeProvider.System);
+        var start = new RunStart(locks, _requests, _events, _keepAwake, _records, flow, TimeProvider.System);
         var background = new BackgroundRun(flow, start, new RunRequestPoll(_requests, TimeSpan.FromMilliseconds(10)), _stop, _requests, new EventLogRunObserver(_events, TimeProvider.System));
         return background.RunAsync(settings, modeOverridden: false, fate);
     }

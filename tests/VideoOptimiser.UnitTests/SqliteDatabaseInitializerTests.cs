@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
+using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
 
@@ -170,7 +171,35 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         await repository.UpdateAsync(databasePath, job);
 
         (await repository.GetAsync(databasePath, ready))!.ValidationWarnings.Should().Equal(job.ValidationWarnings);
-        SqliteDatabaseInitializer.CurrentVersion.Should().Be(12);
+    }
+
+    [Fact]
+    public async Task MigrationThirteenAddsTheRunRecordTablesAndKeepsEveryJob()
+    {
+        var databasePath = Path.Combine(_directory, "migration-twelve.db");
+        await new SqliteDatabaseInitializer().InitializeAsync(databasePath);
+        var job = Guid.NewGuid();
+        // A database exactly as migration 12 left it, with a job from then.
+        await ExecuteAsync(databasePath, $$"""
+            DROP TABLE runs;
+            DROP TABLE workers;
+            DROP TABLE conversion_spans;
+            DELETE FROM schema_migrations WHERE version = 13;
+            INSERT INTO jobs (id, source_path, source_fingerprint, status, created_utc, updated_utc) VALUES
+                ('{{job:N}}', 'C:\Videos\holiday.mp4', 'f', {{(int)JobStatus.Completed}}, '2026-01-01T00:00:00.0000000+00:00', '2026-01-01T00:00:00.0000000+00:00');
+            """);
+
+        var run = Guid.NewGuid();
+        var records = new SqliteRunRecordStore(new SqliteDatabaseInitializer());
+        await records.AddRunAsync(databasePath, run, LockHolders.Run, DateTimeOffset.UtcNow, CancellationToken.None);
+        var span = await records.OpenSpanAsync(databasePath, run, job, workerServerId: null, DateTimeOffset.UtcNow, CancellationToken.None);
+        await new SqliteWorkerBillStore(new SqliteDatabaseInitializer()).AddAsync(databasePath, new WorkerBillEntry(42, "worker", "cx43", "hel1", 0.032m, DateTimeOffset.UtcNow), DateTimeOffset.UtcNow, CancellationToken.None);
+
+        span.Should().BeGreaterThan(0);
+        (await new SqliteJobRepository(new SqliteDatabaseInitializer()).GetAsync(databasePath, job))!.Status.Should().Be(JobStatus.Completed);
+        (await RecordRows.QueryAsync(databasePath, "SELECT (SELECT COUNT(*) FROM runs), (SELECT COUNT(*) FROM conversion_spans), (SELECT COUNT(*) FROM workers), (SELECT COUNT(*) FROM schema_migrations WHERE version = 13);"))
+            .Single().Should().Equal(1L, 1L, 1L, 1L);
+        SqliteDatabaseInitializer.CurrentVersion.Should().Be(13);
     }
 
     /// <summary>A database exactly as migration 7 left it: the current schema without migration 8's columns.</summary>

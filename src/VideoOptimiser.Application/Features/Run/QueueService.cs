@@ -79,7 +79,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
     /// terminal takes effect at the next video, and "runs next" stays true. The total in <c>[n/total]</c> is the queue as
     /// it is then, so it can change.
     /// </remarks>
-    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default)
+    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, ConversionSpans? spans = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default)
     {
         var ready = 0;
         var toCheck = 0;
@@ -108,6 +108,8 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
             tried.Add(job.Id);
             if (passOver is not null && await passOver(job, cancellationToken)) continue;
             progress?.Report(JobProgress.Header(done + 1, done + waiting.Length, job.SourcePath));
+            // One span per attempt, closed on every way out: a result, a changed job, a stop (JobInterruptedException) or an error.
+            var span = spans is null ? (long?)null : await spans.OpenAsync(job.Id, cancellationToken);
             JobProcessingResult result;
             try
             {
@@ -119,6 +121,10 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
                 // counts as started, so a stop after this video pressed meanwhile does not start yet another one.
                 passedOver = job;
                 continue;
+            }
+            finally
+            {
+                if (span is { } spanId) await spans!.CloseAsync(spanId);
             }
 
             done++;

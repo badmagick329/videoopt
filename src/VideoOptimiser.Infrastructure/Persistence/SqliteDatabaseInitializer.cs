@@ -6,7 +6,7 @@ namespace VideoOptimiser.Infrastructure.Persistence;
 public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
 {
     /// <summary>The newest migration below. <see cref="SqliteSchemaCheck"/> refuses a database without it; raise both together.</summary>
-    public const int CurrentVersion = 12;
+    public const int CurrentVersion = 13;
 
     public async Task InitializeAsync(string databasePath, CancellationToken cancellationToken = default)
     {
@@ -196,6 +196,45 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
             // earlier job, which validation either passed outright or failed.
             await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN validation_warnings TEXT NULL;", cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (12, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
+        if (!await HasMigrationAsync(connection, 13, cancellationToken))
+        {
+            // What the freed space cost (VOPT-126): each run, each managed worker's bill, and each video's time converting (one
+            // conversion span per processing attempt). A permanent record, so nothing deletes from these tables, and no foreign
+            // keys: a span names a worker whose row the lifecycle may only backfill later. hourly_gross is decimal text in the
+            // invariant culture, null when Hetzner listed no price; end_estimated is 1 when deleted_utc is the last time the
+            // worker was seen up, because it was deleted outside VideoOptimiser.
+            await ExecuteAsync(connection, """
+                CREATE TABLE IF NOT EXISTS runs (
+                    id TEXT PRIMARY KEY,
+                    started_utc TEXT NOT NULL,
+                    ended_utc TEXT NULL,
+                    holder_name TEXT NOT NULL,
+                    worker_server_id INTEGER NULL
+                );
+                CREATE TABLE IF NOT EXISTS workers (
+                    server_id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    server_type TEXT NOT NULL,
+                    location TEXT NOT NULL,
+                    hourly_gross TEXT NULL,
+                    created_utc TEXT NOT NULL,
+                    deleted_utc TEXT NULL,
+                    end_estimated INTEGER NOT NULL DEFAULT 0,
+                    last_seen_utc TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS conversion_spans (
+                    id INTEGER PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    worker_server_id INTEGER NULL,
+                    started_utc TEXT NOT NULL,
+                    ended_utc TEXT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_conversion_spans_job ON conversion_spans(job_id);
+                CREATE INDEX IF NOT EXISTS ix_conversion_spans_run ON conversion_spans(run_id);
+                """, cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (13, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
         await transaction.CommitAsync(cancellationToken);
     }

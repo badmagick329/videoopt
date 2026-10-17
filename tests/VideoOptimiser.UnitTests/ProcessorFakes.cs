@@ -158,6 +158,58 @@ internal sealed class ResumedWorkerSession : IProcessingSession
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
+/// <summary>
+/// Hands each video to <paramref name="outcome"/>, which returns its result or throws as the real processor would (a changed
+/// job, a stop, an error). It writes nothing, so it refuses a video given twice: a run that forgot what it tried would loop.
+/// </summary>
+internal sealed class OutcomeProcessor(Func<JobRecord, CancellationToken, JobProcessingResult> outcome) : IJobProcessor
+{
+    private readonly HashSet<Guid> _seen = [];
+
+    public Task<bool> NeedsWorkerAsync(JobRecord job, AppSettings settings, CancellationToken cancellationToken = default) => Task.FromResult(false);
+
+    public Task<JobProcessingResult> ProcessAsync(string databasePath, JobRecord job, AppSettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        if (!_seen.Add(job.Id)) throw new InvalidOperationException($"{job.SourcePath} was given to the processor twice.");
+        return Task.FromResult(outcome(job, cancellationToken));
+    }
+}
+
+/// <summary>
+/// The run records in memory, as written. A write given a cancelled token fails, as SQLite's does, so a close that used the
+/// run's token after a stop leaves its span open here too.
+/// </summary>
+internal sealed class RecordingRunRecords : IRunRecordStore
+{
+    public sealed record Span(long Id, Guid RunId, Guid JobId, long? WorkerServerId, DateTimeOffset StartedUtc)
+    {
+        public DateTimeOffset? EndedUtc { get; set; }
+    }
+
+    public List<Span> Spans { get; } = [];
+
+    public Task AddRunAsync(string databasePath, Guid runId, string holderName, DateTimeOffset startedUtc, CancellationToken cancellationToken) => Write(cancellationToken);
+
+    public Task EndRunAsync(string databasePath, Guid runId, DateTimeOffset endedUtc, CancellationToken cancellationToken) => Write(cancellationToken);
+
+    public Task SetRunWorkerAsync(string databasePath, Guid runId, long workerServerId, CancellationToken cancellationToken) => Write(cancellationToken);
+
+    public async Task<long> OpenSpanAsync(string databasePath, Guid runId, Guid jobId, long? workerServerId, DateTimeOffset startedUtc, CancellationToken cancellationToken)
+    {
+        await Write(cancellationToken);
+        Spans.Add(new Span(Spans.Count + 1, runId, jobId, workerServerId, startedUtc));
+        return Spans.Count;
+    }
+
+    public async Task CloseSpanAsync(string databasePath, long spanId, DateTimeOffset endedUtc, CancellationToken cancellationToken)
+    {
+        await Write(cancellationToken);
+        Spans.Single(span => span.Id == spanId).EndedUtc = endedUtc;
+    }
+
+    private static Task Write(CancellationToken cancellationToken) => cancellationToken.IsCancellationRequested ? Task.FromCanceled(cancellationToken) : Task.CompletedTask;
+}
+
 /// <summary>Hands each report to the callback on the reporting thread; <see cref="Progress{T}"/> would post it later.</summary>
 internal sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
 {

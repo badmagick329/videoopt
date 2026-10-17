@@ -34,7 +34,7 @@ internal sealed class ImmichRunCommand(ISettingsValidator settingsValidator, IIm
     {
         if (!RequireImmich(configuration, command) || ReportInvalidSettings(settingsValidator, configuration)) return (int)ExitCode.InvalidConfiguration;
         // Before discovery, so a second run is refused before it downloads anything.
-        using var runLock = await workerEnd.TakeRunLockAsync(configuration, command, LockHolders.ImmichRun, cancellationToken);
+        await using var runLock = await workerEnd.TakeRunLockAsync(configuration, command, LockHolders.ImmichRun, cancellationToken);
         if (runLock is null) return (int)ExitCode.GeneralFailure;
         // Discovery downloads originals, so the banner comes first.
         await conversion.PrintBannerAsync(configuration, command.ModeOverride, cancellationToken);

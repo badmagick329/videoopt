@@ -6,7 +6,7 @@ using VideoOptimiser.Application.Configuration;
 namespace VideoOptimiser.Infrastructure.Hetzner;
 
 /// <summary>
-/// The Hetzner Cloud calls the managed worker needs: servers, actions, Primary IPs and server types, with their paths,
+/// The Hetzner Cloud calls the managed worker needs: servers, actions, Primary IPs, server types and pricing, with their paths,
 /// attempt counts and delays. The ownership labels live here too, because every call that creates, finds or deletes a
 /// server must agree on them; where a server should go and when it is created stay with the worker slice.
 /// </summary>
@@ -170,6 +170,27 @@ internal sealed class HetznerCloudClient : IDisposable
             }
         }
         return offers;
+    }
+
+    /// <summary>
+    /// The Primary IPv4's hourly gross price in <paramref name="location"/>, from <c>GET /pricing</c>: the <c>primary_ips</c>
+    /// entry of type <c>ipv4</c>, its <c>prices[].price_hourly.gross</c> for that location (field names checked against
+    /// Hetzner's API reference on 2026-10-17). Hetzner bills it apart from the server type's <c>price_hourly</c>.
+    /// </summary>
+    /// <returns>Null when Hetzner lists no IPv4 price there. An answer missing a field throws.</returns>
+    public async Task<decimal?> GetPrimaryIpv4HourlyGrossAsync(string token, string location, CancellationToken cancellationToken)
+    {
+        using var document = await SendJsonAsync(token, HttpMethod.Get, "pricing", null, cancellationToken);
+        foreach (var entry in document.RootElement.GetProperty("pricing").GetProperty("primary_ips").EnumerateArray())
+        {
+            if (entry.GetProperty("type").GetString() != "ipv4") continue;
+            foreach (var price in entry.GetProperty("prices").EnumerateArray())
+            {
+                if (!string.Equals(price.GetProperty("location").GetString(), location, StringComparison.OrdinalIgnoreCase)) continue;
+                return decimal.Parse(price.GetProperty("price_hourly").GetProperty("gross").GetString()!, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture);
+            }
+        }
+        return null;
     }
 
     private async Task<JsonDocument> SendJsonAsync(string token, HttpMethod method, string path, byte[]? payload, CancellationToken cancellationToken)

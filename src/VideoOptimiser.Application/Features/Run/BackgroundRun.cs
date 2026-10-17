@@ -22,7 +22,7 @@ public sealed class BackgroundRun(RunFlow flow, RunStart start, RunRequestPoll p
         // Held until the guard has also decided the worker's fate, not just until the conversion returns: a stop now ends the
         // conversion by an exception, and the worker is deleted after that. The next run must not start, or the machine
         // sleep, in the middle of the delete.
-        IDisposable? session = null;
+        IAsyncDisposable? session = null;
         try
         {
             return await flow.GuardAsync(settings, observer, questions, async () =>
@@ -46,7 +46,7 @@ public sealed class BackgroundRun(RunFlow flow, RunStart start, RunRequestPoll p
         }
         finally
         {
-            session?.Dispose();
+            if (session is not null) await session.DisposeAsync();
         }
     }
 }

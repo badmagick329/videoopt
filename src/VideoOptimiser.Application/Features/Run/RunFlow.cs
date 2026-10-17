@@ -15,20 +15,28 @@ namespace VideoOptimiser.Application.Features.Run;
 /// answer, so the CLI, a TUI and a background runner drive the same flow (D3 in the vertical-slices ADR).
 /// </summary>
 /// <remarks>
-/// One per command, registered as a singleton: it holds the run's worker state (<see cref="MarkStarted"/>, whether the worker
-/// was used, set up or already decided), and a host serves one command. The outcome is raised before the worker's fate is
+/// One per command, registered as a singleton: it holds the run's id and worker state (<see cref="MarkStarted"/>, whether the
+/// worker was used, set up or already decided), and a host serves one command. It writes the managed worker onto the run's
+/// row and hands <see cref="QueueService"/> the run's <see cref="ConversionSpans"/>. The outcome is raised before the worker's fate is
 /// decided, so the worker's events come last. The worker question and the delete run on their own token: the run's is already
 /// cancelled after a stop, and a cancelled delete would leave the worker billing silently.
 /// </remarks>
-public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJobProcessor processor, IRemoteWorkerLifecycle lifecycle, IImmichRestaging restaging, FailedValidationRecheck recheck)
+public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJobProcessor processor, IRemoteWorkerLifecycle lifecycle, IImmichRestaging restaging, FailedValidationRecheck recheck, IRunRecordStore records, TimeProvider time)
 {
     private bool _started;
+    private Guid? _runId;
+    private long? _workerServerId;
     private bool _used;
     private bool _settingUpWorker;
     private bool _concluded;
 
     /// <summary>Called once the run holds its lock: from then on every end decides the worker's fate (<see cref="GuardAsync"/>).</summary>
-    public void MarkStarted() => _started = true;
+    /// <param name="runId">The run's row (<see cref="IRunRecordStore"/>), which its managed worker and conversion spans are written against.</param>
+    public void MarkStarted(Guid runId)
+    {
+        _started = true;
+        _runId = runId;
+    }
 
     /// <summary>
     /// Runs a run command so that every way it ends, once it holds the run lock, decides the managed worker's fate: a stop
@@ -97,9 +105,13 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         {
             // Not reset in a finally: a stop leaves the flag set for the events that follow it.
             _settingUpWorker = true;
-            await lifecycle.EnsureReadyAsync(settings, settings.Database.Path, new InlineProgress<string>(observer.WorkerProgress), questions.ConfirmWorkerCreationAsync, cancellationToken);
+            var worker = await lifecycle.EnsureReadyAsync(settings, settings.Database.Path, new InlineProgress<string>(observer.WorkerProgress), questions.ConfirmWorkerCreationAsync, cancellationToken);
             _settingUpWorker = false;
             _used = true;
+            // Only a managed worker reaches here, so a run on this PC or a manual host never names a worker. On no token: the
+            // worker bills from now whether or not a stop comes next.
+            _workerServerId = worker.ServerId;
+            if (_runId is { } runId) await records.SetRunWorkerAsync(settings.Database.Path, runId, worker.ServerId, CancellationToken.None);
         }
         // Asks the worker question at the first stop request only when a managed worker is up; read from the local state file.
         var workerUp = managed && await lifecycle.ReadRecordedAsync(settings.Database.Path, cancellationToken) is not null;
@@ -109,7 +121,10 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         try
         {
             var passOver = PassOverJoiningVideos(settings, modeOverridden, observer, preparation, workerEnsured: managedWork, joinFailures);
-            result = await queue.RunAsync(settings.Database.Path, settings, preparation, passOver, progress, stopAfterThisVideo, cancellationToken);
+            // The worker is ensured before the first video or not at all (a joining video that needs it waits), so it is the
+            // same for every span of this conversion.
+            var spans = _runId is { } runId ? new ConversionSpans(records, time, settings.Database.Path, runId, _workerServerId) : null;
+            result = await queue.RunAsync(settings.Database.Path, settings, preparation, passOver, progress, spans, stopAfterThisVideo, cancellationToken);
         }
         finally
         {

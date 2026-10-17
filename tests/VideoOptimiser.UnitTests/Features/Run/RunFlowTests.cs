@@ -355,8 +355,8 @@ public sealed class RunFlowTests : IDisposable
     {
         var settings = Settings();
         var locks = new DatabaseLocks();
-        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging(), new FailedValidationRecheck(_repository, new OutputManifestStore(), new FileFingerprintService(), _validator));
-        flow.MarkStarted();
+        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging(), new FailedValidationRecheck(_repository, new OutputManifestStore(), new FileFingerprintService(), _validator), new RecordingRunRecords(), TimeProvider.System);
+        flow.MarkStarted(Guid.NewGuid());
         // The same shape as the CLI's: the guard decides the worker's fate for an end the conversion does not decide itself.
         return await flow.GuardAsync(settings, _observer, questions, async () => (int)await flow.ConvertQueueAsync(settings, modeOverridden: false, _observer, questions, stopAfterThisVideo, stopNow));
     }

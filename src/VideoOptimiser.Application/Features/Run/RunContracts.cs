@@ -71,5 +71,6 @@ public interface IQueueService
     /// </summary>
     /// <param name="passOver">Asked before each video starts; true leaves it queued for a later run, after the caller has said why.</param>
     /// <param name="stopAfterThisVideo">Checked before each job, never during one, so a stop after this video keeps the current job's work.</param>
-    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default);
+    /// <param name="spans">Where each attempt's conversion span goes; null records none, which only a conversion outside a started run (a test) does.</param>
+    Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, ConversionSpans? spans = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default);
 }

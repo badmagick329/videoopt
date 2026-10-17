@@ -6,6 +6,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Features.Worker;
+using VideoOptimiser.Infrastructure.Persistence;
 using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.UnitTests.Features.Worker;
@@ -992,6 +993,98 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         await action.Should().ThrowAsync<OperationCanceledException>();
     }
 
+    private static readonly DateTimeOffset At = new(2026, 10, 17, 9, 0, 0, TimeSpan.Zero);
+
+    /// <summary>The <c>created</c> the fake Hetzner gives every server.</summary>
+    private static readonly DateTimeOffset HetznerCreated = new(2026, 8, 20, 0, 0, 0, TimeSpan.Zero);
+
+    /// <summary>The server bills once it exists, so a pricing read that fails or lists no IPv4 there never fails the create: the bill takes the server's price alone.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ACreateWhoseIpv4PriceIsUnknownStillCreatesAndBillsTheServerPrice(bool pricingFails)
+    {
+        using var fixture = new Fixture();
+        if (pricingFails) fixture.Handler.PricingFails = true;
+        else fixture.Handler.Ipv4HourlyGross.Clear();
+        using var lifecycle = fixture.CreateLifecycle(utcNow: new FakeClock(At).Now);
+
+        var worker = await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        worker.ServerId.Should().Be(42);
+        (await BillAsync(fixture)).HourlyGross.Should().Be(0.031m);
+    }
+
+    /// <summary>A server whose provisioning failed existed, so Hetzner bills its hour: its bill ends when the cleanup deleted it.</summary>
+    [Fact]
+    public async Task AFailedCreateEndsTheBillOfTheServerItCleanedUp()
+    {
+        using var fixture = new Fixture { AutoDeletePrimaryIpWithServer = false };
+        fixture.Handler.ActionFailures.Enqueue(("resource_unavailable", "error during placement"));
+        using var lifecycle = fixture.CreateLifecycle(utcNow: new FakeClock(At).Now);
+
+        var action = () => lifecycle.CreateAsync(fixture.Settings, fixture.DatabasePath, new RemoteWorkerCreationOption("cx43", "hel1", 0.031m));
+
+        await action.Should().ThrowAsync<RemoteWorkerCapacityUnavailableException>();
+        (await BillAsync(fixture)).Should().Match<BillRow>(bill => bill.DeletedUtc == At && !bill.EndEstimated);
+    }
+
+    /// <summary>
+    /// <c>worker delete</c> ends the bill when Hetzner confirms the deletion. A worker already deleted in the Hetzner console
+    /// ends at the last time it was seen up, marked as an estimate, since when it went is unknown.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeletingAWorkerEndsItsBill(bool alreadyGone)
+    {
+        using var fixture = new Fixture();
+        var clock = new FakeClock(At);
+        using var lifecycle = fixture.CreateLifecycle(utcNow: clock.Now);
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        clock.Advance(TimeSpan.FromHours(2));
+        if (alreadyGone) fixture.Handler.DeleteServerOutOfBand();
+
+        await lifecycle.DeleteAsync(fixture.Settings, fixture.DatabasePath);
+
+        var bill = await BillAsync(fixture);
+        (bill.DeletedUtc, bill.EndEstimated).Should().Be(alreadyGone ? (At, true) : (At.AddHours(2), false));
+    }
+
+    /// <summary>
+    /// A create starts the worker's bill at what Hetzner charges: the server type in its location plus the Primary IPv4 there,
+    /// priced apart. Reusing the live worker moves the bill's last-seen time; one with no bill (created before bills were
+    /// kept) gets one from what Hetzner says now, with its own creation time and the same summed price.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReusingALiveWorkerMovesItsLastSeenTimeAndBackfillsAMissingBill(bool billMissing)
+    {
+        using var fixture = new Fixture();
+        var clock = new FakeClock(At);
+        using var lifecycle = fixture.CreateLifecycle(utcNow: clock.Now);
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        if (billMissing) await RecordRows.ExecuteAsync(fixture.DatabasePath, "DELETE FROM workers;");
+        clock.Advance(TimeSpan.FromMinutes(30));
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        (await BillAsync(fixture)).Should().Be(new BillRow(42, "cx43", fixture.Handler.CreateLocations[^1], 0.032m, HetznerCreated, null, false, At.AddMinutes(30)));
+    }
+
+    private sealed record BillRow(long ServerId, string ServerType, string Location, decimal? HourlyGross, DateTimeOffset CreatedUtc, DateTimeOffset? DeletedUtc, bool EndEstimated, DateTimeOffset LastSeenUtc);
+
+    private static async Task<BillRow> BillAsync(Fixture fixture)
+    {
+        var row = (await RecordRows.QueryAsync(fixture.DatabasePath, "SELECT server_id, server_type, location, hourly_gross, created_utc, deleted_utc, end_estimated, last_seen_utc FROM workers;")).Should().ContainSingle().Subject;
+        static DateTimeOffset Time(object? value) => DateTimeOffset.Parse((string)value!, System.Globalization.CultureInfo.InvariantCulture);
+        return new BillRow(
+            (long)row[0]!, (string)row[1]!, (string)row[2]!,
+            row[3] is string price ? decimal.Parse(price, System.Globalization.CultureInfo.InvariantCulture) : null,
+            Time(row[4]), row[5] is null ? null : Time(row[5]), (long)row[6]! == 1, Time(row[7]));
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly string _directory = Path.Combine(Path.GetTempPath(), "video-optimiser-tests", Guid.NewGuid().ToString("N"));
@@ -1050,6 +1143,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             Func<TimeSpan, CancellationToken, Task>? delay = null,
             TimeSpan? checkTimeout = null) => new(
             Processes,
+            new SqliteWorkerBillStore(new SqliteDatabaseInitializer()),
             new HttpClient(Handler) { BaseAddress = new Uri("https://api.test/v1/") },
             delay ?? ((_, _) => Task.CompletedTask),
             ownsHttpClient: true,
@@ -1194,6 +1288,21 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         public int RequestCount { get; private set; }
         public int DeleteRequests { get; private set; }
 
+        /// <summary>The Primary IPv4's hourly gross per location that <c>GET /pricing</c> lists; a location left out has no IPv4 price.</summary>
+        public Dictionary<string, decimal> Ipv4HourlyGross { get; } = new(StringComparer.OrdinalIgnoreCase) { ["hel1"] = 0.001m, ["fsn1"] = 0.001m, ["nbg1"] = 0.001m };
+
+        /// <summary>Answers <c>GET /pricing</c> with a server error.</summary>
+        public bool PricingFails { get; set; }
+
+        /// <summary>The live answer's shape (Hetzner's API reference, 2026-10-17), with an IPv6 entry first so the type is checked.</summary>
+        private string PricingJson()
+        {
+            static string Price(string location, decimal gross) =>
+                $"{{\"location\":\"{location}\",\"price_hourly\":{{\"net\":\"0.0000\",\"gross\":\"{gross.ToString(System.Globalization.CultureInfo.InvariantCulture)}\"}},\"price_monthly\":{{\"net\":\"0.0000\",\"gross\":\"0.0000\"}}}}";
+            var ipv4 = string.Join(",", Ipv4HourlyGross.Select(item => Price(item.Key, item.Value)));
+            return $"{{\"pricing\":{{\"currency\":\"EUR\",\"vat_rate\":\"19.00\",\"primary_ips\":[{{\"type\":\"ipv6\",\"prices\":[{Price("hel1", 0.5m)}]}},{{\"type\":\"ipv4\",\"prices\":[{ipv4}]}}]}}}}";
+        }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestCount++;
@@ -1220,6 +1329,8 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                     : ServerExists ? $"[{ServerJson()}]" : "[]";
                 return Json($"{{\"servers\":{servers}}}");
             }
+            if (request.Method == HttpMethod.Get && path == "/v1/pricing")
+                return PricingFails ? Error(HttpStatusCode.InternalServerError, "server_error", "pricing is down") : Json(PricingJson());
             if (request.Method == HttpMethod.Get && path.StartsWith("/v1/primary_ips?", StringComparison.Ordinal))
                 return Json(PrimaryIpExists ? "{\"primary_ips\":[{\"id\":99}]}" : "{\"primary_ips\":[]}");
             if (request.Method == HttpMethod.Post && path == "/v1/servers")

@@ -134,6 +134,52 @@ public sealed class QueueServiceTests : IDisposable
         (await _repository.GetAsync(databasePath, jobs[0].Id))!.Status.Should().Be(JobStatus.Queued);
     }
 
+    public enum AttemptEnd
+    {
+        Result,
+        ChangedJob,
+        Stopped,
+        Error
+    }
+
+    /// <summary>
+    /// One conversion span per attempt, opened with the run and its worker and closed on every way the attempt ends. A stop
+    /// has cancelled the run's token by the time the span closes, and its time still counts.
+    /// </summary>
+    [Theory]
+    [InlineData(AttemptEnd.Result)]
+    [InlineData(AttemptEnd.ChangedJob)]
+    [InlineData(AttemptEnd.Stopped)]
+    [InlineData(AttemptEnd.Error)]
+    public async Task RunAsyncClosesTheSpanOfAnAttemptOnEveryWayItEnds(AttemptEnd end)
+    {
+        var (databasePath, jobs) = await QueuedAsync("a.mp4");
+        using var stopNow = new CancellationTokenSource();
+        var processor = new OutcomeProcessor((job, token) => end switch
+        {
+            AttemptEnd.Result => new JobProcessingResult(new JobRecord { Id = job.Id, SourcePath = job.SourcePath, Status = JobStatus.ReadyToFinalize }, ExitCode.Success, "ready"),
+            AttemptEnd.ChangedJob => throw new JobChangedException(job.Id),
+            AttemptEnd.Stopped => Stop(job, stopNow),
+            _ => throw new InvalidOperationException("the disk broke")
+        });
+        var records = new RecordingRunRecords();
+        var runId = Guid.NewGuid();
+        var queue = new QueueService(_repository, processor, new DatabaseLocks(), new CommandHints(null));
+
+        var run = () => queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs), spans: new ConversionSpans(records, TimeProvider.System, databasePath, runId, workerServerId: 42), cancellationToken: stopNow.Token);
+
+        if (end is AttemptEnd.Result or AttemptEnd.ChangedJob) await run();
+        else await run.Should().ThrowAsync<Exception>();
+        records.Spans.Should().ContainSingle().Which.Should().Match<RecordingRunRecords.Span>(span =>
+            span.RunId == runId && span.JobId == jobs[0].Id && span.WorkerServerId == 42 && span.EndedUtc >= span.StartedUtc);
+    }
+
+    private static JobProcessingResult Stop(JobRecord job, CancellationTokenSource stopNow)
+    {
+        stopNow.Cancel();
+        throw new JobInterruptedException(job, JobStatus.Encoding, remote: true, stopNow.Token);
+    }
+
     /// <summary>
     /// R2: preparation leaves a held job out before anything can write it, so a hold is never undone or the job failed behind
     /// the user's back; the rest come in run order, <c>queue next</c> first.
