@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-18
 ### Remote workers
 
 - A new Hetzner worker whose bootstrap fails stops the run within about 15 seconds. The run names the stage that failed and why, then shows the end of the worker's cloud-init log. It used to wait out `bootstrapTimeout` (90 minutes by default) and keep the server billing.
