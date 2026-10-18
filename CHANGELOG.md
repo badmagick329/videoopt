@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.14.0] - 2026-10-18
 ### Defaults
 
 - `savings.minimumBytesSaved` now defaults to `1MiB` instead of `100MiB`, so `quality.maxEncodedPercent` decides whether a video is worth converting.
