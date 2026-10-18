@@ -9,18 +9,24 @@ namespace VideoOptimiser.Infrastructure.Features.Finalize;
 /// fails, so the original's path always holds the original, or the AV1 is complete at its installed path. When the extension
 /// changes the AV1 never overwrites a different file already at its name; it is numbered instead. <c>keep</c> never moves the
 /// original and installs the AV1 next to it. The AV1 then takes the original's created and modified dates, so it does not look
-/// newly made; failing to set them only warns, because the AV1 is already safely in place.
+/// newly made; failing to set them, or to delete the original afterwards, only warns, because the AV1 is already safely in
+/// place. A move that fails with both files back where they started throws <see cref="FileInstallBlockedException"/>.
 /// </summary>
 public sealed class SafeFileInstaller : ISafeFileInstaller
 {
     private readonly Action<string, DateTime, DateTime> _setTimestamps;
+    private readonly Action<string> _deleteFile;
 
-    public SafeFileInstaller() : this(SetTimestamps)
+    public SafeFileInstaller() : this(SetTimestamps, File.Delete)
     {
     }
 
-    // The seam lets a test force the failure, which a real file system makes hard to provoke.
-    internal SafeFileInstaller(Action<string, DateTime, DateTime> setTimestamps) => _setTimestamps = setTimestamps;
+    // The seams let a test force the failures, which a real file system makes hard to provoke.
+    internal SafeFileInstaller(Action<string, DateTime, DateTime> setTimestamps, Action<string>? deleteFile = null)
+    {
+        _setTimestamps = setTimestamps;
+        _deleteFile = deleteFile ?? File.Delete;
+    }
 
     public Task<FileInstallation> InstallAsync(string sourcePath, string outputPath, OriginalSettings original, CancellationToken cancellationToken = default)
     {
@@ -35,7 +41,14 @@ public sealed class SafeFileInstaller : ISafeFileInstaller
         if (Is(original.Action, OriginalActions.Keep))
         {
             var installed = AvailablePath(directory, $"{stem}.av1", outputExtension);
-            File.Move(outputPath, installed);
+            try
+            {
+                File.Move(outputPath, installed);
+            }
+            catch (Exception exception) when (BlockedIfNothingMoved(sourcePath, outputPath, outputPath, isOriginal: false, exception) is { } blocked)
+            {
+                throw blocked;
+            }
             EnsureInstalled(installed);
             return Task.FromResult(new FileInstallation(installed, null, CopyTimestamps(installed, created, modified)));
         }
@@ -53,9 +66,32 @@ public sealed class SafeFileInstaller : ISafeFileInstaller
         var rollback = Path.Combine(directory, $"{stem}.{Guid.NewGuid():N}.original.pending-delete{extension}");
         var deletedInstalledPath = InstalledPath(sourcePath, directory, stem, extension, outputExtension);
         Replace(sourcePath, outputPath, rollback, deletedInstalledPath);
-        File.Delete(rollback);
-        return Task.FromResult(new FileInstallation(deletedInstalledPath, null, CopyTimestamps(deletedInstalledPath, created, modified)));
+        // The AV1 is already in place, so a failed delete only leaves the original behind; failing the job here would record
+        // a finalisation that worked as one that didn't (VOPT-143).
+        string? deleteWarning = null;
+        try
+        {
+            _deleteFile(rollback);
+        }
+        catch (Exception exception)
+        {
+            deleteWarning = $"the original could not be deleted ({exception.Message}), so it is still at {rollback}; delete it once you have checked the AV1";
+        }
+        var warning = string.Join(". Also, ", new[] { deleteWarning, CopyTimestamps(deletedInstalledPath, created, modified) }.OfType<string>());
+        return Task.FromResult(new FileInstallation(deletedInstalledPath, null, warning.Length == 0 ? null : warning, deleteWarning is null ? null : rollback));
     }
+
+    /// <summary>
+    /// A failed move becomes <see cref="FileInstallBlockedException"/> only when both files are where they started, so the
+    /// job can go back to ready; anything less certain stays a plain failure.
+    /// </summary>
+    private static FileInstallBlockedException? BlockedIfNothingMoved(string sourcePath, string outputPath, string failedPath, bool isOriginal, Exception exception) =>
+        exception is IOException or UnauthorizedAccessException && File.Exists(sourcePath) && File.Exists(outputPath)
+            ? new FileInstallBlockedException(failedPath, isOriginal, IsInUse(exception), exception)
+            : null;
+
+    // ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION: another process has the file open.
+    private static bool IsInUse(Exception exception) => exception is IOException { HResult: unchecked((int)0x80070020) or unchecked((int)0x80070021) };
 
     private string? CopyTimestamps(string installedPath, DateTime created, DateTime modified)
     {
@@ -89,12 +125,21 @@ public sealed class SafeFileInstaller : ISafeFileInstaller
         try
         {
             File.Move(sourcePath, displacedPath);
+        }
+        catch (Exception exception) when (BlockedIfNothingMoved(sourcePath, outputPath, sourcePath, isOriginal: true, exception) is { } blocked)
+        {
+            throw blocked;
+        }
+
+        try
+        {
             File.Move(outputPath, installedPath);
             EnsureInstalled(installedPath);
         }
-        catch
+        catch (Exception exception)
         {
             if (!File.Exists(sourcePath) && File.Exists(displacedPath)) File.Move(displacedPath, sourcePath);
+            if (BlockedIfNothingMoved(sourcePath, outputPath, outputPath, isOriginal: false, exception) is { } blocked) throw blocked;
             throw;
         }
     }

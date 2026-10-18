@@ -95,6 +95,13 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
             await ReturnToReadyAsync(databasePath, job, exception.Message);
             return new FinalizationResult(job, ExitCode.FinalisationFailure, exception.Message);
         }
+        catch (FileInstallBlockedException exception)
+        {
+            // Nothing moved, so the job is ready again: failing it would leave only `queue retry`, a second encode (VOPT-143).
+            var message = Blocked(job, exception);
+            await ReturnToReadyAsync(databasePath, job, message);
+            return new FinalizationResult(job, ExitCode.FinalisationFailure, message);
+        }
         catch (Exception exception) when (fromImmich && exception is not FinalizationRefusedException)
         {
             // Every Immich step before the trash can run again, and the AV1's asset ID is already saved once uploaded, so
@@ -157,6 +164,15 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         return null;
     }
 
+    private string Blocked(JobRecord job, FileInstallBlockedException blocked)
+    {
+        var file = blocked.IsOriginal ? "original" : "AV1";
+        var again = hints.Command($"finalize {job.Id:N}");
+        return blocked.InUse
+            ? $"The {file} is open in another program: {blocked.Path}. Nothing was moved. Close it, then run '{again}' again."
+            : $"The {file} could not be moved: {blocked.Message} Nothing was moved. Fix that, then run '{again}' again.";
+    }
+
     private async Task ReturnToReadyAsync(string databasePath, JobRecord job, string message)
     {
         FinalizationRules.ReturnToReady(job, message);
@@ -172,6 +188,8 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         var moved = string.Equals(installation.InstalledPath, sourcePath, StringComparison.Ordinal) ? string.Empty : $"; the AV1 is {installation.InstalledPath}";
         var message = original.Action.Equals(OriginalActions.Keep, StringComparison.OrdinalIgnoreCase) ? $"Original kept; AV1 installed as {installation.InstalledPath}."
             : installation.ArchivedOriginalPath is { } archived ? $"Original archived to {archived}{moved}."
+            // The warning says where the original is and why it is still there.
+            : installation.LeftoverOriginalPath is not null ? $"AV1 installed as {installation.InstalledPath}."
             : $"Original deleted{moved}.";
         return installation.Warning is { } warning ? $"{message} Warning: {warning}" : message;
     }

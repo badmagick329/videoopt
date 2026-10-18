@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Fixes
+
+- A finalise that can't move a file because another program has it open, such as the player you reviewed the AV1 in, now leaves the video ready to finalise. Close the file and run `finalize` again. It used to mark the video as failed, and only `queue retry`, a full new encode, got it back.
+- With `original.action: delete`, a finalise that installs the AV1 but can't delete the original now counts as done, and says where the original was left so you can delete it. It used to mark the video as failed.
 
 ## [0.14.1] - 2026-10-18
 ### Remote workers

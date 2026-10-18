@@ -13,9 +13,22 @@ public interface IFinalizationService
 
 /// <summary>
 /// Where finalisation put the AV1, and where <c>archive</c> moved the original. <paramref name="Warning"/> is set when the AV1
-/// is installed but something minor failed afterwards, such as copying the original's file dates.
+/// is installed but something failed afterwards, such as copying the original's file dates. <paramref name="LeftoverOriginalPath"/>
+/// is where <c>delete</c> left the original when deleting it failed: the AV1 is installed all the same.
 /// </summary>
-public sealed record FileInstallation(string InstalledPath, string? ArchivedOriginalPath, string? Warning = null);
+public sealed record FileInstallation(string InstalledPath, string? ArchivedOriginalPath, string? Warning = null, string? LeftoverOriginalPath = null);
+
+/// <summary>
+/// The installer could not move a file and found both files where they started, with the original back at its path, so the
+/// job can simply be finalised again (VOPT-143). <paramref name="InUse"/> marks a sharing violation: another program, such as
+/// a player the user reviewed the AV1 in, has the file open.
+/// </summary>
+public sealed class FileInstallBlockedException(string path, bool isOriginal, bool inUse, Exception inner) : Exception(inner.Message, inner)
+{
+    public string Path { get; } = path;
+    public bool IsOriginal { get; } = isOriginal;
+    public bool InUse { get; } = inUse;
+}
 
 public interface ISafeFileInstaller
 {

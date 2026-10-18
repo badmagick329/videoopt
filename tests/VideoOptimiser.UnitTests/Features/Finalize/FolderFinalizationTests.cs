@@ -32,6 +32,82 @@ public sealed class FolderFinalizationTests : IDisposable
         (await File.ReadAllTextAsync(source)).Should().Be("av1");
     }
 
+    /// <summary>
+    /// VOPT-143: a player holding a file open, as during review, blocks the move. Nothing moved, so the job is ready again and
+    /// the next finalise, once the file is closed, completes; it used to fail and leave only `queue retry`. One row per move
+    /// the installer makes: the original aside, then the AV1 into place, and keep's single move of the AV1.
+    /// </summary>
+    [Theory]
+    [InlineData(OriginalActions.Delete, true)]
+    [InlineData(OriginalActions.Archive, false)]
+    [InlineData(OriginalActions.Keep, false)]
+    public async Task AFileOpenInAnotherProgramLeavesTheJobReadyToFinaliseAgain(string action, bool originalOpen)
+    {
+        var (settings, job, source, output) = await ReadyJobAsync();
+        settings.Original = new OriginalSettings { Action = action, ArchiveDirectory = "Archive" };
+        var open = originalOpen ? source : output;
+        FinalizationResult result;
+        // FileShare.Read, as a player opens a video: reading it still works, moving it doesn't.
+        using (new FileStream(open, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+        }
+
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Be($"The {(originalOpen ? "original" : "AV1")} is open in another program: {open}. Nothing was moved. Close it, then run 'video-optimiser finalize {job.Id:N}' again.");
+        (await File.ReadAllTextAsync(source)).Should().Be("original");
+        (await File.ReadAllTextAsync(output)).Should().Be("av1");
+        var stored = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+        stored.Status.Should().Be(JobStatus.ReadyToFinalize);
+        stored.FailureMessage.Should().Be(result.Message);
+        (await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings)).ExitCode.Should().Be(ExitCode.Success);
+    }
+
+    /// <summary>A move refused for another reason than an open file still moved nothing, so the job is ready again too.</summary>
+    [Fact]
+    public async Task AMoveRefusedWithNothingMovedNamesTheCauseAndLeavesTheJobReady()
+    {
+        var (settings, job, source, _) = await ReadyJobAsync();
+        var refused = new FileInstallBlockedException(source, isOriginal: true, inUse: false, new UnauthorizedAccessException("Access to the path is denied."));
+
+        var result = await CreateFinalizer(new ThrowingInstaller(refused)).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.Message.Should().Be($"The original could not be moved: Access to the path is denied. Nothing was moved. Fix that, then run 'video-optimiser finalize {job.Id:N}' again.");
+        (await _repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    /// <summary>Without proof that nothing moved, the job fails as before, and cleanup keeps its AV1.</summary>
+    [Fact]
+    public async Task AnUnexpectedInstallerFailureFailsTheJob()
+    {
+        var (settings, job, _, _) = await ReadyJobAsync();
+
+        var result = await CreateFinalizer(new ThrowingInstaller(new IOException("disk gone"))).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Be("disk gone");
+        var stored = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Failed);
+        stored.FailureCategory.Should().Be("FinalizationFailed");
+    }
+
+    /// <summary>VOPT-143: the AV1 is in place when deleting the original fails, so the job is completed and the warning says where the original is.</summary>
+    [Fact]
+    public async Task AnOriginalThatCannotBeDeletedLeavesTheJobCompletedWithAWarning()
+    {
+        var (settings, job, source, _) = await ReadyJobAsync();
+        var installer = new SafeFileInstaller((_, _, _) => { }, _ => throw new IOException("in use"));
+
+        var result = await CreateFinalizer(installer).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        var leftover = Directory.EnumerateFiles(_directory, "*.pending-delete*").Should().ContainSingle().Subject;
+        result.Message.Should().Be($"AV1 installed as {source}. Warning: the original could not be deleted (in use), so it is still at {leftover}; delete it once you have checked the AV1");
+        (await File.ReadAllTextAsync(leftover)).Should().Be("original");
+        (await File.ReadAllTextAsync(source)).Should().Be("av1");
+        (await _repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.Completed);
+    }
+
     [Fact]
     public async Task FinalizeRefusesAndLeavesTheOriginalUntouchedWhenItChangedAfterEncoding()
     {
@@ -255,6 +331,11 @@ public sealed class FolderFinalizationTests : IDisposable
     private sealed class CancelledInstaller : ISafeFileInstaller
     {
         public Task<FileInstallation> InstallAsync(string sourcePath, string outputPath, OriginalSettings original, CancellationToken cancellationToken = default) => throw new OperationCanceledException();
+    }
+
+    private sealed class ThrowingInstaller(Exception exception) : ISafeFileInstaller
+    {
+        public Task<FileInstallation> InstallAsync(string sourcePath, string outputPath, OriginalSettings original, CancellationToken cancellationToken = default) => throw exception;
     }
 
     private FinalizationService CreateFinalizer(ISafeFileInstaller installer) =>
