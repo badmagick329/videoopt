@@ -12,6 +12,9 @@ readonly FFMPEG_VERSION="8.0"
 readonly AB_AV1_VERSION="0.11.7"
 readonly AUTHORIZED_KEYS_SOURCE="${VIDEOOPT_AUTHORIZED_KEYS_FILE:-/root/.ssh/authorized_keys}"
 readonly PROGRESS_FILE="${PREFIX}/.bootstrap-progress"
+# Without it a failed script looks like a slow one, and the controller waits out the whole bootstrapTimeout (VOPT-140).
+readonly FAILED_FILE="${PREFIX}/.bootstrap-failed"
+current_stage="Starting"
 
 write_progress() {
     local percent="$1"
@@ -24,18 +27,48 @@ write_progress() {
         printf 'stage=%s\n' "${stage}"
     } > "${temporary}"
     mv -f -- "${temporary}" "${PROGRESS_FILE}"
+    current_stage="${stage}"
+}
+
+# Each argument is one key=value line; a newline in a value would split it, so it becomes a space. Best effort: the
+# script is already failing, so a marker that can't be written must not hide the original error.
+write_failure() {
+    local temporary="${FAILED_FILE}.tmp"
+    local line
+
+    install -d -m 0755 "${PREFIX}" 2>/dev/null || return 0
+    if {
+        printf 'stage=%s\n' "${current_stage}"
+        for line in "$@"; do
+            printf '%s\n' "${line//$'\n'/ }"
+        done
+    } > "${temporary}" 2>/dev/null; then
+        mv -f -- "${temporary}" "${FAILED_FILE}" 2>/dev/null || true
+    fi
+}
+
+on_error() {
+    trap - ERR
+    write_failure "status=$1" "line=$2" "command=$3"
 }
 
 die() {
     printf 'bootstrap error: %s\n' "$*" >&2
+    trap - ERR
+    write_failure "error=$*"
     exit 1
 }
+
+# set -E carries the trap into functions and subshells. die exits without tripping it, so it writes its own marker.
+trap 'on_error "$?" "${LINENO}" "${BASH_COMMAND}"' ERR
 
 if [[ "${EUID}" -ne 0 ]]; then
     die "run this script as root"
 fi
 
 install -d -m 0755 "${PREFIX}"
+# A marker left by an earlier failed attempt would end this one's wait at once.
+rm -f -- "${FAILED_FILE}"
 write_progress 0 "Starting"
 
 if [[ "$(uname -m)" != "x86_64" ]]; then

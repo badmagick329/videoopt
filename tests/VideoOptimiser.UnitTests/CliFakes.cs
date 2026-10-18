@@ -267,7 +267,7 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
     /// The price quote the real lifecycle asks the user to approve before it creates a server. With none, a create goes ahead
     /// unasked, as when a worker already exists; with one, a decline throws as the real lifecycle does and creates nothing.
     /// </summary>
-    public RemoteWorkerCreationQuote? Quote { get; init; }
+    public RemoteWorkerCreationQuote? Quote { get; set; }
 
     /// <summary>The answer to <see cref="Quote"/>, or null while it was never asked.</summary>
     public bool? Approved { get; private set; }
@@ -280,6 +280,9 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
 
     /// <summary>Thrown by the run's create before any worker is recorded, as a create Hetzner never confirmed would be.</summary>
     public Exception? EnsureFailure { get; set; }
+
+    /// <summary>Thrown by the run's create once the worker is recorded, as a bootstrap that failed would be.</summary>
+    public Exception? ReadyFailure { get; set; }
 
     public async Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null, CancellationToken cancellationToken = default)
     {
@@ -295,6 +298,7 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
         if (EnsureFailure is not null) throw EnsureFailure;
         Exists = true;
         if (DuringSetup is not null) { await DuringSetup(cancellationToken); cancellationToken.ThrowIfCancellationRequested(); }
+        if (ReadyFailure is not null) throw ReadyFailure;
         return CliFakes.Worker;
     }
 

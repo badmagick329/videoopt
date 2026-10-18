@@ -1,5 +1,6 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Infrastructure.Tools;
 
@@ -13,6 +14,11 @@ internal sealed class WorkerReadiness
 {
     internal const string BootstrapProgressPath = "/opt/video-optimiser/.bootstrap-progress";
     internal const string BootstrapCompletePath = "/opt/video-optimiser/.bootstrap-complete";
+    internal const string BootstrapFailedPath = "/opt/video-optimiser/.bootstrap-failed";
+    private const string CloudInitOutputLogPath = "/var/log/cloud-init-output.log";
+    // The marker and the log come from the worker: cap what of them reaches the error.
+    private const int FailureLogLines = 5;
+    private const int FailureValueMaxLength = 300;
     private static readonly TimeSpan DefaultReadinessProbeTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ProcessTerminationGracePeriod = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan DefaultProgressHeartbeatInterval = TimeSpan.FromSeconds(60);
@@ -69,7 +75,11 @@ internal sealed class WorkerReadiness
             progress?.Report($"Still waiting for the worker's SSH ({HumanReadableValues.FormatDuration(now - failingSince.Value)}): {reason}");
         }
 
-        const string probeCommand = $"if test -f {BootstrapCompletePath}; then printf 'percent=100\\nstage=Ready\\n'; elif test -f {BootstrapProgressPath}; then cat {BootstrapProgressPath}; else printf 'percent=0\\nstage=Starting\\n'; fi";
+        // A failed script leaves its progress file at the last stage, so the failure marker is checked before it (VOPT-140).
+        // Complete comes first: a failure after the script marked itself complete still leaves a usable worker.
+        var probeCommand = $"if test -f {BootstrapCompletePath}; then printf 'percent=100\\nstage=Ready\\n'; " +
+            $"elif test -f {BootstrapFailedPath}; then printf 'failed=1\\n'; cat {BootstrapFailedPath}; tail -n {FailureLogLines} {CloudInitOutputLogPath} 2>/dev/null | sed 's/^/log=/'; " +
+            $"elif test -f {BootstrapProgressPath}; then cat {BootstrapProgressPath}; else printf 'percent=0\\nstage=Starting\\n'; fi";
         while (_utcNow() < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -82,6 +92,10 @@ internal sealed class WorkerReadiness
                 if (result is null)
                 {
                     Failed($"status check exceeded {_readinessProbeTimeout.TotalSeconds:0}s");
+                }
+                else if (result.ExitCode == 0 && TryParseBootstrapFailure(result.StandardOutput, state.Name) is { } failure)
+                {
+                    throw new RemoteWorkerBootstrapFailedException(failure);
                 }
                 else if (result.ExitCode == 0 && TryParseBootstrapProgress(result.StandardOutput, out var currentProgress))
                 {
@@ -125,13 +139,13 @@ internal sealed class WorkerReadiness
                     Failed(FirstNonEmpty(result.StandardError, result.StandardOutput, $"exited with code {result.ExitCode}"));
                 }
             }
-            catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
+            catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException and not RemoteWorkerBootstrapFailedException)
             {
                 Failed(exception.Message);
             }
             await _delay(TimeSpan.FromSeconds(15), cancellationToken);
         }
-        throw new TimeoutException($"The Hetzner worker {state.Name} did not finish bootstrapping within {settings.Processing.RemoteSsh.Hetzner.BootstrapTimeout}. It was retained for inspection.");
+        throw new RemoteWorkerBootstrapFailedException($"The Hetzner worker {state.Name} did not finish bootstrapping within {settings.Processing.RemoteSsh.Hetzner.BootstrapTimeout}.");
     }
 
     // The script's stage names ("Building FFmpeg") start a sentence; here they continue one.
@@ -200,6 +214,49 @@ internal sealed class WorkerReadiness
             cancellation.Dispose();
         }
     }
+
+    /// <summary>
+    /// The error for a probe answer that carries the script's failure marker (<c>failed=1</c>, then the marker's
+    /// <c>stage</c> and either <c>error</c> from <c>die</c> or <c>status</c>/<c>line</c>/<c>command</c> from the ERR trap, then
+    /// <c>log=</c> lines from the cloud-init log), or null for any other answer.
+    /// </summary>
+    private static string? TryParseBootstrapFailure(string output, string workerName)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var log = new List<string>();
+        var failed = false;
+        foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = line.IndexOf('=');
+            if (separator <= 0) continue;
+            var key = line[..separator];
+            var value = Cap(line[(separator + 1)..].Trim());
+            if (key.Equals("failed", StringComparison.OrdinalIgnoreCase)) failed = true;
+            else if (key.Equals("log", StringComparison.OrdinalIgnoreCase))
+            {
+                // die's own line is already the error; a log line repeating it says nothing more.
+                if (value.Length > 0 && !value.StartsWith("bootstrap error: ", StringComparison.Ordinal)) log.Add(value);
+            }
+            else values.TryAdd(key, value);
+        }
+        if (!failed) return null;
+
+        var stage = values.GetValueOrDefault("stage") is { Length: > 0 } named ? $" while {DescribeStage(named)}" : string.Empty;
+        string cause;
+        if (values.GetValueOrDefault("error") is { Length: > 0 } error) cause = error;
+        else if (values.GetValueOrDefault("command") is { Length: > 0 } command)
+        {
+            var status = values.GetValueOrDefault("status") is { Length: > 0 } code ? $" with code {code}" : string.Empty;
+            var where = values.GetValueOrDefault("line") is { Length: > 0 } number ? $" (line {number} of the bootstrap script)" : string.Empty;
+            cause = $"{command} exited{status}{where}";
+        }
+        else cause = "the bootstrap script stopped with an error";
+
+        var message = $"The Hetzner worker {workerName} failed to bootstrap{stage}: {cause}.";
+        return log.Count == 0 ? message : $"{message}{Environment.NewLine}The end of its cloud-init log:{Environment.NewLine}{string.Join(Environment.NewLine, log.Select(line => "  " + line))}";
+    }
+
+    private static string Cap(string value) => value.Length <= FailureValueMaxLength ? value : value[..(FailureValueMaxLength - 1)] + "…";
 
     private static bool TryParseBootstrapProgress(string output, out (int Percent, string Stage) progress)
     {

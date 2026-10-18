@@ -37,8 +37,13 @@ public static class WorkerEndPolicy
     /// <param name="workerUsed">Whether this run used the worker. A worker kept from an earlier run that this one never needed is the user's to delete.</param>
     /// <param name="deleteLosesWork">A stop now while a CRF search, an encode or a finished encode exists only on the worker.</param>
     /// <param name="canAsk">Input is interactive. Redirected input never answers the worker question: a piped "y" is for the creation prompt.</param>
-    public static WorkerFate Decide(RunEnd end, bool? answer, bool deleteAfterRun, bool workerUsed, bool deleteLosesWork, bool canAsk)
+    /// <param name="createdByRun">This run created the worker, after the user approved its price.</param>
+    /// <param name="workerUnusable">The worker can never become ready: its bootstrap failed or timed out.</param>
+    public static WorkerFate Decide(RunEnd end, bool? answer, bool deleteAfterRun, bool workerUsed, bool deleteLosesWork, bool canAsk, bool createdByRun, bool workerUnusable)
     {
+        // Every later run would fail on such a worker at once, so a Keep chosen for a background run cannot have meant it, and
+        // with nobody to ask it would bill unseen (VOPT-140, the user's call, 2026-10-18).
+        if (workerUnusable && !canAsk) return WorkerFate.Delete;
         // A y given before the second press did not know the work it would throw away, so that case is asked again.
         if (answer == true) return end == RunEnd.StoppedNow && deleteLosesWork && canAsk ? WorkerFate.Ask : WorkerFate.Delete;
         if (answer == false) return WorkerFate.Keep;
@@ -48,6 +53,10 @@ public static class WorkerEndPolicy
             // video left on the worker is ever reused.
             RunEnd.Finished => workerUsed && deleteAfterRun ? WorkerFate.Delete : WorkerFate.Keep,
             RunEnd.StoppedAfterVideo or RunEnd.StoppedNow => canAsk ? WorkerFate.Ask : WorkerFate.Keep,
+            // A worker this run created that never became usable (a Hetzner error after the create), or one that never can (VOPT-140,
+            // the user's call, 2026-10-18): kept for inspection only when someone is there to inspect it, since the error
+            // already holds the bootstrap's stage, command and log. Otherwise it would bill unseen until the user noticed it.
+            RunEnd.Failed when !workerUsed && (createdByRun || workerUnusable) => canAsk ? WorkerFate.Ask : WorkerFate.Delete,
             _ => WorkerFate.Keep
         };
     }

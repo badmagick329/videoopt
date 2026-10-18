@@ -462,6 +462,33 @@ public sealed class WorkerEndRunTests : IDisposable
         code.Should().Be((int)ExitCode.ProcessingFailure);
     }
 
+    /// <summary>
+    /// VOPT-140: a worker this run created whose bootstrap failed is the user's to inspect when they are there, so the run asks
+    /// after the error instead of keeping it or deleting it unasked; an N keeps it with the lines that say it bills.
+    /// </summary>
+    [Fact]
+    public async Task ABootstrapFailureOnAWorkerThisRunCreatedAsksWhetherToDeleteIt()
+    {
+        await WriteConfigAsync();
+        await QueueJobsAsync(1);
+        _lifecycle.Exists = false;
+        _lifecycle.Quote = new RemoteWorkerCreationQuote(new("cx43", "hel1", 0.031m), new("cx43", "hel1", 0.031m));
+        const string failure = "The Hetzner worker video-optimiser-1 failed to bootstrap while building FFmpeg: make -j8 exited with code 2 (line 150 of the bootstrap script).";
+        _lifecycle.ReadyFailure = new RemoteWorkerBootstrapFailedException(failure);
+        _input.Then("n");
+
+        var (code, output, error) = await RunAsync(stdin: "y\n");
+
+        // The error prints as it is, not as an unexpected failure.
+        error.Should().Be(Transcript(failure));
+        output.Should().EndWith(Transcript(
+            "Create the worker? [y/N] Creating Hetzner cx43 in hel1.",
+            "Delete the worker now? [y/N] The worker video-optimiser-1 stays up, billed hourly, until it is deleted.",
+            $"To delete it: video-optimiser worker delete {Config}"));
+        code.Should().Be((int)ExitCode.ProcessingFailure);
+        _lifecycle.DeleteCalls.Should().Be(0);
+    }
+
     /// <summary>A worker kept from an earlier run that this run never needed is the user's to delete, but it still bills.</summary>
     [Fact]
     public async Task ARunWithNothingToConvertSaysTheKeptWorkerBills()
@@ -558,8 +585,9 @@ public sealed class WorkerEndRunTests : IDisposable
 
     private const string Banner = "Encoding on the Hetzner worker video-optimiser-1, a cx43 in hel1, kept from an earlier run and still billing.";
 
-    private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync() =>
-        ConsoleCapture.RunCliAsync(services =>
+    /// <param name="stdin">The answer to the creation prompt, which reads the console itself rather than <see cref="IConsoleInput"/>.</param>
+    private Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(string? stdin = null) =>
+        ConsoleCapture.RunCliWithInputAsync(stdin, services =>
         {
             CliFakes.AcceptAnySettings(services);
             services.AddSingleton(_stop);

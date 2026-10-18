@@ -593,6 +593,37 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         fixture.Processes.Requests.Should().HaveCount(4);
     }
 
+    [Theory]
+    // The ERR trap's marker, with the cloud-init log's tail; die's marker, whose own log line is dropped as a repeat.
+    [InlineData(
+        "failed=1\nstage=Building FFmpeg\nstatus=2\nline=150\ncommand=make -j8\nlog=libavcodec/x.c:1: error: boom\nlog=make: *** [all] Error 2\n",
+        "failed to bootstrap while building FFmpeg: make -j8 exited with code 2 (line 150 of the bootstrap script).\nThe end of its cloud-init log:\n  libavcodec/x.c:1: error: boom\n  make: *** [all] Error 2")]
+    [InlineData(
+        "failed=1\nstage=Verifying installed codecs\nerror=FFmpeg does not expose the libsvtav1 encoder\nlog=bootstrap error: FFmpeg does not expose the libsvtav1 encoder\n",
+        "failed to bootstrap while verifying installed codecs: FFmpeg does not expose the libsvtav1 encoder.")]
+    public async Task ABootstrapThatReportsItsFailureEndsTheWaitAtOnceWithTheStageAndCause(string probeAnswer, string expectedEnd)
+    {
+        using var fixture = new Fixture();
+        fixture.Processes.Results.Enqueue(new ExternalProcessResult(0, "percent=60\nstage=Building FFmpeg\n", string.Empty));
+        fixture.Processes.Results.Enqueue(new ExternalProcessResult(0, probeAnswer, string.Empty));
+        var delays = 0;
+        using var lifecycle = fixture.CreateLifecycle(delay: (_, _) =>
+        {
+            delays++;
+            return Task.CompletedTask;
+        });
+
+        var act = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        var failure = await act.Should().ThrowAsync<RemoteWorkerBootstrapFailedException>();
+        failure.Which.Message.ReplaceLineEndings("\n").Should().StartWith("The Hetzner worker ").And.EndWith(expectedEnd);
+        // One wait between the progress answer and the failed one, then no more polling.
+        delays.Should().Be(1);
+        fixture.Processes.Requests.Should().HaveCount(2);
+        // The server bills until its fate is decided, so it stays recorded for that.
+        (await lifecycle.ReadRecordedAsync(fixture.DatabasePath)).Should().NotBeNull();
+    }
+
     [Fact]
     public async Task ANewWorkerIsToldItWillTakeSeveralMinutesBeforeTheFirstProgressLine()
     {

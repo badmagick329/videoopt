@@ -74,6 +74,25 @@ public sealed class BackgroundRunTests : IDisposable
         _events.Read(DatabasePath).Should().Contain(entry => entry.Kind == RunEventKind.StoppedNow && entry.Flag == true && entry.Fate == "Delete");
     }
 
+    /// <summary>
+    /// VOPT-140: a worker whose bootstrap failed can't serve any later run, and nobody watches a background run, so it is deleted
+    /// even though the run was started to keep its worker.
+    /// </summary>
+    [Fact]
+    public async Task ABootstrapFailureDeletesTheWorkerEvenWhenTheRunKeepsIt()
+    {
+        await RunCli.QueueJobsAsync(_repository, DatabasePath, 1);
+        var processor = new ScriptedRunProcessor(remote: true);
+        _lifecycle.ReadyFailure = new RemoteWorkerBootstrapFailedException("The Hetzner worker video-optimiser-1 failed to bootstrap while building FFmpeg: make exited with code 2.");
+
+        var code = await RunAsync(processor, WorkerFateChoice.Keep, remote: true);
+
+        code.Should().Be((int)ExitCode.GeneralFailure);
+        processor.Calls.Should().Be(0);
+        _lifecycle.DeleteCalls.Should().Be(1);
+        Kinds().Should().ContainInOrder(RunEventKind.RunFailed, RunEventKind.WorkerDeleting);
+    }
+
     /// <summary>A stop now is the second Ctrl+C: the video is interrupted where it is and resumes from that stage on the next run.</summary>
     [Fact]
     public async Task AStopNowRequestInterruptsTheVideoAtOnce()

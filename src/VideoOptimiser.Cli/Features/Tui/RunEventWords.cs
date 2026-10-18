@@ -87,7 +87,13 @@ internal static class RunEventWords
             case RunEventKind.ManualWorkerReminder:
                 return Say(LogKind.Info, "The worker's lifecycle is manual: delete it yourself once everything is ready; powering it off still bills.");
             case RunEventKind.RunFailed:
-                return Say(LogKind.Error, $"The run failed: {e.Text}");
+            {
+                // A log row is one line: a failure with lines of its own (a failed bootstrap's log tail) gets a row per line.
+                var lines = (e.Text ?? "").ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is { Length: > 0 } given ? given : ["no reason given"];
+                return new EventEffect(
+                    [new LogEntry(e.At, LogKind.Error, $"The run failed: {Clean(lines[0])}"), .. lines.Skip(1).Select(line => new LogEntry(e.At, LogKind.Detail, Clean(line)))],
+                    false, null, null, null);
+            }
             case RunEventKind.RecheckStarted:
                 return new EventEffect(Line(LogKind.Stage, RecheckWords.Started(e.Count ?? 0)), true, null, null, null);
             case RunEventKind.Rechecked:

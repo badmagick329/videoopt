@@ -27,6 +27,18 @@ public sealed class RunEventWordsTests
         effect.Lines.Should().ContainSingle().Which.Text.Should().Be(expected);
     }
 
+    /// <summary>A log row is one line, so a failure with lines of its own (a failed bootstrap's log tail, VOPT-140) gets a row each.</summary>
+    [Fact]
+    public void AFailureOfSeveralLinesGetsARowPerLine()
+    {
+        var effect = RunEventWords.Of(new RunEvent(DateTimeOffset.UnixEpoch, RunEventKind.RunFailed, Text: "The Hetzner worker w failed to bootstrap.\r\nThe end of its cloud-init log:\n  make: *** [all] Error 2\n"));
+
+        effect.Lines.Select(line => (line.Kind, line.Text)).Should().Equal(
+            (LogKind.Error, "The run failed: The Hetzner worker w failed to bootstrap."),
+            (LogKind.Detail, "The end of its cloud-init log:"),
+            (LogKind.Detail, "make: *** [all] Error 2"));
+    }
+
     /// <summary>A part whose count is zero is left out, and a video still failed turns the line into a warning (VOPT-119).</summary>
     [Theory]
     [InlineData(2, 0, 0, 0, "Checked again: 2 ready to finalise.", false)]

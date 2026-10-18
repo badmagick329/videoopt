@@ -131,6 +131,13 @@ public sealed class RemoteWorkerCreationDeclinedException() : Exception("No work
 /// cause instead of the advice.</remarks>
 public sealed class RemoteWorkerCreationUnconfirmedException(string message) : Exception(message);
 
+/// <summary>
+/// The worker can never become ready (VOPT-140): its bootstrap script reported its own failure, or it ran out the bootstrap
+/// timeout. A failure's message names the script's stage and the failing command, then the end of its cloud-init log, one
+/// per line.
+/// </summary>
+public sealed class RemoteWorkerBootstrapFailedException(string message) : Exception(message);
+
 /// <summary>What <see cref="IRemoteWorkerLifecycle.CheckAsync"/> found.</summary>
 /// <param name="Worker">Null when Hetzner has no managed server for this database (or, when it couldn't be asked, when the state file records none).</param>
 /// <param name="HourlyGross">EUR per hour incl. VAT for its type in its location, from Hetzner; null when unknown or not asked.</param>

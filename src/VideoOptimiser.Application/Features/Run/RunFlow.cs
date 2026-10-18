@@ -27,6 +27,10 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
     private Guid? _runId;
     private long? _workerServerId;
     private bool _used;
+    // The lifecycle asks for the price only when it creates a server, so an approved price means this run created it.
+    private bool _created;
+    // The worker's bootstrap failed or timed out, so no later run can use it either.
+    private bool _unusable;
     private bool _settingUpWorker;
     private bool _concluded;
 
@@ -105,7 +109,18 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         {
             // Not reset in a finally: a stop leaves the flag set for the events that follow it.
             _settingUpWorker = true;
-            var worker = await lifecycle.EnsureReadyAsync(settings, settings.Database.Path, new InlineProgress<string>(observer.WorkerProgress), questions.ConfirmWorkerCreationAsync, cancellationToken);
+            async Task<bool> ConfirmCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken token) =>
+                _created = await questions.ConfirmWorkerCreationAsync(quote, token);
+            RemoteWorkerInfo worker;
+            try
+            {
+                worker = await lifecycle.EnsureReadyAsync(settings, settings.Database.Path, new InlineProgress<string>(observer.WorkerProgress), ConfirmCreationAsync, cancellationToken);
+            }
+            catch (RemoteWorkerBootstrapFailedException)
+            {
+                _unusable = true;
+                throw;
+            }
             _settingUpWorker = false;
             _used = true;
             // Only a managed worker reaches here, so a run on this PC or a manual host never names a worker. On no token: the
@@ -294,7 +309,7 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         };
         var fate = answer.Pending
             ? WorkerFate.Ask
-            : WorkerEndPolicy.Decide(end, answer.Answer, settings.Processing.RemoteSsh.Hetzner.DeleteAfterRun, _used, WorkerEndPolicy.DeleteLosesWork(remoteStage), questions.CanAsk);
+            : WorkerEndPolicy.Decide(end, answer.Answer, settings.Processing.RemoteSsh.Hetzner.DeleteAfterRun, _used, WorkerEndPolicy.DeleteLosesWork(remoteStage), questions.CanAsk, _created, _unusable);
         var stopLike = end is RunEnd.StoppedNow or RunEnd.WorkerUnreachable;
 
         if (end == RunEnd.StoppedNow) observer.StoppedNow(interrupted, worker, fate, _settingUpWorker);
