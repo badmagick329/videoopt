@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using VideoOptimiser.Application;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Infrastructure.Configuration;
@@ -24,18 +25,20 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     private readonly HetznerPlacement _placement;
     private readonly WorkerReadiness _readiness;
     private readonly SqliteWorkerBillStore _bills;
+    private readonly ICommandHints _hints;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly TimeSpan _checkTimeout;
     private const string MoreThanOneServerMessage = "More than one Hetzner worker has this controller label; refusing to choose or delete either one.";
 
-    public HetznerRemoteWorkerLifecycle(IExternalProcessRunner processes, SqliteWorkerBillStore bills)
-        : this(processes, bills, new HttpClient { BaseAddress = new Uri(HetznerHttp.ApiBase) }, Task.Delay, ownsHttpClient: true)
+    public HetznerRemoteWorkerLifecycle(IExternalProcessRunner processes, SqliteWorkerBillStore bills, ICommandHints hints)
+        : this(processes, bills, hints, new HttpClient { BaseAddress = new Uri(HetznerHttp.ApiBase) }, Task.Delay, ownsHttpClient: true)
     {
     }
 
     internal HetznerRemoteWorkerLifecycle(
         IExternalProcessRunner processes,
         SqliteWorkerBillStore bills,
+        ICommandHints hints,
         HttpClient http,
         Func<TimeSpan, CancellationToken, Task> delay,
         bool ownsHttpClient = false,
@@ -46,6 +49,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     {
         _checkTimeout = checkTimeout ?? TimeSpan.FromSeconds(15);
         _bills = bills;
+        _hints = hints;
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _cloud = new HetznerCloudClient(http, ownsHttpClient, delay);
         _placement = new HetznerPlacement(_cloud);
@@ -289,6 +293,12 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             WorkerStateStore.DeleteLocalState(statePath, state.KnownHostsFile);
         }
 
+        return await RecoverByLabelAsync(token, controller, databasePath, statePath, cancellationToken);
+    }
+
+    /// <summary>The server Hetzner has for this database that the state file doesn't record, found by its label and recorded (state file and bill).</summary>
+    private async Task<WorkerState?> RecoverByLabelAsync(string token, string controller, string databasePath, string statePath, CancellationToken cancellationToken)
+    {
         var servers = await _cloud.ListManagedServersAsync(token, controller, cancellationToken);
         if (servers.Count > 1) throw new InvalidOperationException(MoreThanOneServerMessage);
         if (servers.Count == 0) return null;
@@ -387,7 +397,9 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             CreatedServer created;
             try
             {
-                created = await _cloud.CreateServerAsync(token, name, hetzner, candidate.ServerType, candidate.Location, controller, bootstrapScript, cancellationToken);
+                // On no token, through the state and bill writes below: once the POST is sent Hetzner may make the server, and a
+                // stop that cut off the answer naming it would leave it billing with no record. The HTTP timeout bounds the wait.
+                created = await _cloud.CreateServerAsync(token, name, hetzner, candidate.ServerType, candidate.Location, controller, bootstrapScript, CancellationToken.None);
             }
             catch (HetznerApiException exception) when (HetznerPlacement.IsPlacementUnavailable(exception))
             {
@@ -402,6 +414,13 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                 }
                 break;
             }
+            // Any other failure but Hetzner's own refusal left no answer to read (a timeout, a broken connection, an answer that
+            // didn't parse), and the server may exist all the same.
+            catch (Exception exception) when (exception is not HetznerApiException and not OutOfMemoryException)
+            {
+                await RecoverUnansweredCreateAsync(token, controller, databasePath, statePath, name);
+                throw;
+            }
 
             using (created)
             {
@@ -410,12 +429,16 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                 var state = new WorkerState(server.Id, server.PrimaryIpv4Id, server.Name, server.Address, candidate.Location, candidate.ServerType, knownHostsFile, controller, server.CreatedUtc);
 
                 // A failed POST never reaches this point, so no local state is left for a failed placement attempt.
-                await WorkerStateStore.WriteStateAsync(statePath, state, cancellationToken);
+                // On no token: a stop during the write would leave only the .partial file, and the run's end reads the state
+                // file alone to decide what happens to the worker.
+                await WorkerStateStore.WriteStateAsync(statePath, state, CancellationToken.None);
                 // Its bill starts now, whatever happens next. Written on no token: a stop here must not leave a billing server
                 // without a row (a later resolve would backfill it, but only if one comes).
                 var now = _utcNow();
                 var hourly = await WorkerHourlyGrossAsync(token, candidate.HourlyGross, candidate.Location, cancellationToken);
                 await _bills.AddAsync(databasePath, new WorkerBillEntry(server.Id, server.Name, candidate.ServerType, candidate.Location, hourly, server.CreatedUtc ?? now), now, CancellationToken.None);
+                // Recorded, so a stop that came during the create now stops the run, and its end decides the worker's fate.
+                cancellationToken.ThrowIfCancellationRequested();
 
                 try
                 {
@@ -449,6 +472,25 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             reports.Values.Select(report => report.ToOutcome()).ToArray(),
             failures,
             lastPlacementFailure);
+    }
+
+    /// <summary>
+    /// After a create request whose answer was lost, records the server it may have made, found by its label, as a later resolve
+    /// would: the run's end then decides its fate like any recorded worker's. Runs on no token, as the create did. When Hetzner
+    /// can't be asked either, nothing records the server, so the user is told how to check for it and delete it.
+    /// </summary>
+    private async Task RecoverUnansweredCreateAsync(string token, string controller, string databasePath, string statePath, string name)
+    {
+        try
+        {
+            _ = await RecoverByLabelAsync(token, controller, databasePath, statePath, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            throw new RemoteWorkerCreationUnconfirmedException(
+                $"The request to create the worker {name} got no answer, and Hetzner couldn't be asked afterwards whether it made it: {exception.GetBaseException().Message}" + Environment.NewLine +
+                $"If it did, it's billing hourly. To check: {_hints.Command("worker status")}. To delete it: {_hints.Command("worker delete")}");
+        }
     }
 
     /// <remarks>The server existed, so Hetzner bills its started hour: its bill ends now rather than disappearing.</remarks>

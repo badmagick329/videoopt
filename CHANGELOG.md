@@ -5,6 +5,7 @@
 ### Fixes
 
 - If you edit a stopped video's original before the next run, for example to fix its date or location, the run now converts it again from the start. It used to reuse the CRF, upload or encode made from the old file, and finalising then replaced your edited original with an AV1 of the old version, so the edits were lost.
+- Pressing Ctrl+C while a Hetzner worker was being created could leave the new server billing, with no record of it on this PC and nothing said about it. The stop now waits for Hetzner's answer to the create request and records the worker, then ends like any stop with a worker up. When the request gets no answer, after a timeout for example, the run looks the worker up on Hetzner. If Hetzner can't be asked either, the run says the worker may be billing and gives the commands to check for it and delete it.
 
 ## [0.14.0] - 2026-10-18
 ### Defaults

@@ -439,6 +439,29 @@ public sealed class WorkerEndRunTests : IDisposable
         _lifecycle.DeleteCalls.Should().Be(0);
     }
 
+    /// <summary>
+    /// VOPT-139: a create Hetzner never confirmed leaves no record, so the error's own lines are all the user has to find and
+    /// delete a server that may bill; they print as they are, not as an unexpected failure.
+    /// </summary>
+    [Fact]
+    public async Task AnUnconfirmedCreatePrintsHowToCheckForTheWorkerAsAProcessingFailure()
+    {
+        await WriteConfigAsync();
+        await QueueJobsAsync(1);
+        _lifecycle.Exists = false;
+        string[] lines =
+        [
+            "The request to create the worker video-optimiser-1 got no answer, and Hetzner couldn't be asked afterwards whether it made it: No such host is known.",
+            $"If it did, it's billing hourly. To check: video-optimiser worker status {Config}. To delete it: video-optimiser worker delete {Config}"
+        ];
+        _lifecycle.EnsureFailure = new RemoteWorkerCreationUnconfirmedException(string.Join(Environment.NewLine, lines));
+
+        var (code, _, error) = await RunAsync();
+
+        error.Should().Be(Transcript(lines));
+        code.Should().Be((int)ExitCode.ProcessingFailure);
+    }
+
     /// <summary>A worker kept from an earlier run that this run never needed is the user's to delete, but it still bills.</summary>
     [Fact]
     public async Task ARunWithNothingToConvertSaysTheKeptWorkerBills()

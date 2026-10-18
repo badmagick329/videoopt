@@ -211,9 +211,9 @@ internal sealed class TuiActions(
                 ? $"Created the worker {worker.Name} ({worker.ServerType} in {worker.Location}). It is bootstrapping, and bills hourly until it is deleted."
                 : $"The worker {worker.Name} is up.", refreshWorker: true);
         }
-        catch (RemoteWorkerCapacityUnavailableException exception)
+        catch (Exception exception) when (exception is RemoteWorkerCapacityUnavailableException or RemoteWorkerCreationUnconfirmedException)
         {
-            return CapacityFailure(exception);
+            return EveryLineFailure(exception);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -221,8 +221,11 @@ internal sealed class TuiActions(
         }
     }
 
-    /// <summary>Hetzner's own message lists what it tried per type; each line goes in the log, the first in the footer.</summary>
-    private static ActionResult CapacityFailure(RemoteWorkerCapacityUnavailableException exception)
+    /// <summary>
+    /// A failure whose every line matters: Hetzner's capacity message lists what it tried per type, and an unconfirmed create
+    /// says how to check for the server and delete it. Each line goes in the log, the first in the footer.
+    /// </summary>
+    private static ActionResult EveryLineFailure(Exception exception)
     {
         var lines = exception.Message.Split('\n').Select(line => line.Trim()).Where(line => line.Length > 0).ToArray();
         return new ActionResult([.. lines.Select(line => new LogLine(LogKind.Error, line))], lines[0], RefreshWorker: true);
@@ -276,9 +279,9 @@ internal sealed class TuiActions(
             {
                 created = await lifecycle.CreateAsync(Managed(settings), database, option, new LogProgress(log), cancellationToken);
             }
-            catch (RemoteWorkerCapacityUnavailableException exception)
+            catch (Exception exception) when (exception is RemoteWorkerCapacityUnavailableException or RemoteWorkerCreationUnconfirmedException)
             {
-                var failure = CapacityFailure(exception);
+                var failure = EveryLineFailure(exception);
                 return failure with { Lines = [.. failure.Lines, new LogLine(LogKind.Warning, "No run was started.")] };
             }
             catch (Exception exception) when (exception is not OperationCanceledException)

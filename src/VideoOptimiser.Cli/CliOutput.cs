@@ -81,6 +81,9 @@ internal static class CliOutput
                 WriteError(exception.Message);
                 WriteError("Check server type and location availability in Hetzner Console: https://console.hetzner.com/");
                 return (int)ExitCode.ProcessingFailure;
+            case RemoteWorkerCreationUnconfirmedException:
+                WriteError(exception.Message);
+                return (int)ExitCode.ProcessingFailure;
             default:
                 WriteError($"Unexpected failure: {exception.GetBaseException().Message}");
                 return (int)ExitCode.GeneralFailure;

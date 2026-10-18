@@ -122,6 +122,15 @@ public static class CostPrice
 /// <summary>The user declined <see cref="RemoteWorkerCreationQuote"/>, so nothing was created and nothing bills.</summary>
 public sealed class RemoteWorkerCreationDeclinedException() : Exception("No worker was created.");
 
+/// <summary>
+/// A create request got no answer that could be read (a timeout, a broken connection), and Hetzner couldn't be asked
+/// afterwards whether it made the server. If it did, the server bills and nothing on this PC records it, so the message says
+/// how to check and how to delete it.
+/// </summary>
+/// <remarks>No inner exception: the run's reporters print <see cref="Exception.GetBaseException"/>, which would print the
+/// cause instead of the advice.</remarks>
+public sealed class RemoteWorkerCreationUnconfirmedException(string message) : Exception(message);
+
 /// <summary>What <see cref="IRemoteWorkerLifecycle.CheckAsync"/> found.</summary>
 /// <param name="Worker">Null when Hetzner has no managed server for this database (or, when it couldn't be asked, when the state file records none).</param>
 /// <param name="HourlyGross">EUR per hour incl. VAT for its type in its location, from Hetzner; null when unknown or not asked.</param>

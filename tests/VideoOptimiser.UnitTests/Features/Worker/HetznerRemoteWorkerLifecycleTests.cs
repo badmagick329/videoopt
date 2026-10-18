@@ -4,6 +4,7 @@ using System.Text.Json;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Worker;
+using VideoOptimiser.Cli;
 using VideoOptimiser.Infrastructure.Configuration;
 using VideoOptimiser.Infrastructure.Features.Worker;
 using VideoOptimiser.Infrastructure.Persistence;
@@ -1030,6 +1031,65 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     }
 
     /// <summary>
+    /// VOPT-139: a Ctrl+C while the create request is out must not cut off the answer naming the server Hetzner made. The stop
+    /// lands once the server is recorded, so the run's end can decide its fate. The token is already cancelled when the state
+    /// file is written, so this also catches that write going back onto it.
+    /// </summary>
+    [Fact]
+    public async Task AStopDuringTheCreateRequestStopsOnlyOnceTheServerIsRecorded()
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.CreateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var lifecycle = fixture.CreateLifecycle(utcNow: new FakeClock(At).Now);
+        using var stop = new CancellationTokenSource();
+
+        var ensuring = lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath, cancellationToken: stop.Token);
+        await fixture.Handler.CreateArrived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await stop.CancelAsync();
+        fixture.Handler.CreateGate.SetResult();
+
+        await ((Func<Task>)(() => ensuring)).Should().ThrowAsync<OperationCanceledException>();
+        (await lifecycle.ReadRecordedAsync(fixture.DatabasePath))!.ServerId.Should().Be(42);
+        (await BillAsync(fixture)).ServerId.Should().Be(42);
+        fixture.Processes.Requests.Should().BeEmpty("the stop lands before the worker's setup starts");
+    }
+
+    /// <summary>
+    /// VOPT-139: a create whose answer was lost may still have made the server. Found by its label, it is recorded as a later
+    /// resolve would record it, and the create's own failure still ends the call. Found absent, nothing is recorded. When
+    /// Hetzner can't be asked, nothing records the server, so the message says how to look for it and delete it.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task ACreateWhoseAnswerIsLostRecordsTheServerItFindsByLabel(bool serverMade, bool lookupFails)
+    {
+        using var fixture = new Fixture();
+        var lost = new HttpRequestException("The response ended prematurely.");
+        fixture.Handler.LostCreateAnswer = lost;
+        fixture.Handler.LostCreateMadeServer = serverMade;
+        fixture.Handler.ListingFailsAfterCreate = lookupFails;
+        using var lifecycle = fixture.CreateLifecycle(utcNow: new FakeClock(At).Now);
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        var thrown = (await action.Should().ThrowAsync<Exception>()).Which;
+        if (lookupFails)
+            thrown.Should().BeOfType<RemoteWorkerCreationUnconfirmedException>().Which.Message.Should().Contain("worker status").And.Contain("worker delete");
+        else
+            thrown.Should().BeSameAs(lost);
+        var recorded = serverMade && !lookupFails;
+        File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().Be(recorded);
+        if (recorded)
+        {
+            (await lifecycle.ReadRecordedAsync(fixture.DatabasePath))!.ServerId.Should().Be(42);
+            (await BillAsync(fixture)).ServerId.Should().Be(42);
+        }
+        fixture.Handler.CreateCount.Should().Be(1, "a lost answer is never retried as another create");
+    }
+
+    /// <summary>
     /// <c>worker delete</c> ends the bill when Hetzner confirms the deletion. A worker already deleted in the Hetzner console
     /// ends at the last time it was seen up, marked as an estimate, since when it went is unknown.
     /// </summary>
@@ -1144,6 +1204,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             TimeSpan? checkTimeout = null) => new(
             Processes,
             new SqliteWorkerBillStore(new SqliteDatabaseInitializer()),
+            new CommandHints(null),
             new HttpClient(Handler) { BaseAddress = new Uri("https://api.test/v1/") },
             delay ?? ((_, _) => Task.CompletedTask),
             ownsHttpClient: true,
@@ -1294,6 +1355,25 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         /// <summary>Answers <c>GET /pricing</c> with a server error.</summary>
         public bool PricingFails { get; set; }
 
+        /// <summary>
+        /// When set, the create request is held until it completes or the request's own token is cancelled; <see cref="CreateArrived"/>
+        /// completes once the request is in.
+        /// </summary>
+        public TaskCompletionSource? CreateGate { get; set; }
+
+        public TaskCompletionSource CreateArrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>
+        /// The create request throws this instead of answering, as a timeout or a dropped connection would: after Hetzner made the
+        /// server when <see cref="LostCreateMadeServer"/>, before it got the request otherwise.
+        /// </summary>
+        public Exception? LostCreateAnswer { get; set; }
+
+        public bool LostCreateMadeServer { get; set; }
+
+        /// <summary>The server listing throws, as a network failure would, once a create was requested.</summary>
+        public bool ListingFailsAfterCreate { get; set; }
+
         /// <summary>The live answer's shape (Hetzner's API reference, 2026-10-17), with an IPv6 entry first so the type is checked.</summary>
         private string PricingJson()
         {
@@ -1324,6 +1404,7 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             }
             if (request.Method == HttpMethod.Get && path.StartsWith("/v1/servers?", StringComparison.Ordinal))
             {
+                if (ListingFailsAfterCreate && CreateCount > 0) throw new HttpRequestException("No such host is known.");
                 var servers = ReturnWrongOwnership ? $"[{ServerJson(wrongOwnership: true)}]"
                     : ListTwoServers ? $"[{ServerJson()},{ServerJson()}]"
                     : ServerExists ? $"[{ServerJson()}]" : "[]";
@@ -1340,6 +1421,13 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                 CreateCount++;
                 CreateLocations.Add(CreatePayload.RootElement.GetProperty("location").GetString()!);
                 CreateServerTypes.Add(CreatePayload.RootElement.GetProperty("server_type").GetString()!);
+                CreateArrived.TrySetResult();
+                if (CreateGate is not null) await CreateGate.Task.WaitAsync(cancellationToken);
+                if (LostCreateAnswer is not null)
+                {
+                    if (LostCreateMadeServer) (ServerExists, PrimaryIpExists) = (true, true);
+                    throw LostCreateAnswer;
+                }
                 if (CreateErrorBody is not null)
                     return new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(CreateErrorBody, Encoding.UTF8, "application/json") };
                 if (CreateFailures.TryDequeue(out var failure))

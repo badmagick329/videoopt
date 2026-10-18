@@ -267,17 +267,27 @@ public sealed class TuiActionTests : IDisposable
         result.RefreshWorker.Should().BeTrue();
     }
 
-    [Fact]
-    public async Task ACreateHetznerRefusesShowsItsReasonLineByLineAndNothingBills()
+    private const string UnconfirmedFirstLine = "The request to create the worker video-optimiser-1 got no answer.";
+    private const string UnconfirmedLastLine = "To check: video-optimiser worker status. To delete it: video-optimiser worker delete";
+
+    /// <summary>The failures whose every line goes in the log: Hetzner's capacity refusal, and a create it never confirmed (VOPT-139).</summary>
+    private static Exception EveryLineFailure(bool unconfirmed) => unconfirmed
+        ? new RemoteWorkerCreationUnconfirmedException(UnconfirmedFirstLine + Environment.NewLine + UnconfirmedLastLine)
+        : new RemoteWorkerCapacityUnavailableException([new RemoteWorkerTypeOutcome("cx43", ["hel1"], "sold out")]);
+
+    [Theory]
+    [InlineData(false, "No Hetzner worker could be created, so none is running. Tried:", "cx43 in hel1: sold out")]
+    [InlineData(true, UnconfirmedFirstLine, UnconfirmedLastLine)]
+    public async Task ACreateHetznerRefusesOrNeverConfirmsShowsItsReasonLineByLine(bool unconfirmed, string notice, string laterLine)
     {
         _rig.Worker.Exists = false;
-        _rig.Worker.CreateFailure = new RemoteWorkerCapacityUnavailableException([new RemoteWorkerTypeOutcome("cx43", ["hel1"], "sold out")]);
+        _rig.Worker.CreateFailure = EveryLineFailure(unconfirmed);
 
         var result = await _rig.Actions.CreateWorkerAsync(Cx43, _rig.Settings, Log, default);
 
         result.Lines.Should().OnlyContain(line => line.Kind == LogKind.Error);
-        Texts(result).Should().Contain("cx43 in hel1: sold out");
-        result.Notice.Should().Be("No Hetzner worker could be created, so none is running. Tried:");
+        Texts(result).Should().Contain(laterLine);
+        result.Notice.Should().Be(notice);
         _rig.Worker.Created.Should().BeEmpty();
     }
 
@@ -374,16 +384,18 @@ public sealed class TuiActionTests : IDisposable
     }
 
     /// <summary>A run without its worker would only fail, and a launch after a failed create would bill nothing but start nothing useful.</summary>
-    [Fact]
-    public async Task AFailedCreateLaunchesNothingAndSaysSo()
+    [Theory]
+    [InlineData(false, "cx43 in hel1: sold out")]
+    [InlineData(true, UnconfirmedLastLine)]
+    public async Task AFailedCreateLaunchesNothingAndSaysSo(bool unconfirmed, string laterLine)
     {
         _rig.Worker.Exists = false;
-        _rig.Worker.CreateFailure = new RemoteWorkerCapacityUnavailableException([new RemoteWorkerTypeOutcome("cx43", ["hel1"], "sold out")]);
+        _rig.Worker.CreateFailure = EveryLineFailure(unconfirmed);
 
         var result = await _rig.Actions.StartRunAsync(new StartPlan(Cx43, WorkerFateChoice.Delete, ProcessingModeOverride.Remote), _rig.Settings, _rig.Configuration.Path, Log, default);
 
         _rig.Launcher.Launches.Should().BeEmpty();
-        Texts(result).Should().Contain("cx43 in hel1: sold out").And.EndWith("No run was started.");
+        Texts(result).Should().Contain(laterLine).And.EndWith("No run was started.");
     }
 
     [Fact]

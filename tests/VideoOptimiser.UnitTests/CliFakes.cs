@@ -278,6 +278,9 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
     /// <summary>Runs once the server exists, while the real lifecycle would still be bootstrapping it; a Ctrl+C here lands mid-setup.</summary>
     public Func<CancellationToken, Task>? DuringSetup { get; set; }
 
+    /// <summary>Thrown by the run's create before any worker is recorded, as a create Hetzner never confirmed would be.</summary>
+    public Exception? EnsureFailure { get; set; }
+
     public async Task<RemoteWorkerInfo> EnsureReadyAsync(AppSettings settings, string databasePath, IProgress<string>? progress = null, Func<RemoteWorkerCreationQuote, CancellationToken, Task<bool>>? confirmCreation = null, CancellationToken cancellationToken = default)
     {
         EnsureCalls++;
@@ -289,6 +292,7 @@ internal sealed class FakeWorkerLifecycle : IRemoteWorkerLifecycle
             if (!Approved.Value) throw new RemoteWorkerCreationDeclinedException();
             progress?.Report("Creating Hetzner cx43 in hel1.");
         }
+        if (EnsureFailure is not null) throw EnsureFailure;
         Exists = true;
         if (DuringSetup is not null) { await DuringSetup(cancellationToken); cancellationToken.ThrowIfCancellationRequested(); }
         return CliFakes.Worker;
