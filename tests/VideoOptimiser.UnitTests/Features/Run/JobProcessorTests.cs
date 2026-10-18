@@ -65,11 +65,56 @@ public sealed class JobProcessorTests : IDisposable
         var source = await SourceAsync("clip.mov");
         var encoder = new FakeEncoder();
 
-        var result = await Processor(encoder: encoder, probe: new H264Probe(audioCodecs: ["aac", "pcm_s24le", "pcm_s16le"])).ProcessAsync(DatabasePath, source, Settings(), force: false);
+        var result = await Processor(encoder: encoder, probe: new H264Probe(audio: [new("aac"), new("pcm_s24le"), new("pcm_s16le")])).ProcessAsync(DatabasePath, source, Settings(), force: false);
 
         result.ExitCode.Should().Be(ExitCode.Success, result.Message);
         encoder.OutputPath.Should().EndWith(".encoding.mp4");
-        encoder.FlacAudioStreams.Should().Equal(1, 2);
+        encoder.Audio!.FlacOutputStreams.Should().Equal(1, 2);
+        encoder.Audio.Dropped.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ProcessAsyncAsksTheEncoderToDropAnAudioStreamFfmpegCannotIdentify()
+    {
+        var source = await SourceAsync("clip.mov");
+        var encoder = new FakeEncoder();
+        var reported = new List<JobProgress>();
+        const string note = "Audio track 2 (apac) was left out because FFmpeg can't copy it. The other audio is kept.";
+
+        var result = await Processor(encoder: encoder, probe: new H264Probe(audio: [new("aac"), new("apple_apac", "apac")])).ProcessAsync(DatabasePath, source, Settings(), force: false, new ListProgress(reported));
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        encoder.Audio!.Dropped.Should().Equal(new DroppedAudioTrack(1, "apac"));
+        var stored = (await _repository.GetAsync(DatabasePath, result.Job.Id))!;
+        (stored.Status, stored.ValidationWarnings.Count).Should().Be((JobStatus.ReadyToFinalize, 0));
+        stored.Notes.Should().Equal(note);
+        reported.TakeLast(2).Select(line => (line.Kind, line.Tone, line.Text)).Should().Equal(
+            (JobProgressKind.Step, JobTone.Success, "Ready to finalise: 100 B -> 50 B, 50.0% saved."),
+            (JobProgressKind.Detail, JobTone.None, $"Note: {note}"));
+    }
+
+    /// <summary>
+    /// The remote session fails the job as soon as it is staged, so a skip proves nothing was uploaded. A video left with no
+    /// audio is skipped even under drop, and even with --force: its AV1 would pass validation and replace the original.
+    /// </summary>
+    [Theory]
+    [InlineData("skip", true, "FFmpeg can't copy audio track 2 (apac), and quality.unsupportedAudio is skip.")]
+    [InlineData("drop", false, "FFmpeg can't copy audio track 1 (apac), its only audio, so the AV1 would have no sound.")]
+    [InlineData("skip", false, "FFmpeg can't copy audio track 1 (apac), its only audio, so the AV1 would have no sound.")]
+    public async Task AVideoWithAudioFfmpegCannotCopyIsSkippedBeforeItIsStagedWhenSkipIsSetOrNoAudioWouldBeLeft(string unsupportedAudio, bool withAac, string reason)
+    {
+        var source = await SourceAsync("spatial.mov");
+        var settings = Settings(new QualitySettings { UnsupportedAudio = unsupportedAudio }, remote: true);
+        AudioTrack[] audio = withAac ? [new("aac"), new("apple_apac", "apac")] : [new("unknown", "apac")];
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(session: new UnavailableRemoteSession(), probe: new H264Probe(audio)).ProcessAsync(DatabasePath, source, settings, force: true, new ListProgress(reported));
+
+        result.ExitCode.Should().Be(ExitCode.Success);
+        var stored = (await _repository.GetAsync(DatabasePath, result.Job.Id))!;
+        (stored.Status, stored.FailureCategory, stored.FailureMessage).Should().Be((JobStatus.Skipped, FailureCategories.UnsupportedAudio, reason));
+        stored.QualityFingerprint.Should().Be(QualityFingerprint.Compute(settings));
+        Steps(reported).Should().Equal($"Skipped: {reason}");
     }
 
     [Theory]
@@ -731,8 +776,8 @@ public sealed class JobProcessorTests : IDisposable
 
     private sealed class FailingLoggingEncoder : IVideoEncoder
     {
-        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams) => [];
-        public Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio) => [];
+        public Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             progress?.Report(JobProgress.Tool("Error: disk full"));
             throw new InvalidOperationException("ab-av1 encode failed with exit code 1.");
@@ -780,7 +825,7 @@ public sealed class JobProcessorTests : IDisposable
         public string? RemoteWorkspace => null;
         public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default) => throw new RemoteConnectionException("Remote unavailable.");
         public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -806,7 +851,7 @@ public sealed class JobProcessorTests : IDisposable
         public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<CrfSearchResult> SearchCrfAsync(string sourcePath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
 
-        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             EncodeAttempts.Add(attempt);
             if (cancellationStage == CancellationStage.Encoding) throw new OperationCanceledException();
@@ -859,7 +904,7 @@ public sealed class JobProcessorTests : IDisposable
             return Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
         }
 
-        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             if (server.Uploads == 0) throw new InvalidOperationException("No source on this server.");
             if (stopIn == CancellationStage.Encoding) throw new OperationCanceledException();

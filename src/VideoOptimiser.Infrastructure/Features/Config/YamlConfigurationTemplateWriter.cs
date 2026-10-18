@@ -142,6 +142,9 @@ quality:
   encoder: "libsvtav1"
   # Output pixel format.
   pixelFormat: "yuv420p10le"
+  # Audio FFmpeg can't copy, such as iPhone spatial audio. drop leaves that track out and keeps the others;
+  # skip leaves the whole video unconverted.
+  unsupportedAudio: "drop"
   crfSearch:
     # Inclusive CRF search range.
     minCrf: 8

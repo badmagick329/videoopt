@@ -84,6 +84,7 @@ public sealed class SettingsValidator : ISettingsValidator
         AddWhen(settings.Quality.CrfSearch.SampleCount < 1, "InvalidSampleCount", "quality.crfSearch.sampleCount must be at least 1.");
         ValidateDuration(settings.Quality.CrfSearch.SampleDuration, "quality.crfSearch.sampleDuration", diagnostics);
         AddWhen(string.IsNullOrWhiteSpace(settings.Quality.Encoder), "EncoderRequired", "quality.encoder is required.");
+        AddWhen(!IsOneOf(settings.Quality.UnsupportedAudio, UnsupportedAudioActions.Drop, UnsupportedAudioActions.Skip), "InvalidUnsupportedAudio", "quality.unsupportedAudio must be drop or skip.");
         AddWhen(!IsOneOf(settings.Original.Action, OriginalActions.Delete, OriginalActions.Archive, OriginalActions.Keep), "InvalidOriginalAction", "original.action must be delete, archive, or keep.");
         AddWhen(settings.Original.Action.Equals(OriginalActions.Archive, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(settings.Original.ArchiveDirectory), "ArchiveDirectoryRequired", "original.archiveDirectory is required when original.action is archive.");
         AddWhen(!string.IsNullOrWhiteSpace(settings.Original.ArchiveDirectory) && !IsFolderNameOrAbsolutePath(settings.Original.ArchiveDirectory), "InvalidArchiveDirectory", "original.archiveDirectory must be a folder name, such as Archive, or an absolute path.");

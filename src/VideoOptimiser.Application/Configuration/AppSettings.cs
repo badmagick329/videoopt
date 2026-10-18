@@ -192,6 +192,13 @@ public sealed class QualitySettings
     [YamlMember(Alias = "pixelFormat")] public string PixelFormat { get; set; } = "yuv420p10le";
     [YamlMember(Alias = "crfSearch")] public CrfSearchSettings CrfSearch { get; set; } = new();
 
+    /// <summary>
+    /// What happens to an audio track FFmpeg cannot copy, such as iPhone spatial audio (VOPT-125). <c>drop</c> leaves it out and
+    /// notes it on the job; <c>skip</c> leaves the whole video unconverted, for people who would rather keep spatial audio than
+    /// save the space. Not part of the quality fingerprint: it does not change which CRF a search picks.
+    /// </summary>
+    [YamlMember(Alias = "unsupportedAudio")] public string UnsupportedAudio { get; set; } = UnsupportedAudioActions.Drop;
+
     /// <summary>A copy with the sample count the search will use. Cloned rather than rebuilt field by field, so a new setting cannot be dropped.</summary>
     public QualitySettings WithSampleCount(int sampleCount)
     {
@@ -214,6 +221,12 @@ public sealed class QualitySettings
         copy.SizeCap = cap;
         return copy;
     }
+}
+
+public static class UnsupportedAudioActions
+{
+    public const string Drop = "drop";
+    public const string Skip = "skip";
 }
 
 [YamlSerializable]

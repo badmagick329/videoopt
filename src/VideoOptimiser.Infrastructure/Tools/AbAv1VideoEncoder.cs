@@ -8,7 +8,7 @@ namespace VideoOptimiser.Infrastructure.Tools;
 
 public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
 {
-    public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams) =>
+    public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio) =>
     [
         "encode", "--input", inputPath, "--output", outputPath,
         "--encoder", settings.Encoder,
@@ -17,6 +17,9 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
         "--crf", crf.ToString(CultureInfo.InvariantCulture),
         // Container-specific data streams such as timecode tracks are not generally portable to the output container.
         "--enc", "map=-0:d",
+        // FFmpeg cannot identify these streams (iPhone spatial audio), so the muxer has no tag to write for them and refuses
+        // the whole output. The index names an input stream, so it is the original's audio-relative one.
+        .. audio.Dropped.SelectMany(track => new[] { "--enc", $"map=-0:a:{track.Index.ToString(CultureInfo.InvariantCulture)}" }),
         // Every frame keeps its own timestamp. Writing MP4, ffmpeg otherwise forces the header's nominal frame rate, which a
         // phone's variable-rate video only approximates: one at 30.01 fps on average but tagged 29.75 lost a frame every 4
         // seconds, and validation failed it on packet count.
@@ -29,14 +32,15 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
         "--enc", "map_metadata=0",
         "--enc", "movflags=+faststart+use_metadata_tags",
         // ab-av1 copies audio. PCM copied into MP4 is tagged ipcm, which browsers cannot play, so those streams become
-        // lossless FLAC, which MP4 and Matroska both carry and browsers play.
-        .. flacAudioStreams.SelectMany(index => new[] { "--enc", $"c:a:{index.ToString(CultureInfo.InvariantCulture)}=flac" })
+        // lossless FLAC, which MP4 and Matroska both carry and browsers play. The indexes are output-relative (past any
+        // dropped stream), because -c:a:N names an output stream.
+        .. audio.FlacOutputStreams.SelectMany(index => new[] { "--enc", $"c:a:{index.ToString(CultureInfo.InvariantCulture)}=flac" })
     ];
 
-    public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var info = new ProcessStartInfo { FileName = executablePath, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var argument in BuildArguments(inputPath, outputPath, crf, settings, flacAudioStreams))
+        foreach (var argument in BuildArguments(inputPath, outputPath, crf, settings, audio))
         {
             info.ArgumentList.Add(argument);
         }

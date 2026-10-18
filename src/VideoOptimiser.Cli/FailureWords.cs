@@ -27,6 +27,7 @@ internal static class FailureWords
         ["SourceChanged"] = null,
         ["RemoteConfigurationChanged"] = null,
         [FailureCategories.NotWorthConverting] = null,
+        [FailureCategories.UnsupportedAudio] = null,
         [FailureCategories.FinalizationIncomplete] = null,
         ["Interrupted"] = null
     };

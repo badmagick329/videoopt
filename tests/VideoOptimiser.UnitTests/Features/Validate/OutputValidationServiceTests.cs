@@ -30,6 +30,10 @@ public sealed class OutputValidationServiceTests : IDisposable
         SavesTooLittle,
         Shorter,
         AudioStreams,
+        /// <summary>The AV1 lacks the original's spatial-audio track on purpose, so one stream fewer is expected.</summary>
+        DroppedAudioTrack,
+        /// <summary>The AV1 lacks a track the encode should have kept.</summary>
+        MissingAudioTrack,
         SubtitleStreams,
         AudioTiming,
         AudioStartUnreadable,
@@ -52,6 +56,8 @@ public sealed class OutputValidationServiceTests : IDisposable
     [InlineData(Check.SavesTooLittle, ValidationVerdict.NotWorthConverting, "the AV1 saves only 50 B, less than 51B (savings.minimumBytesSaved).")]
     [InlineData(Check.Shorter, ValidationVerdict.Warned, "The AV1's video is 4.069 s shorter than the original's.")]
     [InlineData(Check.AudioStreams, ValidationVerdict.Warned, "The AV1 has 0 audio streams; the original has 1.")]
+    [InlineData(Check.DroppedAudioTrack, ValidationVerdict.Passed, null)]
+    [InlineData(Check.MissingAudioTrack, ValidationVerdict.Warned, "The AV1 has 1 audio stream; the original has 2.")]
     [InlineData(Check.SubtitleStreams, ValidationVerdict.Warned, "The AV1 has 1 subtitle stream; the original has 0.")]
     [InlineData(Check.AudioTiming, ValidationVerdict.Warned, "The AV1's audio starts 0.749 s later relative to the video than in the original.")]
     [InlineData(Check.AudioStartUnreadable, ValidationVerdict.Warned, "The audio's start time could not be read, so audio sync was not checked.")]
@@ -74,6 +80,8 @@ public sealed class OutputValidationServiceTests : IDisposable
             case Check.SavesTooLittle: scenario.MinimumBytesSaved = "51B"; break;
             case Check.Shorter: scenario.Output = new MediaTimeline(0, 145, 2.251); break;
             case Check.AudioStreams: scenario.OutputAudioStreams = 0; break;
+            case Check.DroppedAudioTrack: scenario.SourceAudio = [new("aac", "mp4a"), new("unknown", "apac")]; break;
+            case Check.MissingAudioTrack: scenario.SourceAudio = [new("aac", "mp4a"), new("aac", "mp4a")]; break;
             case Check.SubtitleStreams: scenario.OutputSubtitleStreams = 1; break;
             case Check.AudioTiming: scenario.Source = new MediaTimeline(1.881, 149.069, 4.132); scenario.Output = new MediaTimeline(0, 147.188, 3); break;
             case Check.AudioStartUnreadable: scenario.Output = new MediaTimeline(0, 149.069, null); break;
@@ -179,6 +187,8 @@ public sealed class OutputValidationServiceTests : IDisposable
         public bool RequireSmallerOutput { get; set; } = true;
         public Exception? OutputProbeError { get; set; }
         public string OutputCodec { get; set; } = "av1";
+        /// <summary>The original's audio streams; null is one plain stream. The output always has <see cref="OutputAudioStreams"/>.</summary>
+        public AudioTrack[]? SourceAudio { get; set; }
         public int OutputAudioStreams { get; set; } = 1;
         public int OutputSubtitleStreams { get; set; }
         public DecodeTestResult Decode { get; set; } = new(true, null);
@@ -223,14 +233,15 @@ public sealed class OutputValidationServiceTests : IDisposable
             return Task.FromResult(new MediaInfo(
                 isOutput ? scenario.OutputCodec : "h264",
                 1,
-                isOutput ? scenario.OutputAudioStreams : 1,
+                isOutput ? scenario.OutputAudioStreams : scenario.SourceAudio?.Length ?? 1,
                 isOutput ? scenario.OutputSubtitleStreams : 0,
                 0,
                 isOutput ? 147.189 : 149.069,
                 null,
                 1920,
                 1080,
-                10_000_000));
+                10_000_000,
+                isOutput ? null : scenario.SourceAudio));
         }
     }
 

@@ -15,18 +15,22 @@ public sealed class QueueServiceTests : IDisposable
 
     public QueueServiceTests() => Directory.CreateDirectory(_directory);
 
-    [Fact]
-    public async Task RunAsyncCountsASkippedJobAsSkippedNotFailedAndExitsSuccessfully()
+    /// <summary>A video skipped for its audio was never tried, so the tally's "not worth converting" leaves it out.</summary>
+    [Theory]
+    [InlineData(FailureCategories.NotWorthConverting, 1)]
+    [InlineData(FailureCategories.UnsupportedAudio, 0)]
+    public async Task RunAsyncCountsASkippedJobAsSkippedNotFailedAndExitsSuccessfully(string category, int notWorthConverting)
     {
         var (databasePath, jobs) = await QueuedAsync("a.mp4");
-        var skipped = new JobRecord { Id = jobs[0].Id, SourcePath = jobs[0].SourcePath, Status = JobStatus.Skipped, FailureCategory = "NotWorthConverting", FailureMessage = "AV1 would keep 95%." };
+        var skipped = new JobRecord { Id = jobs[0].Id, SourcePath = jobs[0].SourcePath, Status = JobStatus.Skipped, FailureCategory = category, FailureMessage = "AV1 would keep 95%." };
         var queue = new QueueService(_repository, new ResultProcessor(new JobProcessingResult(skipped, ExitCode.Success, "AV1 would keep 95%.")), new DatabaseLocks(), new CommandHints(null));
 
         var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs));
 
         result.ReadyToFinalize.Should().Be(0);
         result.FailedJobs.Should().BeEmpty();
-        result.SkippedJobs.Should().ContainSingle().Which.Should().Be(new SkippedQueueJob(skipped.Id, skipped.SourcePath, "AV1 would keep 95%."));
+        result.SkippedJobs.Should().ContainSingle().Which.Should().Be(new SkippedQueueJob(skipped.Id, skipped.SourcePath, "AV1 would keep 95%.", category));
+        result.NotWorthConverting.Should().Be(notWorthConverting);
         result.ExitCode.Should().Be(ExitCode.Success);
     }
 

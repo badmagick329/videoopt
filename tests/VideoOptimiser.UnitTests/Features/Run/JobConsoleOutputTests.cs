@@ -141,9 +141,9 @@ public sealed class JobConsoleOutputTests : IDisposable
 
     private sealed class ReplayedEncoder : IVideoEncoder
     {
-        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams) => [];
+        public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio) => [];
 
-        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             foreach (var line in Lines("local-encode.stderr.log")) progress?.Report(JobProgress.Tool(line));
             await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
@@ -177,7 +177,7 @@ public sealed class JobConsoleOutputTests : IDisposable
             return Task.FromResult(new CrfSearchResult(crf, log, string.Empty, TimeSpan.FromSeconds(456), CrfSearchOutputParser.TryParsePrediction(log, crf, out var prediction) ? prediction : null));
         }
 
-        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+        public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             foreach (var line in Lines("remote-encode.log")) progress?.Report(JobProgress.Tool(line));
             return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));

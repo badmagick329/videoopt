@@ -133,7 +133,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
                 ready++;
                 if (result.Job.ValidationWarnings.Count > 0) toCheck++;
             }
-            else if (result.Job.Status == JobStatus.Skipped) skipped.Add(new SkippedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureMessage ?? result.Message));
+            else if (result.Job.Status == JobStatus.Skipped) skipped.Add(new SkippedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureMessage ?? result.Message, result.Job.FailureCategory ?? FailureCategories.NotWorthConverting));
             else if (result.Job is { Status: JobStatus.Interrupted, FailureCategory: FailureCategories.RemoteUnavailable })
             {
                 // Each later job would retry the dead worker three times and end the same way, so the run stops here.

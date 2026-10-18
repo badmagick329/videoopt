@@ -67,7 +67,8 @@ public static class JobValidation
 
     /// <summary>
     /// The lines a run shows for a recorded verdict: the outcome, then each warning on its own line in the warning tone, so
-    /// the console colours it and the TUI logs it as a warning.
+    /// the console colours it and the TUI logs it as a warning. A ready video's notes follow in the plain tone: they ask
+    /// nothing of the person (VOPT-125).
     /// </summary>
     public static IEnumerable<JobProgress> Describe(JobRecord job, ValidationVerdict verdict)
     {
@@ -85,10 +86,13 @@ public static class JobValidation
         if (job.ValidationWarnings.Count == 0)
         {
             yield return JobProgress.Outcome(JobTone.Success, $"Ready to finalise: {sizes}");
-            yield break;
         }
-        yield return JobProgress.Outcome(JobTone.Success, $"Ready to finalise: {sizes} Check it before finalising:");
-        foreach (var warning in job.ValidationWarnings) yield return JobProgress.Detail(warning, JobTone.Warning);
+        else
+        {
+            yield return JobProgress.Outcome(JobTone.Success, $"Ready to finalise: {sizes} Check it before finalising:");
+            foreach (var warning in job.ValidationWarnings) yield return JobProgress.Detail(warning, JobTone.Warning);
+        }
+        foreach (var note in job.Notes) yield return JobProgress.Detail($"Note: {note}");
     }
 
     /// <summary>

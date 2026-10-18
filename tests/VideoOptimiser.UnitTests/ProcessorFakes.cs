@@ -36,11 +36,12 @@ internal sealed class FuncProbe(Func<string, MediaInfo> media) : IMediaProbe
     }
 }
 
-/// <summary>A 1080p h264 original of 120 s at the given bitrate; an encoded output (<c>.encoding.mp4</c>) probes as av1.</summary>
-internal sealed class H264Probe(IReadOnlyList<string>? audioCodecs = null, long? bitrate = 10_000_000) : IMediaProbe
+/// <summary>A 1080p h264 original of 120 s at the given bitrate, with one audio stream unless <paramref name="audio"/> lists them;
+/// an encoded output (<c>.encoding.mp4</c>) probes as av1.</summary>
+internal sealed class H264Probe(IReadOnlyList<AudioTrack>? audio = null, long? bitrate = 10_000_000) : IMediaProbe
 {
     public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, bitrate, audioCodecs));
+        Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : "h264", 1, audio?.Count ?? 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, bitrate, audio));
 }
 
 /// <summary>Chooses CRF 42 at once, with no estimate.</summary>
@@ -56,15 +57,15 @@ internal sealed class FakeEncoder : IVideoEncoder
 {
     public int CallCount { get; private set; }
     public string? OutputPath { get; private set; }
-    public IReadOnlyList<int>? FlacAudioStreams { get; private set; }
+    public AudioPlan? Audio { get; private set; }
 
-    public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams) => [];
+    public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio) => [];
 
-    public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         CallCount++;
         OutputPath = outputPath;
-        FlacAudioStreams = flacAudioStreams;
+        Audio = audio;
         await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
         return new EncodeResult(outputPath, TimeSpan.Zero);
     }
@@ -115,7 +116,7 @@ internal sealed class ResumedWorkerSession : IProcessingSession
         return Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, SearchDuration));
     }
 
-    public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, IReadOnlyList<int> flacAudioStreams, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         Calls.Add($"Encode {attempt}");
         return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));

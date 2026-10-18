@@ -79,6 +79,52 @@ public sealed class FinalizeCommandsTests : IDisposable
         _finalizer.Calls.Should().HaveCount(finalises ? 1 : 0);
     }
 
+    /// <summary>A note is not a warning: finalising one video lists its notes under their own heading, after any warnings, and a noted video with no warnings still finalises without a question.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FinalizingANotedJobListsItsNotesApartFromItsWarnings(bool warned)
+    {
+        var job = Noted(warned ? Warned(FileJob("clip-a.mp4", null, null, null)) : FileJob("clip-a.mp4", null, null, null));
+        _jobs.Add(job);
+        _finalizer.Results[job.Id] = new(job, ExitCode.Success, "Original deleted.");
+
+        var (code, stdout, stderr) = await RunAsync("y\n", "finalize", job.Id.ToString("N"));
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().Be(warned
+            ? "clip-a.mp4  sizes unknown\n" +
+              "Validation warnings:\n" +
+              "  The AV1 is 2.0 s shorter than the original.\n" +
+              "  The AV1 has no audio.\n" +
+              "Notes:\n" +
+              "  Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept.\n" +
+              "Each original is deleted and its AV1 takes its place as an .mp4 file.\n" +
+              "Finalise it? [y/N] Original deleted.\n"
+            // Only a warned video asks first; the noted one finalises at once.
+            : "Original deleted.\n");
+        _finalizer.Calls.Should().Equal(job.Id);
+    }
+
+    /// <summary>A note holds nothing back from a batch: the noted, unwarned video is finalised with the clean one, and nothing is left out.</summary>
+    [Fact]
+    public async Task ReadyFinalisesANotedJobWithNoWarnings()
+    {
+        var clean = FileJob("clip-a.mp4", null, null, null);
+        var noted = Noted(FileJob("clip-b.mp4", null, null, null));
+        _jobs.AddRange([clean, noted]);
+        _finalizer.Results[clean.Id] = new(clean, ExitCode.Success, "Original deleted.");
+        _finalizer.Results[noted.Id] = new(noted, ExitCode.Success, "Original deleted.");
+
+        var (code, stdout, stderr) = await RunAsync("y\n", "finalize", "--ready");
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().NotContain("Left out");
+        _finalizer.Calls.Should().Equal(clean.Id, noted.Id);
+    }
+
     [Fact]
     public async Task ReadyFinalisesOnlyTheCleanJobAndNamesTheWarnedOneBeforeThePromptAndAtTheEnd()
     {
@@ -496,6 +542,12 @@ public sealed class FinalizeCommandsTests : IDisposable
     private static JobRecord Warned(JobRecord job)
     {
         job.ValidationWarnings = ["The AV1 is 2.0 s shorter than the original.", "The AV1 has no audio."];
+        return job;
+    }
+
+    private static JobRecord Noted(JobRecord job)
+    {
+        job.Notes = ["Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept."];
         return job;
     }
 

@@ -73,6 +73,7 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         CliConsole.WriteLine(warnings[0]);
         // The sentences are coloured as validate colours them; the header and indent stay plain.
         foreach (var line in warnings.Skip(1)) CliConsole.WriteLine($"  {OutputStyle.Tone(JobTone.Warning, line.TrimStart())}");
+        foreach (var line in FinalizationConsole.DescribeNotes(job)) CliConsole.WriteLine(line);
         CliConsole.WriteLine(job.SourceKind == JobSourceKind.Immich ? ImmichTrashLine : FinalizationConsole.DescribeOriginalAction(original, [job]));
         CliConsole.Write("Finalise it? [y/N] ");
         return string.Equals(CliConsole.ReadLine(), "y", StringComparison.OrdinalIgnoreCase);

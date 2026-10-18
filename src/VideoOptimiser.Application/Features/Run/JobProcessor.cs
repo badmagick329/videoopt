@@ -80,9 +80,11 @@ public sealed class JobProcessor(
             // Saved with the job's next update. This covers a job queued before migration 8; for the rest it describes the
             // file as this run found it.
             if (verdict.Media is not null) job.VideoFacts = verdict.Media.ToVideoFacts(verdict.Info.Length);
-            if (verdict.Skip) return await SkipAsync(job, databasePath, settings, verdict.Message!, progress, cancellationToken);
+            if (verdict.Skip) return await SkipAsync(job, databasePath, settings, verdict.Message!, progress, cancellationToken, verdict.SkipCategory);
             if (!verdict.Proceeds) return await FailAsync(job, databasePath, verdict.FailureCategory!, verdict.Message!, verdict.ExitCode, progress, cancellationToken);
             var (info, media, cap) = (verdict.Info, verdict.Media!, verdict.Cap!);
+            // Saved with the job's next update, so the note is there from the first stage on and a new attempt replaces it.
+            job.Notes = AudioPlan.For(media) is { Dropped.Count: > 0 } audio ? [DroppedAudioNote(audio)] : [];
 
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.SampleCount);
             var quality = settings.Quality.WithSampleCount(sampleCount).WithSizeCap(cap);
@@ -160,7 +162,7 @@ public sealed class JobProcessor(
                     Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
                     var crf = job.Crf!.Value.ToString(CultureInfo.InvariantCulture);
                     progress?.Report(JobProgress.Step(prediction is null ? $"Encoding at CRF {crf}." : $"Encoding at CRF {crf}, expected to take about {prediction.Taking}."));
-                    var encodeResult = await session.EncodeAsync(path, outputPath, job.Crf.Value, quality, job.Attempt, PcmAudioStreams(media), Translating(progress, AbAv1Stage.Encode, quality), cancellationToken);
+                    var encodeResult = await session.EncodeAsync(path, outputPath, job.Crf.Value, quality, job.Attempt, AudioPlan.For(media), Translating(progress, AbAv1Stage.Encode, quality), cancellationToken);
                     encodedPath = encodeResult.OutputPath;
                     if (session.IsRemote)
                     {
@@ -307,6 +309,15 @@ public sealed class JobProcessor(
         var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
         if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return SourceVerdict.Fail(info, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles) with { Media = media };
 
+        // Before staging, and whatever --force says: an AV1 with no audio would pass validation, which expects none, and replace
+        // the original at finalise; and a person who chose skip wants the original's spatial audio kept (VOPT-125).
+        var audio = AudioPlan.For(media);
+        if (audio.LeavesNoAudio) return new SourceVerdict(info) { Media = media, Skip = true, SkipCategory = FailureCategories.UnsupportedAudio, Message = $"FFmpeg can't copy {audio.DroppedTracks}, its only audio, so the AV1 would have no sound." };
+        if (audio.Dropped.Count > 0 && settings.Quality.UnsupportedAudio.Equals(UnsupportedAudioActions.Skip, StringComparison.OrdinalIgnoreCase))
+        {
+            return new SourceVerdict(info) { Media = media, Skip = true, SkipCategory = FailureCategories.UnsupportedAudio, Message = $"FFmpeg can't copy {audio.DroppedTracks}, and quality.unsupportedAudio is skip." };
+        }
+
         // Before staging, and whatever --force says: a video that cannot save savings.minimumBytesSaved would only fail
         // validation after a full upload, search and encode.
         var cap = SizeCap.For(media, info.Length, settings.Quality, settings.Savings);
@@ -327,6 +338,7 @@ public sealed class JobProcessor(
         public string? Message { get; init; }
         public ExitCode ExitCode { get; init; }
         public bool Skip { get; init; }
+        public string SkipCategory { get; init; } = FailureCategories.NotWorthConverting;
         public bool Proceeds => FailureCategory is null && !Skip;
 
         public static SourceVerdict Fail(FileInfo info, string category, string message, ExitCode exitCode) =>
@@ -341,9 +353,13 @@ public sealed class JobProcessor(
     internal static JobStatus ResumePoint(JobStatus current, JobStatus? earlier) =>
         current is JobStatus.Queued or JobStatus.Staging && earlier is { } resume ? resume : current;
 
-    /// <summary>The audio-relative indexes of the PCM streams. Browsers do not play PCM copied into MP4, so these are re-encoded to FLAC.</summary>
-    private static int[] PcmAudioStreams(MediaInfo media) =>
-        [.. (media.AudioCodecs ?? []).Select((codec, index) => (codec, index)).Where(stream => stream.codec.StartsWith("pcm_", StringComparison.OrdinalIgnoreCase)).Select(stream => stream.index)];
+    /// <summary>A note, not a validation warning: the person loses only what FFmpeg cannot carry, and a warning would keep every
+    /// iPhone 16 video out of batch finalise.</summary>
+    private static string DroppedAudioNote(AudioPlan audio)
+    {
+        var tracks = audio.DroppedTracks;
+        return $"{char.ToUpperInvariant(tracks[0])}{tracks[1..]} {(audio.Dropped.Count == 1 ? "was" : "were")} left out because FFmpeg can't copy {(audio.Dropped.Count == 1 ? "it" : "them")}. The other audio is kept.";
+    }
 
     private IProgress<JobProgress>? Translating(IProgress<JobProgress>? progress, AbAv1Stage stage, QualitySettings quality) =>
         progress is null ? null : translator.Wrap(progress, stage, quality);
@@ -397,19 +413,19 @@ public sealed class JobProcessor(
     }
 
     /// <summary>
-    /// Ends the job as skipped: AV1 cannot meet the quality bar and the size cap together. The fingerprint lets discovery
-    /// check the video again once those settings change. A remote search has already cleaned its workspace on the way out;
-    /// a skip before the search staged nothing in this run.
+    /// Ends the job as skipped: AV1 cannot meet the quality bar and the size cap together, or its audio cannot be copied. The
+    /// fingerprint lets discovery check the video again once those settings change. A remote search has already cleaned its
+    /// workspace on the way out; a skip before the search staged nothing in this run.
     /// </summary>
-    private async Task<JobProcessingResult> SkipAsync(JobRecord job, string databasePath, AppSettings settings, string reason, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    private async Task<JobProcessingResult> SkipAsync(JobRecord job, string databasePath, AppSettings settings, string reason, IProgress<JobProgress>? progress, CancellationToken cancellationToken, string category = FailureCategories.NotWorthConverting)
     {
         job.Status = JobStatus.Skipped;
-        job.FailureCategory = FailureCategories.NotWorthConverting;
+        job.FailureCategory = category;
         job.FailureMessage = reason;
         job.QualityFingerprint = QualityFingerprint.Compute(settings);
         job.CompletedUtc = DateTimeOffset.UtcNow;
         await jobs.UpdateAsync(databasePath, job, cancellationToken);
-        progress?.Report(JobProgress.Outcome(JobTone.Warning, $"Not worth converting: {reason}"));
+        progress?.Report(JobProgress.Outcome(JobTone.Warning, category == FailureCategories.UnsupportedAudio ? $"Skipped: {reason}" : $"Not worth converting: {reason}"));
         return new JobProcessingResult(job, ExitCode.Success, reason);
     }
 

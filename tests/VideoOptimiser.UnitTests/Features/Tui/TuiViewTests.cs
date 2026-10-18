@@ -231,6 +231,34 @@ public sealed class TuiViewTests
         review.Should().NotContain(cell => cell.Contains('…'));
     }
 
+    /// <summary>
+    /// A note shows under its own heading after the warnings, marks nothing in the header or the rows, and belongs to the
+    /// selected video only.
+    /// </summary>
+    [Theory]
+    [InlineData(6, true)]
+    [InlineData(5, false)]
+    public void TheSelectedVideosNotesShowApartFromItsWarnings(int selected, bool shown)
+    {
+        const string note = "Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept.";
+        var model = After(TuiModel.Initial(Now, 140, 40, "jobs.db"), Snap(Quiet([Queued(2), Ready(5), Ready(6, size: 2000 * Mib, av1: 700 * Mib, saved: 65m) with { JobNotes = [note] }])), Tick(TimeSpan.Zero, 140, 40))
+            with { ReviewSelection = Id(selected) };
+
+        var rows = Rows(model);
+
+        Row(rows, "converting").Should().Contain("2 ready").And.NotContain("to check");
+        rows.Should().NotContain(row => row.Contains("warning", StringComparison.OrdinalIgnoreCase));
+        var review = rows.Select(row => row[77..].Trim().Trim('│').Trim()).ToArray();
+        if (!shown)
+        {
+            review.Should().NotContain(cell => cell.Contains("Notes:", StringComparison.Ordinal) || cell.Contains("apac", StringComparison.Ordinal));
+            return;
+        }
+        var heading = Array.IndexOf(review, "Notes:");
+        heading.Should().BePositive();
+        string.Join(' ', review.Skip(heading + 1).TakeWhile(cell => !cell.StartsWith("2 ready to finalise", StringComparison.Ordinal)).Where(cell => cell.Length > 0)).Should().Be(note);
+    }
+
     /// <summary>A short pane keeps the list's rows first: the warnings keep their first rows and end in an ellipsis where cut.</summary>
     [Fact]
     public void OnAShortPaneTheWarningsGiveWayToTheList()

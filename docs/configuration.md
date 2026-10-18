@@ -93,6 +93,19 @@ FFmpeg cannot write AV1 into `.mov` or `.m4v`, so the AV1 is always an `.mp4` or
 
 Audio is copied, except PCM, which is re-encoded to FLAC. FLAC is lossless and plays in browsers; 32-bit float PCM becomes 24-bit.
 
+### Audio FFmpeg can't copy
+
+FFmpeg can't copy an audio track it doesn't recognise. The usual one is iPhone 16 spatial audio (`apac`). Those videos also carry a normal stereo track, and that's the one Immich, browsers, Android and Windows play. `quality.unsupportedAudio` decides what happens:
+
+| Value | What happens |
+| --- | --- |
+| `drop` (default) | The track is left out and every other track is kept. The video gets a note saying so. A note doesn't hold the video back from `finalize --ready`. |
+| `skip` | The video isn't converted, so the original keeps its spatial audio. `history` lists it as skipped, with the reason. |
+
+Without the spatial track you lose head-tracked playback on Apple devices and Audio Mix editing in Apple Photos, iMovie and Final Cut.
+
+If FFmpeg recognises none of a video's audio tracks, the video is skipped under either value, so you never get an AV1 with no sound.
+
 ## Tools
 
 | Tool | Needed for | Where to get it |

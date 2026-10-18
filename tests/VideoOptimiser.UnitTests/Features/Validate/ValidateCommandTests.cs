@@ -161,13 +161,15 @@ public sealed class ValidateCommandTests : IDisposable
         job.FailureCategory = FailureCategories.FinalizationIncomplete;
         job.FailureMessage = "The upload finished.";
         await _repository.UpdateAsync(DatabasePath, job);
+        job.Notes = ["Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept."];
+        await _repository.UpdateAsync(DatabasePath, job);
         _validation.Report = new ValidationReport { Passed = true, SourceSizeBytes = 1000, OutputSizeBytes = 400, PercentageSaved = 60m };
 
         var (code, stdout, stderr) = await RunAsync(job.Id.ToString("N"));
 
         code.Should().Be((int)ExitCode.Success);
         stderr.Should().BeEmpty();
-        stdout.ReplaceLineEndings("\n").Should().Be("Validation passed: saved 60.0%.\n");
+        stdout.ReplaceLineEndings("\n").Should().Be("Validation passed: saved 60.0%.\nNotes:\n  Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept.\n");
         var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
         stored.Status.Should().Be(JobStatus.ReadyToFinalize);
         (stored.ValidationPassed, stored.SourceSizeBytes, stored.OutputSizeBytes, stored.PercentageSaved).Should().Be((true, 1000L, 400L, 60m));
@@ -199,6 +201,8 @@ public sealed class ValidateCommandTests : IDisposable
     public async Task WarningsKeepTheJobReadyPrintEachOneAndStoreThem()
     {
         var job = await CreateReadyJobAsync();
+        job.Notes = ["Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept."];
+        await _repository.UpdateAsync(DatabasePath, job);
         _validation.Report = new ValidationReport { Passed = true, Warnings = ["The AV1's video is 2 s shorter than the original's.", "The AV1 failed the decode test: bad frame"], SourceSizeBytes = 1000, OutputSizeBytes = 400, PercentageSaved = 60m };
 
         var (code, stdout, stderr) = await RunAsync(job.Id.ToString("N"));
@@ -209,6 +213,8 @@ public sealed class ValidateCommandTests : IDisposable
             Validation passed with warnings: saved 60.0%. Check the AV1 before finalising it:
               The AV1's video is 2 s shorter than the original's.
               The AV1 failed the decode test: bad frame
+            Notes:
+              Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept.
 
             """.ReplaceLineEndings("\n"));
         var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;

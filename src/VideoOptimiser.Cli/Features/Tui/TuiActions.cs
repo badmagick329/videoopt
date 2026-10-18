@@ -375,7 +375,11 @@ internal sealed class TuiActions(
 
         var lines = ready.Take(Named).Select(FinalizationConsole.DescribeReady).ToList();
         if (ready.Length > Named) lines.Add($"And {ready.Length - Named} more.");
-        if (effect.Id is not null) lines.AddRange(FinalizationConsole.DescribeWarnings(ready[0]));
+        if (effect.Id is not null)
+        {
+            lines.AddRange(FinalizationConsole.DescribeWarnings(ready[0]));
+            lines.AddRange(FinalizationConsole.DescribeNotes(ready[0]));
+        }
         if (ready.Where(job => job.SourceKind == JobSourceKind.File).ToArray() is { Length: > 0 } fileJobs) lines.Add(FinalizationConsole.DescribeOriginalAction(settings.Original, fileJobs));
         if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) lines.Add("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
         if (leftOut.Length > 0)

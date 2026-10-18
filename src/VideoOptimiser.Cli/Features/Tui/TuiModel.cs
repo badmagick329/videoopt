@@ -32,6 +32,7 @@ internal enum LogKind { Info, Stage, Success, Warning, Error, Action, Detail }
 /// <param name="Note">A phrase for the row's right side: why a video failed, or what a ready video's finalising did.</param>
 /// <param name="Immich">An Immich video: its original is in Immich, and the AV1 sits beside a downloaded copy.</param>
 /// <param name="Warnings">What validation warned about a ready video, one sentence each: <c>F</c> leaves it out, so it is watched and finalised with <c>f</c>.</param>
+/// <param name="JobNotes">What the encode left out of a ready video (VOPT-125), one sentence each; unlike warnings they hold nothing back, and <see cref="Note"/> is a different thing.</param>
 internal sealed record Video(
     Guid Id,
     string Name,
@@ -44,9 +45,11 @@ internal sealed record Video(
     decimal? PercentSaved = null,
     string? Note = null,
     bool Immich = false,
-    IReadOnlyList<string>? Warnings = null)
+    IReadOnlyList<string>? Warnings = null,
+    IReadOnlyList<string>? JobNotes = null)
 {
     public IReadOnlyList<string> Warnings { get; init; } = Warnings ?? [];
+    public IReadOnlyList<string> JobNotes { get; init; } = JobNotes ?? [];
 
     public long? SavedBytes => SizeBytes is { } size && Av1Bytes is { } av1 ? size - av1 : null;
 }

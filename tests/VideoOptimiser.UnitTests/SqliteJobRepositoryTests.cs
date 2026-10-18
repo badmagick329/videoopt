@@ -347,6 +347,29 @@ public sealed class SqliteJobRepositoryTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
+    /// <summary>
+    /// Notes are one per line like warnings, and a later attempt replaces them outright: none stores as null and reads back
+    /// empty, and the warnings next to them stay apart.
+    /// </summary>
+    [Theory]
+    [InlineData(new string[0], new[] { "Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept." })]
+    [InlineData(new[] { "Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept.", "Audio track 3 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept." }, new string[0])]
+    public async Task NotesRoundTripAndTheNextAttemptReplacesThem(string[] first, string[] second)
+    {
+        var job = await _repository.CreateAsync(_databasePath, NewJob(JobStatus.Queued));
+        job.Notes = first;
+        job.ValidationWarnings = ["The decode test failed."];
+        await _repository.UpdateAsync(_databasePath, job);
+        var stored = (await _repository.GetAsync(_databasePath, job.Id))!;
+        stored.Notes.Should().Equal(first);
+        stored.ValidationWarnings.Should().Equal("The decode test failed.");
+
+        stored.Notes = second;
+        await _repository.UpdateAsync(_databasePath, stored);
+
+        (await _repository.GetAsync(_databasePath, job.Id))!.Notes.Should().Equal(second);
+    }
+
     private static JobRecord NewJob(JobStatus status, string sourcePath = "C:\\Videos\\movie.mp4") => new()
     {
         Id = Guid.NewGuid(),

@@ -329,6 +329,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                 {
                     JobStatus.Completed => $"{name} was already converted (job {job.Id:N}).",
                     JobStatus.Cancelled => $"{name} was dropped before (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}",
+                    JobStatus.Skipped when SkippedForAudio(job) => $"{name} was skipped before for its audio (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}",
                     JobStatus.Skipped => $"{name} was not worth converting before (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}",
                     JobStatus.Rejected => $"{name} was rejected before (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}",
                     _ => $"{name} failed before (job {job.Id:N}). To try it again: {command.Hint($"queue retry {job.Id:N}")}"
@@ -385,7 +386,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         var jobs = await repository.ListAsync(databasePath, terminal, cancellationToken);
         if (command.Json)
         {
-            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.Held, job.SourcePath, job.SourceKind == JobSourceKind.Immich ? "immich" : "file", job.ImmichAssetId, job.ImmichNewAssetId, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.ValidationWarnings, job.UpdatedUtc)).ToArray();
+            var output = jobs.Select(job => new JobJsonOutput(job.Id.ToString("N"), job.Status.ToString(), job.Held, job.SourcePath, job.SourceKind == JobSourceKind.Immich ? "immich" : "file", job.ImmichAssetId, job.ImmichNewAssetId, job.Crf, job.OutputPath, job.PercentageSaved, job.FailureCategory, job.FailureMessage, job.ValidationWarnings, job.Notes, job.UpdatedUtc)).ToArray();
             CliConsole.WriteLine(JsonSerializer.Serialize(output, QueueJsonContext.Default.JobJsonOutputArray));
         }
         else if (jobs.Count == 0)
@@ -400,7 +401,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                 var savings = job.PercentageSaved is null ? string.Empty : $" {job.PercentageSaved:F1}% saved";
                 // An Immich job's file name is the original's in Immich; the asset IDs find it there.
                 var immich = job.ImmichAssetId is { } asset ? $" Immich {asset}{(job.ImmichNewAssetId is { } av1 ? $" -> {av1}" : string.Empty)}" : string.Empty;
-                CliConsole.WriteLine($"{job.Id:N}  {StatusName(job.Status),-20} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}");
+                CliConsole.WriteLine($"{job.Id:N}  {StatusName(job),-20} {Path.GetFileName(job.SourcePath)}{immich}{(job.Crf is null ? string.Empty : $" CRF {job.Crf}")}{savings}{suffix}");
             }
         }
 

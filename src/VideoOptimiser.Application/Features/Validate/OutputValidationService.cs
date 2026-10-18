@@ -59,7 +59,8 @@ public sealed class OutputValidationService(
 
         var warnings = new List<string>();
         await CompareTimelinesAsync(manifest, settings, source, warnings, cancellationToken);
-        AddStreamCountWarning(warnings, "audio", source.AudioStreamCount, output.AudioStreamCount);
+        // The encode leaves out audio FFmpeg cannot identify, so the AV1 should have the original's count less those.
+        AddStreamCountWarning(warnings, "audio", AudioPlan.For(source).KeptAudioStreamCount, output.AudioStreamCount);
         AddStreamCountWarning(warnings, "subtitle", source.SubtitleStreamCount, output.SubtitleStreamCount);
         // A warned AV1 is decoded too, so a decode problem is one more thing the user sees, not hidden behind the first doubt.
         await TestDecodingAsync(manifest.OutputPath, settings, output.DurationSeconds, warnings, cancellationToken);

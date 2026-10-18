@@ -43,6 +43,13 @@ internal sealed class FinalizationConsole(TextWriter output, TerminalStyle outpu
     internal static IReadOnlyList<string> DescribeWarnings(JobRecord job) =>
         job.ValidationWarnings.Count == 0 ? [] : ["Validation warnings:", .. job.ValidationWarnings.Select(warning => "  " + warning)];
 
+    /// <summary>
+    /// The job's notes (VOPT-125) in the same place and shape as <see cref="DescribeWarnings"/>, under their own heading and
+    /// printed untoned: a note asks nothing of the person, and no rule treats a noted video differently.
+    /// </summary>
+    internal static IReadOnlyList<string> DescribeNotes(JobRecord job) =>
+        job.Notes.Count == 0 ? [] : ["Notes:", .. job.Notes.Select(note => "  " + note)];
+
     /// <summary>Whether the job finalised. A failure goes to the error stream, as the exit code says it is one.</summary>
     public bool Outcome(JobRecord job, FinalizationResult result)
     {

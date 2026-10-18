@@ -61,6 +61,13 @@ public static class FailureCategories
     public const string NotWorthConverting = "NotWorthConverting";
 
     /// <summary>
+    /// A <see cref="JobStatus.Skipped"/> job whose audio FFmpeg cannot copy (VOPT-125): <c>quality.unsupportedAudio</c> is
+    /// <c>skip</c>, or no audio track would be left. Nothing was staged or encoded. Settled like any skip, by the quality
+    /// fingerprint, which carries the setting while it is <c>skip</c>.
+    /// </summary>
+    public const string UnsupportedAudio = "UnsupportedAudio";
+
+    /// <summary>
     /// A <see cref="JobStatus.Failed"/> job whose AV1 left nothing to review: missing, empty, unreadable or not AV1. Before
     /// VOPT-117 every doubtful check failed a job this way, so a run checks such jobs again while their AV1 is on disk.
     /// </summary>

@@ -134,7 +134,7 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         var failures = preparation.FailedJobs.Concat(joinFailures).Concat(result.FailedJobs).ToArray();
         if (result.UnreachableWorkerJob is not null) observer.StoppedByUnreachableWorker(await WorkerNameAsync(settings), result.NotStarted + 1);
         if (result.StoppedAfter is { } last) observer.StoppedAfter(last, result.NotStarted);
-        await SummariseAsync(settings, observer, result.ReadyToFinalize, result.SkippedJobs.Count, failures, stoppedAfter: result.StoppedAfter is not null, toCheck: result.ToCheck);
+        await SummariseAsync(settings, observer, result.ReadyToFinalize, result.NotWorthConverting, failures, stoppedAfter: result.StoppedAfter is not null, toCheck: result.ToCheck);
         var end = result.UnreachableWorkerJob is not null ? RunEnd.WorkerUnreachable : result.StoppedAfter is not null ? RunEnd.StoppedAfterVideo : RunEnd.Finished;
         var workerHandled = await ConcludeAsync(settings, observer, questions, end, unreachableJob: result.UnreachableWorkerJob);
         // U3m (VOPT-69): a manual host that stopped answering is neither billed nor deleted by this tool, so the user hears only how to resume.
@@ -146,7 +146,7 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         {
             observer.ManualWorkerReminder();
         }
-        return (result.ReadyToFinalize, result.SkippedJobs.Count, failures, result.UnreachableWorkerJob is not null, result.StoppedAfter is not null, workerHandled);
+        return (result.ReadyToFinalize, result.NotWorthConverting, failures, result.UnreachableWorkerJob is not null, result.StoppedAfter is not null, workerHandled);
     }
 
     private async Task SummariseAsync(AppSettings settings, IRunObserver observer, int ready, int skipped, IReadOnlyList<FailedQueueJob> failures, bool stoppedAfter, int toCheck)

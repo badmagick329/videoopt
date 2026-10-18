@@ -146,6 +146,7 @@ public sealed class TuiSnapshotReaderTests : IDisposable
         ready.OutputSizeBytes = 80 * Mib;
         ready.PercentageSaved = 60m;
         ready.ValidationWarnings = ["The AV1 has no audio."];
+        ready.Notes = ["Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept."];
         var failedFinalise = Job(4, JobStatus.ReadyToFinalize, minute: 4, message: "Original is in use.");
         var held = Job(2, JobStatus.Queued, minute: 2);
         held.Held = true;
@@ -165,6 +166,7 @@ public sealed class TuiSnapshotReaderTests : IDisposable
         var readyVideo = snapshot.Open!.Single(video => video.Id == Id(3));
         (readyVideo.Name, readyVideo.SizeBytes, readyVideo.Av1Bytes, readyVideo.PercentSaved, readyVideo.Note).Should().Be(("clip-003.mp4", 200 * Mib, 80 * Mib, 60m, null));
         readyVideo.Warnings.Should().Equal("The AV1 has no audio.");
+        readyVideo.JobNotes.Should().Equal("Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept.");
         snapshot.Open!.Single(video => video.Id == Id(4)).Note.Should().Be("last finalising failed");
         snapshot.Open!.Single(video => video.Id == Id(5)).Remote.Should().BeTrue();
     }

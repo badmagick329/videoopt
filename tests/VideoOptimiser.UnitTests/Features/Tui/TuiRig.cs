@@ -121,6 +121,15 @@ internal sealed class TuiRig : IDisposable
         return job;
     }
 
+    /// <summary>A ready job the encode left a note on: no warning, so bulk finalise still takes it.</summary>
+    public async Task<JobRecord> NotedAsync(string name, params string[] notes)
+    {
+        var job = await ReadyAsync(name);
+        job.Notes = notes;
+        await Repository.UpdateAsync(DatabasePath, job);
+        return job;
+    }
+
     public async Task<JobRecord> StoredAsync(JobRecord job) => (await Repository.GetAsync(DatabasePath, job.Id))!;
 
     public void Dispose()

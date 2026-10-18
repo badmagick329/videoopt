@@ -51,10 +51,12 @@ internal sealed class ValidateCommand(IJobRepository repository, IOutputManifest
         {
             case ValidationVerdict.Passed:
                 CliConsole.WriteLine($"Validation passed: {saved}.");
+                WriteNotes(job);
                 return (int)ExitCode.Success;
             case ValidationVerdict.Warned:
                 CliConsole.WriteLine($"Validation passed with warnings: {saved}. Check the AV1 before finalising it:");
                 foreach (var warning in job.ValidationWarnings) CliConsole.WriteLine($"  {OutputStyle.Tone(JobTone.Warning, warning)}");
+                WriteNotes(job);
                 return (int)ExitCode.Success;
             // A skip is not a failure (RunContracts), so it exits 0 like a run that skips.
             case ValidationVerdict.NotWorthConverting:
@@ -64,5 +66,13 @@ internal sealed class ValidateCommand(IJobRepository repository, IOutputManifest
                 CliConsole.WriteLine($"Validation failed: {job.FailureMessage}");
                 return (int)ExitCode.ValidationFailure;
         }
+    }
+
+    // Notes (VOPT-125) come from the encode and survive a re-check; plain text, since they are not warnings.
+    private static void WriteNotes(JobRecord job)
+    {
+        if (job.Notes.Count == 0) return;
+        CliConsole.WriteLine("Notes:");
+        foreach (var note in job.Notes) CliConsole.WriteLine($"  {note}");
     }
 }

@@ -27,6 +27,7 @@ internal static class QueueWords
         JobStatus.Failed => "has already failed",
         JobStatus.Cancelled => "was already dropped",
         JobStatus.Completed => "was already finalised",
+        JobStatus.Skipped when SkippedForAudio(job) => "was skipped for its audio",
         JobStatus.Skipped => "was not worth converting",
         JobStatus.Rejected => "was already rejected",
         _ => $"is {StatusWord(job.Status)}"
@@ -60,11 +61,14 @@ internal static class QueueWords
     };
 
     /// <summary>The same word starting a column, as <c>history</c> lists it.</summary>
-    public static string StatusName(JobStatus status)
+    public static string StatusName(JobRecord job)
     {
-        var word = StatusWord(status);
+        var word = SkippedForAudio(job) ? "skipped" : StatusWord(job.Status);
         return char.ToUpperInvariant(word[0]) + word[1..];
     }
+
+    /// <summary>Skipped for audio FFmpeg cannot copy, never tried, so "not worth converting" would be false (VOPT-125).</summary>
+    public static bool SkippedForAudio(JobRecord job) => job.Status == JobStatus.Skipped && job.FailureCategory == FailureCategories.UnsupportedAudio;
 
     /// <summary>The open status in the glossary's words.</summary>
     public static string OpenStatusPhrase(JobRecord job, OpenJobState state) => state switch
@@ -127,6 +131,8 @@ internal static class QueueWords
         var line = string.Join(", ", facts);
         // In full, as the run printed them: the person reads them here before choosing to finalise the video on its own.
         if (FinalizationRules.IsLeftForReview(job)) line += $", {OutputWords.Count(job.ValidationWarnings.Count, "warning", "warnings")}: {string.Join(' ', job.ValidationWarnings)}";
+        // A note is no warning: it never marks the video for review, so it is listed after any warnings under its own word.
+        if (job is { Status: JobStatus.ReadyToFinalize, Notes.Count: > 0 }) line += $", {OutputWords.Count(job.Notes.Count, "note", "notes")}: {string.Join(' ', job.Notes)}";
         return entry.State switch
         {
             OpenJobState.LastFinaliseFailed => $"{line}; the last finalise stopped: {job.FailureMessage}",

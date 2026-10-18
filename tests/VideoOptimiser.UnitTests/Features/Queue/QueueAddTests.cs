@@ -221,12 +221,14 @@ public sealed class QueueAddTests : QueueTestBase
     [InlineData(JobStatus.Failed, "clip.mp4 failed before (job {0}). To try it again: video-optimiser queue retry {0}{1}")]
     [InlineData(JobStatus.Cancelled, "clip.mp4 was dropped before (job {0}). To try it again: video-optimiser queue retry {0}{1}")]
     [InlineData(JobStatus.Skipped, "clip.mp4 was not worth converting before (job {0}). To try it again: video-optimiser queue retry {0}{1}")]
+    [InlineData(JobStatus.Skipped, "clip.mp4 was skipped before for its audio (job {0}). To try it again: video-optimiser queue retry {0}{1}", FailureCategories.UnsupportedAudio)]
     [InlineData(JobStatus.Rejected, "clip.mp4 was rejected before (job {0}). To try it again: video-optimiser queue retry {0}{1}")]
     [InlineData(JobStatus.Completed, "clip.mp4 was already converted (job {0}).")]
-    public async Task AFileItsLastJobSettledPointsAtRetry(JobStatus settled, string line)
+    public async Task AFileItsLastJobSettledPointsAtRetry(JobStatus settled, string line, string? category = null)
     {
         await WriteConfigAsync();
         var job = await QueuedAsync("clip.mp4");
+        job.FailureCategory = category;
         job.SourceFingerprint = await new FileFingerprintService().CreateAsync(job.SourcePath);
         // The quality settings that skipped it are the ones in force, so the skip still holds.
         job.QualityFingerprint = Application.Jobs.QualityFingerprint.Compute(await SettingsAsync());

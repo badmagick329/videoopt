@@ -23,7 +23,7 @@ public interface IJobProcessor
 public sealed record FailedQueueJob(Guid Id, string SourcePath, string FailureCategory, string FailureMessage);
 
 /// <summary>A job that ended <see cref="JobStatus.Skipped"/>. Not a failure: it changes neither the exit code nor the managed worker's deletion.</summary>
-public sealed record SkippedQueueJob(Guid Id, string SourcePath, string Message);
+public sealed record SkippedQueueJob(Guid Id, string SourcePath, string Message, string Category = FailureCategories.NotWorthConverting);
 
 /// <param name="SkippedJobs">Started jobs left untouched because <c>--local</c> or <c>--remote</c> chose the other mode; see
 /// <see cref="JobCompatibility.IsBoundToOtherMode"/>. They are neither runnable nor failed.</param>
@@ -44,6 +44,10 @@ public sealed record QueuePreparationResult(IReadOnlyList<JobRecord> RunnableJob
 public sealed record QueueRunResult(int ReadyToFinalize, IReadOnlyList<FailedQueueJob> FailedJobs, IReadOnlyList<SkippedQueueJob> SkippedJobs, JobRecord? UnreachableWorkerJob, int NotStarted, ExitCode ExitCode, JobRecord? StoppedAfter = null, int ToCheck = 0)
 {
     public int Failed => FailedJobs.Count;
+
+    /// <summary>What the run's tally counts as not worth converting. A video skipped for its audio was never tried, and its own
+    /// block already said why.</summary>
+    public int NotWorthConverting => SkippedJobs.Count(job => job.Category == FailureCategories.NotWorthConverting);
 }
 
 public static class QueueExitCode

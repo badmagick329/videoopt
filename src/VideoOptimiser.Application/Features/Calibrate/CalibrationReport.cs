@@ -199,7 +199,8 @@ public sealed record CalibrationReport(
 
         foreach (var job in finishedJobs)
         {
-            if (job.Status is not (JobStatus.Completed or JobStatus.Skipped)) continue;
+            // A video skipped for its audio was never tried, so it says nothing about what AV1 saves.
+            if (job.Status is not (JobStatus.Completed or JobStatus.Skipped) || job.FailureCategory == FailureCategories.UnsupportedAudio) continue;
             if (!string.Equals(job.QualityFingerprint, qualityFingerprint, StringComparison.Ordinal)) { otherSettings++; continue; }
             if (job.VideoFacts is not { } facts) { noVideoFacts++; continue; }
 

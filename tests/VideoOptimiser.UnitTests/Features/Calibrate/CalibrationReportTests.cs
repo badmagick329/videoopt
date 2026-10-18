@@ -76,7 +76,8 @@ public sealed class CalibrationReportTests
             Result(true, 50, fingerprint: null),
             Change(Result(true, 50), job => job.VideoFacts = null),
             Change(Result(true, 50), job => job.Status = JobStatus.Failed),
-            Change(Result(true, 50), job => job.Status = JobStatus.Cancelled)]);
+            Change(Result(true, 50), job => job.Status = JobStatus.Cancelled),
+            Change(Result(false, 50), job => job.FailureCategory = FailureCategories.UnsupportedAudio)]);
 
         (report.OtherSettings, report.NoVideoFacts).Should().Be((2, 1));
         report.Rules[0].History.Should().Be(new CalibrationHistory(2, new IntRange(40, 45), new IntRange(71, 80), 1, new IntRange(20, 20)));

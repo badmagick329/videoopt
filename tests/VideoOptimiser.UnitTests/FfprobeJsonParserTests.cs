@@ -51,21 +51,28 @@ public sealed class FfprobeJsonParserTests
         FfprobeJsonParser.Parse(json).PrimaryVideoBitrate.Should().Be(expected);
     }
 
+    /// <summary>
+    /// The APAC streams are built from an FFmpeg 8.1.1 encode log and FFmpeg 9.0's codec list, not captured (VOPT-125):
+    /// 8.x gives spatial audio no codec name, 9.x names it apple_apac, and both keep the container's apac tag.
+    /// </summary>
     [Fact]
-    public void ParseListsTheAudioCodecsInAudioStreamOrder()
+    public void ParseListsTheAudioTracksInOrderWithTheirTags()
     {
         const string json = """
             {
               "streams": [
-                { "codec_type": "video", "codec_name": "h264" },
-                { "codec_type": "audio", "codec_name": "aac" },
+                { "codec_type": "video", "codec_name": "hevc" },
+                { "codec_type": "audio", "codec_name": "aac", "codec_tag_string": "mp4a" },
                 { "codec_type": "subtitle", "codec_name": "subrip" },
+                { "codec_type": "audio", "codec_tag_string": "apac", "codec_tag": "0x63617061", "sample_rate": "48000", "channels": 4 },
+                { "codec_type": "audio", "codec_name": "apple_apac", "codec_tag_string": "apac", "codec_tag": "0x63617061", "sample_rate": "48000", "channels": 4 },
                 { "codec_type": "audio", "codec_name": "pcm_s24le" }
               ]
             }
             """;
 
-        FfprobeJsonParser.Parse(json).AudioCodecs.Should().Equal("aac", "pcm_s24le");
+        FfprobeJsonParser.Parse(json).AudioTracks.Should().Equal(
+            new AudioTrack("aac", "mp4a"), new AudioTrack("unknown", "apac"), new AudioTrack("apple_apac", "apac"), new AudioTrack("pcm_s24le"));
     }
 
     [Fact]

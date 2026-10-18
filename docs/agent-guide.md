@@ -136,7 +136,7 @@ Next:
 
 ### `queue list`
 
-It groups the open videos, each group only when it has videos: `Converting now`, `Queue, in run order` (numbered), `Held` and `Ready to finalise`. Each line starts with the job ID that `queue hold`, `release`, `next`, `drop`, `retry`, `validate` and `finalize` take. A stopped video says what the next run does with it, for example `Stopped  clip.mp4, CRF 30: picks up the encode on the worker, or encodes again on a new one`. Immich videos show `(Immich)`. A warned ready video ends `, N warnings: <each warning>`. `Nothing is queued or ready to finalise.` means none. `history` lists the ended ones.
+It groups the open videos, each group only when it has videos: `Converting now`, `Queue, in run order` (numbered), `Held` and `Ready to finalise`. Each line starts with the job ID that `queue hold`, `release`, `next`, `drop`, `retry`, `validate` and `finalize` take. A stopped video says what the next run does with it, for example `Stopped  clip.mp4, CRF 30: picks up the encode on the worker, or encodes again on a new one`. Immich videos show `(Immich)`. A warned ready video ends `, N warnings: <each warning>`, and a noted one `, N notes: <each note>` after that. `Nothing is queued or ready to finalise.` means none. `history` lists the ended ones.
 
 ### The run
 
@@ -167,12 +167,16 @@ Upload and download lines appear only with a remote worker. Colour appears on a 
 | --- | --- |
 | `Ready to finalise: ...` | `ReadyToFinalize` |
 | `Ready to finalise: ... Check it before finalising:`, then one line per warning | `ReadyToFinalize`, with `validationWarnings` |
+| `Note: ...`, after either line above | `ReadyToFinalize`, with `notes` |
 | `Not worth converting: ...` | `Skipped` |
+| `Skipped: ...` | `Skipped`, `UnsupportedAudio` |
 | `Failed validation: ...` | `Failed`, `ValidationFailed` |
 | `Failed during the upload`, `the CRF search`, `encoding` or `the download: ...`, then `Full log: <path>` | `Failed`; the ab-av1 log stays at that path |
 | `Worker unreachable: ...` | `Interrupted`, `RemoteUnavailable`; the run stops here |
 
 A warning names something the AV1 check doubted: a shorter or longer video, a different number of audio or subtitle streams, audio that starts at another point relative to the video, audio sync that could not be checked, or a failed decode test. The video is ready all the same; the person watches it and decides whether to finalise it alone (`finalize <job-id>`, or `f` in the view) or `queue reject` it. To explain a warning, say what to watch for: a length or stream warning means the encode may have stopped short or dropped a track, so check the end of the video and its audio; an audio-sync warning means watching lips against speech; a decode-test warning means FFmpeg hit frames it could not decode, so play the video through. The run's tally counts warned videos within the ready ones: `Ready to finalise: 4 (1 to check).`
+
+A note is not a warning. It says what the encode left out on purpose, and nothing counts it: bulk finalise includes a noted video, and no `to check` tally includes it. Today the only note is an audio track FFmpeg can't copy (`Audio track 2 (apac) was left out ...`), almost always iPhone 16 spatial audio. The stereo track beside it is kept, and it is the one Immich, browsers, Android and Windows play. The person loses head-tracked playback on Apple devices and Audio Mix editing in Apple Photos, iMovie and Final Cut. A person who wants those kept sets `quality.unsupportedAudio: skip` (see `docs/configuration.md`); a video already finalised has lost the track for good. Notes appear on `queue list`, `validate`, the finalise question and the view's review pane, each under `Note`/`Notes`.
 
 **Slow or stuck.** A CRF search prints one `CRF` line per attempt, usually 4 to 7 attempts of about 2 minutes each for a 1 GB phone video on a Hetzner cpx42, longer on a PC. An encode prints progress about every 15 seconds at first and less often as it goes, a minute or more apart near the end; `about <time> left` appears only after 30 seconds and 5 percentage points. A job that prints nothing new for 15 minutes is stuck: ask for its last lines and `queue list --json`.
 
@@ -198,6 +202,7 @@ Match the job's `status` and `failureCategory` (from `queue list --json` or `his
 | `Interrupted` | Stopped by `Ctrl+C`, a crash or a lost connection. A remote stage keeps running on the worker | Run `run` again. It resumes and follows a running remote stage. |
 | `RemoteUnavailable` | The worker could not be reached. The run stopped at this job and left the rest `Queued`, printing `Stopped: the worker <name> can't be reached, ...` | The `To resume:` command it printed (`run`). A Hetzner worker stays up for it, billed hourly. Its `To delete it instead:` command is a **warn**, and the line names the work deleting loses. |
 | `Skipped`, `NotWorthConverting` | No CRF met both `quality.minimumVmaf` and the video's size cap, the stricter of `quality.maxEncodedPercent` and `savings.minimumBytesSaved`. A video too small to save `savings.minimumBytesSaved` is skipped before its search, with nothing uploaded. A finished AV1 no smaller than the original (`savings.requireSmallerOutput`) or saving less than `savings.minimumBytesSaved` ends here too, and its AV1 is deleted. Not a failure | Relay `failureMessage`: the setting that ruled it out, and the best CRF found or the AV1's size. Discovery checks the video again when the file or those settings change. |
+| `Skipped`, `UnsupportedAudio` | The video has audio FFmpeg can't copy (iPhone spatial audio, `apac`), and either `quality.unsupportedAudio` is `skip` or no other audio track would be left. Checked before anything is uploaded or searched. Not a failure | Relay `failureMessage`. To convert it with the track left out, set `quality.unsupportedAudio` back to `drop`; discovery then queues it again. A video with no other audio stays skipped: converting it would make a silent AV1. |
 | `ValidationFailed` | The AV1 left nothing to review: missing, empty, unreadable by ffprobe, or not AV1. A job that failed under an earlier version's stricter checks may hold a good AV1 | The original is untouched. A job failed by an earlier version's checks is checked again by the next run (see *The run*), so steer the person away from `queue retry`, the view's `t` and `cleanup` until then: each throws its AV1 away. Otherwise discovery won't queue it again until the file changes; `queue retry <id>` converts it again. |
 | `StagingFailed`, `CrfSearchFailed`, `EncodeFailed`, `DownloadFailed`, `ProcessingFailed` | A step failed | Relay `failureMessage`. After the cause is fixed, `queue retry <id>` queues it again. |
 | `RemoteConfigurationChanged` | The job started under a different processing setup | `queue retry <id>` starts a fresh job under the current setup. |
@@ -237,7 +242,7 @@ Failed, dropped, rejected and skipped jobs stay settled: discovery skips them un
 The console uses plain words; `--json` keeps the enum names.
 
 - **Open** (`queue list`): `Queued` (waiting), `Staging` (uploading), `CrfSearching` (finding CRF), `Encoding`, `Downloading`, `Validating` (checking), `ReadyToFinalize`, `Finalizing`, `Interrupted` (stopped).
-- **Finished** (`history`): `Completed` (finalised), `Failed`, `Cancelled` (dropped), `Skipped` (not worth converting), `Rejected`.
+- **Finished** (`history`): `Completed` (finalised), `Failed`, `Cancelled` (dropped), `Skipped` (not worth converting, or skipped for its audio: `history` shows `Skipped` for those), `Rejected`.
 
 A held job keeps its status, `Queued` or `Interrupted`; runs pass over it until `queue release` or `queue next`. `Staging` and `Downloading` are transfers to and from a worker. A job whose finalisation was cut off (`Finalizing`, or `Interrupted` after it) is finalised like a `ReadyToFinalize` one. An Immich one continues where it stopped. A file one continues only if its original and AV1 are where they started and the original is unchanged, and fails as `ManualInterventionRequired` otherwise; `run` leaves it alone and says so. `Ctrl+C` during `finalize` leaves the job ready.
 
@@ -258,6 +263,7 @@ A held job keeps its status, `Queued` or `Interrupted`; runs pass over it until 
 | `percentageSaved` | Size saving in percent, or `null` |
 | `failureCategory`, `failureMessage` | Why the job failed or was skipped, or what it needs, or `null` |
 | `validationWarnings` | What the last AV1 check asks the person to watch for before finalising, one sentence each; empty when it found nothing |
+| `notes` | What the encode left out on purpose, one sentence each; empty when nothing. Unlike `validationWarnings`, never a reason to hold the video back |
 | `updatedUtc` | Last change, ISO 8601 |
 
 `status --json` prints the card as one object; every field is present, `null` where it has no value:

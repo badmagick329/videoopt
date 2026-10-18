@@ -465,7 +465,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var source = await SourceAsync();
         var runner = new QueueRunner([Ok(AtEnd("completed 0", "encode complete\n")), Ok("encode complete\n"), Ok()]);
 
-        var result = await CreateSession(Guid.NewGuid(), runner, source).EncodeAsync(source, Output, 42, new QualitySettings(), 3, []);
+        var result = await CreateSession(Guid.NewGuid(), runner, source).EncodeAsync(source, Output, 42, new QualitySettings(), 3, new AudioPlan([], [], 1));
 
         result.OutputPath.Should().Be(Output);
         runner.Requests.Should().HaveCount(3);
@@ -715,7 +715,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
             return Task.FromCanceled(cancellation.Token);
         });
 
-        var action = async () => await session.EncodeAsync(source, Output, 30, new QualitySettings(), 1, [], cancellationToken: cancellation.Token);
+        var action = async () => await session.EncodeAsync(source, Output, 30, new QualitySettings(), 1, new AudioPlan([], [], 1), cancellationToken: cancellation.Token);
 
         await action.Should().ThrowAsync<OperationCanceledException>();
         runner.Requests.Should().ContainSingle();
@@ -804,7 +804,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var progress = new ListProgress();
         var translator = new AbAv1OutputTranslator(AbAv1Stage.Encode, 95, 80, () => TimeSpan.Zero).Wrap(progress);
 
-        await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, [], translator);
+        await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, new AudioPlan([], [], 1), translator);
 
         progress.Lines.Should().Equal(
             JobProgress.Step("Picked up the encode running on the worker."),
@@ -851,7 +851,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var worker = new StageWorker([new("running"), new("running", start), new("running", rest), new("completed 0")], log: string.Empty);
         var progress = new ListProgress();
 
-        await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, [], progress);
+        await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, new AudioPlan([], [], 1), progress);
 
         progress.Lines.Where(line => line.Kind == JobProgressKind.ToolOutput).Select(line => line.Text).Should().Equal(start + rest.TrimEnd('\n'));
     }

@@ -44,6 +44,17 @@ public sealed class SettingsValidatorTests
     }
 
     [Theory]
+    [InlineData("Skip", false)]
+    [InlineData("keep", true)]
+    public void ValidateAcceptsOnlyDropOrSkipForUnsupportedAudio(string value, bool rejected)
+    {
+        var settings = CreateValidSettings();
+        settings.Quality.UnsupportedAudio = value;
+
+        Codes(settings).Contains("InvalidUnsupportedAudio").Should().Be(rejected);
+    }
+
+    [Theory]
     [InlineData("archive", "Archive", null)]
     [InlineData("Keep", "", null)]
     [InlineData("archive", "D:\\Video archive", null)]

@@ -7,6 +7,10 @@
 - `quality.crfSearch.minCrf` now defaults to `8` instead of `18`. A video that needs a CRF below 18 to reach the VMAF target can now be converted.
 - If your config leaves either setting out, the next run checks the videos it skipped as not worth converting again. A config written by `config init` sets both, so change them there to get the new values.
 
+### Fixes
+
+- iPhone 16 videos with spatial audio no longer fail to encode. FFmpeg can't copy the spatial track (`apac`), so it's left out, the stereo track is kept, and the video gets a note. Notes show wherever warnings do but don't hold a video back from `finalize --ready`; `queue list --json` and `history --json` have a new `notes` array. To keep spatial audio, set the new `quality.unsupportedAudio` to `skip`; those videos then stay unconverted. A video with no audio FFmpeg can copy is skipped under either setting. To convert videos that already failed this way, run `queue retry <job-id>`.
+
 ## [0.13.0] - 2026-10-17
 ### What the freed space cost
 

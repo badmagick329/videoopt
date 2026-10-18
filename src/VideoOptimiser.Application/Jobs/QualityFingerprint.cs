@@ -29,6 +29,10 @@ public static class QualityFingerprint
             quality.CrfSearch.MinCrf.ToString(CultureInfo.InvariantCulture),
             quality.CrfSearch.MaxCrf.ToString(CultureInfo.InvariantCulture),
             minimumBytesSaved.ToString(CultureInfo.InvariantCulture));
+        // quality.unsupportedAudio decides whether a video with such audio is converted at all, so turning skip off must
+        // unsettle those skips. Added only when it is skip, so the default leaves every earlier fingerprint, and every skip
+        // settled under it, unchanged.
+        if (quality.UnsupportedAudio.Equals(UnsupportedAudioActions.Skip, StringComparison.OrdinalIgnoreCase)) text += "|unsupportedAudio=skip";
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)))[..16];
     }
 }

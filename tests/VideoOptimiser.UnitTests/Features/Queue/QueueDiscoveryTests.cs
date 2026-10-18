@@ -160,6 +160,8 @@ public sealed class QueueDiscoveryTests : IDisposable
     [InlineData("sampleCount", true)]
     [InlineData("minimumBytesSaved", false)]
     [InlineData("minimumBytesSavedRespelled", true)]
+    [InlineData("unsupportedAudioDrop", true)]
+    [InlineData("unsupportedAudioSkip", false)]
     public async Task DiscoverAsyncSettlesASkippedOriginalOnlyWhileTheQualityBarIsUnchanged(string change, bool stillSettled)
     {
         var source = (await FilesAsync("movie.mp4"))[0];
@@ -169,6 +171,9 @@ public sealed class QueueDiscoveryTests : IDisposable
             case "sampleCount": _settings.Quality.CrfSearch.SampleCount = 9; break;
             case "minimumBytesSaved": _settings.Savings.MinimumBytesSaved = "50MiB"; break;
             case "minimumBytesSavedRespelled": _settings.Savings.MinimumBytesSaved = "1 MiB"; break;
+            // The default adds nothing to the fingerprint, so upgrading leaves every earlier skip settled.
+            case "unsupportedAudioDrop": _settings.Quality.UnsupportedAudio = "Drop"; break;
+            case "unsupportedAudioSkip": _settings.Quality.UnsupportedAudio = "skip"; break;
         }
 
         var result = await DiscoverAsync(new FixedScanner(source));

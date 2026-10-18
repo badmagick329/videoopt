@@ -6,7 +6,7 @@ namespace VideoOptimiser.Infrastructure.Persistence;
 public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
 {
     /// <summary>The newest migration below. <see cref="SqliteSchemaCheck"/> refuses a database without it; raise both together.</summary>
-    public const int CurrentVersion = 13;
+    public const int CurrentVersion = 14;
 
     public async Task InitializeAsync(string databasePath, CancellationToken cancellationToken = default)
     {
@@ -235,6 +235,13 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
                 CREATE INDEX IF NOT EXISTS ix_conversion_spans_run ON conversion_spans(run_id);
                 """, cancellationToken, transaction);
             await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (13, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
+        }
+        if (!await HasMigrationAsync(connection, 14, cancellationToken))
+        {
+            // Job notes (VOPT-125): what an attempt left out of the encode (an audio track FFmpeg cannot copy), one per line.
+            // Unlike validation_warnings they never hold a video back from bulk finalise. Null on every earlier job.
+            await ExecuteAsync(connection, "ALTER TABLE jobs ADD COLUMN notes TEXT NULL;", cancellationToken, transaction);
+            await ExecuteAsync(connection, "INSERT INTO schema_migrations(version, applied_utc) VALUES (14, $appliedUtc);", cancellationToken, transaction, new SqliteParameter("$appliedUtc", DateTimeOffset.UtcNow.ToString("O")));
         }
         await transaction.CommitAsync(cancellationToken);
     }

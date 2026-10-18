@@ -25,6 +25,11 @@ public sealed class JobRecord
     /// nothing or never ran. Bulk finalise leaves a job with any out.
     /// </summary>
     public IReadOnlyList<string> ValidationWarnings { get; set; } = [];
+    /// <summary>
+    /// What the last attempt left out or changed that the user should know (VOPT-125), one line each; empty when nothing.
+    /// Not a warning: it never holds a video back from bulk finalise and counts toward nothing. A new attempt replaces it.
+    /// </summary>
+    public IReadOnlyList<string> Notes { get; set; } = [];
     public long? SourceSizeBytes { get; set; }
     public long? OutputSizeBytes { get; set; }
     public decimal? PercentageSaved { get; set; }

@@ -86,7 +86,7 @@ public static class FfprobeJsonParser
             GetInt(primaryVideo, "width"),
             GetInt(primaryVideo, "height"),
             GetLong(primaryVideo, "bit_rate") ?? OverallBitrate(format, size, duration),
-            [.. streams.Where(stream => GetString(stream, "codec_type") == "audio").Select(stream => GetString(stream, "codec_name") ?? "unknown")]);
+            [.. streams.Where(stream => GetString(stream, "codec_type") == "audio").Select(stream => new AudioTrack(GetString(stream, "codec_name") ?? "unknown", GetString(stream, "codec_tag_string")))]);
     }
 
     /// <summary>

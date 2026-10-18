@@ -628,6 +628,8 @@ internal static partial class TuiView
         var chosen = ready.FirstOrDefault(video => video.Id == m.ReviewSelection) ?? ready.FirstOrDefault();
         var warnings = WarningRows(chosen, width, listCapacity - Math.Min(Math.Max(1, ready.Count), ListRowsKept));
         listCapacity -= warnings.Count;
+        var notes = NoteRows(chosen, width, listCapacity - Math.Min(Math.Max(1, ready.Count), ListRowsKept));
+        listCapacity -= notes.Count;
 
         // While a finalise is out the Saved cell may hold a tag, so it widens to fit one, head and all, and Original and AV1
         // stay over their figures.
@@ -667,11 +669,12 @@ internal static partial class TuiView
         var start = Bars.WindowStart(items.Count, selectedRow, Math.Max(1, listCapacity));
         rows.AddRange(items.Skip(start).Take(Math.Max(1, listCapacity)));
 
-        var pinned = warnings.Count + (showSummary ? 1 : 0);
+        var pinned = warnings.Count + notes.Count + (showSummary ? 1 : 0);
         if (pinned > 0)
         {
             while (rows.Count < capacity - pinned) rows.Add(new Line().Build(width));
             rows.AddRange(warnings);
+            rows.AddRange(notes);
         }
         if (showSummary)
         {
@@ -702,17 +705,27 @@ internal static partial class TuiView
     /// watch for before <c>f</c>. With less room than they need the first rows stay and the last one ends in an ellipsis; with
     /// no room for the heading and one row they give way entirely.
     /// </summary>
-    private static List<IRenderable> WarningRows(Video? video, int width, int room)
+    private static List<IRenderable> WarningRows(Video? video, int width, int room) =>
+        TextRows(video?.Warnings ?? [], "Validation warnings:", Theme.Held, width, room);
+
+    /// <summary>
+    /// The selected video's notes (VOPT-125) below its warnings, in the soft grey of ordinary text rather than the warning
+    /// amber: a note asks nothing of the person, so it must not read as something to check.
+    /// </summary>
+    private static List<IRenderable> NoteRows(Video? video, int width, int room) =>
+        TextRows(video?.JobNotes ?? [], "Notes:", Theme.Soft, width, room);
+
+    private static List<IRenderable> TextRows(IReadOnlyList<string> texts, string heading, Color color, int width, int room)
     {
-        if (video is not { Warnings.Count: > 0 } || room < 2) return [];
+        if (texts.Count == 0 || room < 2) return [];
         const string indent = "     ";
-        var parts = video.Warnings.SelectMany(warning => TuiText.Wrap(warning, Math.Max(1, width - indent.Length))).ToList();
+        var parts = texts.SelectMany(text => TuiText.Wrap(text, Math.Max(1, width - indent.Length))).ToList();
         var shown = parts.Take(room - 1).ToList();
         if (shown.Count < parts.Count) shown[^1] = TuiText.Fit(shown[^1] + "…", Math.Max(1, width - indent.Length));
         return
         [
-            new Line().Left("   ", Style.Plain).Flex("Validation warnings:", Theme.Of(Theme.Dim)).Build(width),
-            .. shown.Select(part => new Line().Left(indent, Style.Plain).Flex(part, Theme.Of(Theme.Held)).Build(width))
+            new Line().Left("   ", Style.Plain).Flex(heading, Theme.Of(Theme.Dim)).Build(width),
+            .. shown.Select(part => new Line().Left(indent, Style.Plain).Flex(part, Theme.Of(color)).Build(width))
         ];
     }
 

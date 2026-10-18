@@ -619,6 +619,24 @@ public sealed class TuiActionTests : IDisposable
         prepared.Confirm.OnYes.Should().BeOfType<FinaliseVideos>().Which.Ids.Should().Equal(warned.Id);
     }
 
+    /// <summary>A noted video is not a warned one: F takes it with the clean ones, and f lists its notes after any warnings.</summary>
+    [Fact]
+    public async Task ANotedVideoIsFinalisedInBulkAndFListsItsNotes()
+    {
+        var noted = await _rig.NotedAsync("clip-a.mp4", "Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept.");
+
+        var bulk = await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(null), _rig.Settings, default);
+        var single = await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(noted.Id), _rig.Settings, default);
+
+        bulk.Confirm!.OnYes.Should().BeOfType<FinaliseVideos>().Which.Ids.Should().Equal(noted.Id);
+        bulk.Confirm.Detail.Should().NotContain("Left out");
+        single.Confirm!.Detail.Split('\n').Should().Equal(
+            "clip-a.mp4  1000 B -> 400 B, 60.0% saved",
+            "Notes:",
+            "  Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept.",
+            "Each original is deleted and its AV1 takes its place as an .mp4 file.");
+    }
+
     [Fact]
     public async Task AfterFTheWarnedVideosItLeftOutAreTheLastLine()
     {

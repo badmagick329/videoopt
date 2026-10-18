@@ -199,7 +199,31 @@ public sealed class SqliteDatabaseInitializerTests : IDisposable
         (await new SqliteJobRepository(new SqliteDatabaseInitializer()).GetAsync(databasePath, job))!.Status.Should().Be(JobStatus.Completed);
         (await RecordRows.QueryAsync(databasePath, "SELECT (SELECT COUNT(*) FROM runs), (SELECT COUNT(*) FROM conversion_spans), (SELECT COUNT(*) FROM workers), (SELECT COUNT(*) FROM schema_migrations WHERE version = 13);"))
             .Single().Should().Equal(1L, 1L, 1L, 1L);
-        SqliteDatabaseInitializer.CurrentVersion.Should().Be(13);
+    }
+
+    [Fact]
+    public async Task MigrationFourteenAddsNotesToAnEarlierJobAndKeepsItsWarnings()
+    {
+        var databasePath = Path.Combine(_directory, "migration-thirteen.db");
+        await new SqliteDatabaseInitializer().InitializeAsync(databasePath);
+        var ready = Guid.NewGuid();
+        // A database exactly as migration 13 left it, with a warned ready video from then.
+        await ExecuteAsync(databasePath, $$"""
+            ALTER TABLE jobs DROP COLUMN notes;
+            DELETE FROM schema_migrations WHERE version = 14;
+            INSERT INTO jobs (id, source_path, source_fingerprint, status, validation_warnings, created_utc, updated_utc) VALUES
+                ('{{ready:N}}', 'C:\Videos\old.mp4', 'f', {{(int)JobStatus.ReadyToFinalize}}, 'The decode test failed.', '2026-01-01T00:00:00.0000000+00:00', '2026-01-01T00:00:00.0000000+00:00');
+            """);
+
+        var repository = new SqliteJobRepository(new SqliteDatabaseInitializer());
+        var job = (await repository.GetAsync(databasePath, ready))!;
+        job.Notes.Should().BeEmpty();
+        job.ValidationWarnings.Should().Equal("The decode test failed.");
+        job.Notes = ["Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept."];
+        await repository.UpdateAsync(databasePath, job);
+
+        (await repository.GetAsync(databasePath, ready))!.Notes.Should().Equal(job.Notes);
+        SqliteDatabaseInitializer.CurrentVersion.Should().Be(14);
     }
 
     /// <summary>A database exactly as migration 7 left it: the current schema without migration 8's columns.</summary>
