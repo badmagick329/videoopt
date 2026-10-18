@@ -63,7 +63,7 @@ internal static class ServiceRegistration
         services.AddSingleton<IOnlyCopyGuard, OnlyCopyGuard>();
         // Shared: `run` and `immich run` both restage a job's lost original before converting it. A lambda, so the
         // optional clock keeps its default.
-        services.AddSingleton<IImmichRestaging>(provider => new ImmichRestaging(provider.GetRequiredService<IImmichClientFactory>(), provider.GetRequiredService<IJobRepository>()));
+        services.AddSingleton<IImmichRestaging>(provider => new ImmichRestaging(provider.GetRequiredService<IImmichClientFactory>(), provider.GetRequiredService<IJobRepository>(), provider.GetRequiredService<IFileFingerprintService>()));
         services.AddSingleton<IFileReadinessService, FileReadinessService>();
         services.AddSingleton<Func<string, IMediaProbe>>(_ => ffprobePath => new FfprobeMediaProbe(ffprobePath));
         services.AddSingleton<Func<string, IMediaTimelineProbe>>(_ => ffprobePath => new FfprobeMediaTimelineProbe(ffprobePath));

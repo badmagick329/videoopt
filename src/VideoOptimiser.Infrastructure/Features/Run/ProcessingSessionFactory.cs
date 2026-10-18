@@ -51,7 +51,7 @@ internal sealed class LocalProcessingSession(JobRecord job, ICrfSearchClient crf
     public Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.FromResult(false);
     public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StopAndRemoveWorkspacesAsync(IReadOnlySet<Guid> jobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private async Task<T> RunLoggedAsync<T>(string sourcePath, string stageName, IProgress<JobProgress>? progress, Func<IProgress<JobProgress>, Task<T>> run)

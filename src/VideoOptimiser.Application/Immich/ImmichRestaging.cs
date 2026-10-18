@@ -1,5 +1,6 @@
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.Immich;
@@ -13,7 +14,7 @@ namespace VideoOptimiser.Application.Immich;
 /// is about to convert. Only Immich's answer that the asset is gone (HTTP 400 or 404) or
 /// holds other bytes fails a job; any other failure means Immich can't be used now, and the jobs left stay queued.
 /// </summary>
-public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository jobs, Func<DateTimeOffset>? utcNow = null) : IImmichRestaging
+public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository jobs, IFileFingerprintService fingerprints, Func<DateTimeOffset>? utcNow = null) : IImmichRestaging
 {
     private readonly Func<DateTimeOffset> _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
 
@@ -61,6 +62,7 @@ public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository
                 }
 
                 keep = true;
+                await RecordFingerprintAsync(databasePath, job, path, cancellationToken);
                 progress?.Report(new ImmichProgress.Restaged(Path.GetFileName(path), null));
             }
             // The asset is gone. A server error or a rate limit says nothing about the asset, so it ends the restaging instead.
@@ -73,6 +75,24 @@ public sealed class ImmichRestaging(IImmichClientFactory clients, IJobRepository
             {
                 if (!keep) ImmichStaging.DeleteStaged(path);
             }
+        }
+    }
+
+    /// <summary>
+    /// The checksum proved the copy holds the bytes the job was created for, but its last-write time is new, so its fingerprint
+    /// differs from the stored one. Left stored, the processor would take the copy for an edited original and throw away the
+    /// job's CRF and any encode on the worker (VOPT-138).
+    /// </summary>
+    private async Task RecordFingerprintAsync(string databasePath, JobRecord job, string path, CancellationToken cancellationToken)
+    {
+        job.SourceFingerprint = await fingerprints.CreateAsync(path, cancellationToken);
+        try
+        {
+            await jobs.UpdateAsync(databasePath, job, cancellationToken);
+        }
+        catch (JobChangedException)
+        {
+            // Held or dropped from another terminal since it was read; that change stands, and the run passes over it.
         }
     }
 

@@ -267,15 +267,15 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         EnsureSuccess(result, "Remote cleanup");
     }
 
-    public async Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default)
+    public async Task StopAndRemoveWorkspacesAsync(IReadOnlySet<Guid> jobIds, CancellationToken cancellationToken = default)
     {
         // Decided here, from the worker's own listing: the shell below only acts on the names it is handed. A missing working
         // directory lists nothing.
         var listing = await SshAsync($"ls -1 -- {Quote(_root)} 2>/dev/null; true", cancellationToken: cancellationToken);
-        var finished = listing.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(name => Guid.TryParseExact(name, "N", out var id) && id.ToString("N") == name && finishedJobIds.Contains(id))
+        var workspaces = listing.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(name => Guid.TryParseExact(name, "N", out var id) && id.ToString("N") == name && jobIds.Contains(id))
             .ToArray();
-        if (finished.Length == 0) return;
+        if (workspaces.Length == 0) return;
         // The stage script is a process-group leader whose pid its stage directory keeps (see RunStageAsync), so the group takes
         // ab-av1 and ffmpeg with it. The command line is checked first: a pid file that outlived its stage may name a pid that
         // something else now holds.
@@ -302,7 +302,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             "rm -rf -- \"$workspace\"",
             "done"
         ]);
-        var removal = await SshAsync(stopAndRemove, string.Join("\n", finished) + "\n", cancellationToken: cancellationToken);
+        var removal = await SshAsync(stopAndRemove, string.Join("\n", workspaces) + "\n", cancellationToken: cancellationToken);
         EnsureSuccess(removal, "Remote workspace removal");
     }
 

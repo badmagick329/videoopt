@@ -31,13 +31,14 @@ public interface IProcessingSession : IAsyncDisposable
     Task CleanupAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Stops the stage processes and removes the workspaces on the worker of the jobs in <paramref name="finishedJobIds"/>, the
-    /// ones this database knows ended. A dropped video's CRF search or encode keeps running there, detached, and nothing else
-    /// would ever end it or free its disk (VOPT-90). Any other workspace is left alone: that of an open job, a stopped one
-    /// included, because a later run picks it up, and that of a job this database does not know, because a manual worker can be
-    /// shared by two databases. Nothing on this PC.
+    /// Stops the stage processes and removes the workspaces on the worker of the jobs in <paramref name="jobIds"/>; any other
+    /// workspace is left alone. A stage runs detached, so a removed workspace alone would not end its CRF search or encode.
+    /// Callers pass the jobs whose work there is no longer wanted: those this database knows ended, whose search or encode
+    /// nothing else would ever end or free the disk of (VOPT-90), and a job whose original changed since its work there
+    /// started (VOPT-138). Never an open job's workspace that a later run picks up, nor one of a job this database does not
+    /// know, because a manual worker can be shared by two databases. Nothing on this PC.
     /// </summary>
-    Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default);
+    Task StopAndRemoveWorkspacesAsync(IReadOnlySet<Guid> jobIds, CancellationToken cancellationToken = default);
 }
 
 public interface IProcessingSessionFactory

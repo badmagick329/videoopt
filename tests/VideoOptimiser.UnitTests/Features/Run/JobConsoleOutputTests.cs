@@ -194,7 +194,7 @@ public sealed class JobConsoleOutputTests : IDisposable
         }
 
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task StopAndRemoveWorkspacesAsync(IReadOnlySet<Guid> jobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

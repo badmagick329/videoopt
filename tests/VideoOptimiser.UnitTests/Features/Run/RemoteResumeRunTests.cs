@@ -92,7 +92,7 @@ public sealed class RemoteResumeRunTests : IDisposable
             "Stopped. The encoded output is waiting on the worker video-optimiser-1, which stays up, billed hourly.",
             $"To resume: video-optimiser run --config \"{config}\"",
             $"To delete it instead: video-optimiser worker delete --config \"{config}\" (the finished encode is lost)"));
-        session.Calls.Should().Equal("Sweep", "HasFinishedEncode 1", "Retrieve 1");
+        session.Calls.Should().Equal("StopAndRemove", "HasFinishedEncode 1", "Retrieve 1");
         (await _repository.ListAsync(DatabasePath, terminal: false)).Single().ResumeStatus.Should().Be(JobStatus.Downloading);
     }
 
@@ -127,7 +127,8 @@ public sealed class RemoteResumeRunTests : IDisposable
     {
         var source = Path.Combine(_directory, "movie.mp4");
         await File.WriteAllTextAsync(source, "original video data");
-        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = "fp", Status = JobStatus.Queued, ExecutionMode = ProcessingModes.RemoteSsh, RemoteHost = RemoteExecutionIdentity.ManagedHetzner };
+        // The original as the earlier run read it, so the rerun takes it as unchanged.
+        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = await new FileFingerprintService().CreateAsync(source), Status = JobStatus.Queued, ExecutionMode = ProcessingModes.RemoteSsh, RemoteHost = RemoteExecutionIdentity.ManagedHetzner };
         job.RemoteWorkspace = $"/var/tmp/video-optimiser/{job.Id:N}";
         job = await _repository.CreateAsync(DatabasePath, job);
         (job.Status, job.ResumeStatus, job.Crf, job.Attempt) = (JobStatus.Interrupted, stoppedIn, 42, 1);

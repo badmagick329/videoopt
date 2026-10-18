@@ -3,6 +3,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Domain.Jobs;
 using VideoOptimiser.Infrastructure.Persistence;
+using VideoOptimiser.Infrastructure.TemporaryOutputs;
 
 namespace VideoOptimiser.UnitTests.Immich;
 
@@ -58,7 +59,7 @@ public sealed class ImmichRestagingTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private ImmichRestaging Restaging() => new(_immich, _repository);
+    private ImmichRestaging Restaging() => new(_immich, _repository, new FileFingerprintService());
 
     /// <summary>A queued Immich job whose downloaded copy is missing.</summary>
     private Task<JobRecord> JobAsync(ImmichAsset asset, string path) => _repository.CreateAsync(_settings.Database.Path, new JobRecord

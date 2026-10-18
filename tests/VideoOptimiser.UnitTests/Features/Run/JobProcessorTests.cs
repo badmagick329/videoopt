@@ -5,6 +5,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Validate;
+using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Application.Tools;
@@ -25,6 +26,8 @@ public sealed class JobProcessorTests : IDisposable
     public JobProcessorTests() => Directory.CreateDirectory(_directory);
 
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
+
+    private const string RestartLine = "The original changed after this video was stopped, so the conversion starts over.";
 
     /// <summary>
     /// The job also keeps the quality settings that chose its CRF, since calibrate counts a conversion only under the settings
@@ -197,7 +200,7 @@ public sealed class JobProcessorTests : IDisposable
         {
             Id = id,
             SourcePath = source,
-            SourceFingerprint = "stale",
+            SourceFingerprint = await Fingerprint(source),
             Status = JobStatus.Interrupted,
             ResumeStatus = JobStatus.Encoding,
             Attempt = 1,
@@ -228,7 +231,7 @@ public sealed class JobProcessorTests : IDisposable
         {
             Id = id,
             SourcePath = source,
-            SourceFingerprint = "stale",
+            SourceFingerprint = await Fingerprint(source),
             Status = JobStatus.Interrupted,
             ResumeStatus = JobStatus.Encoding,
             Attempt = 1,
@@ -266,7 +269,7 @@ public sealed class JobProcessorTests : IDisposable
         {
             Id = id,
             SourcePath = source,
-            SourceFingerprint = "stale",
+            SourceFingerprint = await Fingerprint(source),
             Status = JobStatus.Interrupted,
             ResumeStatus = JobStatus.Validating,
             Attempt = 1,
@@ -281,6 +284,37 @@ public sealed class JobProcessorTests : IDisposable
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
         result.Job.OutputPath.Should().Be(output);
         encoder.CallCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// VOPT-138: the AV1 on this PC is of the original before it was edited, so it is deleted with its manifest, and the job
+    /// searches and encodes the edited original under a new attempt. The restart line covers the delete.
+    /// </summary>
+    [Fact]
+    public async Task ResumingALocalValidationAfterTheOriginalChangedDeletesTheOldAv1AndConvertsAgain()
+    {
+        var source = await SourceAsync("edited.mp4");
+        var manifests = new OutputManifestStore();
+        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = await Fingerprint(source), Status = JobStatus.Interrupted, ResumeStatus = JobStatus.Validating, Attempt = 1, Crf = 30 };
+        var output = await WriteOutputAsync(job, source);
+        (job.OutputPath, job.ManifestPath) = (output, manifests.GetPath(output));
+        await _repository.CreateAsync(DatabasePath, job);
+        await EditAsync(source);
+        var encoder = new FakeEncoder();
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(encoder: encoder, manifests: manifests).ProcessAsync(DatabasePath, source, Settings(), force: false, new ListProgress(reported));
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
+        (result.Job.Attempt, result.Job.Crf, encoder.CallCount).Should().Be((2, 42, 1));
+        (File.Exists(output), File.Exists(manifests.GetPath(output))).Should().Be((false, false));
+        Steps(reported).Should().Equal(
+            RestartLine,
+            "Finding the best CRF for VMAF 95 (2 test clips of 20s each).",
+            "Chose CRF 42 in 0s.",
+            "Encoding at CRF 42.",
+            "Checking the output: streams, duration, savings and decode test.",
+            "Ready to finalise: 100 B -> 50 B, 50.0% saved.");
     }
 
     [Fact]
@@ -576,7 +610,7 @@ public sealed class JobProcessorTests : IDisposable
         var result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false, new ListProgress(reported));
 
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
-        session.Calls.Should().Equal("Sweep", "HasFinishedEncode 1", "Retrieve 1", "Cleanup");
+        session.Calls.Should().Equal("StopAndRemove", "HasFinishedEncode 1", "Retrieve 1", "Cleanup");
         result.Job.Attempt.Should().Be(1, "the finished encode is the one fetched, not a new attempt");
         Steps(reported).Should().Equal(saysItFinished
             ? ["The encode on the worker had already finished.", "Checking the output: streams, duration, savings and decode test.", "Ready to finalise: 100 B -> 50 B, 50.0% saved."]
@@ -598,7 +632,7 @@ public sealed class JobProcessorTests : IDisposable
         var result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false);
 
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
-        session.Calls.Should().Equal("Sweep", "HasFinishedEncode 1", "Stage", "Encode 1", "Retrieve 1", "Cleanup");
+        session.Calls.Should().Equal("StopAndRemove", "HasFinishedEncode 1", "Stage", "Encode 1", "Retrieve 1", "Cleanup");
         result.Job.Attempt.Should().Be(1);
     }
 
@@ -631,30 +665,118 @@ public sealed class JobProcessorTests : IDisposable
 
     /// <summary>
     /// The AV1 is already on this PC, so checking it needs no worker: nothing is asked of the session, and the run is not made to
-    /// create a server for it (VOPT-89). Its workspace is left for the sweep of jobs that are no longer open.
+    /// create a server for it (VOPT-89). Its workspace is left for the sweep of jobs that are no longer open. Once the original
+    /// is edited that AV1 is of the old video (VOPT-138): it is deleted, and the job needs the worker to start again there, its
+    /// old workspace stopped and removed first.
     /// </summary>
-    [Fact]
-    public async Task AResumeFromValidatingWithTheAv1OnThisPcNeedsNoWorker()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AResumeFromValidatingWithTheAv1OnThisPcNeedsNoWorkerUnlessTheOriginalChanged(bool edited)
     {
         var source = await SourceAsync();
         var settings = Settings(remote: true);
         var job = await StopRemoteJobAsync(source, settings, JobStatus.Validating);
-        var output = Path.Combine(_directory, ".video-optimiser", $"movie.{job.Id:N}.1.encoding.mp4");
-        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-        await File.WriteAllTextAsync(output, "av1");
+        var output = await WriteOutputAsync(job, source);
         var manifests = new OutputManifestStore();
-        await manifests.SaveAsync(new OutputManifest { SourcePath = source, SourceFingerprint = "fp", OutputPath = output, Crf = 42, CreatedUtc = DateTimeOffset.UtcNow });
         job.OutputPath = output;
         job.ManifestPath = manifests.GetPath(output);
         await _repository.UpdateAsync(DatabasePath, job);
+        if (edited) await EditAsync(source);
         var session = new ResumedWorkerSession();
         var processor = Processor(session: session);
 
-        (await processor.NeedsWorkerAsync(DatabasePath, source, settings, force: false)).Should().BeFalse();
+        (await processor.NeedsWorkerAsync(DatabasePath, source, settings, force: false)).Should().Be(edited);
         var result = await processor.ProcessAsync(DatabasePath, source, settings, force: false);
 
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
-        session.Calls.Should().BeEmpty();
+        if (!edited)
+        {
+            session.Calls.Should().BeEmpty();
+            return;
+        }
+        session.Calls.Should().Equal("StopAndRemove", "StopAndRemove", "Stage", "Search", "Encode 2", "Retrieve 2", "Cleanup");
+        session.Removals[0].Should().Equal(job.Id);
+        (File.Exists(output), File.Exists(manifests.GetPath(output))).Should().Be((false, false));
+        result.Job.OutputPath.Should().NotBe(output);
+    }
+
+    /// <summary>
+    /// VOPT-138: an original edited while its job was stopped on the worker, such as one re-tagged with another date, makes
+    /// everything there of the old video. Its workspace is stopped and removed before anything else is asked of the worker, so
+    /// a finished encode is not downloaded, a running one is not followed, and a search stopped midway is not picked up; the
+    /// job uploads, searches and encodes again under a new attempt.
+    /// </summary>
+    [Theory]
+    [InlineData(JobStatus.Encoding, true, 2)]
+    [InlineData(JobStatus.Encoding, false, 2)]
+    [InlineData(JobStatus.CrfSearching, false, 1)]
+    public async Task AResumeAfterTheOriginalChangedStopsTheOldWorkOnTheWorkerAndStartsAgain(JobStatus stoppedIn, bool encodeFinished, int attempt)
+    {
+        var source = await SourceAsync();
+        var settings = Settings(remote: true);
+        var job = await StopRemoteJobAsync(source, settings, stoppedIn);
+        await EditAsync(source);
+        var session = new ResumedWorkerSession { EncodeFinished = encodeFinished };
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false, new ListProgress(reported));
+
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
+        session.Calls.Should().Equal("StopAndRemove", "StopAndRemove", "Stage", "Search", $"Encode {attempt}", $"Retrieve {attempt}", "Cleanup");
+        session.Removals[0].Should().Equal(job.Id);
+        result.Job.Attempt.Should().Be(attempt);
+        result.Job.SourceFingerprint.Should().Be(await Fingerprint(source));
+        Steps(reported)[0].Should().Be(RestartLine);
+    }
+
+    /// <summary>A job with no stored fingerprint has nothing to compare, so its resume reattaches as before.</summary>
+    [Fact]
+    public async Task AResumeWithNoStoredFingerprintReattachesWithoutStartingAgain()
+    {
+        var source = await SourceAsync();
+        var settings = Settings(remote: true);
+        var job = await StopRemoteJobAsync(source, settings, JobStatus.Encoding);
+        job.SourceFingerprint = string.Empty;
+        await _repository.UpdateAsync(DatabasePath, job);
+        var session = new ResumedWorkerSession { EncodeFinished = true };
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false, new ListProgress(reported));
+
+        session.Calls.Should().Equal("StopAndRemove", "HasFinishedEncode 1", "Retrieve 1", "Cleanup");
+        session.Removals[0].Should().BeEmpty("the sweep names only ended jobs");
+        result.Job.Attempt.Should().Be(1);
+        Steps(reported).Should().NotContain(RestartLine);
+    }
+
+    /// <summary>
+    /// A downloaded Immich copy that <c>cleanup</c> deleted comes back with the same bytes but a new last-write time, so a
+    /// different fingerprint. Restaging stores the new one, so the stopped encode is fetched rather than thrown away as the
+    /// encode of an edited original. The processor gets the job from the database, as the run does.
+    /// </summary>
+    [Fact]
+    public async Task AnImmichCopyDownloadedAgainResumesTheEncodeItWasStoppedIn()
+    {
+        var settings = Settings(remote: true);
+        settings.Immich.StagingDirectory = Path.Combine(_directory, "staging");
+        var immich = new InMemoryImmich(new DateTimeOffset(2024, 3, 4, 12, 0, 0, TimeSpan.Zero));
+        var asset = immich.Add("PXL.mp4", "original video data");
+        var source = await SourceAsync(Path.Combine("staging", asset.Id, "PXL.mp4"));
+        File.SetLastWriteTimeUtc(source, new DateTime(2024, 3, 5, 0, 0, 0, DateTimeKind.Utc));
+        var job = await StopRemoteJobAsync(source, settings, JobStatus.Encoding);
+        (job.SourceKind, job.ImmichAssetId, job.ImmichChecksum) = (JobSourceKind.Immich, asset.Id, asset.Checksum);
+        await _repository.UpdateAsync(DatabasePath, job);
+        File.Delete(source);
+        var session = new ResumedWorkerSession { EncodeFinished = true };
+
+        var restage = await new ImmichRestaging(immich, _repository, new FileFingerprintService()).RestageMissingAsync(DatabasePath, settings, [job]);
+        var result = await Processor(session: session).ProcessAsync(DatabasePath, source, settings, force: false);
+
+        restage.Failed.Should().BeEmpty();
+        result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
+        session.Calls.Should().Equal("StopAndRemove", "HasFinishedEncode 1", "Retrieve 1", "Cleanup");
+        result.Job.Attempt.Should().Be(1);
     }
 
     /// <summary>
@@ -679,8 +801,8 @@ public sealed class JobProcessorTests : IDisposable
         await processor.ProcessAsync(DatabasePath, await SourceAsync("a.mp4"), settings, force: false);
         await processor.ProcessAsync(DatabasePath, await SourceAsync("b.mp4"), settings, force: false);
 
-        session.Sweeps.Should().ContainSingle().Which.Should().BeEquivalentTo(new[] { dropped.Id, failed.Id });
-        session.Calls.Take(2).Should().Equal("Sweep", "Stage");
+        session.Removals.Should().ContainSingle().Which.Should().BeEquivalentTo(new[] { dropped.Id, failed.Id });
+        session.Calls.Take(2).Should().Equal("StopAndRemove", "Stage");
     }
 
     /// <summary>The sweep is housekeeping: a worker that cannot answer it fails the video's own stage, not the video before that.</summary>
@@ -688,7 +810,7 @@ public sealed class JobProcessorTests : IDisposable
     public async Task AFailedSweepDoesNotFailTheVideo()
     {
         var source = await SourceAsync();
-        var session = new ResumedWorkerSession { SweepFailure = new RemoteConnectionException("SSH connection failed: timed out.") };
+        var session = new ResumedWorkerSession { RemovalFailure = new RemoteConnectionException("SSH connection failed: timed out.") };
 
         var result = await Processor(session: session).ProcessAsync(DatabasePath, source, Settings(remote: true), force: false);
 
@@ -708,15 +830,34 @@ public sealed class JobProcessorTests : IDisposable
         Steps(reported).Should().Contain("Chose CRF 42.");
     }
 
-    /// <summary>Stops a job on a worker in <paramref name="stoppedIn"/> with its CRF chosen and one attempt made, as an earlier run left it.</summary>
+    /// <summary>
+    /// Stops a job on a worker in <paramref name="stoppedIn"/>, as an earlier run left it: with the original's fingerprint as
+    /// that run read it, its CRF chosen and one attempt made, or, stopped in the search, neither.
+    /// </summary>
     private async Task<JobRecord> StopRemoteJobAsync(string source, AppSettings settings, JobStatus stoppedIn)
     {
-        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = "fp", Status = JobStatus.Queued };
+        var job = new JobRecord { Id = Guid.NewGuid(), SourcePath = source, SourceFingerprint = await Fingerprint(source), Status = JobStatus.Queued };
         JobCompatibility.Apply(job, JobCompatibility.ExpectedBinding(job.Id, settings));
         job = await _repository.CreateAsync(DatabasePath, job);
-        (job.Status, job.ResumeStatus, job.Crf, job.Attempt) = (JobStatus.Interrupted, stoppedIn, 42, 1);
+        var searched = stoppedIn != JobStatus.CrfSearching;
+        (job.Status, job.ResumeStatus, job.Crf, job.Attempt) = (JobStatus.Interrupted, stoppedIn, searched ? 42 : null, searched ? 1 : 0);
         await _repository.UpdateAsync(DatabasePath, job);
         return job;
+    }
+
+    private static Task<string> Fingerprint(string source) => new FileFingerprintService().CreateAsync(source);
+
+    /// <summary>Edits the original as another app would, such as one fixing its date or place.</summary>
+    private static Task EditAsync(string source) => File.WriteAllTextAsync(source, "original video data, re-tagged");
+
+    /// <summary>The AV1 and manifest of attempt 1 of <paramref name="job"/>, on this PC.</summary>
+    private async Task<string> WriteOutputAsync(JobRecord job, string source)
+    {
+        var output = Path.Combine(_directory, ".video-optimiser", $"{Path.GetFileNameWithoutExtension(source)}.{job.Id:N}.1.encoding.mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        await File.WriteAllTextAsync(output, "av1");
+        await new OutputManifestStore().SaveAsync(new OutputManifest { SourcePath = source, SourceFingerprint = job.SourceFingerprint, OutputPath = output, Crf = 42, CreatedUtc = DateTimeOffset.UtcNow });
+        return output;
     }
 
     /// <summary>An original of 19 B at <paramref name="name"/>, a path under the test's directory.</summary>
@@ -829,7 +970,7 @@ public sealed class JobProcessorTests : IDisposable
         public Task<bool> HasFinishedEncodeAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task RetrieveOutputAsync(string outputPath, int attempt, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task StopAndRemoveWorkspacesAsync(IReadOnlySet<Guid> jobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
@@ -867,7 +1008,7 @@ public sealed class JobProcessorTests : IDisposable
         }
 
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task StopAndRemoveWorkspacesAsync(IReadOnlySet<Guid> jobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
@@ -922,7 +1063,7 @@ public sealed class JobProcessorTests : IDisposable
         }
 
         public Task CleanupAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task StopAndRemoveWorkspacesAsync(IReadOnlySet<Guid> jobIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

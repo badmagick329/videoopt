@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixes
+
+- If you edit a stopped video's original before the next run, for example to fix its date or location, the run now converts it again from the start. It used to reuse the CRF, upload or encode made from the old file, and finalising then replaced your edited original with an AV1 of the old version, so the edits were lost.
+
 ## [0.14.0] - 2026-10-18
 ### Defaults
 

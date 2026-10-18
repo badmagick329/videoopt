@@ -143,17 +143,17 @@ internal sealed class ResumedWorkerSession : IProcessingSession
         return Task.CompletedTask;
     }
 
-    /// <summary>The open jobs each sweep was told to keep; a sweep is also a call.</summary>
-    public List<IReadOnlySet<Guid>> Sweeps { get; } = [];
+    /// <summary>The jobs whose workspaces each call was told to stop and remove, in order; each is also a call.</summary>
+    public List<IReadOnlySet<Guid>> Removals { get; } = [];
 
-    /// <summary>Thrown by each sweep, as a worker that cannot be reached would.</summary>
-    public Exception? SweepFailure { get; init; }
+    /// <summary>Thrown by each removal, as a worker that cannot be reached would.</summary>
+    public Exception? RemovalFailure { get; init; }
 
-    public Task RemoveFinishedWorkspacesAsync(IReadOnlySet<Guid> finishedJobIds, CancellationToken cancellationToken = default)
+    public Task StopAndRemoveWorkspacesAsync(IReadOnlySet<Guid> jobIds, CancellationToken cancellationToken = default)
     {
-        Calls.Add("Sweep");
-        Sweeps.Add(finishedJobIds);
-        return SweepFailure is null ? Task.CompletedTask : Task.FromException(SweepFailure);
+        Calls.Add("StopAndRemove");
+        Removals.Add(jobIds);
+        return RemovalFailure is null ? Task.CompletedTask : Task.FromException(RemovalFailure);
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

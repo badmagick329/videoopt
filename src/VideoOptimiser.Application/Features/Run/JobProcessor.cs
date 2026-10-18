@@ -75,6 +75,11 @@ public sealed class JobProcessor(
             {
                 return await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
             }
+            // Settled before anything below decides what to reuse; an empty stored fingerprint has nothing to compare.
+            if (ChangedSinceLastRun(job, fingerprint))
+            {
+                resumeStatus = await DiscardEarlierWorkAsync(job, resumeStatus, session, progress, cancellationToken);
+            }
             job.SourceFingerprint = fingerprint;
             var verdict = await CheckSourceAsync(path, job.SourceKind, settings, force, cancellationToken);
             // Saved with the job's next update. This covers a job queued before migration 8; for the rest it describes the
@@ -244,8 +249,9 @@ public sealed class JobProcessor(
         var path = Path.GetFullPath(job.SourcePath);
         if (!File.Exists(path)) return false;
         if (!job.IsQueued) return false;
-        // The AV1 is on this PC, so its validation runs here whatever the job did on the worker.
-        if (CanReuseOutput(job, job.ResumeStatus)) return false;
+        // The AV1 is on this PC, so its validation runs here whatever the job did on the worker; unless the original changed
+        // since, when the job starts again on the worker.
+        if (CanReuseOutput(job, job.ResumeStatus) && !await ChangedSinceLastRunAsync(job, path, cancellationToken)) return false;
         if (JobCompatibility.Evaluate(job, settings).Status == JobCompatibilityStatus.Incompatible) return false;
         // A file still being written or briefly unreadable by ffprobe may be fine by the time the job runs, and a job that
         // reaches a remote stage with no worker ensured stops with nothing to resume on. So a passing condition that can
@@ -279,7 +285,7 @@ public sealed class JobProcessor(
         try
         {
             var finished = (await jobs.ListAsync(databasePath, terminal: true, cancellationToken)).Select(job => job.Id).ToHashSet();
-            await session.RemoveFinishedWorkspacesAsync(finished, cancellationToken);
+            await session.StopAndRemoveWorkspacesAsync(finished, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -289,6 +295,53 @@ public sealed class JobProcessor(
     /// <summary>A job stopped while its AV1 was being checked, with that AV1 and its manifest still on this PC: nothing is left to encode or fetch.</summary>
     private bool CanReuseOutput(JobRecord job, JobStatus? resumeStatus) =>
         resumeStatus == JobStatus.Validating && job.OutputPath is not null && File.Exists(job.OutputPath) && File.Exists(manifests.GetPath(job.OutputPath));
+
+    /// <summary>Whether the original differs from the one the job last read; a job with no stored fingerprint has nothing to compare.</summary>
+    private static bool ChangedSinceLastRun(JobRecord job, string fingerprint) =>
+        job.SourceFingerprint.Length > 0 && !string.Equals(job.SourceFingerprint, fingerprint, StringComparison.Ordinal);
+
+    /// <summary>
+    /// <see cref="ChangedSinceLastRun(JobRecord, string)"/> for the prediction. An original that cannot be read counts as
+    /// unchanged: processing fails it before any remote stage.
+    /// </summary>
+    private async Task<bool> ChangedSinceLastRunAsync(JobRecord job, string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return ChangedSinceLastRun(job, await fingerprints.CreateAsync(path, cancellationToken));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The original changed since the job last ran, as when someone fixes its date or place in another app, so everything the job
+    /// made is of the old content: its CRF, the AV1 on this PC, and the upload, search and encode on the worker (VOPT-138).
+    /// Reattaching or reusing any of it would finalise an AV1 of the old video under the new fingerprint, and lose the edits.
+    /// The worker's workspace is stopped and removed before the job changes, because removing it does not end a running
+    /// ab-av1 and a new search there would pick up the old one's result; a worker that cannot be reached leaves the job as it
+    /// was, so the next run finds the change again. A job with nothing made yet, such as one whose file changed after
+    /// <c>queue add</c>, just goes on.
+    /// </summary>
+    /// <returns>The resume point the job now has: none, so it stages again and makes a new attempt.</returns>
+    private async Task<JobStatus?> DiscardEarlierWorkAsync(JobRecord job, JobStatus? resumeStatus, IProcessingSession session, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    {
+        if (job.Crf is null && resumeStatus is null) return null;
+        progress?.Report(JobProgress.Step("The original changed after this video was stopped, so the conversion starts over."));
+        if (session.IsRemote) await session.StopAndRemoveWorkspacesAsync(new HashSet<Guid> { job.Id }, cancellationToken);
+        if (CanReuseOutput(job, resumeStatus))
+        {
+            // The restart line covers a delete that works.
+            DeleteAttemptFiles(job, progress, "the AV1 made before the original changed", reportDeleted: false);
+            job.OutputPath = null;
+            job.ManifestPath = null;
+        }
+        job.Crf = null;
+        job.QualityFingerprint = null;
+        return null;
+    }
 
     private static string EncodingOutputPath(string sourcePath, JobRecord job) =>
         Path.Combine(Path.GetDirectoryName(sourcePath)!, TemporaryOutputClassifier.FolderName, $"{Path.GetFileNameWithoutExtension(sourcePath)}.{job.Id:N}.{job.Attempt}.encoding{OutputContainer.ExtensionFor(sourcePath)}");
@@ -364,13 +417,18 @@ public sealed class JobProcessor(
     private IProgress<JobProgress>? Translating(IProgress<JobProgress>? progress, AbAv1Stage stage, QualitySettings quality) =>
         progress is null ? null : translator.Wrap(progress, stage, quality);
 
+    private void DeletePartialOutput(JobRecord job, IProgress<JobProgress>? progress) =>
+        DeleteAttemptFiles(job, progress, "the unfinished AV1 from the stopped encode", reportDeleted: true);
+
     /// <summary>
-    /// Matches by job ID and attempt rather than by <see cref="JobRecord.OutputPath"/>, because ab-av1 writes the encode
-    /// under a temporary name of its own and renames it only on success. A failed delete is reported, not fatal: the new
-    /// attempt writes a different file, and <c>cleanup</c> can remove this one later, for example once an ab-av1 orphaned
-    /// by a crash releases it.
+    /// Deletes the files of the job's current attempt: its AV1, partial or finished, and the manifest beside it. Matches by job
+    /// ID and attempt rather than by <see cref="JobRecord.OutputPath"/>, because ab-av1 writes the encode under a temporary
+    /// name of its own and renames it only on success. A failed delete is reported, not fatal: the new attempt writes a
+    /// different file, and <c>cleanup</c> can remove this one later, for example once an ab-av1 orphaned by a crash releases it.
     /// </summary>
-    private void DeletePartialOutput(JobRecord job, IProgress<JobProgress>? progress)
+    /// <param name="what">The files as the lines name them.</param>
+    /// <param name="reportDeleted">Whether each deleted file gets a line; a failed delete always does.</param>
+    private void DeleteAttemptFiles(JobRecord job, IProgress<JobProgress>? progress, string what, bool reportDeleted)
     {
         var folder = Path.Combine(Path.GetDirectoryName(job.SourcePath)!, TemporaryOutputClassifier.FolderName);
         if (!Directory.Exists(folder)) return;
@@ -380,11 +438,11 @@ public sealed class JobProcessor(
             try
             {
                 File.Delete(file);
-                progress?.Report(JobProgress.Step("Deleted the unfinished AV1 from the stopped encode."));
+                if (reportDeleted) progress?.Report(JobProgress.Step($"Deleted {what}."));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                progress?.Report(JobProgress.Step($"Could not delete the unfinished AV1 from the stopped encode ({exception.Message}); run '{hints.Command("cleanup")}' later to remove {Path.GetFileName(file)}."));
+                progress?.Report(JobProgress.Step($"Could not delete {what} ({exception.Message}); run '{hints.Command("cleanup")}' later to remove {Path.GetFileName(file)}."));
             }
         }
     }

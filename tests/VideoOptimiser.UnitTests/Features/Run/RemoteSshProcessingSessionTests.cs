@@ -737,7 +737,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var upper = new string('A', 32);
         var runner = new QueueRunner([Ok($"{dropped:N}\n{stopped:N}\n{unknown:N}\nlost+found\nnotes.txt\n{upper}\n{Guid.NewGuid():N}.tmp\n"), Ok()]);
 
-        await CreateSession(Guid.NewGuid(), runner).RemoveFinishedWorkspacesAsync(new HashSet<Guid> { dropped });
+        await CreateSession(Guid.NewGuid(), runner).StopAndRemoveWorkspacesAsync(new HashSet<Guid> { dropped });
 
         runner.Requests.Should().HaveCount(2);
         runner.Requests[0].Arguments[^1].Should().Contain("ls -1 --").And.Contain("/var/tmp/video-optimiser");
@@ -755,7 +755,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var unknown = Guid.NewGuid();
         var runner = new QueueRunner([Ok($"{unknown:N}\n")]);
 
-        await CreateSession(Guid.NewGuid(), runner).RemoveFinishedWorkspacesAsync(new HashSet<Guid> { Guid.NewGuid() });
+        await CreateSession(Guid.NewGuid(), runner).StopAndRemoveWorkspacesAsync(new HashSet<Guid> { Guid.NewGuid() });
 
         runner.Requests.Should().ContainSingle();
     }
