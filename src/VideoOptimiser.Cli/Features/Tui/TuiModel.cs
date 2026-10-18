@@ -58,8 +58,18 @@ internal sealed record LogEntry(DateTimeOffset At, LogKind Kind, string Text);
 
 internal sealed record Notice(string Text, DateTimeOffset Until);
 
+/// <summary>
+/// The dialog open over the panes, one at most: <see cref="TuiConfirm"/> or <see cref="TuiChoice"/>. A single field holds it so
+/// what is drawn, what takes the keys and the footer's hints can't name different dialogs (VOPT-141). The key guide is not one:
+/// any key closes it, so it may lie over a dialog an effect opened.
+/// </summary>
+internal abstract record TuiDialog
+{
+    private protected TuiDialog() { }
+}
+
 /// <summary>A question the user answers with y; anything else cancels. What <paramref name="OnYes"/> asks for runs as an effect.</summary>
-internal sealed record TuiConfirm(string Question, string Detail, TuiEffect OnYes);
+internal sealed record TuiConfirm(string Question, string Detail, TuiEffect OnYes) : TuiDialog;
 
 /// <summary>
 /// One line of a list dialog. Choosing it runs <paramref name="Effect"/>, or opens <paramref name="Next"/> (the start flow asks
@@ -69,7 +79,7 @@ internal sealed record TuiConfirm(string Question, string Detail, TuiEffect OnYe
 internal sealed record ChoiceOption(string Label, TuiEffect? Effect, TuiChoice? Next = null, string Hint = "");
 
 /// <summary>A list the user picks from: arrows move, Enter chooses, Esc cancels.</summary>
-internal sealed record TuiChoice(string Title, string Detail, ImmutableList<ChoiceOption> Options, int Selected);
+internal sealed record TuiChoice(string Title, string Detail, ImmutableList<ChoiceOption> Options, int Selected) : TuiDialog;
 
 /// <summary>Where the run is in its flow, from its events: the idle text says why nothing converts.</summary>
 internal enum RunPhase { Preparing, Converting, Ending }
@@ -190,8 +200,7 @@ internal sealed record TuiModel(
     ActivityState Activity,
     ImmutableList<LogEntry> Log,
     int LogScroll,
-    TuiConfirm? Confirm,
-    TuiChoice? Choice,
+    TuiDialog? Dialog,
     bool Help,
     ImmutableDictionary<string, string> Busy,
     Notice? Notice,
@@ -207,13 +216,17 @@ internal sealed record TuiModel(
 
     public Video? Converting => Open.FirstOrDefault(video => video.Group == VideoGroup.ConvertingNow);
 
+    public TuiConfirm? Confirm => Dialog as TuiConfirm;
+
+    public TuiChoice? Choice => Dialog as TuiChoice;
+
     public int Count(VideoGroup group) => group == VideoGroup.Failed ? Failed.Count : Open.Count(video => video.Group == group);
 
     public static TuiModel Initial(DateTimeOffset now, int width, int height, string subtitle) => new(
         width, height, now, subtitle, Pane.Queue, Loaded: false,
         Open: [], Failed: [], QueueSelection: null, ReviewSelection: null,
         Run: null, Requests: null, Worker: WorkerState.Unknown, Activity: ActivityState.None,
-        Log: [], LogScroll: 0, Confirm: null, Choice: null, Help: false, Busy: ImmutableDictionary<string, string>.Empty, Notice: null, ReadProblem: null, Quit: false, Finalising: null);
+        Log: [], LogScroll: 0, Dialog: null, Help: false, Busy: ImmutableDictionary<string, string>.Empty, Notice: null, ReadProblem: null, Quit: false, Finalising: null);
 }
 
 /// <summary>The worker as the pane shows it, merged from the state file and Hetzner's answer.</summary>

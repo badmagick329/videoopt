@@ -282,7 +282,7 @@ public sealed class TuiUpdateTests
         var ctrlC = Press(ConsoleKey.C, '\u0003', ConsoleModifiers.Control);
 
         After(Model(), ctrlC).Quit.Should().BeTrue();
-        After(Model() with { Confirm = new TuiConfirm("Sure?", "It matters.", new RefreshWorkerCheck(0)) }, ctrlC).Quit.Should().BeTrue();
+        After(Model() with { Dialog = new TuiConfirm("Sure?", "It matters.", new RefreshWorkerCheck(0)) }, ctrlC).Quit.Should().BeTrue();
     }
 
     [Theory]
@@ -345,7 +345,7 @@ public sealed class TuiUpdateTests
     [Fact]
     public void ADialogConfirmsOnlyOnAnExplicitYAndAnythingElseCancelsIt()
     {
-        var asking = Model() with { Confirm = new TuiConfirm("Check the worker?", "It asks Hetzner.", new RefreshWorkerCheck(3)) };
+        var asking = Model() with { Dialog = new TuiConfirm("Check the worker?", "It asks Hetzner.", new RefreshWorkerCheck(3)) };
 
         var yes = Update(asking, Letter('y'));
         yes.Model.Confirm.Should().BeNull();

@@ -131,9 +131,9 @@ internal static partial class TuiView
         (string Key, string What)[] stopFinalise = m.Finalising is { CanStop: true } ? [("esc", "stop")] : [];
         (string Key, string What)[] hints = m.Help
             ? [("any key", "close the help")]
-            : m.Confirm is not null
+            : m.Dialog is TuiConfirm
             ? [("y", "confirm"), ("any other key", "cancel")]
-            : m.Choice is not null
+            : m.Dialog is TuiChoice
                 ? [("↑↓", "move"), ("enter", "choose"), ("esc", "cancel")]
                 : m.Cost is { } page
                 ? [.. page.Report is { Runs.Count: > 0 } ? [("↑↓", "select a run"), ("pgup pgdn", "scroll its videos")] : Array.Empty<(string, string)>(),
@@ -151,7 +151,7 @@ internal static partial class TuiView
         var noticeText = notice is null ? string.Empty : TuiText.Fit(notice, Math.Max(10, m.Width * 2 / 3)) + " ";
         var line = new Line();
         var used = 1;
-        if (m.Confirm is null && m.Choice is null)
+        if (m.Dialog is null)
         {
             var name = (m.Cost is null ? m.Focus.ToString() : "Cost") + "  ";
             line.Left(" " + name, Theme.Of(Theme.Accent, bold: true));
@@ -734,8 +734,16 @@ internal static partial class TuiView
     public static IRenderable? Dialog(TuiModel m)
     {
         if (m.Help) return HelpDialog(m);
-        if (m.Choice is { } choice) return ChoiceDialog(m, choice);
-        if (m.Confirm is not { } confirm) return null;
+        return m.Dialog switch
+        {
+            TuiChoice choice => ChoiceDialog(m, choice),
+            TuiConfirm confirm => ConfirmDialog(m, confirm),
+            _ => null
+        };
+    }
+
+    private static Panel ConfirmDialog(TuiModel m, TuiConfirm confirm)
+    {
         var width = DialogWidth(m);
 
         var prompt = new Paragraph();

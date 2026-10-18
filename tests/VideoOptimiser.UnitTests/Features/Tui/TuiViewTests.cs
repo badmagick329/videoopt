@@ -504,7 +504,7 @@ public sealed class TuiViewTests
     [Fact]
     public void ADialogIsDrawnOverTheDimmedScreenWithItsQuestionAndTheYesNoFooter()
     {
-        var model = Busy() with { Confirm = new TuiConfirm("Check the worker now?", "It asks Hetzner, which can take 15 seconds.", new RefreshWorkerCheck(0)) };
+        var model = Busy() with { Dialog = new TuiConfirm("Check the worker now?", "It asks Hetzner, which can take 15 seconds.", new RefreshWorkerCheck(0)) };
 
         var rows = Rows(model);
 
@@ -522,7 +522,7 @@ public sealed class TuiViewTests
     {
         var choice = new TuiChoice("Which worker converts?", "Pick the server the run uses. Prices include VAT.",
             [new ChoiceOption("cx43  hel1", null, Hint: "EUR 0.012/h"), new ChoiceOption("cx53  fsn1", null, Hint: "EUR 0.024/h"), new ChoiceOption("No worker: convert on this PC", null)], 1);
-        var model = Busy() with { Choice = choice };
+        var model = Busy() with { Dialog = choice };
 
         var rows = Rows(model);
 

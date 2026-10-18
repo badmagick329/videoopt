@@ -373,8 +373,8 @@ internal sealed class TuiActions(
         var finalisable = JobRunOrder.Sort(open).Where(FinalizationRules.IsFinalisable).ToArray();
         JobRecord[] ready = effect.Id is { } id ? [.. finalisable.Where(job => job.Id == id)] : [.. finalisable.Where(FinalizationRules.IsBulkFinalisable)];
         JobRecord[] leftOut = effect.Id is null ? [.. finalisable.Where(FinalizationRules.IsLeftForReview)] : [];
-        if (ready.Length == 0 && leftOut.Length > 0) return NothingInBulk(effect.BusyKey!, leftOut);
-        if (ready.Length == 0) return new PreparedMsg(effect.BusyKey!, null, effect.Id is null ? "Nothing is ready to finalise." : "That video can't be finalised now.");
+        if (ready.Length == 0 && leftOut.Length > 0) return NothingInBulk(effect, leftOut);
+        if (ready.Length == 0) return new PreparedMsg(effect, null, effect.Id is null ? "Nothing is ready to finalise." : "That video can't be finalised now.");
 
         var lines = ready.Take(Named).Select(FinalizationConsole.DescribeReady).ToList();
         if (ready.Length > Named) lines.Add($"And {ready.Length - Named} more.");
@@ -394,20 +394,20 @@ internal sealed class TuiActions(
 
         var question = ready.Length == 1 ? $"Finalise {FileName(ready[0])}?" : $"Finalise {ready.Length.ToString(CultureInfo.InvariantCulture)} videos?";
         var onYes = new FinaliseVideos([.. ready.Select(job => job.Id)], [.. leftOut.Select(FileName)]);
-        return new PreparedMsg(effect.BusyKey!, new TuiConfirm(question, string.Join('\n', lines), onYes), null);
+        return new PreparedMsg(effect, new TuiConfirm(question, string.Join('\n', lines), onYes), null);
     }
 
     /// <summary>
     /// <c>F</c> when every ready video has warnings: no dialog, as <c>finalize --ready</c> asks nothing then. The footer's one
     /// line can't hold the names, so the log gets them under the same words.
     /// </summary>
-    private static PreparedMsg NothingInBulk(string key, JobRecord[] leftOut)
+    private static PreparedMsg NothingInBulk(PrepareFinalise asked, JobRecord[] leftOut)
     {
         const string message = "Nothing to finalise in bulk: every ready video has validation warnings. Watch each one, then press f on its row in Review.";
         var lines = new List<LogLine> { new(LogKind.Warning, message) };
         lines.AddRange(leftOut.Take(Named).Select(job => new LogLine(LogKind.Detail, FileName(job))));
         if (leftOut.Length > Named) lines.Add(new LogLine(LogKind.Detail, $"And {leftOut.Length - Named} more."));
-        return new PreparedMsg(key, null, message, lines);
+        return new PreparedMsg(asked, null, message, lines);
     }
 
     /// <summary>

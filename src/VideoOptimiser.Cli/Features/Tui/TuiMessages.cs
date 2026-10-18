@@ -56,9 +56,13 @@ internal enum WorkerOptionsPurpose { Create, Start }
 /// <summary>The servers a creation may choose from, or why they could not be listed (<paramref name="Error"/> may hold several lines).</summary>
 internal sealed record WorkerOptionsMsg(WorkerOptionsPurpose Purpose, IReadOnlyList<RemoteWorkerCreationOption>? Options, string? Error) : TuiMsg;
 
-/// <summary>A dialog an effect prepared from data it had to read (finalising shows what the confirmation shows), or why there is none.</summary>
+/// <summary>The finalise confirmation, prepared from the jobs it had to read, or why there is none.</summary>
+/// <param name="Asked">What asked for it: <c>f</c> on one video or <c>F</c> on all, which a dropped confirmation names.</param>
 /// <param name="Lines">For the log, when the footer's one line can't hold everything: <c>F</c> with only warned videos names them there.</param>
-internal sealed record PreparedMsg(string Key, TuiConfirm? Confirm, string? Notice, IReadOnlyList<LogLine>? Lines = null) : TuiMsg;
+internal sealed record PreparedMsg(PrepareFinalise Asked, TuiConfirm? Confirm, string? Notice, IReadOnlyList<LogLine>? Lines = null) : TuiMsg
+{
+    public string Key => Asked.BusyKey;
+}
 
 /// <summary>
 /// A thing Update asks the world to do. Update stays pure by returning these instead of doing them; <see cref="TuiEffects"/>

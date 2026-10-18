@@ -596,7 +596,7 @@ public sealed class TuiActionKeysTests
         // With no batch out yet, the preparation's key still refuses a second press.
         Notice(Update(asked.Model, Letter('F'))).Should().Be("Reading what is ready to finalise.");
 
-        var prepared = Update(asked.Model, new PreparedMsg("finalise", confirm, null));
+        var prepared = Update(asked.Model, new PreparedMsg(new PrepareFinalise(null), confirm, null));
         prepared.Model.Confirm.Should().Be(confirm);
         prepared.Model.Busy.Should().BeEmpty();
 
@@ -695,7 +695,7 @@ public sealed class TuiActionKeysTests
     private static TuiModel Batch(int selected)
     {
         var confirm = new TuiConfirm("Finalise 2 videos?", "details", new FinaliseVideos([Id(1), Id(2)]));
-        var model = Update(Reviewing(Ready(1), Ready(2), Ready(3)) with { Confirm = confirm }, Letter('y')).Model;
+        var model = Update(Reviewing(Ready(1), Ready(2), Ready(3)) with { Dialog = confirm }, Letter('y')).Model;
         return After(model, new FinaliseStartedMsg(Id(1))) with { ReviewSelection = Id(selected) };
     }
 
@@ -703,7 +703,7 @@ public sealed class TuiActionKeysTests
     [Fact]
     public void AFinalisesProgressMovesTheCountTheCurrentRowAndTheSavedTotal()
     {
-        var model = Update(Reviewing(Ready(1), Ready(2), Ready(3)) with { Confirm = new TuiConfirm("Finalise 3 videos?", "details", new FinaliseVideos([Id(1), Id(2), Id(3)])) }, Letter('y')).Model;
+        var model = Update(Reviewing(Ready(1), Ready(2), Ready(3)) with { Dialog = new TuiConfirm("Finalise 3 videos?", "details", new FinaliseVideos([Id(1), Id(2), Id(3)])) }, Letter('y')).Model;
 
         model = After(model, new FinaliseStartedMsg(Id(1)));
         model.Finalising!.Current.Should().Be(Id(1));
@@ -724,7 +724,7 @@ public sealed class TuiActionKeysTests
     [Fact]
     public void TheBatchClearsWhenTheFinaliseEnds()
     {
-        var model = Update(Reviewing(Ready(1), Ready(2)) with { Confirm = new TuiConfirm("Finalise 2 videos?", "details", new FinaliseVideos([Id(1), Id(2)])) }, Letter('y')).Model;
+        var model = Update(Reviewing(Ready(1), Ready(2)) with { Dialog = new TuiConfirm("Finalise 2 videos?", "details", new FinaliseVideos([Id(1), Id(2)])) }, Letter('y')).Model;
 
         model = After(model, new FinaliseStartedMsg(Id(1)), new ActionDoneMsg("finalise", new ActionResult([], "Finalised 2 videos.")));
 
@@ -737,7 +737,7 @@ public sealed class TuiActionKeysTests
     {
         var model = Update(Reviewing(Ready(1)), Letter('F')).Model;
 
-        var step = Update(model, new PreparedMsg("finalise", null, "Nothing is ready to finalise."));
+        var step = Update(model, new PreparedMsg(new PrepareFinalise(null), null, "Nothing is ready to finalise."));
 
         step.Model.Confirm.Should().BeNull();
         step.Model.Busy.Should().BeEmpty();
@@ -751,7 +751,7 @@ public sealed class TuiActionKeysTests
         var model = Update(Reviewing(Ready(1) with { Warnings = ["The AV1 has no audio."] }), Letter('F')).Model;
         LogLine[] lines = [new(LogKind.Warning, "Nothing to finalise in bulk."), new(LogKind.Detail, "clip-001.mp4")];
 
-        var step = Update(model, new PreparedMsg("finalise", null, "Nothing to finalise in bulk.", lines));
+        var step = Update(model, new PreparedMsg(new PrepareFinalise(null), null, "Nothing to finalise in bulk.", lines));
 
         step.Model.Log.Select(entry => (entry.Kind, entry.Text)).Should().EndWith([(LogKind.Warning, "Nothing to finalise in bulk."), (LogKind.Detail, "clip-001.mp4")]);
         Notice(step).Should().Be("Nothing to finalise in bulk.");
@@ -976,6 +976,79 @@ public sealed class TuiActionKeysTests
         Choose(model, Press(ConsoleKey.DownArrow), Press(ConsoleKey.DownArrow), Press(ConsoleKey.DownArrow)).Model.Choice!.Selected.Should().Be(1);
         // Ctrl+C still quits.
         Choose(model, Press(ConsoleKey.C, '\u0003', ConsoleModifiers.Control)).Model.Quit.Should().BeTrue();
+    }
+
+    // ---- an effect's answer over an open dialog (VOPT-141) ----------------------------------
+
+    /// <summary>
+    /// The servers can take seconds to list, and the user may open a reject meanwhile. The list must not cover it: the reject
+    /// would still take the keys, so y would delete an AV1 behind a list the user was reading.
+    /// </summary>
+    [Theory]
+    [InlineData('s')]
+    [InlineData('c')]
+    public void AServerListThatComesInOverAnOpenQuestionIsDroppedAndNamesTheKeyThatAsksAgain(char key)
+    {
+        var purpose = key == 's' ? WorkerOptionsPurpose.Start : WorkerOptionsPurpose.Create;
+        var model = Focused(WithWorker(After(Model(), Snap(Quiet([Queued(1), Ready(2)])))), purpose == WorkerOptionsPurpose.Start ? Pane.Queue : Pane.Worker);
+        var asked = Update(model, Letter(key));
+        asked.Effects.Should().Equal(new LoadWorkerOptions(purpose));
+        var rejecting = Update(Focused(asked.Model, Pane.Review), Letter('r')).Model;
+        var reject = rejecting.Confirm;
+
+        var step = Update(rejecting, new WorkerOptionsMsg(purpose, [Cx43], null));
+
+        step.Model.Dialog.Should().Be(reject);
+        step.Model.Busy.Should().BeEmpty();
+        Notice(step).Should().Be($"The server list came in while a question was open. Press {key} again.");
+        // The question on screen is the one y answers.
+        Update(step.Model, Letter('y')).Effects.Should().Equal(new QueueActionEffect(QueueAction.Reject, Id(2), "clip-002.mp4"));
+    }
+
+    /// <summary>A finalise confirmation that comes in over another question must not replace it, or a y meant for a drop finalises.</summary>
+    [Theory]
+    [InlineData('f')]
+    [InlineData('F')]
+    public void AFinaliseConfirmationThatComesInOverAnOpenQuestionIsDroppedAndNamesTheKeyThatAsksAgain(char key)
+    {
+        var asked = Update(Reviewing(Queued(1), Ready(2)), Letter(key));
+        var prepare = asked.Effects.Should().ContainSingle().Which.Should().BeOfType<PrepareFinalise>().Subject;
+        var dropping = Update(Focused(asked.Model, Pane.Queue), Letter('d')).Model;
+        var drop = dropping.Confirm;
+
+        var step = Update(dropping, new PreparedMsg(prepare, new TuiConfirm("Finalise clip-002.mp4?", "details", new FinaliseVideos([Id(2)])), null));
+
+        step.Model.Dialog.Should().Be(drop);
+        step.Model.Busy.Should().BeEmpty();
+        Notice(step).Should().Be($"The finalise question came in while another was open. Press {key} again.");
+        Update(step.Model, Letter('y')).Effects.Should().Equal(new QueueActionEffect(QueueAction.Drop, Id(1), "clip-001.mp4"));
+    }
+
+    [Fact]
+    public void TheQuitQuestionStaysWhenAnEffectsAnswerComesIn()
+    {
+        var busy = Update(Update(WithWorker(Reviewing(Queued(1), Ready(2))), Letter('s')).Model, Letter('f')).Model;
+        var quitting = Update(busy, Letter('q')).Model;
+        quitting.Confirm!.OnYes.Should().Be(new QuitNow());
+
+        var listed = Update(quitting, new WorkerOptionsMsg(WorkerOptionsPurpose.Start, [Cx43], null)).Model;
+        var prepared = Update(listed, new PreparedMsg(new PrepareFinalise(Id(2)), new TuiConfirm("Finalise clip-002.mp4?", "details", new FinaliseVideos([Id(2)])), null)).Model;
+
+        prepared.Dialog.Should().Be(quitting.Dialog);
+        Update(prepared, Letter('y')).Model.Quit.Should().BeTrue();
+    }
+
+    /// <summary>The key guide is no question: any key closes it, so an answer opens under it and shows once it closes.</summary>
+    [Fact]
+    public void AnEffectsAnswerOpensUnderTheKeyGuide()
+    {
+        var asked = Update(Startable(), Letter('s')).Model;
+        var guide = Update(asked, Question).Model;
+
+        var listed = Update(guide, new WorkerOptionsMsg(WorkerOptionsPurpose.Start, [Cx43], null)).Model;
+
+        listed.Help.Should().BeTrue();
+        Update(listed, Letter('x')).Model.Choice!.Title.Should().Be("Which worker converts?");
     }
 
     // ---- the cost page ----------------------------------------------------------------------

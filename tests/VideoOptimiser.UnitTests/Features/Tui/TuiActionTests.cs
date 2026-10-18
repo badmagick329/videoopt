@@ -576,8 +576,8 @@ public sealed class TuiActionTests : IDisposable
     {
         var waiting = await _rig.QueuedAsync("clip-q.mp4");
 
-        (await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(null), _rig.Settings, default)).Should().Be(new PreparedMsg("finalise", null, "Nothing is ready to finalise."));
-        (await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(waiting.Id), _rig.Settings, default)).Should().Be(new PreparedMsg("finalise", null, "That video can't be finalised now."));
+        (await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(null), _rig.Settings, default)).Should().Be(new PreparedMsg(new PrepareFinalise(null), null, "Nothing is ready to finalise."));
+        (await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(waiting.Id), _rig.Settings, default)).Should().Be(new PreparedMsg(new PrepareFinalise(waiting.Id), null, "That video can't be finalised now."));
     }
 
     /// <summary>VOPT-118: F takes only the clean videos and names the warned ones, which are each finalised with f once watched.</summary>

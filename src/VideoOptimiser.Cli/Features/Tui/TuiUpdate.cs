@@ -190,23 +190,25 @@ internal static partial class TuiUpdate
         if (key.Key == ConsoleKey.C && key.Modifiers.HasFlag(ConsoleModifiers.Control))
         {
             // Ctrl+C twice always gets out: the second press lands in the quit dialog.
-            return m.Busy.IsEmpty || m.Confirm?.OnYes is QuitNow ? TuiStep.Of(m with { Quit = true }) : TuiStep.Of(ConfirmQuit(m));
+            return m.Busy.IsEmpty || m.Dialog is TuiConfirm { OnYes: QuitNow } ? TuiStep.Of(m with { Quit = true }) : TuiStep.Of(ConfirmQuit(m));
         }
 
         // Any key closes the guide, and does nothing else.
         if (m.Help) return TuiStep.Of(m with { Help = false });
 
-        if (m.Confirm is { } confirm)
+        switch (m.Dialog)
         {
-            // A question being answered stays: ? is for the screen, not for the dialog.
-            if (key.KeyChar == '?') return TuiStep.Of(m);
-            // Only an explicit y confirms; anything else, Enter included, is the [y/N] default.
-            var yes = key.Key == ConsoleKey.Y && key.Modifiers == 0;
-            m = m with { Confirm = null };
-            if (!yes) return TuiStep.Of(m);
-            return confirm.OnYes is QuitNow ? TuiStep.Of(m with { Quit = true }) : Emit(m, confirm.OnYes);
+            case TuiConfirm confirm:
+                // A question being answered stays: ? is for the screen, not for the dialog.
+                if (key.KeyChar == '?') return TuiStep.Of(m);
+                // Only an explicit y confirms; anything else, Enter included, is the [y/N] default.
+                var yes = key.Key == ConsoleKey.Y && key.Modifiers == 0;
+                m = m with { Dialog = null };
+                if (!yes) return TuiStep.Of(m);
+                return confirm.OnYes is QuitNow ? TuiStep.Of(m with { Quit = true }) : Emit(m, confirm.OnYes);
+            case TuiChoice choice:
+                return OnChoiceKey(m, choice, key.Key);
         }
-        if (m.Choice is { } choice) return OnChoiceKey(m, choice, key.Key);
 
         // The cost page takes the keys after the dialogs, which an effect may open over it (the quit question among them).
         if (m.Cost is { } page) return CostKey(m, page, key);
@@ -240,7 +242,7 @@ internal static partial class TuiUpdate
             : ($"{going.Length} actions are still going.", $"{string.Join("; ", going)}. Quitting now stops them partway. It's better to wait for them to finish.");
         // A long batch need not be waited out: Esc ends it cleanly after the video it is on.
         if (m.Finalising is { CanStop: true }) detail += " " + EscStopsTheFinalise;
-        return m with { Choice = null, Confirm = new TuiConfirm(question, detail, new QuitNow()) };
+        return m with { Dialog = new TuiConfirm(question, detail, new QuitNow()) };
     }
 
     private static Pane Cycle(Pane pane, int by) => (Pane)(((int)pane + by + 4) % 4);
@@ -290,8 +292,20 @@ internal static partial class TuiUpdate
 
     private static TuiStep Told(TuiModel m, string text) => TuiStep.Of(Tell(m, text));
 
-    private static TuiStep Confirming(TuiModel m, string question, string detail, TuiEffect onYes) =>
-        TuiStep.Of(m with { Confirm = new TuiConfirm(question, detail, onYes) });
+    // A key opens its dialog directly: OnKey hands every key to an open dialog first, so a key handler never runs under one.
+
+    private static TuiStep Confirming(TuiModel m, string question, string detail, TuiEffect onYes) => Asking(m, new TuiConfirm(question, detail, onYes));
+
+    private static TuiStep Asking(TuiModel m, TuiDialog dialog) => TuiStep.Of(m with { Dialog = dialog });
+
+    /// <summary>
+    /// An effect's answer opens its dialog only when none is open. The user may have opened another one while the effect was
+    /// out, and swapping or covering it would hand a y meant for that question to this one (VOPT-141): a reject or a finalise
+    /// they never saw. The answer is dropped instead, and <paramref name="dropped"/> names the key that asks for it again. The
+    /// key guide doesn't count, since any key closes it.
+    /// </summary>
+    private static TuiModel OpenAnswer(TuiModel m, TuiDialog dialog, string dropped) =>
+        m.Dialog is null ? m with { Dialog = dialog } : Tell(m, dropped);
 
     /// <summary>
     /// Starts an effect and marks what it holds: a second one with the same key is refused with the first one's text, so two

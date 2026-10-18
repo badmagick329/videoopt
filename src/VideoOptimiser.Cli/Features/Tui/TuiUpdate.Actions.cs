@@ -77,10 +77,7 @@ internal static partial class TuiUpdate
         if (m.Failed.Count == 1) return Confirming(m, $"Dismiss {video.Name}?", DismissDetail, one);
         // The group shows at most MostFailed; at the cap there may be more, and all of them go.
         var all = m.Failed.Count < TuiSnapshotReader.MostFailed ? $"Dismiss all {m.Failed.Count} failures" : "Dismiss every failure";
-        return TuiStep.Of(m with
-        {
-            Choice = new TuiChoice("Dismiss failures", DismissDetail, [new ChoiceOption($"Dismiss {video.Name}", one), new ChoiceOption(all, new DismissAllFailures())], 0)
-        });
+        return Asking(m, new TuiChoice("Dismiss failures", DismissDetail, [new ChoiceOption($"Dismiss {video.Name}", one), new ChoiceOption(all, new DismissAllFailures())], 0));
     }
 
     private static string ConvertingNow(TuiModel m, string name) => $"{name} is converting now. {StopWords.HowToStop(m.Run)}";
@@ -128,11 +125,9 @@ internal static partial class TuiUpdate
                 var lines = why!.Split('\n').Select(line => line.Trim()).Where(line => line.Length > 0).Select(line => new LogLine(LogKind.Error, line));
                 return TuiStep.Of(Tell(AppendLines(m, lines), FirstLine(why)));
             }
-            return TuiStep.Of(m with
-            {
-                Choice = new TuiChoice("Create a worker", "Pick the server. Prices include VAT, and it bills hourly until it is deleted.",
-                    [.. found.Select(option => new ChoiceOption($"{option.ServerType}  {option.Location}", new CreateWorker(option), Hint: PriceOf(option)))], 0)
-            });
+            var create = new TuiChoice("Create a worker", "Pick the server. Prices include VAT, and it bills hourly until it is deleted.",
+                [.. found.Select(option => new ChoiceOption($"{option.ServerType}  {option.Location}", new CreateWorker(option), Hint: PriceOf(option)))], 0);
+            return TuiStep.Of(OpenAnswer(m, create, ServerListDropped('c')));
         }
 
         // Starting a run: every server, the first selected (the one `worker create` would take), and always the way out.
@@ -140,8 +135,10 @@ internal static partial class TuiUpdate
         choices = choices.Add(NoWorkerOption);
         var detail = why is null ? "Pick the server the run uses. Prices include VAT." : $"Couldn't list the servers: {FirstLine(why)}";
         if (why is not null) m = AppendLines(m, [new LogLine(LogKind.Warning, $"Couldn't list the servers: {FirstLine(why)}")]);
-        return TuiStep.Of(m with { Choice = new TuiChoice("Which worker converts?", detail, choices, 0) });
+        return TuiStep.Of(OpenAnswer(m, new TuiChoice("Which worker converts?", detail, choices, 0), ServerListDropped('s')));
     }
+
+    private static string ServerListDropped(char again) => $"The server list came in while a question was open. Press {again} again.";
 
     private static ChoiceOption NoWorkerOption { get; } =
         new("No worker: convert on this PC", new StartRun(new StartPlan(null, WorkerFateChoice.Delete, ProcessingModeOverride.Local)));
@@ -167,10 +164,7 @@ internal static partial class TuiUpdate
 
         if (WorkerView.Of(m.Worker).Info is { } worker)
         {
-            return TuiStep.Of(m with
-            {
-                Choice = new TuiChoice("Which worker converts?", "A worker is up already.", [new ChoiceOption($"Use {worker.Name}", null, FateChoice(null)), NoWorkerOption], 0)
-            });
+            return Asking(m, new TuiChoice("Which worker converts?", "A worker is up already.", [new ChoiceOption($"Use {worker.Name}", null, FateChoice(null)), NoWorkerOption], 0));
         }
         return Emit(m, new LoadWorkerOptions(WorkerOptionsPurpose.Start));
     }
@@ -185,12 +179,9 @@ internal static partial class TuiUpdate
         // With no managed worker the fate means nothing: the run has no worker to delete or keep.
         if (!m.Worker.Managed) return Told(m, "There is no worker whose fate to set.");
         var current = FateOf(m) ?? WorkerFateChoice.Delete;
-        return TuiStep.Of(m with
-        {
-            Choice = new TuiChoice("When the run ends", "What happens to the worker. The run reads this when it ends, so a change counts.",
-                [new ChoiceOption("Delete the worker", new SetWorkerFate(WorkerFateChoice.Delete)), new ChoiceOption("Keep the worker", new SetWorkerFate(WorkerFateChoice.Keep))],
-                current == WorkerFateChoice.Keep ? 1 : 0)
-        });
+        return Asking(m, new TuiChoice("When the run ends", "What happens to the worker. The run reads this when it ends, so a change counts.",
+            [new ChoiceOption("Delete the worker", new SetWorkerFate(WorkerFateChoice.Delete)), new ChoiceOption("Keep the worker", new SetWorkerFate(WorkerFateChoice.Keep))],
+            current == WorkerFateChoice.Keep ? 1 : 0));
     }
 
     /// <summary>Stopping is the run's, not a pane's: x and X work wherever the cursor is, like s.</summary>
@@ -285,12 +276,12 @@ internal static partial class TuiUpdate
         {
             case ConsoleKey.UpArrow or ConsoleKey.DownArrow:
                 var at = Math.Clamp(choice.Selected + (key == ConsoleKey.UpArrow ? -1 : 1), 0, choice.Options.Count - 1);
-                return TuiStep.Of(m with { Choice = choice with { Selected = at } });
+                return TuiStep.Of(m with { Dialog = choice with { Selected = at } });
             case ConsoleKey.Escape:
-                return TuiStep.Of(m with { Choice = null });
+                return TuiStep.Of(m with { Dialog = null });
             case ConsoleKey.Enter:
                 var option = choice.Options[choice.Selected];
-                m = m with { Choice = option.Next };
+                m = m with { Dialog = option.Next };
                 return option.Effect is { } effect ? Emit(m, effect) : TuiStep.Of(m);
             default:
                 return TuiStep.Of(m);
@@ -335,7 +326,11 @@ internal static partial class TuiUpdate
     {
         m = m with { Busy = m.Busy.Remove(prepared.Key) };
         if (prepared.Lines is { } lines) m = AppendLines(m, lines);
-        if (prepared.Confirm is { } confirm) m = m with { Confirm = confirm };
+        if (prepared.Confirm is { } confirm)
+        {
+            var again = prepared.Asked.Id is null ? 'F' : 'f';
+            m = OpenAnswer(m, confirm, $"The finalise question came in while another was open. Press {again} again.");
+        }
         return prepared.Notice is { } notice ? Tell(m, notice) : m;
     }
 }
