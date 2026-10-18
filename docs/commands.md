@@ -50,7 +50,7 @@ The card shows the queue's counts, the run going now, the Hetzner worker if you 
 
 | Command | What it does |
 | --- | --- |
-| `run [--local \| --remote]` | Convert every queued video, folder and Immich alike. It stops before replacing anything. `--local` or `--remote` picks where to encode for this run only. First it checks again the AV1s of videos that failed validation in an earlier version, without encoding them again or using a worker, so they can become ready to finalise. |
+| `run [--local \| --remote]` | Convert every queued video, folder and Immich alike. It stops before replacing anything. `--local` or `--remote` picks where to encode for this run only. First it rechecks the AV1s of videos that failed validation in an earlier version, without encoding them again or using a worker, so they can become ready to finalise. |
 | `immich run [--first \| --limit <n>] [--local \| --remote]` | `queue add immich`, then `run`. `--limit` counts new videos only. |
 | `run stop [--now]` | Stop a background run after this video, or now. A run in a terminal stops with `Ctrl+C` instead. |
 

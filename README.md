@@ -2,7 +2,7 @@
 
 Shrink big videos by converting them to AV1 at the same visual quality. Nothing replaces an original until you've watched the result and said yes.
 
-It finds videos worth converting in your folders or your [Immich](https://immich.app) library, using rules you set. [ab-av1](https://github.com/alexheretic/ab-av1) picks the smallest file that still meets your quality target, and every AV1 is checked before it can replace anything. The app runs on Windows only (for now). It can encode on the same PC, or hand the encoding to a Hetzner server it creates and deletes for you, or to a Linux server you already have.
+It finds videos worth converting in your folders or your [Immich](https://immich.app) library, using rules you set. [ab-av1](https://github.com/alexheretic/ab-av1) picks the smallest file that still meets your quality target, and every AV1 is checked before it can replace anything. The app runs on Windows only (for now). Encoding can run on the same PC, on a Hetzner server the app creates and deletes for you, or on a Linux server you already have.
 
 ## Quick start
 

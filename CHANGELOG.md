@@ -9,7 +9,10 @@
 
 ### Fixes
 
-- iPhone 16 videos with spatial audio no longer fail to encode. FFmpeg can't copy the spatial track (`apac`), so it's left out, the stereo track is kept, and the video gets a note. Notes show wherever warnings do but don't hold a video back from `finalize --ready`; `queue list --json` and `history --json` have a new `notes` array. To keep spatial audio, set the new `quality.unsupportedAudio` to `skip`; those videos then stay unconverted. A video with no audio FFmpeg can copy is skipped under either setting. To convert videos that already failed this way, run `queue retry <job-id>`.
+- iPhone 16 videos with spatial audio no longer fail to encode. FFmpeg can't copy the spatial track (`apac`), so the AV1 leaves it out and keeps the stereo track, and the video gets a note saying so.
+- Notes show wherever warnings do, but they don't hold a video back from `finalize --ready`. `queue list --json` and `history --json` have a new `notes` array.
+- To keep spatial audio, set the new `quality.unsupportedAudio` to `skip`; those videos then stay unconverted. A video with no audio FFmpeg can copy is skipped under either setting.
+- Videos that already failed this way convert after `queue retry <job-id>`.
 
 ## [0.13.0] - 2026-10-17
 ### What the freed space cost

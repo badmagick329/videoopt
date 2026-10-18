@@ -1,6 +1,6 @@
 # Configuration
 
-Settings live in the YAML file that `config init` writes. This page covers the ones you are most likely to change, and the tools it needs. Remote encoding is in [remote-ssh.md](remote-ssh.md), and Immich is in [immich.md](immich.md).
+Settings live in the YAML file that `config init` writes. This page covers the ones you are most likely to change, and the tools you need. Remote encoding is in [remote-ssh.md](remote-ssh.md) and Immich is in [immich.md](immich.md).
 
 ## Choose which videos to convert
 
@@ -64,7 +64,7 @@ To let more videos through, follow the reason. If it names the size cap, raise `
 
 The same two limits apply to the finished AV1. If it is not smaller than the original while `savings.requireSmallerOutput` is on, or it saves less than `savings.minimumBytesSaved`, the video also ends as not worth converting. Its AV1 and validation record are deleted, and the original stays where it is.
 
-A video not worth converting is checked again when its file changes, or when you change `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat`, `crfSearch.minCrf`, `crfSearch.maxCrf` or `savings.minimumBytesSaved`. To try one again now, run `queue retry <job-id>`; `history` shows the ID.
+A video not worth converting is checked again when its file changes, or when you change `quality.minimumVmaf`, `maxEncodedPercent`, `preset`, `encoder`, `pixelFormat`, `crfSearch.minCrf`, `crfSearch.maxCrf` or `savings.minimumBytesSaved`. A video skipped for its audio is checked again when you set `quality.unsupportedAudio` back to `drop`. To try one again now, run `queue retry <job-id>`; `history` shows the ID.
 
 ## What finalize does to originals
 

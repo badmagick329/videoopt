@@ -94,7 +94,7 @@ The worker's type and location show in `worker status`.
 <details>
 <summary>Doing it by hand</summary>
 
-`remote setup` does these steps for you. Do them by hand only if you want to.
+`remote setup` does these steps for you; do them by hand only if you prefer.
 
 1. Create the API token and `.env` as in the first item of *Run remote setup*.
 2. Generate the key in PowerShell, pressing Enter twice when asked for a passphrase:
@@ -205,7 +205,7 @@ For an initial test with an empty queue, queue only one eligible video:
 
 ### How a run ends
 
-When a run finishes, failed videos included, `deleteAfterRun: true` deletes the worker if the run used it, after outputs have been downloaded, checksum-verified, and validated locally, and confirms that the separately billable IPv4 address was also deleted. With `false` the run ends with `The worker <name> stays up, billed hourly, until it is deleted.` and `To delete it: video-optimiser worker delete`. So does a run that never used a worker kept from an earlier run, and a run that ends with an error once the worker exists. The original videos stay untouched, ready to finalise.
+When a run finishes, failed videos included, `deleteAfterRun: true` deletes the worker if the run used it, after outputs have been downloaded, checksum-verified, and validated locally, and confirms that the separately billable IPv4 address was also deleted. With `false` the run ends with `The worker <name> stays up, billed hourly, until it is deleted.` and `To delete it: video-optimiser worker delete`. The same ending applies to a run that never used a worker kept from an earlier run, and to a run that ends with an error once the worker exists. The original videos stay untouched, ready to finalise.
 
 If the delete fails, the run prints `Couldn't delete the worker <name>: <reason>` and `It's still billing hourly.` with the `worker delete` command, and exits `1` (`9` after `Ctrl+C`).
 
@@ -257,7 +257,7 @@ The `worker` commands follow `lifecycle` alone, so they still work after you set
 
 ## Failed videos and kept workers
 
-A run creates the managed worker only once a job will use it. Each job is first checked on this PC (the original exists, sits under a watch root, passes the eligibility rules and can save `savings.minimumBytesSaved`); a run in which every job fails those checks, or is already ready to finalise, creates no server and prints nothing about one. A file still being written, or one ffprobe cannot read yet, counts as needing the server, since it may be fine by the time its job runs. A video stopped while its AV1 was being checked, with the AV1 still on this PC, is checked here and needs no server. Before it creates a managed worker, `run` checks that each queued or stopped job matches the current processing mode, worker and workspace. A job that never started takes the current settings. A job that started under other settings fails before any worker is created. Under `--local` or `--remote`, which set the mode for one run, a job started in the other mode is left for a later run instead and printed as `<file> is left for a later run: it started on ...`, with the command that resumes it: a plain `run` when the config matches where the video started, `run --local` or `run --remote` when the config uses the other mode, and when the config points at another worker (or the same worker under another `workingDirectory`), a line to set `processing.remoteSsh` back or to `queue drop` the video.
+A run creates the managed worker only once a job will use it. Each job is first checked on this PC (the original exists, sits under a watch root, passes the eligibility rules, can save `savings.minimumBytesSaved`, and isn't skipped for its audio); a run in which every job fails those checks, or is already ready to finalise, creates no server and prints nothing about one. A file still being written, or one ffprobe cannot read yet, counts as needing the server, since it may be fine by the time its job runs. A video stopped while its AV1 was being checked, with the AV1 still on this PC, is checked here and needs no server. Before it creates a managed worker, `run` checks that each queued or stopped job matches the current processing mode, worker and workspace. A job that never started takes the current settings. A job that started under other settings fails before any worker is created. Under `--local` or `--remote`, which set the mode for one run, a job started in the other mode is left for a later run instead and printed as `<file> is left for a later run: it started on ...`, with the command that resumes it: a plain `run` when the config matches where the video started, `run --local` or `run --remote` when the config uses the other mode, and when the config points at another worker (or the same worker under another `workingDirectory`), a line to set `processing.remoteSsh` back or to `queue drop` the video.
 
 A video that joins a run after it started (released with `queue release`, moved up with `queue next`, or queued from another terminal) is checked the same way when its turn comes. If it needs the worker and the run created none, it waits for the next run: `<file> waits for the next run: it needs a worker, and this run has none.`
 
@@ -278,8 +278,6 @@ Finalisation remains local and can happen after the worker has been deleted:
 ```powershell
 .\video-optimiser.exe finalize --ready --config .\video-optimiser.yaml
 ```
-
-The original videos remain untouched until finalisation succeeds.
 
 ## Manual SSH lifecycle
 

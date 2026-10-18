@@ -23,7 +23,7 @@ The view reads the same database as every other command, so it follows a run sta
 
 ## Keys
 
-Press `?` for a guide to the main keys; the tables below have them all. Anything that can lose work or cost money asks `y/N` first.
+Press `?` for a guide to the main keys. Anything that can lose work or cost money asks `y/N` first.
 
 These work from any pane:
 
