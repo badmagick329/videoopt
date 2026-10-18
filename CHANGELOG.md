@@ -2,13 +2,18 @@
 
 ## [Unreleased]
 
+### Remote workers
+
+- A new Hetzner worker whose bootstrap fails stops the run within about 15 seconds. The run names the stage that failed and why, then shows the end of the worker's cloud-init log. It used to wait out `bootstrapTimeout` (90 minutes by default) and keep the server billing.
+- A worker that never got ready is no longer kept by default. A run in a terminal asks `Delete the worker now? [y/N]`, and a run with redirected input deletes it. A background run deletes it even when it was started to keep the worker, since no later run could use it.
+- Ctrl+C while a worker is being created no longer leaves a server billing with no record of it on this PC. The run records the worker and ends like any other stop with a worker up. If Hetzner never answered the create request, the run looks the worker up there; if it can't, it says the worker may be billing and gives the commands to check for it and delete it.
+- When Hetzner takes more than 100 seconds to answer, `worker create`, `worker delete` and a run that creates a worker say so and exit with code 6. They used to print nothing and exit with code 9, as if you had pressed Ctrl+C. A run that was setting up a worker ends as failed, and the worker is kept or deleted as after any other failed setup.
+
 ### Fixes
 
-- If you edit a stopped video's original before the next run, for example to fix its date or location, the run now converts it again from the start. It used to reuse the CRF, upload or encode made from the old file, and finalising then replaced your edited original with an AV1 of the old version, so the edits were lost.
-- Pressing Ctrl+C while a Hetzner worker was being created could leave the new server billing, with no record of it on this PC and nothing said about it. The stop now waits for Hetzner's answer to the create request and records the worker, then ends like any stop with a worker up. When the request gets no answer, after a timeout for example, the run looks the worker up on Hetzner. If Hetzner can't be asked either, the run says the worker may be billing and gives the commands to check for it and delete it.
-- When a new Hetzner worker fails to bootstrap, the run now stops within about 15 seconds and says which stage failed and why, followed by the last lines of the worker's cloud-init log. It used to wait out `bootstrapTimeout` (90 minutes by default) and then keep the server, still billing. A worker that never got ready is no longer kept by default: in a terminal the run asks `Delete the worker now? [y/N]`, and with redirected input it deletes the worker without asking. A background run deletes a worker whose bootstrap failed or timed out even when it was started to keep the worker, since no later run could use it.
-- In the full-screen view, the server list or the finalise question could arrive while you were answering another question, such as a reject or a drop. The list covered that question while it still took the keys, or the finalise question replaced it, so pressing y could reject or finalise a video you never chose. The question on screen now stays open, and the footer says which key to press to get the list or the finalise question back.
-- When Hetzner took more than 100 seconds to answer, the full-screen view and the commands treated it as if you had stopped them. In the full-screen view the action never finished: the worker pane stayed busy, quitting asked about it, or the server list never arrived. `worker create`, `worker delete` and a run that creates a worker exited with code 9 and printed nothing. They now say Hetzner didn't answer in time and exit with code 6. A run that was setting up a worker ends as failed, and the worker is kept or deleted as after any other failed setup.
+- Editing a stopped video's original before the next run, to fix its date or location for example, now makes that run convert it from the start. The run used to reuse the work done on the old file, and finalising then replaced your edited original with an AV1 of the old version.
+- In the full-screen view, the server list or the finalise question no longer covers or replaces a question you are answering, such as a reject or a drop, so y can no longer act on a video you never chose. The footer names the key that brings the list or the question back.
+- In the full-screen view, an action Hetzner doesn't answer now ends with an error after 100 seconds. It used to stay busy until the view was restarted, and quitting asked about it.
 
 ## [0.14.0] - 2026-10-18
 ### Defaults
