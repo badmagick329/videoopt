@@ -163,6 +163,26 @@ public sealed class WorkerCommandsTests : IDisposable
         lifecycle.DatabasePaths.Should().Equal(DatabasePath);
     }
 
+    /// <summary>
+    /// Only a stop the user pressed exits 9 with nothing printed (<c>CtrlCRunTests</c>). A Hetzner that doesn't answer is a
+    /// failure: converted at the source it is a <see cref="TimeoutException"/>; a cancellation nobody converted still fails.
+    /// </summary>
+    [Theory]
+    [InlineData(false, "Hetzner didn't answer DELETE servers/42 within 100 seconds.\n")]
+    [InlineData(true, "A request was cut off before it finished, and no stop was pressed, so it probably timed out.\n")]
+    public async Task ADeleteCutOffByAnythingButAStopIsAFailure(bool unconverted, string expected)
+    {
+        var lifecycle = new FakeWorkerLifecycle
+        {
+            DeleteFailure = unconverted ? new TaskCanceledException() : new TimeoutException("Hetzner didn't answer DELETE servers/42 within 100 seconds.")
+        };
+
+        var (code, _, stderr) = await RunAsync(lifecycle, null, CliFakes.AcceptAnySettings, "worker", "delete");
+
+        code.Should().Be((int)ExitCode.ProcessingFailure);
+        stderr.ReplaceLineEndings("\n").Should().EndWith(expected);
+    }
+
     private string DatabasePath => Path.Combine(_directory, "jobs.db");
 
     private string _config = "";

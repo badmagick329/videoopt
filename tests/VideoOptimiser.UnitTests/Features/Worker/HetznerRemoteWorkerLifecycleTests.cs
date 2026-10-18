@@ -996,6 +996,45 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         check.NotCheckedReason.Should().Be("Hetzner didn't answer within 15 seconds");
     }
 
+    /// <summary>
+    /// VOPT-142: HttpClient's own timeout is a <see cref="TimeoutException"/>, which every caller reads as a failure; read as
+    /// an <see cref="OperationCanceledException"/>, the TUI and the CLI took it for the user stopping. A caller that did stop
+    /// still gets its cancellation.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AHetznerThatDoesNotAnswerTimesOutUnlessTheCallerStopped(bool callerStopped)
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.Hang = true;
+        using var lifecycle = fixture.CreateLifecycle(httpTimeout: callerStopped ? Timeout.InfiniteTimeSpan : TimeSpan.FromMilliseconds(50));
+        using var stop = new CancellationTokenSource();
+        if (callerStopped) await stop.CancelAsync();
+
+        var action = () => lifecycle.ListCreationOptionsAsync(fixture.Settings, stop.Token);
+
+        if (callerStopped)
+            await action.Should().ThrowAsync<OperationCanceledException>();
+        else
+            (await action.Should().ThrowExactlyAsync<TimeoutException>()).Which.Message.Should().Be("Hetzner didn't answer GET server_types within 0.05 seconds.");
+    }
+
+    /// <summary>Should HttpClient's own timeout ever beat the check's, the status read still answers with a reason.</summary>
+    [Fact]
+    public async Task CheckTurnsAnHttpTimeoutIntoAReason()
+    {
+        using var fixture = new Fixture();
+        using var lifecycle = fixture.CreateLifecycle(httpTimeout: TimeSpan.FromMilliseconds(50));
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        fixture.Handler.Hang = true;
+
+        var check = await lifecycle.CheckAsync(fixture.Settings, fixture.DatabasePath).WaitAsync(TimeSpan.FromSeconds(10));
+
+        check.Worker!.Status.Should().Be("recorded");
+        check.NotCheckedReason.Should().StartWith("Hetzner didn't answer GET servers").And.EndWith("within 0.05 seconds.");
+    }
+
     [Fact]
     public async Task CheckWithTwoLabelledServersSaysSoInsteadOfChoosing()
     {
@@ -1090,24 +1129,29 @@ public sealed class HetznerRemoteWorkerLifecycleTests
     /// resolve would record it, and the create's own failure still ends the call. Found absent, nothing is recorded. When
     /// Hetzner can't be asked, nothing records the server, so the message says how to look for it and delete it.
     /// </summary>
+    /// <remarks>The timed-out row is HttpClient's own timeout firing on the create (VOPT-142), not a stand-in exception.</remarks>
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    public async Task ACreateWhoseAnswerIsLostRecordsTheServerItFindsByLabel(bool serverMade, bool lookupFails)
+    [InlineData(true, false, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    public async Task ACreateWhoseAnswerIsLostRecordsTheServerItFindsByLabel(bool serverMade, bool lookupFails, bool timedOut)
     {
         using var fixture = new Fixture();
         var lost = new HttpRequestException("The response ended prematurely.");
-        fixture.Handler.LostCreateAnswer = lost;
+        if (timedOut) fixture.Handler.HangCreate = true;
+        else fixture.Handler.LostCreateAnswer = lost;
         fixture.Handler.LostCreateMadeServer = serverMade;
         fixture.Handler.ListingFailsAfterCreate = lookupFails;
-        using var lifecycle = fixture.CreateLifecycle(utcNow: new FakeClock(At).Now);
+        using var lifecycle = fixture.CreateLifecycle(utcNow: new FakeClock(At).Now, httpTimeout: timedOut ? TimeSpan.FromMilliseconds(200) : null);
 
         var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
 
         var thrown = (await action.Should().ThrowAsync<Exception>()).Which;
         if (lookupFails)
             thrown.Should().BeOfType<RemoteWorkerCreationUnconfirmedException>().Which.Message.Should().Contain("worker status").And.Contain("worker delete");
+        else if (timedOut)
+            thrown.Should().BeOfType<TimeoutException>().Which.Message.Should().Be("Hetzner didn't answer POST servers within 0.2 seconds.");
         else
             thrown.Should().BeSameAs(lost);
         var recorded = serverMade && !lookupFails;
@@ -1232,11 +1276,12 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             TimeSpan? progressHeartbeatInterval = null,
             Func<DateTimeOffset>? utcNow = null,
             Func<TimeSpan, CancellationToken, Task>? delay = null,
-            TimeSpan? checkTimeout = null) => new(
+            TimeSpan? checkTimeout = null,
+            TimeSpan? httpTimeout = null) => new(
             Processes,
             new SqliteWorkerBillStore(new SqliteDatabaseInitializer()),
             new CommandHints(null),
-            new HttpClient(Handler) { BaseAddress = new Uri("https://api.test/v1/") },
+            new HttpClient(Handler) { BaseAddress = new Uri("https://api.test/v1/"), Timeout = httpTimeout ?? TimeSpan.FromSeconds(100) },
             delay ?? ((_, _) => Task.CompletedTask),
             ownsHttpClient: true,
             readinessProbeTimeout: readinessProbeTimeout,
@@ -1402,6 +1447,9 @@ public sealed class HetznerRemoteWorkerLifecycleTests
 
         public bool LostCreateMadeServer { get; set; }
 
+        /// <summary>The create request never answers, until HttpClient's own timeout cancels it; it honours <see cref="LostCreateMadeServer"/>.</summary>
+        public bool HangCreate { get; set; }
+
         /// <summary>The server listing throws, as a network failure would, once a create was requested.</summary>
         public bool ListingFailsAfterCreate { get; set; }
 
@@ -1454,10 +1502,11 @@ public sealed class HetznerRemoteWorkerLifecycleTests
                 CreateServerTypes.Add(CreatePayload.RootElement.GetProperty("server_type").GetString()!);
                 CreateArrived.TrySetResult();
                 if (CreateGate is not null) await CreateGate.Task.WaitAsync(cancellationToken);
-                if (LostCreateAnswer is not null)
+                if (LostCreateAnswer is not null || HangCreate)
                 {
                     if (LostCreateMadeServer) (ServerExists, PrimaryIpExists) = (true, true);
-                    throw LostCreateAnswer;
+                    if (HangCreate) await Task.Delay(Timeout.Infinite, cancellationToken);
+                    throw LostCreateAnswer!;
                 }
                 if (CreateErrorBody is not null)
                     return new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(CreateErrorBody, Encoding.UTF8, "application/json") };

@@ -15,14 +15,29 @@ internal static class HetznerHttp
     /// Sends one request with the bearer token and, when there is a body, a JSON content type. The response is returned
     /// once its headers arrive; the caller reads and disposes it.
     /// </summary>
+    /// <remarks>
+    /// <see cref="HttpClient.Timeout"/> firing throws <see cref="TaskCanceledException"/>, which every caller up to the TUI and
+    /// <c>Program</c> would read as the user stopping. It becomes a <see cref="TimeoutException"/> here, so a Hetzner that
+    /// doesn't answer is a failure; a cancelled caller still gets its cancellation.
+    /// </remarks>
     public static async Task<HttpResponseMessage> SendAsync(HttpClient http, string token, string userAgent, HttpMethod method, string path, byte[]? payload, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.UserAgent.ParseAdd(userAgent);
         if (payload is not null) request.Content = new ByteArrayContent(payload) { Headers = { ContentType = new MediaTypeHeaderValue("application/json") } };
-        return await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        try
+        {
+            return await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Hetzner didn't answer {method} {RequestName(path)} within {http.Timeout.TotalSeconds:0.###} seconds.", exception);
+        }
     }
+
+    /// <summary>The path without its query, which holds paging and label selectors nobody reading the error needs.</summary>
+    private static string RequestName(string path) => path.Split('?', 2)[0];
 
     /// <summary>
     /// Reads Hetzner's <c>error.code</c> and <c>error.message</c>. A field counts only when it is a JSON string; anything

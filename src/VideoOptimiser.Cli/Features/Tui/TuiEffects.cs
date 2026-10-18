@@ -51,9 +51,10 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
         {
             await ExecuteAsync(effect, stop?.Token ?? CancellationToken.None, cancellationToken);
         }
-        catch (OperationCanceledException)
+        // Only the TUI's own token means closing. Any other cancellation (an HTTP client's timeout, say) is a failure: ending
+        // without Finish would hold the effect's busy key until the TUI restarts.
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // The TUI is closing.
         }
         catch (JobChangedException)
         {

@@ -81,8 +81,12 @@ internal static class CliOutput
                 WriteError(exception.Message);
                 WriteError("Check server type and location availability in Hetzner Console: https://console.hetzner.com/");
                 return (int)ExitCode.ProcessingFailure;
-            case RemoteWorkerCreationUnconfirmedException or RemoteWorkerBootstrapFailedException:
+            case RemoteWorkerCreationUnconfirmedException or RemoteWorkerBootstrapFailedException or TimeoutException:
                 WriteError(exception.Message);
+                return (int)ExitCode.ProcessingFailure;
+            case OperationCanceledException:
+                // Program reports a pressed stop itself, so a cancellation that reaches here came from a timer nobody converted.
+                WriteError("A request was cut off before it finished, and no stop was pressed, so it probably timed out.");
                 return (int)ExitCode.ProcessingFailure;
             default:
                 WriteError($"Unexpected failure: {exception.GetBaseException().Message}");

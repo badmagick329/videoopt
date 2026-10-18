@@ -82,7 +82,7 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
             errors.Report($"Hetzner rejected the API token ({TokenSource(hetzner)}). Create a new Read & Write token.");
             return new(ExitCode.InvalidConfiguration);
         }
-        catch (Exception exception) when (IsHetznerFailure(exception, cancellationToken))
+        catch (Exception exception) when (IsHetznerFailure(exception))
         {
             errors.Report($"Could not list SSH keys on Hetzner: {exception.Message}");
             return new(ExitCode.MissingDependency);
@@ -163,7 +163,7 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
                 errors.Report($"Hetzner rejected the API token ({TokenSource(hetzner)}). Create a new Read & Write token.");
                 return new(ExitCode.InvalidConfiguration);
             }
-            catch (Exception exception) when (IsHetznerFailure(exception, cancellationToken))
+            catch (Exception exception) when (IsHetznerFailure(exception))
             {
                 errors.Report($"Could not upload the SSH key to Hetzner: {exception.Message}");
                 return new(ExitCode.MissingDependency);
@@ -288,10 +288,9 @@ public sealed class RemoteSetupService : IRemoteSetupService, IDisposable
 
     private static string Describe(Diagnostic diagnostic) => $"[{diagnostic.Code}] {diagnostic.Message}";
 
-    // A cancelled token is the user's Ctrl+C; any other cancellation is HttpClient's own timeout.
-    private static bool IsHetznerFailure(Exception exception, CancellationToken cancellationToken) =>
-        exception is HetznerSshKeyException or HttpRequestException or JsonException ||
-        (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested);
+    // HetznerHttp turns HttpClient's own timeout into a TimeoutException, so a cancellation left here is the user's Ctrl+C.
+    private static bool IsHetznerFailure(Exception exception) =>
+        exception is HetznerSshKeyException or HttpRequestException or JsonException or TimeoutException;
 
     private static string TokenSource(HetznerSettings hetzner) =>
         string.IsNullOrWhiteSpace(hetzner.ApiTokenFile) ? hetzner.ApiTokenEnvironmentVariable : $"{hetzner.ApiTokenEnvironmentVariable} or {hetzner.ApiTokenFile}";

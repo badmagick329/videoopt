@@ -196,7 +196,7 @@ internal sealed class TuiActions(
         {
             return new WorkerOptionsMsg(purpose, null, exception.Message);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return new WorkerOptionsMsg(purpose, null, OneLine(exception));
         }
@@ -215,7 +215,7 @@ internal sealed class TuiActions(
         {
             return EveryLineFailure(exception);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return Done(LogKind.Error, $"Couldn't create the worker: {OneLine(exception)}", refreshWorker: true);
         }
@@ -239,7 +239,7 @@ internal sealed class TuiActions(
             // The lifecycle's own lines say what was deleted and that billing has stopped.
             return deleted ? new ActionResult([], "Deleted the worker.", RefreshWorker: true) : Done(LogKind.Info, "There was no worker to delete.", refreshWorker: true);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return new ActionResult(
                 [new LogLine(LogKind.Error, $"Couldn't delete the worker: {OneLine(exception)}"), new LogLine(LogKind.Warning, "If it is still up, it bills hourly until it is deleted.")],
@@ -256,7 +256,7 @@ internal sealed class TuiActions(
         {
             return new CostReadMsg(await cost.ReadAsync(settings.Database.Path, cancellationToken), null);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             var why = OneLine(exception);
             return new CostReadMsg(null, $"Couldn't read the cost: {why}{(why.EndsWith('.') ? string.Empty : ".")}");
@@ -284,7 +284,7 @@ internal sealed class TuiActions(
                 var failure = EveryLineFailure(exception);
                 return failure with { Lines = [.. failure.Lines, new LogLine(LogKind.Warning, "No run was started.")] };
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 return new ActionResult([new LogLine(LogKind.Error, $"Couldn't create the worker: {OneLine(exception)}"), new LogLine(LogKind.Warning, "No run was started.")], "Couldn't create the worker.", RefreshWorker: true);
             }
@@ -296,7 +296,7 @@ internal sealed class TuiActions(
         {
             result = await launch.StartAsync(database, BackgroundRunnerArguments.For(configurationPath, plan.Fate, plan.Mode), Environment.CurrentDirectory, cancellationToken);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return WithWorkerWarning(new ActionResult([new LogLine(LogKind.Error, $"Couldn't start the run: {OneLine(exception)}")], "Couldn't start the run.", created is not null), created);
         }
@@ -352,7 +352,7 @@ internal sealed class TuiActions(
         {
             opener.Open(path);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return Done(LogKind.Error, $"Couldn't open the {what} of {effect.Name}: {OneLine(exception)}");
         }
@@ -445,7 +445,7 @@ internal sealed class TuiActions(
                 var line = new LogLine(succeeded ? LogKind.Success : LogKind.Error, RunEventWords.Clean($"{(succeeded ? "Finalised" : "Couldn't finalise")} {name}: {result.Message}"));
                 done = new FinaliseEndedMsg(id, succeeded, succeeded && job is not null ? TuiSnapshotReader.SavedBytesOf(job) : 0, line);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 done = new FinaliseEndedMsg(id, false, 0, new LogLine(LogKind.Error, $"Couldn't finalise {name}: {OneLine(exception)}"));
             }

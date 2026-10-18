@@ -327,6 +327,18 @@ public sealed class TuiActionTests : IDisposable
             (LogKind.Warning, "If it is still up, it bills hourly until it is deleted."));
     }
 
+    /// <summary>Only the TUI's own token cancelled makes a cancellation the TUI closing, which the effect lets end silently.</summary>
+    [Fact]
+    public async Task ADeleteCancelledByTheTuiClosingIsLeftToEndTheEffect()
+    {
+        using var closing = new CancellationTokenSource();
+        _rig.Worker.DuringDelete = () => { closing.Cancel(); throw new TaskCanceledException(); };
+
+        var action = () => _rig.Actions.DeleteWorkerAsync(_rig.Settings, Log, closing.Token);
+
+        await action.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     // ---- starting a run ---------------------------------------------------------------------
 
     private void RunnerTakesTheLock() =>

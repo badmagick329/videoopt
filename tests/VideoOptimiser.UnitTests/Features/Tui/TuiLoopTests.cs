@@ -26,6 +26,13 @@ public sealed class TuiLoopTests
         return await reader.ReadAsync(timeout.Token);
     }
 
+    /// <summary>The first message of that type, past the progress lines an action posts while it works.</summary>
+    private static async Task<T> FirstOfAsync<T>(ChannelReader<TuiMsg> reader) where T : TuiMsg
+    {
+        while (true)
+            if (await FirstAsync(reader) is T message) return message;
+    }
+
     private static async Task UntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(Patience);
@@ -173,6 +180,51 @@ public sealed class TuiLoopTests
         var done = (ActionDoneMsg)await FirstAsync(channel.Reader);
         done.Key.Should().StartWith("queue:");
         done.Result.Lines.Should().ContainSingle().Which.Should().Be(new LogLine(LogKind.Error, "That didn't work: The database is locked."));
+    }
+
+    /// <summary>
+    /// A cancellation the TUI's own token didn't cause (an HTTP client's timeout) is a failure at each layer that catches it:
+    /// the effect's own catch for a queue verb, the action's for the worker's delete and its server listing. Read as the TUI
+    /// closing, the effect would post nothing and hold its busy key until a restart.
+    /// </summary>
+    [Fact]
+    public async Task AQueueVerbCancelledByAnythingButTheTuiClosingIsAnErrorLine()
+    {
+        using var rig = new TuiRig(services => services.AddSingleton<IQueueVerbs>(new ThrowingVerbs(new TaskCanceledException())));
+        var job = await rig.QueuedAsync("clip-a.mp4");
+        var channel = NewChannel();
+
+        new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, channel.Writer).Run(new QueueActionEffect(QueueAction.Drop, job.Id, "clip-a.mp4"), CancellationToken.None);
+
+        var done = (ActionDoneMsg)await FirstAsync(channel.Reader);
+        done.Key.Should().StartWith("queue:");
+        done.Result.Lines.Should().ContainSingle().Which.Kind.Should().Be(LogKind.Error);
+    }
+
+    [Fact]
+    public async Task AWorkerDeleteCancelledByAnythingButTheTuiClosingFreesTheWorkerKey()
+    {
+        using var rig = new TuiRig();
+        rig.Worker.DeleteFailure = new TaskCanceledException();
+        var channel = NewChannel();
+
+        new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, channel.Writer).Run(new DeleteWorker(), CancellationToken.None);
+
+        var done = await FirstOfAsync<ActionDoneMsg>(channel.Reader);
+        done.Key.Should().Be("worker");
+        done.Result.Lines[0].Should().Be(new LogLine(LogKind.Error, "Couldn't delete the worker: A task was canceled."));
+    }
+
+    [Fact]
+    public async Task AServerListingCancelledByAnythingButTheTuiClosingAnswersWithTheError()
+    {
+        using var rig = new TuiRig();
+        rig.Worker.ListFailure = new TimeoutException("Hetzner didn't answer GET server_types within 100 seconds.");
+        var channel = NewChannel();
+
+        new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, channel.Writer).Run(new LoadWorkerOptions(WorkerOptionsPurpose.Start), CancellationToken.None);
+
+        (await FirstAsync(channel.Reader)).Should().Be(new WorkerOptionsMsg(WorkerOptionsPurpose.Start, null, "Hetzner didn't answer GET server_types within 100 seconds."));
     }
 
     [Fact]

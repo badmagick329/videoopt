@@ -187,8 +187,8 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             return new WorkerCheck(state?.ToInfo(RemoteWorkerStatuses.Recorded), null, "Hetzner didn't answer within 15 seconds");
         }
         // A status read never fails for what Hetzner said or didn't: the card shows the record and the reason. KeyNotFound is
-        // an answer missing a field the parser needs.
-        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or JsonException or KeyNotFoundException)
+        // an answer missing a field the parser needs; a Timeout is HttpClient's own timer, which the 15 s one normally beats.
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or JsonException or KeyNotFoundException or TimeoutException)
         {
             return new WorkerCheck(state?.ToInfo(RemoteWorkerStatuses.Recorded), null, exception.Message);
         }

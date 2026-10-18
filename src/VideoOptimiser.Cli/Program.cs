@@ -30,6 +30,8 @@ internal static class CliApplication
     /// <param name="configureServices">Replaces services after the real ones are registered; tests use it to put fakes behind the real CLI.</param>
     public static async Task<int> RunAsync(string[] args, Action<IServiceCollection>? configureServices = null)
     {
+        // The token, not the RunStop: the host disposes the RunStop before the catch below reads whether it was pressed.
+        var stopped = CancellationToken.None;
         try
         {
             var command = CliCommand.Parse(args);
@@ -56,6 +58,7 @@ internal static class CliApplication
 
             using var host = BuildHost(command, configureServices);
             var stop = host.Services.GetRequiredService<RunStop>();
+            stopped = stop.Now;
             ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
             {
                 eventArgs.Cancel = true;
@@ -74,7 +77,8 @@ internal static class CliApplication
                 if (hasConsole) Console.CancelKeyPress -= cancelHandler;
             }
         }
-        catch (OperationCanceledException)
+        // Only a stop the user pressed (or a stop request) is a cancel; any other cancellation is a failure to report.
+        catch (OperationCanceledException) when (stopped.IsCancellationRequested)
         {
             return (int)ExitCode.Cancelled;
         }

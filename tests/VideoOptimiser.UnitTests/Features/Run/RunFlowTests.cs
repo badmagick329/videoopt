@@ -57,25 +57,29 @@ public sealed class RunFlowTests : IDisposable
 
     /// <summary>
     /// VOPT-140: with nobody to ask, a worker this run created and whose bootstrap failed is deleted rather than left billing
-    /// unseen; one reused from an earlier run is still the user's to delete.
+    /// unseen; one reused from an earlier run is still the user's to delete. A Hetzner that stops answering during setup
+    /// (VOPT-142) is the same failure, never a stop now.
     /// </summary>
     [Theory]
-    [InlineData(true, 1)]
-    [InlineData(false, 0)]
-    public async Task ABootstrapFailureWithNobodyToAskDeletesOnlyAWorkerThisRunCreated(bool created, int deletes)
+    [InlineData(true, 1, false)]
+    [InlineData(false, 0, false)]
+    [InlineData(true, 1, true)]
+    public async Task ABootstrapFailureWithNobodyToAskDeletesOnlyAWorkerThisRunCreated(bool created, int deletes, bool timedOut)
     {
         await RunCli.QueueJobsAsync(_repository, DatabasePath, 1);
         var processor = new ScriptedRunProcessor(remote: true);
         _lifecycle.Exists = !created;
         _lifecycle.Quote = created ? new RemoteWorkerCreationQuote(new("cx43", "hel1", 0.031m), new("cx43", "hel1", 0.031m)) : null;
-        _lifecycle.ReadyFailure = new InvalidOperationException("The Hetzner worker video-optimiser-1 failed to bootstrap while building FFmpeg: make exited with code 2.");
+        _lifecycle.ReadyFailure = timedOut
+            ? new TimeoutException("Hetzner didn't answer GET servers within 100 seconds.")
+            : new InvalidOperationException("The Hetzner worker video-optimiser-1 failed to bootstrap while building FFmpeg: make exited with code 2.");
 
         var code = await RunAsync(processor, new ScriptedQuestions(new RunWorkerAnswer(null, Pending: false)), CancellationToken.None);
 
         code.Should().Be((int)ExitCode.GeneralFailure);
         processor.Calls.Should().Be(0);
         _lifecycle.DeleteCalls.Should().Be(deletes);
-        _observer.Events.Should().Contain(created ? "WorkerDeleting" : "WorkerKept:Failed");
+        _observer.Events.Should().Contain("RunFailed").And.Contain(created ? "WorkerDeleting" : "WorkerKept:Failed");
     }
 
     /// <summary>
