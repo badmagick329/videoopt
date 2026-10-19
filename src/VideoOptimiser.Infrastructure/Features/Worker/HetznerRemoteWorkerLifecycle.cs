@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -296,8 +297,11 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
         return await RecoverByLabelAsync(token, controller, databasePath, statePath, cancellationToken);
     }
 
-    /// <summary>The server Hetzner has for this database that the state file doesn't record, found by its label and recorded (state file and bill).</summary>
-    private async Task<WorkerState?> RecoverByLabelAsync(string token, string controller, string databasePath, string statePath, CancellationToken cancellationToken)
+    /// <summary>
+    /// The server Hetzner has for this database that the state file doesn't record, found by its label and recorded (state
+    /// file and bill). <paramref name="hostKey"/>, when the caller knows the key the server was created with, is recorded too.
+    /// </summary>
+    private async Task<WorkerState?> RecoverByLabelAsync(string token, string controller, string databasePath, string statePath, CancellationToken cancellationToken, WorkerHostKey? hostKey = null)
     {
         var servers = await _cloud.ListManagedServersAsync(token, controller, cancellationToken);
         if (servers.Count > 1) throw new InvalidOperationException(MoreThanOneServerMessage);
@@ -313,6 +317,8 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             WorkerStateStore.KnownHostsPath(databasePath, servers[0].Id),
             controller,
             servers[0].CreatedUtc);
+        // Before the state file, as in PlaceAsync.
+        if (hostKey is not null) WorkerStateStore.WriteKnownHosts(recovered.KnownHostsFile, hostKey.KnownHostsLine(recovered.Address));
         await WorkerStateStore.WriteStateAsync(statePath, recovered, cancellationToken);
         await RecordSeenAsync(token, databasePath, servers[0], cancellationToken);
         return recovered;
@@ -363,7 +369,11 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     {
         // cloud-init runs the script with bash, which fails on CRLF; a Windows checkout with core.autocrlf has CRLF.
         var script = (await File.ReadAllTextAsync(settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, cancellationToken)).ReplaceLineEndings("\n");
-        if (Encoding.UTF8.GetByteCount(script) > 32 * 1024) throw new InvalidOperationException("The Hetzner bootstrap script exceeds the 32 KiB user-data limit.");
+        // Checked here, before anything is created. The user data's size depends only on the script's, as every host key is
+        // as long as any other, so a throwaway one measures it.
+        var bytes = Encoding.UTF8.GetByteCount(WorkerUserData.Build(script, WorkerHostKey.Generate()));
+        if (bytes > WorkerUserData.MaxBytes)
+            throw new InvalidOperationException(string.Create(CultureInfo.InvariantCulture, $"The Hetzner bootstrap script is too large. Sent as user data with the worker's host key, it comes to {bytes / 1024.0:0.0} KiB, and Hetzner accepts at most 32 KiB."));
         return script;
     }
 
@@ -395,11 +405,13 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                 ? $"Creating Hetzner {candidate} ({HetznerPlacement.FormatPrice(price)} incl. VAT)."
                 : $"Creating Hetzner {candidate}.");
             CreatedServer created;
+            // One key per server: a placement that fails deletes its server, and the next one never answers with that key.
+            var hostKey = WorkerHostKey.Generate();
             try
             {
                 // On no token, through the state and bill writes below: once the POST is sent Hetzner may make the server, and a
                 // stop that cut off the answer naming it would leave it billing with no record. The HTTP timeout bounds the wait.
-                created = await _cloud.CreateServerAsync(token, name, hetzner, candidate.ServerType, candidate.Location, controller, bootstrapScript, CancellationToken.None);
+                created = await _cloud.CreateServerAsync(token, name, hetzner, candidate.ServerType, candidate.Location, controller, WorkerUserData.Build(bootstrapScript, hostKey), CancellationToken.None);
             }
             catch (HetznerApiException exception) when (HetznerPlacement.IsPlacementUnavailable(exception))
             {
@@ -418,7 +430,7 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
             // didn't parse), and the server may exist all the same.
             catch (Exception exception) when (exception is not HetznerApiException and not OutOfMemoryException)
             {
-                await RecoverUnansweredCreateAsync(token, controller, databasePath, statePath, name);
+                await RecoverUnansweredCreateAsync(token, controller, databasePath, statePath, name, hostKey);
                 throw;
             }
 
@@ -428,6 +440,9 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
                 var knownHostsFile = WorkerStateStore.KnownHostsPath(statePath[..^".hetzner-worker.json".Length], server.Id);
                 var state = new WorkerState(server.Id, server.PrimaryIpv4Id, server.Name, server.Address, candidate.Location, candidate.ServerType, knownHostsFile, controller, server.CreatedUtc);
 
+                // Before the state file names it, so no record ever points at a worker whose key isn't known yet, which
+                // would trust whatever answered first.
+                WorkerStateStore.WriteKnownHosts(knownHostsFile, hostKey.KnownHostsLine(server.Address));
                 // A failed POST never reaches this point, so no local state is left for a failed placement attempt.
                 // On no token: a stop during the write would leave only the .partial file, and the run's end reads the state
                 // file alone to decide what happens to the worker.
@@ -479,11 +494,15 @@ public sealed class HetznerRemoteWorkerLifecycle : IRemoteWorkerLifecycle, IDisp
     /// would: the run's end then decides its fate like any recorded worker's. Runs on no token, as the create did. When Hetzner
     /// can't be asked either, nothing records the server, so the user is told how to check for it and delete it.
     /// </summary>
-    private async Task RecoverUnansweredCreateAsync(string token, string controller, string databasePath, string statePath, string name)
+    /// <remarks>
+    /// The lookup runs under the lifecycle lock, after one that found no server, so a labelled server it finds is the one this
+    /// request made, created with <paramref name="hostKey"/>.
+    /// </remarks>
+    private async Task RecoverUnansweredCreateAsync(string token, string controller, string databasePath, string statePath, string name, WorkerHostKey hostKey)
     {
         try
         {
-            _ = await RecoverByLabelAsync(token, controller, databasePath, statePath, CancellationToken.None);
+            _ = await RecoverByLabelAsync(token, controller, databasePath, statePath, CancellationToken.None, hostKey);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {

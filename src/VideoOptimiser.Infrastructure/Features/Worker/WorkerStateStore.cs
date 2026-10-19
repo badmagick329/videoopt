@@ -86,6 +86,17 @@ internal static class WorkerStateStore
         File.Move(partial, path, overwrite: true);
     }
 
+    /// <summary>Records <paramref name="line"/> as the one key the worker's known-hosts file trusts.</summary>
+    internal static void WriteKnownHosts(string path, string line)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, line + "\n");
+    }
+
+    /// <summary>Whether the worker's known-hosts file holds a key, so a connection can check it strictly.</summary>
+    internal static bool HasHostKey(string path) =>
+        !string.IsNullOrWhiteSpace(path) && File.Exists(path) && File.ReadAllLines(path).Any(line => line.Trim() is { Length: > 0 } text && !text.StartsWith('#'));
+
     internal static void DeleteLocalState(string statePath, string knownHostsFile)
     {
         if (File.Exists(statePath)) File.Delete(statePath);

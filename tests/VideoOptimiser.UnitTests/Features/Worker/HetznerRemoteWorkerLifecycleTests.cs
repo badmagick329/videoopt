@@ -1,6 +1,8 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Worker;
@@ -64,14 +66,97 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         fixture.Handler.CreatePayload.RootElement.GetProperty("ssh_keys")[0].GetString().Should().Be("video-optimiser-hetzner-cx43");
         fixture.Handler.CreatePayload.RootElement.GetProperty("public_net").GetProperty("enable_ipv4").GetBoolean().Should().BeTrue();
         fixture.Handler.CreatePayload.RootElement.GetProperty("public_net").GetProperty("enable_ipv6").GetBoolean().Should().BeFalse();
-        fixture.Handler.CreatePayload.RootElement.GetProperty("user_data").GetString().Should().Be("#!/usr/bin/env bash\ntouch /opt/video-optimiser/.bootstrap-complete\n");
+        fixture.Handler.CreatePayload.RootElement.GetProperty("user_data").GetString().Should().NotContain("\r");
+        SentUserData(fixture).Script.Should().Be("#!/usr/bin/env bash\ntouch /opt/video-optimiser/.bootstrap-complete\n");
         fixture.Handler.AutoDeleteUpdated.Should().BeTrue();
         fixture.Processes.Requests.Should().HaveCount(2);
-        fixture.Processes.Requests[0].Arguments.Should().Contain("StrictHostKeyChecking=accept-new");
         fixture.Processes.Requests[0].Arguments.Should().ContainInOrder("-o", "User=root");
         fixture.Processes.Requests[1].Arguments.Should().ContainInOrder("-o", "User=videoopt");
         fixture.Settings.Processing.RemoteSsh.User.Should().Be("videoopt");
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().BeTrue();
+    }
+
+    /// <summary>
+    /// VOPT-152: the worker is created with a host key whose public half is in its known-hosts file before the first probe,
+    /// and every probe checks it strictly, so nothing that answers at the new address first is trusted in its place.
+    /// </summary>
+    [Fact]
+    public async Task ANewWorkersHostKeyIsKnownBeforeTheFirstConnectionAndCheckedStrictly()
+    {
+        using var fixture = new Fixture();
+        var knownHosts = fixture.DatabasePath + ".hetzner-42.known_hosts";
+        var knownHostsAtEachProbe = new List<string?>();
+        fixture.Processes.OnRun = _ => knownHostsAtEachProbe.Add(File.Exists(knownHosts) ? File.ReadAllText(knownHosts) : null);
+        using var lifecycle = fixture.CreateLifecycle();
+
+        await lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        var sent = SentHostKey(fixture);
+        using (var key = ECDsa.Create())
+        {
+            key.ImportFromPem(sent.PrivateKeyPem);
+            WorkerHostKey.PublicKeyOf(key).Should().Be(sent.PublicKey, "sshd serves the private half, and known_hosts trusts the public one");
+        }
+        knownHostsAtEachProbe.Should().HaveCount(2).And.AllBe($"203.0.113.42 {sent.PublicKey}\n");
+        fixture.Processes.Requests.Should().AllSatisfy(request => request.Arguments.Should().Contain("StrictHostKeyChecking=yes").And.NotContain("StrictHostKeyChecking=accept-new"));
+    }
+
+    /// <summary>
+    /// A worker an earlier version created has its key in known_hosts once a probe got through, and is then checked strictly
+    /// too. One that never answered a probe has no key recorded, and only that one trusts its first answer, as before.
+    /// </summary>
+    [Theory]
+    [InlineData(true, "StrictHostKeyChecking=yes")]
+    [InlineData(false, "StrictHostKeyChecking=accept-new")]
+    public async Task AReusedWorkerIsCheckedStrictlyWhenItsHostKeyIsRecorded(bool keyRecorded, string expected)
+    {
+        using var fixture = new Fixture();
+        using (var first = fixture.CreateLifecycle()) await first.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+        if (!keyRecorded) File.Delete(fixture.DatabasePath + ".hetzner-42.known_hosts");
+        fixture.Processes.Requests.Clear();
+
+        using var second = fixture.CreateLifecycle();
+        await second.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        fixture.Handler.CreateCount.Should().Be(1);
+        fixture.Processes.Requests.Should().NotBeEmpty().And.AllSatisfy(request => request.Arguments.Should().Contain(expected));
+    }
+
+    /// <summary>The host key and the base64 script part make the user data larger than the script: the 32 KiB cap is on that.</summary>
+    [Fact]
+    public async Task AScriptUnderTheLimitThatIsOverItOnceSentAsUserDataCreatesNothing()
+    {
+        using var fixture = new Fixture();
+        File.WriteAllText(fixture.Settings.Processing.RemoteSsh.Hetzner.BootstrapScriptPath, "#!/usr/bin/env bash\n" + new string('#', 25 * 1024) + "\n");
+        using var lifecycle = fixture.CreateLifecycle();
+
+        var action = () => lifecycle.EnsureReadyAsync(fixture.Settings, fixture.DatabasePath);
+
+        (await action.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().StartWith("The Hetzner bootstrap script is too large.").And.Contain("32 KiB");
+        fixture.Handler.CreateCount.Should().Be(0);
+    }
+
+    /// <summary>The two parts of the create request's MIME user data: the cloud-config and the decoded bootstrap script.</summary>
+    private static (string CloudConfig, string Script) SentUserData(Fixture fixture)
+    {
+        var userData = fixture.Handler.CreatePayload!.RootElement.GetProperty("user_data").GetString()!;
+        var boundary = Regex.Match(userData, "boundary=\"([^\"]+)\"").Groups[1].Value;
+        var parts = userData.Split($"--{boundary}");
+        parts.Should().HaveCount(4, "a header, two parts and the closing boundary");
+        string Body(string part) => part[(part.IndexOf("\n\n", StringComparison.Ordinal) + 2)..];
+        parts[1].Should().Contain("Content-Type: text/cloud-config");
+        parts[2].Should().Contain("Content-Type: text/x-shellscript").And.Contain("Content-Transfer-Encoding: base64");
+        return (Body(parts[1]), Encoding.UTF8.GetString(Convert.FromBase64String(Body(parts[2]).Replace("\n", string.Empty))));
+    }
+
+    private static (string PublicKey, string PrivateKeyPem) SentHostKey(Fixture fixture)
+    {
+        var config = SentUserData(fixture).CloudConfig;
+        config.Should().StartWith("#cloud-config\nssh_keys:\n");
+        var publicKey = Regex.Match(config, "^  ecdsa_public: \"(.+)\"$", RegexOptions.Multiline).Groups[1].Value;
+        // The block scalar's lines, four spaces in, after its key.
+        var pem = string.Join("\n", config.Split('\n').SkipWhile(line => line != "  ecdsa_private: |").Skip(1).TakeWhile(line => line.StartsWith("    ", StringComparison.Ordinal)).Select(line => line[4..]));
+        return (publicKey, pem);
     }
 
     [Fact]
@@ -1156,10 +1241,13 @@ public sealed class HetznerRemoteWorkerLifecycleTests
             thrown.Should().BeSameAs(lost);
         var recorded = serverMade && !lookupFails;
         File.Exists(fixture.DatabasePath + ".hetzner-worker.json").Should().Be(recorded);
+        var knownHosts = fixture.DatabasePath + ".hetzner-42.known_hosts";
+        File.Exists(knownHosts).Should().Be(recorded, "a recorded worker without its key would trust whatever answers first");
         if (recorded)
         {
             (await lifecycle.ReadRecordedAsync(fixture.DatabasePath))!.ServerId.Should().Be(42);
             (await BillAsync(fixture)).ServerId.Should().Be(42);
+            File.ReadAllText(knownHosts).Should().Be($"203.0.113.42 {SentHostKey(fixture).PublicKey}\n");
         }
         fixture.Handler.CreateCount.Should().Be(1, "a lost answer is never retried as another create");
     }
@@ -1303,9 +1391,13 @@ public sealed class HetznerRemoteWorkerLifecycleTests
         public int BlockingAttempts { get; set; }
         public int CancelledRequests { get; private set; }
 
+        /// <summary>Runs as each request arrives, to see what the disk held at that moment.</summary>
+        public Action<ExternalProcessRequest>? OnRun { get; set; }
+
         public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
         {
             Requests.Add(request);
+            OnRun?.Invoke(request);
             if (BlockingAttempts > 0)
             {
                 BlockingAttempts--;

@@ -5,11 +5,18 @@ readonly PREFIX="/opt/video-optimiser"
 readonly WORK_ROOT="/var/tmp/video-optimiser"
 readonly WORKER_USER="videoopt"
 readonly WORKER_HOME="/var/lib/videoopt"
+# Each version has its pin on the next line: the commit its tag named, or the SHA-256 of the file it downloads. A moved
+# tag or a replaced upstream file then fails the bootstrap instead of building into the worker. Bump the two together;
+# ToolVersionPinTests fails when a version has no pin beside it, or when a pair isn't the one it lists.
 readonly VMAF_VERSION="3.0.0"
+readonly VMAF_COMMIT="17a67b238ce0539bdeafdc95961abac64fa16ea8"
 readonly SVT_AV1_VERSION="3.1.0"
+readonly SVT_AV1_COMMIT="cc569c1eb16832b7f1a649cac0b3bd1a8e4a814d"
 readonly FFMPEG_VERSION="8.0"
+readonly FFMPEG_SHA256="b2751fccb6cc4c77708113cd78b561059b6fa904b24162fa0be2d60273d27b8e"
 # Same version as scripts/install-media-tools.ps1, which CI tests; ToolVersionPinTests fails when they differ.
 readonly AB_AV1_VERSION="0.11.7"
+readonly AB_AV1_SHA256="40c035df608162fcb1c991d1474bc9bc8817e0354ac7aef5be5314d3efd64069"
 readonly AUTHORIZED_KEYS_SOURCE="${VIDEOOPT_AUTHORIZED_KEYS_FILE:-/root/.ssh/authorized_keys}"
 readonly PROGRESS_FILE="${PREFIX}/.bootstrap-progress"
 # Without it a failed script looks like a slow one, and the controller waits out the whole bootstrapTimeout (VOPT-140).
@@ -61,6 +68,28 @@ die() {
 
 # set -E carries the trap into functions and subshells. die exits without tripping it, so it writes its own marker.
 trap 'on_error "$?" "${LINENO}" "${BASH_COMMAND}"' ERR
+
+# Bash fires no ERR trap for a command in a || list, so each check ends in die, which writes the failure marker itself.
+verify_sha256() {
+    local file="$1"
+    local expected="$2"
+
+    printf '%s  %s\n' "${expected}" "${file}" | sha256sum --check --status \
+        || die "${file##*/} doesn't match the SHA-256 pinned in the bootstrap script"
+}
+
+# Fetches the pinned commit itself rather than a tag, which upstream can move to other code.
+fetch_commit() {
+    local url="$1"
+    local commit="$2"
+    local directory="$3"
+
+    git init --quiet "${directory}"
+    git -C "${directory}" fetch --quiet --depth 1 "${url}" "${commit}"
+    git -C "${directory}" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+    [[ "$(git -C "${directory}" rev-parse HEAD)" == "${commit}" ]] \
+        || die "the commit fetched from ${url} isn't the one pinned in the bootstrap script"
+}
 
 if [[ "${EUID}" -ne 0 ]]; then
     die "run this script as root"
@@ -134,8 +163,7 @@ export PATH="${PREFIX}/bin:${PATH}"
 if [[ ! -f "${PREFIX}/.versions/libvmaf-${VMAF_VERSION}" ]] || \
    [[ "$(pkg-config --modversion libvmaf 2>/dev/null || true)" != "${VMAF_VERSION}" ]]; then
     write_progress 15 "Building libvmaf"
-    git clone --depth 1 --branch "v${VMAF_VERSION}" --single-branch \
-        https://github.com/Netflix/vmaf.git "${build_dir}/vmaf"
+    fetch_commit https://github.com/Netflix/vmaf.git "${VMAF_COMMIT}" "${build_dir}/vmaf"
     meson setup "${build_dir}/vmaf/libvmaf/build" "${build_dir}/vmaf/libvmaf" \
         --buildtype=release \
         --prefix="${PREFIX}" \
@@ -149,8 +177,7 @@ fi
 if [[ ! -f "${PREFIX}/.versions/svt-av1-${SVT_AV1_VERSION}" ]] || \
    [[ "$(pkg-config --modversion SvtAv1Enc 2>/dev/null || true)" != "${SVT_AV1_VERSION}" ]]; then
     write_progress 35 "Building SVT-AV1"
-    git clone --depth 1 --branch "v${SVT_AV1_VERSION}" --single-branch \
-        https://gitlab.com/AOMediaCodec/SVT-AV1.git "${build_dir}/svt-av1"
+    fetch_commit https://gitlab.com/AOMediaCodec/SVT-AV1.git "${SVT_AV1_COMMIT}" "${build_dir}/svt-av1"
     cmake -S "${build_dir}/svt-av1" -B "${build_dir}/svt-av1-build" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
@@ -178,6 +205,7 @@ if [[ ! -f "${PREFIX}/.versions/ffmpeg-${FFMPEG_VERSION}" ]] || \
     curl --fail --location --retry 5 --proto '=https' --tlsv1.2 \
         "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
         --output "${build_dir}/ffmpeg.tar.xz"
+    verify_sha256 "${build_dir}/ffmpeg.tar.xz" "${FFMPEG_SHA256}"
     tar -xJf "${build_dir}/ffmpeg.tar.xz" -C "${build_dir}"
     pushd "${build_dir}/ffmpeg-${FFMPEG_VERSION}" >/dev/null
     PKG_CONFIG_PATH="${PKG_CONFIG_PATH}" ./configure \
@@ -202,6 +230,7 @@ if [[ ! -f "${PREFIX}/.versions/ab-av1-${AB_AV1_VERSION}" ]] || \
     curl --fail --location --retry 5 --proto '=https' --tlsv1.2 \
         "https://github.com/alexheretic/ab-av1/releases/download/v${AB_AV1_VERSION}/ab-av1-v${AB_AV1_VERSION}-x86_64-unknown-linux-musl.tar.zst" \
         --output "${build_dir}/ab-av1.tar.zst"
+    verify_sha256 "${build_dir}/ab-av1.tar.zst" "${AB_AV1_SHA256}"
     tar --zstd -xf "${build_dir}/ab-av1.tar.zst" -C "${build_dir}"
     install -m 0755 "${build_dir}/ab-av1" "${PREFIX}/bin/ab-av1"
     touch "${PREFIX}/.versions/ab-av1-${AB_AV1_VERSION}"

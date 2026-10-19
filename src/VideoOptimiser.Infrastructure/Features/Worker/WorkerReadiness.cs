@@ -83,7 +83,13 @@ internal sealed class WorkerReadiness
         while (_utcNow() < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var arguments = OpenSshConnectionArguments.Build(settings.Processing.RemoteSsh, acceptNewHostKey: true, userOverride: "root");
+            // A worker this version creates has its host key recorded before it boots (VOPT-152), so every probe checks
+            // strictly, and a key mismatch is just a failed probe, retried like a refused one. Only a worker with no recorded
+            // key trusts its first answer, as every worker did before: one an earlier version created that never answered
+            // a probe, or one recovered by its label after its local files were lost. Read again each time, because the
+            // first accepted probe records the key.
+            var acceptNewHostKey = !WorkerStateStore.HasHostKey(settings.Processing.RemoteSsh.KnownHostsFile);
+            var arguments = OpenSshConnectionArguments.Build(settings.Processing.RemoteSsh, acceptNewHostKey, userOverride: "root");
             arguments.Add(state.Address);
             arguments.Add(probeCommand);
             try
@@ -102,7 +108,7 @@ internal sealed class WorkerReadiness
                     failingSince = null;
                     if (currentProgress.Percent >= 100)
                     {
-                        var processingArguments = OpenSshConnectionArguments.Build(settings.Processing.RemoteSsh, acceptNewHostKey: true);
+                        var processingArguments = OpenSshConnectionArguments.Build(settings.Processing.RemoteSsh, acceptNewHostKey: !WorkerStateStore.HasHostKey(settings.Processing.RemoteSsh.KnownHostsFile));
                         processingArguments.Add(state.Address);
                         processingArguments.Add("true");
                         var processingResult = await RunReadinessProbeAsync(settings.Tools.SshPath, processingArguments, cancellationToken);

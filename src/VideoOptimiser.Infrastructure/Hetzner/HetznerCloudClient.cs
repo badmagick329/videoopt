@@ -32,9 +32,9 @@ internal sealed class HetznerCloudClient : IDisposable
     /// Posts the create request and parses the server it answers with. A failed POST throws before anything exists, and the
     /// caller decides whether that failure means "try the next placement".
     /// </summary>
-    public async Task<CreatedServer> CreateServerAsync(string token, string name, HetznerSettings hetzner, string serverType, string location, string controller, string bootstrapScript, CancellationToken cancellationToken)
+    public async Task<CreatedServer> CreateServerAsync(string token, string name, HetznerSettings hetzner, string serverType, string location, string controller, string userData, CancellationToken cancellationToken)
     {
-        var document = await SendJsonAsync(token, HttpMethod.Post, "servers", CreateServerPayload(name, hetzner, serverType, location, controller, bootstrapScript), cancellationToken);
+        var document = await SendJsonAsync(token, HttpMethod.Post, "servers", CreateServerPayload(name, hetzner, serverType, location, controller, userData), cancellationToken);
         try
         {
             return new CreatedServer(document, ParseServer(document.RootElement.GetProperty("server")));
@@ -282,7 +282,7 @@ internal sealed class HetznerCloudClient : IDisposable
     private static InvalidOperationException PreflightFailure(string reason, Exception? innerException = null) =>
         new($"Hetzner server type preflight failed: {reason}; no worker was created.", innerException);
 
-    private static byte[] CreateServerPayload(string name, HetznerSettings hetzner, string serverType, string location, string controller, string bootstrapScript)
+    private static byte[] CreateServerPayload(string name, HetznerSettings hetzner, string serverType, string location, string controller, string userData)
     {
         using var payload = new MemoryStream();
         using (var writer = new Utf8JsonWriter(payload))
@@ -296,7 +296,7 @@ internal sealed class HetznerCloudClient : IDisposable
             writer.WriteStartArray();
             writer.WriteStringValue(hetzner.SshKeyName);
             writer.WriteEndArray();
-            writer.WriteString("user_data", bootstrapScript);
+            writer.WriteString("user_data", userData);
             writer.WritePropertyName("labels");
             writer.WriteStartObject();
             writer.WriteString(ManagedLabel, "true");

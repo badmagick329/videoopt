@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Remote workers
+
+- A new Hetzner worker now gets an SSH host key that VideoOptimiser makes before the server exists, so even the first connection checks that key. Before, the first connection trusted whatever answered at the new address.
+- The worker's bootstrap now checks FFmpeg and ab-av1 against pinned SHA-256 checksums and builds libvmaf and SVT-AV1 from pinned commits. A download that doesn't match stops the bootstrap, and the run says why. Before, it built whatever the download returned.
+
 ### Fixes
 
 - A finalise that can't move a file because another program has it open, such as the player you reviewed the AV1 in, now leaves the video ready to finalise. Close the file and run `finalize` again. It used to mark the video as failed, and only `queue retry`, a full new encode, got it back.
