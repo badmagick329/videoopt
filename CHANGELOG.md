@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Check your config
+
+- **If your config has `sampleCount: 5` under `quality.crfSearch`, delete that line to keep the number of CRF-search samples you had before.** Earlier versions of `config init` wrote it into every config. Until now it did almost nothing: every video whose length ffprobe could read got one sample per two minutes of video, from 2 to 12. `sampleCount` now applies to every video, so a config that keeps the line gets exactly 5 samples per search. A 3-minute video then takes 5 samples instead of 2, and a 30-minute video 5 instead of 12. Configs made by `config init` from now on leave the line commented out.
+
 ### Remote workers
 
 - A new Hetzner worker now gets an SSH host key that VideoOptimiser makes before the server exists, so even the first connection checks that key. Before, the first connection trusted whatever answered at the new address.
@@ -20,9 +24,7 @@
 - Uploading a large video to a worker no longer fails when the worker takes more than 30 seconds to check the upload's checksum. The video used to fail as a staging failure even though the upload had finished, and it was converted only on a later run.
 - A CRF search or encode that hangs on a worker without exiting is now stopped, and the video fails with a message saying how long its log was silent. The run then goes on to the next video. Before, the run waited on it forever while the worker billed, and the full-screen view kept saying the worker had answered.
 - When a worker can't remove a video's files after the video is done, the run now says so in one line and carries on, and a later run removes them. It used to mark a video that had passed validation as failed, or stop the whole run if the worker had just stopped answering. It also hid the real reason a video failed on the worker, or that its original changed during the upload.
-- A run that fails while it starts, for example because the database is busy, now only reports the error. It used to go on to decide the worker's fate after it had already let go of the run lock, so a background run set to delete the worker could delete one that another run had just started using.
-- `quality.crfSearch.sampleCount` now sets how many samples every CRF search takes. It used to apply only to a video whose length ffprobe couldn't read; every other video got one sample per two minutes, from 2 to 12. Leave it out to keep that rule. A config that sets it, as `config init` used to write it with `5`, now gets exactly that many.
-- Stopping a run now always ends the ffprobe, ab-av1 or ssh it was waiting on, and a video stopped mid-encode is marked as stopped at once. ffprobe used to keep running after Ctrl+C, a stop could leave ssh running with half its commands sent, and a stop that hit an ab-av1 just as it exited could leave its video shown as encoding until the next run.
+- A run that fails while it starts, for example because the database is busy, now only reports the error. It used to go on to decide the worker's fate after it had already let go of the run lock, so a background run set to delete the worker could delete one that another run had just started using.- Stopping a run now always ends the ffprobe, ab-av1 or ssh it was waiting on, and a video stopped mid-encode is marked as stopped at once. ffprobe used to keep running after Ctrl+C, a stop could leave ssh running with half its commands sent, and a stop that hit an ab-av1 just as it exited could leave its video shown as encoding until the next run.
 - A video whose encode started on a worker now stays stopped when its original can't be found, for example on a network or USB drive that is offline, and resumes once the original is back. It used to fail, and the next run deleted the encode from the worker, so the video needed `queue retry` and a whole new encode.
 
 ## [0.14.1] - 2026-10-18
