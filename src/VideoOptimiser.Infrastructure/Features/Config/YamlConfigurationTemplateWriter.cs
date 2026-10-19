@@ -151,8 +151,8 @@ quality:
     # Inclusive CRF search range.
     minCrf: 8
     maxCrf: 50
-    # Maximum samples; short videos automatically use fewer.
-    sampleCount: 5
+    # Samples per search, for every video. Absent means one per two minutes of video, 2 to 12.
+    # sampleCount: 5
     # Duration of each CRF-search sample.
     sampleDuration: "20s"
 

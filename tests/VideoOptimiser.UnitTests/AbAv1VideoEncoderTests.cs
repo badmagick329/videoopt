@@ -13,7 +13,7 @@ public sealed class AbAv1VideoEncoderTests
         PixelFormat = "yuv420p10le",
         Preset = 6,
         MinimumVmaf = 95,
-        CrfSearch = new CrfSearchSettings { MinCrf = 18, MaxCrf = 50, SampleCount = 5, SampleDuration = "20s" }
+        CrfSearch = new CrfSearchSettings { MinCrf = 18, MaxCrf = 50, SampleDuration = "20s" }
     };
 
     /// <summary>

@@ -236,13 +236,22 @@ public sealed class CrfSearchSettings
 {
     [YamlMember(Alias = "minCrf")] public int MinCrf { get; set; } = 8;
     [YamlMember(Alias = "maxCrf")] public int MaxCrf { get; set; } = 50;
-    [YamlMember(Alias = "sampleCount")] public int SampleCount { get; set; } = 5;
+    /// <summary>The count the user set, used for every video; null lets each video's duration pick it (VOPT-159).</summary>
+    [YamlMember(Alias = "sampleCount")] public int? ConfiguredSampleCount { get; set; }
     [YamlMember(Alias = "sampleDuration")] public string SampleDuration { get; set; } = "20s";
+
+    private int? _sampleCount;
+
+    /// <summary>
+    /// The count one video's search uses, chosen by <see cref="WithSampleCount"/> on a job's copy. Kept apart from the setting
+    /// so ab-av1's arguments and the progress text always read a count; reading it before one is chosen is a bug, so it throws.
+    /// </summary>
+    [YamlIgnore] public int SampleCount => _sampleCount ?? throw new InvalidOperationException("The CRF search's sample count is chosen per video; call WithSampleCount first.");
 
     public CrfSearchSettings WithSampleCount(int sampleCount)
     {
         var copy = (CrfSearchSettings)MemberwiseClone();
-        copy.SampleCount = sampleCount;
+        copy._sampleCount = sampleCount;
         return copy;
     }
 }

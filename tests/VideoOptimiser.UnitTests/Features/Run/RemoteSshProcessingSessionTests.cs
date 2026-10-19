@@ -397,7 +397,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var session = CreateSession(Guid.NewGuid(), runner, source);
         var progress = new ListProgress();
 
-        var result = await session.SearchCrfAsync(source, new QualitySettings(), progress);
+        var result = await session.SearchCrfAsync(source, new QualitySettings().WithSampleCount(5), progress);
 
         result.Crf.Should().Be(29);
         result.Prediction.Should().Be(new CrfPrediction("284.87 MiB", 29, "5 minutes"));
@@ -522,7 +522,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var runner = new ScriptedProcessRunner([Ok(AtEnd("completed 9", "fatal encode error\n")), Ok("fatal encode error\n"), Ok()]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
-        var action = async () => await session.SearchCrfAsync(source, new QualitySettings());
+        var action = async () => await session.SearchCrfAsync(source, new QualitySettings().WithSampleCount(5));
 
         var thrown = (await action.Should().ThrowAsync<AbAv1StageException>().WithMessage("*exit code 9*")).Which;
         var logPath = Path.Combine(_directory, ".video-optimiser", $"{session.RemoteWorkspace!.Split('/').Last()}.crf.remote.log");
@@ -538,7 +538,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var runner = new ScriptedProcessRunner([Ok(AtEnd("completed 1", NoWorthwhileCrfLog.Text)), Ok(NoWorthwhileCrfLog.Text), Ok()]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
-        var action = async () => await session.SearchCrfAsync(source, new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 });
+        var action = async () => await session.SearchCrfAsync(source, new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 }.WithSampleCount(5));
 
         var thrown = (await action.Should().ThrowAsync<NoWorthwhileCrfException>()).Which;
         thrown.Best.Should().Be(new CrfAttempt(31, 97.31, 95));
@@ -594,7 +594,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var runner = new ScriptedProcessRunner([Ok(AtEnd("missing", "")), Ok(), Ok(), Ok(Sent("completed 0", "crf 42 successful\n")), Ok("crf 42 successful\n")]);
         var progress = new ListProgress();
 
-        var result = await CreateSession(Guid.NewGuid(), runner, source).SearchCrfAsync(source, new QualitySettings(), progress);
+        var result = await CreateSession(Guid.NewGuid(), runner, source).SearchCrfAsync(source, new QualitySettings().WithSampleCount(5), progress);
 
         Steps(progress).Should().BeEmpty();
         result.Duration.Should().NotBeNull();
@@ -607,7 +607,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var source = await SourceAsync();
         var runner = new ScriptedProcessRunner([Ok(AtEnd("running", "")), Ok(Sent("completed 0", "crf 42 successful\n")), Ok("crf 42 successful\n")]);
 
-        var result = await CreateSession(Guid.NewGuid(), runner, source).SearchCrfAsync(source, new QualitySettings());
+        var result = await CreateSession(Guid.NewGuid(), runner, source).SearchCrfAsync(source, new QualitySettings().WithSampleCount(5));
 
         result.Duration.Should().BeNull();
     }

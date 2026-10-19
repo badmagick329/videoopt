@@ -2,12 +2,17 @@ namespace VideoOptimiser.Application.Tools;
 
 public static class CrfSampleCountCalculator
 {
-    public static int Calculate(double? durationSeconds, int fallbackSampleCount)
+    /// <summary>The count when neither the setting nor the video's duration picks one: the setting's default before VOPT-159.</summary>
+    public const int UnknownDurationSampleCount = 5;
+
+    /// <summary>
+    /// A configured <c>quality.crfSearch.sampleCount</c> is used as is. Without one, longer videos get more samples, one per
+    /// two minutes of video, from 2 to 12.
+    /// </summary>
+    public static int Calculate(double? durationSeconds, int? configuredSampleCount)
     {
-        if (durationSeconds is not > 0)
-        {
-            return fallbackSampleCount;
-        }
+        if (configuredSampleCount is { } configured) return configured;
+        if (durationSeconds is not > 0) return UnknownDurationSampleCount;
 
         var minutes = durationSeconds.Value / 60d;
         return Math.Clamp((int)Math.Ceiling(minutes / 2), 2, 12);

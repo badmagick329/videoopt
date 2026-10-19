@@ -27,7 +27,7 @@ public sealed record SizeCap(int Percent, bool SetByMinimumBytes, long MeasuredB
         if (!HumanReadableValues.TryParseSize(savings.MinimumBytesSaved, out var minimumBytes))
             throw new InvalidOperationException("savings.minimumBytesSaved must be validated before the size cap is computed.");
 
-        var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, quality.CrfSearch.SampleCount);
+        var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, quality.CrfSearch.ConfiguredSampleCount);
         var wholeVideo = HumanReadableValues.TryParseDuration(quality.CrfSearch.SampleDuration, out var sampleDuration)
             && CrfSampleCountCalculator.TestsWholeVideo(media.DurationSeconds, sampleCount, sampleDuration);
         var isFile = wholeVideo || media.PrimaryVideoBitrate is not > 0 || media.DurationSeconds is not > 0;

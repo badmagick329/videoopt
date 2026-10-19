@@ -85,7 +85,7 @@ public sealed class SettingsValidator : ISettingsValidator
         AddWhen(settings.Quality.MaxEncodedPercent is < 1 or > 100, "InvalidMaxEncodedPercent", "quality.maxEncodedPercent must be a whole number between 1 and 100.");
         AddWhen(settings.Quality.Preset < 0, "InvalidPreset", "quality.preset cannot be negative.");
         AddWhen(settings.Quality.CrfSearch.MinCrf > settings.Quality.CrfSearch.MaxCrf, "InvalidCrfRange", "quality.crfSearch.minCrf cannot exceed maxCrf.");
-        AddWhen(settings.Quality.CrfSearch.SampleCount < 1, "InvalidSampleCount", "quality.crfSearch.sampleCount must be at least 1.");
+        AddWhen(settings.Quality.CrfSearch.ConfiguredSampleCount is < 1, "InvalidSampleCount", "quality.crfSearch.sampleCount must be at least 1.");
         ValidateDuration(settings.Quality.CrfSearch.SampleDuration, "quality.crfSearch.sampleDuration", diagnostics);
         AddWhen(string.IsNullOrWhiteSpace(settings.Quality.Encoder), "EncoderRequired", "quality.encoder is required.");
         AddWhen(!IsOneOf(settings.Quality.UnsupportedAudio, UnsupportedAudioActions.Drop, UnsupportedAudioActions.Skip), "InvalidUnsupportedAudio", "quality.unsupportedAudio must be drop or skip.");

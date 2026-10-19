@@ -91,7 +91,7 @@ public sealed class JobProcessor(
             // Saved with the job's next update, so the note is there from the first stage on and a new attempt replaces it.
             job.Notes = AudioPlan.For(media) is { Dropped.Count: > 0 } audio ? [DroppedAudioNote(audio)] : [];
 
-            var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.SampleCount);
+            var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.ConfiguredSampleCount);
             var quality = settings.Quality.WithSampleCount(sampleCount).WithSizeCap(cap);
             // Both questions are settled before anything is staged: staging hashes the original and needs a worker, and a
             // resume that only has to download or check what is already finished needs neither (VOPT-72, VOPT-89).

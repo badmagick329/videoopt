@@ -17,8 +17,8 @@ public sealed class AbAv1CrfSearchClientTests
             PixelFormat = "yuv420p10le",
             Preset = 6,
             MinimumVmaf = 95,
-            CrfSearch = new CrfSearchSettings { MinCrf = 18, MaxCrf = 50, SampleCount = 5, SampleDuration = "20s" }
-        };
+            CrfSearch = new CrfSearchSettings { MinCrf = 18, MaxCrf = 50, SampleDuration = "20s" }
+        }.WithSampleCount(5);
 
         var arguments = new AbAv1CrfSearchClient("ab-av1").BuildArguments("C:\\video.mp4", settings);
 
@@ -66,7 +66,7 @@ public sealed class AbAv1CrfSearchClientTests
             await File.WriteAllTextAsync(Path.Combine(directory, "stderr.txt"), stderr);
             var script = Path.Combine(directory, "ab-av1.cmd");
             await File.WriteAllTextAsync(script, $"@echo off\r\ntype \"%~dp0stdout.txt\"\r\ntype \"%~dp0stderr.txt\" 1>&2\r\nexit /b {exitCode}\r\n");
-            return await new AbAv1CrfSearchClient(script).SearchAsync("C:\\video.mp4", settings, progress);
+            return await new AbAv1CrfSearchClient(script).SearchAsync("C:\\video.mp4", settings.WithSampleCount(5), progress);
         }
         finally
         {

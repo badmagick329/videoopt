@@ -168,7 +168,7 @@ public sealed class QueueDiscoveryTests : IDisposable
         await JobAsync(source, JobStatus.Skipped, job => (job.FailureCategory, job.QualityFingerprint) = ("NotWorthConverting", QualityFingerprint.Compute(_settings)));
         switch (change)
         {
-            case "sampleCount": _settings.Quality.CrfSearch.SampleCount = 9; break;
+            case "sampleCount": _settings.Quality.CrfSearch.ConfiguredSampleCount = 9; break;
             case "minimumBytesSaved": _settings.Savings.MinimumBytesSaved = "50MiB"; break;
             case "minimumBytesSavedRespelled": _settings.Savings.MinimumBytesSaved = "1 MiB"; break;
             // The default adds nothing to the fingerprint, so upgrading leaves every earlier skip settled.

@@ -136,6 +136,22 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         (await load.Should().ThrowAsync<InvalidDataException>()).WithMessage("Invalid value for 'quality.crfSearch.minCrf' at line 4, column 13:*");
     }
 
+    /// <summary>An absent count must stay null, not a default, or every config would opt out of the duration rule (VOPT-159).</summary>
+    [Theory]
+    [InlineData("", null)]
+    [InlineData("sampleCount: 7", 7)]
+    public async Task LoadAsyncKeepsAnAbsentSampleCountUnset(string line, int? expected)
+    {
+        var loaded = await LoadAsync($"""
+            version: 1
+            quality:
+              crfSearch:
+                {line}
+            """);
+
+        loaded.Settings.Quality.CrfSearch.ConfiguredSampleCount.Should().Be(expected);
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     private async Task<LoadedConfiguration> LoadAsync(string yaml)
