@@ -162,6 +162,12 @@ internal sealed class RecordingFinalizer : IFinalizationService
     public Dictionary<Guid, FinalizationResult> Results { get; } = [];
     public Exception? Failure { get; set; }
 
+    /// <summary>What one job's finalisation throws, the others answering as usual.</summary>
+    public Dictionary<Guid, Exception> Failures { get; } = [];
+
+    /// <summary>The token each finalisation was handed, in order, so a test can see what a stop reached.</summary>
+    public List<CancellationToken> Tokens { get; } = [];
+
     /// <summary>Runs as each job is finalised, such as the TUI closing partway through a batch.</summary>
     public Action<Guid>? During { get; set; }
 
@@ -169,8 +175,10 @@ internal sealed class RecordingFinalizer : IFinalizationService
     {
         if (Finalised.Contains(jobId)) throw new InvalidOperationException($"Job {jobId} was given to finalise twice.");
         Finalised.Add(jobId);
+        Tokens.Add(cancellationToken);
         During?.Invoke(jobId);
         if (Failure is not null) throw Failure;
+        if (Failures.TryGetValue(jobId, out var failure)) throw failure;
         return Task.FromResult(Results.TryGetValue(jobId, out var result) ? result : new FinalizationResult(null, ExitCode.Success, "Original deleted; the AV1 is in its place."));
     }
 }

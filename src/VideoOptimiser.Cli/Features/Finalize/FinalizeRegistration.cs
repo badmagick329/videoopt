@@ -9,6 +9,7 @@ internal static class FinalizeRegistration
     public static IServiceCollection AddFinalize(this IServiceCollection services) => services
         .AddSingleton<ImmichFinalizer>()
         .AddSingleton<IFinalizationService, FinalizationService>()
+        .AddSingleton<FinalizationBatch>()
         .AddSingleton<ISafeFileInstaller, SafeFileInstaller>()
         .AddSingleton<FinalizeCommands>();
 }

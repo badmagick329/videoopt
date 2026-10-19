@@ -29,7 +29,7 @@ internal sealed class TuiActions(
     BackgroundLaunch launch,
     StopRunRequest stop,
     IRunRequestStore requests,
-    IFinalizationService finalizer,
+    FinalizationBatch batch,
     IDatabaseLocks locks,
     IFileOpener opener,
     ICostReport cost)
@@ -370,14 +370,12 @@ internal sealed class TuiActions(
     public async Task<PreparedMsg> PrepareFinaliseAsync(PrepareFinalise effect, AppSettings settings, CancellationToken cancellationToken)
     {
         var open = await jobs.ListAsync(settings.Database.Path, terminal: false, cancellationToken);
-        var finalisable = JobRunOrder.Sort(open).Where(FinalizationRules.IsFinalisable).ToArray();
-        JobRecord[] ready = effect.Id is { } id ? [.. finalisable.Where(job => job.Id == id)] : [.. finalisable.Where(FinalizationRules.IsBulkFinalisable)];
-        JobRecord[] leftOut = effect.Id is null ? [.. finalisable.Where(FinalizationRules.IsLeftForReview)] : [];
-        if (ready.Length == 0 && leftOut.Length > 0) return NothingInBulk(effect, leftOut);
-        if (ready.Length == 0) return new PreparedMsg(effect, null, effect.Id is null ? "Nothing is ready to finalise." : "That video can't be finalised now.");
+        var (ready, leftOut) = effect.Id is { } id ? FinalizationPlan.One(open, id) : FinalizationPlan.Bulk(open);
+        if (ready.Count == 0 && leftOut.Count > 0) return NothingInBulk(effect, leftOut);
+        if (ready.Count == 0) return new PreparedMsg(effect, null, effect.Id is null ? "Nothing is ready to finalise." : "That video can't be finalised now.");
 
         var lines = ready.Take(Named).Select(FinalizationConsole.DescribeReady).ToList();
-        if (ready.Length > Named) lines.Add($"And {ready.Length - Named} more.");
+        if (ready.Count > Named) lines.Add($"And {ready.Count - Named} more.");
         if (effect.Id is not null)
         {
             lines.AddRange(FinalizationConsole.DescribeWarnings(ready[0]));
@@ -385,14 +383,14 @@ internal sealed class TuiActions(
         }
         if (ready.Where(job => job.SourceKind == JobSourceKind.File).ToArray() is { Length: > 0 } fileJobs) lines.Add(FinalizationConsole.DescribeOriginalAction(settings.Original, fileJobs));
         if (ready.Any(job => job.SourceKind == JobSourceKind.Immich)) lines.Add("Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.");
-        if (leftOut.Length > 0)
+        if (leftOut.Count > 0)
         {
             lines.Add("Left out because validation warned about them. Watch each one, then press f on its row in Review:");
             lines.AddRange(leftOut.Take(Named).Select(job => "  " + FileName(job)));
-            if (leftOut.Length > Named) lines.Add($"  And {leftOut.Length - Named} more.");
+            if (leftOut.Count > Named) lines.Add($"  And {leftOut.Count - Named} more.");
         }
 
-        var question = ready.Length == 1 ? $"Finalise {FileName(ready[0])}?" : $"Finalise {ready.Length.ToString(CultureInfo.InvariantCulture)} videos?";
+        var question = ready.Count == 1 ? $"Finalise {FileName(ready[0])}?" : $"Finalise {ready.Count.ToString(CultureInfo.InvariantCulture)} videos?";
         var onYes = new FinaliseVideos([.. ready.Select(job => job.Id)], [.. leftOut.Select(FileName)]);
         return new PreparedMsg(effect, new TuiConfirm(question, string.Join('\n', lines), onYes), null);
     }
@@ -401,71 +399,64 @@ internal sealed class TuiActions(
     /// <c>F</c> when every ready video has warnings: no dialog, as <c>finalize --ready</c> asks nothing then. The footer's one
     /// line can't hold the names, so the log gets them under the same words.
     /// </summary>
-    private static PreparedMsg NothingInBulk(PrepareFinalise asked, JobRecord[] leftOut)
+    private static PreparedMsg NothingInBulk(PrepareFinalise asked, IReadOnlyList<JobRecord> leftOut)
     {
         const string message = "Nothing to finalise in bulk: every ready video has validation warnings. Watch each one, then press f on its row in Review.";
         var lines = new List<LogLine> { new(LogKind.Warning, message) };
         lines.AddRange(leftOut.Take(Named).Select(job => new LogLine(LogKind.Detail, FileName(job))));
-        if (leftOut.Length > Named) lines.Add(new LogLine(LogKind.Detail, $"And {leftOut.Length - Named} more."));
+        if (leftOut.Count > Named) lines.Add(new LogLine(LogKind.Detail, $"And {leftOut.Count - Named} more."));
         return new PreparedMsg(asked, null, message, lines);
     }
 
     /// <summary>
-    /// Finalises <paramref name="effect"/>'s videos in order under the finalise lock. Each video's start and end go out through
-    /// <paramref name="post"/> as they happen, its log line with the end, so Review shows the batch's progress; the result keeps
-    /// only the tally and the left-out names. A cancelled token (the TUI closing) ends the batch and posts nothing more.
+    /// Finalises <paramref name="effect"/>'s videos through <see cref="FinalizationBatch"/>, which takes the finalise lock and
+    /// keeps the batch's guarantees. Each video's start and end go out through <paramref name="post"/> as they happen, its log
+    /// line with the end, so Review shows the batch's progress; the result keeps only the tally and the left-out names. A
+    /// cancelled token (the TUI closing) ends the batch and posts nothing more.
     /// </summary>
-    /// <param name="stopAfterVideo">
-    /// Esc's stop, read only between videos and never handed to the finalisation: a video once started always finishes, and
-    /// the ones after it stay ready.
-    /// </param>
+    /// <param name="stopAfterVideo">Esc's stop: the batch reads it only between videos, so the current one always finishes.</param>
     public async Task<ActionResult> FinaliseAsync(FinaliseVideos effect, AppSettings settings, Action<TuiMsg> post, CancellationToken stopAfterVideo, CancellationToken cancellationToken)
     {
-        var database = settings.Database.Path;
-        // The lock a finalise holds, so a run leaves these videos alone while they are finalised.
-        using var finaliseLock = (await locks.TakeFinalizeAsync(database, "finalize", cancellationToken)).Lock;
-        if (finaliseLock is null) return Done(LogKind.Warning, "Another finalise is running on this database, so nothing was finalised. Wait for it to finish.");
+        var outcome = await batch.RunAsync(effect.Ids, settings, "finalize", new BatchPosts(post, cancellationToken), stopAfterVideo, cancellationToken);
+        // A batch whose last video ended as the TUI closed returns normally; its tally would land in a loop that is gone.
+        cancellationToken.ThrowIfCancellationRequested();
+        if (outcome is not FinalizationBatchTally tally) return Done(LogKind.Warning, "Another finalise is running on this database, so nothing was finalised. Wait for it to finish.");
 
-        var lines = new List<LogLine>();
-        var failed = 0;
-        var ended = 0;
-        foreach (var id in effect.Ids)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (stopAfterVideo.IsCancellationRequested) break;
-            var name = id.ToString("N");
-            FinaliseEndedMsg done;
-            try
-            {
-                var job = await jobs.GetAsync(database, id, cancellationToken);
-                name = job is null ? name : FileName(job);
-                post(new FinaliseStartedMsg(id));
-                var result = await finalizer.FinalizeAsync(database, id, settings, cancellationToken);
-                var succeeded = result.ExitCode == ExitCode.Success;
-                var line = new LogLine(succeeded ? LogKind.Success : LogKind.Error, RunEventWords.Clean($"{(succeeded ? "Finalised" : "Couldn't finalise")} {name}: {result.Message}"));
-                done = new FinaliseEndedMsg(id, succeeded, succeeded && job is not null ? TuiSnapshotReader.SavedBytesOf(job) : 0, line);
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                done = new FinaliseEndedMsg(id, false, 0, new LogLine(LogKind.Error, $"Couldn't finalise {name}: {OneLine(exception)}"));
-            }
-            ended++;
-            if (!done.Succeeded) failed++;
-            cancellationToken.ThrowIfCancellationRequested();
-            post(done);
-        }
-
-        var finalised = ended - failed;
-        var left = effect.Ids.Count - ended;
+        var (finalised, failed, left) = (tally.Finalised, tally.Failed, tally.Left);
         var summary = left > 0
             ? $"Finalised {Count(finalised)}{(failed > 0 ? $", {Count(failed)} failed" : string.Empty)}; stopped with {Count(left)} still ready."
             : failed == 0
             ? finalised == 1 ? "Finalised 1 video." : $"Finalised {Count(finalised)} videos."
             : $"Finalised {Count(finalised)}; {Count(failed)} failed.";
-        if (effect.Ids.Count > 1) lines.Add(new LogLine(failed == 0 ? LogKind.Success : LogKind.Warning, summary));
+        var lines = new List<LogLine>();
+        if (tally.Total > 1) lines.Add(new LogLine(failed == 0 ? LogKind.Success : LogKind.Warning, summary));
         // After the tally, so the videos still waiting for a look are the last thing read.
         if (effect.LeftOut is { Count: > 0 } leftOut) lines.Add(new LogLine(LogKind.Warning, $"Left out with validation warnings: {string.Join(", ", leftOut)}."));
         return new ActionResult(lines, summary);
+    }
+
+    /// <summary>
+    /// Words each video's start and end as the loop's messages. Once <paramref name="closing"/> is cancelled it posts nothing:
+    /// the loop it would land in is gone.
+    /// </summary>
+    private sealed class BatchPosts(Action<TuiMsg> post, CancellationToken closing) : IFinalizationBatchObserver
+    {
+        public void VideoStarted(Guid id, JobRecord? job)
+        {
+            if (!closing.IsCancellationRequested) post(new FinaliseStartedMsg(id));
+        }
+
+        public void VideoEnded(FinalizationBatchVideo video)
+        {
+            if (closing.IsCancellationRequested) return;
+            var name = video.Job is { } job ? FileName(job) : video.Id.ToString("N");
+            var line = video switch
+            {
+                { Result: { } result } => new LogLine(video.Succeeded ? LogKind.Success : LogKind.Error, RunEventWords.Clean($"{(video.Succeeded ? "Finalised" : "Couldn't finalise")} {name}: {result.Message}")),
+                _ => new LogLine(LogKind.Error, $"Couldn't finalise {name}: {OneLine(video.Error!)}")
+            };
+            post(new FinaliseEndedMsg(video.Id, video.Succeeded, video.Succeeded && video.Job is not null ? TuiSnapshotReader.SavedBytesOf(video.Job) : 0, line));
+        }
     }
 
     private static string Count(int count) => count.ToString(CultureInfo.InvariantCulture);

@@ -11,6 +11,10 @@
 - The worker's bootstrap now checks FFmpeg and ab-av1 against pinned SHA-256 checksums and builds libvmaf and SVT-AV1 from pinned commits. A download that doesn't match stops the bootstrap, and the run says why. Before, it built whatever the download returned.
 - New setting `processing.remoteSsh.stageSilenceTimeout` (default `30m`): how long a CRF search or encode on the worker may go without writing to its log before it counts as hung. A long encode gets more time, up to 1.5 times as long as it had been running.
 
+### Other changes
+
+- `finalize --ready` and `immich finalize` now list and finalise videos in the order they were queued, with any you moved up through `queue next` first, as the full-screen view's `F` already did. They used to go by when each video last changed. When one video fails with an unexpected error, such as a failed database read, the command now counts it as failed and goes on to the next one, as the full-screen view does. It used to stop the whole command.
+
 ### Fixes
 
 - A finalise that can't move a file because another program has it open, such as the player you reviewed the AV1 in, now leaves the video ready to finalise. Close the file and run `finalize` again. It used to mark the video as failed, and only `queue retry`, a full new encode, got it back.
