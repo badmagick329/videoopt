@@ -105,7 +105,7 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
         if (!File.Exists(path)) return new QueueAddResult(QueueAddOutcome.Missing, path);
         // Not even with --force (R10): converting a temporary output, a staged copy or an archived original would replace
         // the tool's own file, or undo a finalisation.
-        if (IsMadeByTool(path, settings)) return new QueueAddResult(QueueAddOutcome.MadeByTool, path);
+        if (ToolFiles.IsMadeByTool(path, settings)) return new QueueAddResult(QueueAddOutcome.MadeByTool, path);
         if (FileScanner.IsWithinArchiveDirectory(path, settings.Original.ArchiveDirectory)) return new QueueAddResult(QueueAddOutcome.Archived, path);
         if (await jobs.FindOpenBySourceAsync(databasePath, path, cancellationToken) is { } open) return OpenJob(databasePath, path, open);
         var settled = await FindSettledOriginalsAsync(databasePath, [], QualityFingerprint.Compute(settings), onlyPath: path, cancellationToken);
@@ -176,15 +176,6 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
         _ when job.IsConverting && !runGoing => OpenJobState.Stopped,
         _ => OpenJobState.Other
     };
-
-    private static bool IsMadeByTool(string path, AppSettings settings)
-    {
-        for (var directory = Path.GetDirectoryName(path); !string.IsNullOrEmpty(directory); directory = Path.GetDirectoryName(directory))
-        {
-            if (string.Equals(Path.GetFileName(directory), TemporaryOutputClassifier.FolderName, StringComparison.OrdinalIgnoreCase)) return true;
-        }
-        return settings.Immich.StagingDirectory.Length > 0 && IsWithinFolder(path, settings.Immich.StagingDirectory);
-    }
 
     private static bool IsWithinFolder(string path, string folder) =>
         path.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);

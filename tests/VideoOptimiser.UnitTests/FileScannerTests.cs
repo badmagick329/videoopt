@@ -84,6 +84,34 @@ public sealed class FileScannerTests : IDisposable
         report.Items.Should().ContainSingle(item => item.Path == original && item.Status == ScanItemStatus.Eligible);
     }
 
+    /// <summary>
+    /// The exclude lists are emptied, so only the tool's own rule keeps its files out. In the last row the watch root is the
+    /// staging folder itself, so the walk starts inside a folder it would never have entered.
+    /// </summary>
+    [Theory]
+    [InlineData(".video-optimiser", false)]
+    [InlineData("immich-staging", false)]
+    [InlineData("immich-staging", true)]
+    public async Task ScanAsyncNeverTakesAFileTheToolMadeWhateverTheExcludeListsSay(string folder, bool rootIsToolFolder)
+    {
+        var toolFolder = Path.Combine(_directory, folder);
+        Directory.CreateDirectory(Path.Combine(toolFolder, "asset"));
+        var ordinary = Path.Combine(_directory, "movie.mkv");
+        foreach (var path in new[] { Path.Combine(toolFolder, "clip.mkv"), Path.Combine(toolFolder, "asset", "clip.mkv"), ordinary })
+        {
+            await File.WriteAllBytesAsync(path, [1, 2, 3]);
+        }
+        var settings = Settings("1B", recursive: true);
+        settings.Eligibility.ExcludedDirectories = [];
+        settings.Eligibility.ExcludedNamePatterns = [];
+        settings.Immich.StagingDirectory = Path.Combine(_directory, "immich-staging");
+        if (rootIsToolFolder) settings.Watch.Roots[0].Path = toolFolder;
+
+        var report = await Scanner().ScanAsync(settings.Watch.Roots, settings);
+
+        report.Items.Select(item => (item.Path, item.Status)).Should().Equal(rootIsToolFolder ? [] : [(ordinary, ScanItemStatus.Eligible)]);
+    }
+
     [Fact]
     public async Task ScanAsyncStopsAfterTheFirstEligibleFileWhenRequested()
     {

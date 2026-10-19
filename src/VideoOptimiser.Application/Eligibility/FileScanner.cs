@@ -1,3 +1,4 @@
+using System.IO.Enumeration;
 using System.Text.RegularExpressions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Tools;
@@ -61,11 +62,12 @@ public sealed class FileScanner(
             options.RecurseSubdirectories = root.Recursive;
             try
             {
-                foreach (var path in Directory.EnumerateFiles(root.Path, "*", options))
+                foreach (var path in EnumerateFiles(root.Path, options, settings))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var canonicalPath = Path.GetFullPath(path);
-                    if (!seenPaths.Add(canonicalPath))
+                    // The walk never enters a tool folder; this catches a watch root that is itself inside one.
+                    if (!seenPaths.Add(canonicalPath) || ToolFiles.IsMadeByTool(canonicalPath, settings))
                     {
                         continue;
                     }
@@ -108,6 +110,17 @@ public sealed class FileScanner(
 
         return new ScanReport(items, issues, cacheHits, realProbes);
     }
+
+    /// <summary>
+    /// <see cref="Directory.EnumerateFiles(string, string, EnumerationOptions)"/> that does not descend into the tool's
+    /// folders (<see cref="ToolFiles"/>), whatever the exclude lists say, so their files are never even counted as checked.
+    /// </summary>
+    private static FileSystemEnumerable<string> EnumerateFiles(string root, EnumerationOptions options, AppSettings settings) =>
+        new(root, (ref FileSystemEntry entry) => entry.ToSpecifiedFullPath(), options)
+        {
+            ShouldIncludePredicate = (ref FileSystemEntry entry) => !entry.IsDirectory,
+            ShouldRecursePredicate = (ref FileSystemEntry entry) => !ToolFiles.IsToolFolder(entry.ToFullPath(), settings)
+        };
 
     public async Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default)
     {

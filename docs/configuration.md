@@ -23,6 +23,7 @@ eligibility:
 - `resolution` is `1080p-1440p`, `1440p-4k` or `4k+`, measured by total pixels.
 - `minimumVideoBitrate` is the video stream's bitrate as ffprobe reports it. Many MKV files don't record one, so the whole file's bitrate is used instead. That figure includes the audio, so it reads slightly high.
 - Only files with an extension in `eligibility.extensions` are scanned. The default is `.mkv`, `.mp4`, `.mov` and `.m4v`.
+- `queue add` and `calibrate` never look inside VideoOptimiser's own folders: the `.video-optimiser` folders that hold its temporary AV1s, and `immich.stagingDirectory`. `eligibility.excludedDirectories` and `excludedNamePatterns` can't change that.
 - `queue add` never queues a video too small to save `savings.minimumBytesSaved` (1 MiB by default), even with `--force`.
 
 `queue add` scans the watch folders. `queue add <file>` queues one file after the same checks. A file outside your watch roots or rules is refused with exit `5`, and the message gives the command to queue it anyway with `--force`. `--force` skips only those two checks, and `queue retry` keeps it.
