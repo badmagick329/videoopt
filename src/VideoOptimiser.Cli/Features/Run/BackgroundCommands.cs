@@ -17,7 +17,7 @@ internal sealed class BackgroundCommands(ISettingsValidator settingsValidator, B
     {
         if (ReportInvalidSettings(settingsValidator, configuration)) return (int)ExitCode.InvalidConfiguration;
 
-        var result = await launch.StartAsync(configuration.Settings.Database.Path, BackgroundRunnerArguments.For(configuration.Path, command.KeepWorker ? WorkerFateChoice.Keep : WorkerFateChoice.Delete, command.ModeOverride), Environment.CurrentDirectory, cancellationToken);
+        var result = await launch.StartAsync(configuration.Settings.Database.Path, BackgroundRunnerArguments.For(configuration.Path, command.KeepWorker ? WorkerFateChoice.Keep : WorkerFateChoice.Delete, command.ModeOverride, existingWorker: false), Environment.CurrentDirectory, cancellationToken);
         switch (result.Outcome)
         {
             case BackgroundLaunchOutcome.Started:
@@ -37,5 +37,5 @@ internal sealed class BackgroundCommands(ISettingsValidator settingsValidator, B
     }
 
     public Task<int> RunnerAsync(LoadedConfiguration configuration, CliCommand command) =>
-        background.RunAsync(configuration.Settings, command.ModeOverride is not null, command.WorkerFate!.Value);
+        background.RunAsync(configuration.Settings, command.ModeOverride is not null, command.WorkerFate!.Value, mayCreateWorker: !command.ExistingWorker);
 }

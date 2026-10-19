@@ -346,7 +346,7 @@ public sealed class TuiActionTests : IDisposable
 
     private string[] LaunchedArguments => _rig.Launcher.Launches.Single().Arguments;
 
-    /// <summary>The worker that is up is used: no create, the runner gets --remote and the fate chosen, and the loaded config's full path.</summary>
+    /// <summary>The worker that is up is used: no create, and the runner gets --remote, the fate chosen, the loaded config's full path and --existing-worker, so it never replaces a worker deleted meanwhile (VOPT-154).</summary>
     [Fact]
     public async Task StartingWithTheWorkerThatIsUpLaunchesTheRunnerWithRemoteAndTheFate()
     {
@@ -354,7 +354,7 @@ public sealed class TuiActionTests : IDisposable
 
         var result = await _rig.Actions.StartRunAsync(new StartPlan(null, WorkerFateChoice.Keep, ProcessingModeOverride.Remote), _rig.Settings, _rig.Configuration.Path, Log, default);
 
-        LaunchedArguments.Should().Equal("background", "runner", "--worker-fate", "keep", "--config", Path.GetFullPath(_rig.Configuration.Path), "--remote");
+        LaunchedArguments.Should().Equal("background", "runner", "--worker-fate", "keep", "--config", Path.GetFullPath(_rig.Configuration.Path), "--remote", "--existing-worker");
         _rig.Launcher.Launches.Single().WorkingDirectory.Should().Be(Environment.CurrentDirectory);
         _rig.Worker.CreateCalls.Should().Be(0);
         Texts(result).Should().Equal($"Started a background run (process {Environment.ProcessId}). Closing this screen doesn't stop it.");
@@ -369,7 +369,7 @@ public sealed class TuiActionTests : IDisposable
         var result = await _rig.Actions.StartRunAsync(new StartPlan(Cx43, WorkerFateChoice.Delete, ProcessingModeOverride.Remote), _rig.Settings, _rig.Configuration.Path, Log, default);
 
         _rig.Worker.Created.Should().Equal(Cx43);
-        LaunchedArguments.Should().Equal("background", "runner", "--worker-fate", "delete", "--config", Path.GetFullPath(_rig.Configuration.Path), "--remote");
+        LaunchedArguments.Should().Equal("background", "runner", "--worker-fate", "delete", "--config", Path.GetFullPath(_rig.Configuration.Path), "--remote", "--existing-worker");
         _progress.Select(line => line.Text).Should().Equal("Creating Hetzner cx43 in hel1.", "Created the worker video-optimiser-1 (cx43 in hel1). It is bootstrapping.");
         result.RefreshWorker.Should().BeTrue();
     }

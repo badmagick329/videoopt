@@ -65,6 +65,8 @@ Without a Hetzner worker (`remoteSsh.lifecycle: "hetzner"`), it starts at once a
 1. Which worker converts. With a worker up, use it or convert on this PC instead. With none, pick a server from the list with its hourly price, or convert on this PC. Converting on this PC starts the run straight away. A server you pick is created before the run starts; if Hetzner can't create it, no run starts.
 2. If you picked a worker, what happens to it when the run ends: delete it, or keep it up, billed hourly. You can change this while the run goes with `w` in the Activity pane.
 
+While the worker pane is deleting or creating the worker, `s` asks nothing and tells you to start the run once that's finished. If the worker you picked is deleted before the run gets to it, from here or from another terminal, the run ends without creating a server in its place, and the Activity pane says so.
+
 To stop a background run from a terminal, use `run stop` (after this video) or `run stop --now`. A run started with `run` in a terminal is stopped only with `Ctrl+C` in its own window; `x` and `X` say so.
 
 ## What the freed space cost

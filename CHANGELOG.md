@@ -10,6 +10,7 @@
 - `immich run` now leaves alone a video that another terminal queues while it is still searching Immich, for example with `queue retry`. It used to download that video again over the copy the other job reads, so its conversion started over, or `immich finalize` refused it because the original had changed.
 - `immich finalize` now moves an original to Immich's trash only after checking that Immich's copy of the AV1 has the same checksum as the AV1 that passed validation. If they differ, the original stays and the message says what to delete before you run it again. An AV1 changed on this PC after validation isn't uploaded. It used to trash the original without checking, so a damaged upload or a changed AV1 could take its place.
 - VideoOptimiser no longer follows a redirect from Immich, so your API key is only sent to `immich.baseUrl`. A server or proxy that redirected to another host used to receive the key with the request. A redirect now stops the command with an error that says where it pointed and what to set `immich.baseUrl` to.
+- In the full-screen view, `s` no longer offers the worker while the worker pane is deleting or creating it. It tells you to start the run once that's finished. If the worker you picked for a background run is deleted before the run gets to it, the run now ends and says so. It used to create a new server on its own, the first in stock within your price limit, and that server billed.
 
 ## [0.14.1] - 2026-10-18
 ### Remote workers

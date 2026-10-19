@@ -93,6 +93,27 @@ public sealed class BackgroundRunTests : IDisposable
         Kinds().Should().ContainInOrder(RunEventKind.RunFailed, RunEventKind.WorkerDeleting);
     }
 
+    /// <summary>
+    /// VOPT-154: the TUI launched the runner to use the worker that was up, and it was deleted before the runner needed it. The
+    /// runner creates no server in its place, and the event file says why the run did nothing.
+    /// </summary>
+    [Fact]
+    public async Task AChosenWorkerThatIsGoneEndsTheRunWithoutCreatingOneAndSaysSo()
+    {
+        await RunCli.QueueJobsAsync(_repository, DatabasePath, 1);
+        var processor = new ScriptedRunProcessor(remote: true);
+        _lifecycle.Exists = false;
+        _lifecycle.Quote = new RemoteWorkerCreationQuote(new("cx43", "hel1", 0.031m), new("cx43", "hel1", 0.031m));
+
+        var code = await RunAsync(processor, remote: true, mayCreateWorker: false);
+
+        code.Should().Be((int)ExitCode.GeneralFailure);
+        (_lifecycle.Approved, _lifecycle.Exists, processor.Calls).Should().Be((false, false, 0));
+        _events.Read(DatabasePath).Should().ContainSingle(entry => entry.Kind == RunEventKind.RunFailed)
+            .Which.Text.Should().Be("The worker chosen for this run is gone, so no new one was created. Start the run again to choose a worker.");
+        Kinds().Should().NotContain(RunEventKind.WorkerDeleting);
+    }
+
     /// <summary>A stop now is the second Ctrl+C: the video is interrupted where it is and resumes from that stage on the next run.</summary>
     [Fact]
     public async Task AStopNowRequestInterruptsTheVideoAtOnce()
@@ -227,7 +248,7 @@ public sealed class BackgroundRunTests : IDisposable
         _events.Read(DatabasePath).Should().Contain(entry => entry.Kind == RunEventKind.RunFailed && entry.Text == "database is locked");
     }
 
-    private Task<int> RunAsync(ScriptedRunProcessor processor, WorkerFateChoice fate = WorkerFateChoice.Delete, bool remote = false)
+    private Task<int> RunAsync(ScriptedRunProcessor processor, WorkerFateChoice fate = WorkerFateChoice.Delete, bool remote = false, bool mayCreateWorker = true)
     {
         var settings = new AppSettings { Database = new DatabaseSettings { Path = DatabasePath } };
         if (remote) settings.Processing = new ProcessingSettings { Mode = ProcessingModes.RemoteSsh, RemoteSsh = new RemoteSshSettings { Lifecycle = RemoteLifecycleModes.Hetzner } };
@@ -235,7 +256,7 @@ public sealed class BackgroundRunTests : IDisposable
         var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging(), new FailedValidationRecheck(_repository, new OutputManifestStore(), new FileFingerprintService(), new PassingValidator()), _records, TimeProvider.System);
         var start = new RunStart(locks, _requests, _events, _keepAwake, _records, flow, TimeProvider.System);
         var background = new BackgroundRun(flow, start, new RunRequestPoll(_requests, TimeSpan.FromMilliseconds(10)), _stop, _requests, new EventLogRunObserver(_events, TimeProvider.System));
-        return background.RunAsync(settings, modeOverridden: false, fate);
+        return background.RunAsync(settings, modeOverridden: false, fate, mayCreateWorker);
     }
 
     private IEnumerable<RunEventKind> Kinds() => _events.Read(DatabasePath).Select(entry => entry.Kind);

@@ -106,6 +106,7 @@ public sealed class CliCommandParserTests
     [InlineData("--worker-fate requires delete or keep.", "background", "runner", "--worker-fate")]
     [InlineData("--worker-fate requires delete or keep.", "background", "runner", "--worker-fate", "sell")]
     [InlineData("background runner requires --worker-fate delete or keep.", "background", "runner")]
+    [InlineData("--existing-worker is only supported by background runner.", "background", "start", "--existing-worker")]
     [InlineData("--local and --remote cannot be used together.", "background", "start", "--local", "--remote")]
     [InlineData("--local is only supported by run and immich run.", "run", "stop", "--local")]
     [InlineData("--json is only supported by doctor, queue list, status, history, calibrate and cost.", "run", "stop", "--json")]
@@ -122,13 +123,14 @@ public sealed class CliCommandParserTests
     /// the runner's arguments are exactly what the launcher builds.
     /// </summary>
     [Theory]
-    [InlineData("StopRun", false, false, null, null, "run", "stop")]
-    [InlineData("StopRun", true, false, null, null, "run", "stop", "--now", "--config", "my.yaml")]
-    [InlineData("BackgroundStart", false, false, null, null, "background", "start")]
-    [InlineData("BackgroundStart", false, true, null, "--remote", "background", "start", "--keep-worker", "--remote")]
-    [InlineData("BackgroundRunner", false, false, WorkerFateChoice.Delete, null, "background", "runner", "--worker-fate", "delete", "--config", "my.yaml")]
-    [InlineData("BackgroundRunner", false, false, WorkerFateChoice.Keep, "--local", "background", "runner", "--worker-fate", "KEEP", "--local")]
-    public void TheStopAndBackgroundVerbsParse(string kind, bool stopNow, bool keepWorker, WorkerFateChoice? fate, string? modeFlag, params string[] args)
+    [InlineData("StopRun", false, false, null, null, false, "run", "stop")]
+    [InlineData("StopRun", true, false, null, null, false, "run", "stop", "--now", "--config", "my.yaml")]
+    [InlineData("BackgroundStart", false, false, null, null, false, "background", "start")]
+    [InlineData("BackgroundStart", false, true, null, "--remote", false, "background", "start", "--keep-worker", "--remote")]
+    [InlineData("BackgroundRunner", false, false, WorkerFateChoice.Delete, null, false, "background", "runner", "--worker-fate", "delete", "--config", "my.yaml")]
+    [InlineData("BackgroundRunner", false, false, WorkerFateChoice.Keep, "--local", false, "background", "runner", "--worker-fate", "KEEP", "--local")]
+    [InlineData("BackgroundRunner", false, false, WorkerFateChoice.Keep, "--remote", true, "background", "runner", "--worker-fate", "keep", "--remote", "--existing-worker")]
+    public void TheStopAndBackgroundVerbsParse(string kind, bool stopNow, bool keepWorker, WorkerFateChoice? fate, string? modeFlag, bool existingWorker, params string[] args)
     {
         var command = CliCommand.Parse(args);
 
@@ -138,6 +140,7 @@ public sealed class CliCommandParserTests
         command.KeepWorker.Should().Be(keepWorker);
         command.WorkerFate.Should().Be(fate);
         (command.ModeOverride?.Flag).Should().Be(modeFlag);
+        command.ExistingWorker.Should().Be(existingWorker);
     }
 
     /// <summary><c>tui --snapshot</c> is the hidden way to see the TUI's screen from a shell; the size is optional and defaults where the command prints it.</summary>

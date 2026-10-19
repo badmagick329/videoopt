@@ -9,12 +9,17 @@ namespace VideoOptimiser.Application.Features.Run;
 /// the latest choice and nothing bills while waiting for a reply.
 /// </summary>
 /// <param name="startFate">The fate chosen at launch: the answer when the requests row can't be read as the run ends.</param>
-public sealed class BackgroundRunQuestions(IRunRequestStore requests, string databasePath, WorkerFateChoice startFate) : IRunQuestions
+/// <param name="mayCreateWorker">
+/// False when the launcher chose the worker that is up (VOPT-154): the lifecycle asks only when no worker exists, so that
+/// worker was deleted after the choice, and creating the first server that fits would bill for one nobody chose.
+/// </param>
+public sealed class BackgroundRunQuestions(IRunRequestStore requests, string databasePath, WorkerFateChoice startFate, bool mayCreateWorker) : IRunQuestions
 {
     /// <summary>Never: with nobody to ask, <see cref="WorkerEndPolicy"/> turns the fate into the answer given, never <see cref="WorkerFate.Ask"/>.</summary>
     public bool CanAsk => false;
 
-    public Task<bool> ConfirmWorkerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken) => Task.FromResult(true);
+    /// <summary>The launch already answered: a plain <c>background start</c> lets the run create its worker, the TUI's choice of a worker doesn't.</summary>
+    public Task<bool> ConfirmWorkerCreationAsync(RemoteWorkerCreationQuote quote, CancellationToken cancellationToken) => Task.FromResult(mayCreateWorker);
 
     /// <remarks>
     /// Read on a token of its own: the run's is already cancelled after a stop, and the fate of a stopped run is the one that

@@ -161,6 +161,9 @@ internal static partial class TuiUpdate
         if (m.Worker.Lifecycle.Length == 0) return Told(m, "Still reading the worker.");
         // Not hetzner: nothing to ask, and the config's mode stands.
         if (!m.Worker.Managed) return Emit(m, new StartRun(new StartPlan(null, WorkerFateChoice.Delete, null)));
+        // VOPT-154: a delete or create from the worker pane would change the worker under the choice, so "Use X" could name a
+        // server that is about to be gone. The runner refuses to replace a missing chosen worker too; this saves the wasted launch.
+        if (m.Busy.TryGetValue("worker", out var working)) return Told(m, WorkerBusyAtStart(working));
 
         if (WorkerView.Of(m.Worker).Info is { } worker)
         {
@@ -168,6 +171,14 @@ internal static partial class TuiUpdate
         }
         return Emit(m, new LoadWorkerOptions(WorkerOptionsPurpose.Start));
     }
+
+    /// <summary>What <c>s</c> says while the worker pane's action goes; the server list keeps its own busy text.</summary>
+    private static string WorkerBusyAtStart(string working) => working switch
+    {
+        DeleteWorker.Text => "The worker is being deleted. Start the run once it's gone.",
+        CreateWorker.Text => "The worker is being created. Start the run once it's up.",
+        _ => working
+    };
 
     // ---- activity: stopping and the worker's fate -------------------------------------------
 

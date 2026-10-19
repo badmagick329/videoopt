@@ -3,6 +3,7 @@ using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Config;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Cli;
+using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Cli.Features.Tui;
 
 internal enum CliCommandKind
@@ -52,8 +53,9 @@ internal enum CliCommandKind
 /// <param name="StopNow"><c>run stop --now</c>.</param>
 /// <param name="KeepWorker">Hidden <c>background start --keep-worker</c>: the worker's fate is keep instead of the default, delete.</param>
 /// <param name="WorkerFate">Hidden <c>background runner --worker-fate</c>.</param>
+/// <param name="ExistingWorker">Hidden <c>background runner --existing-worker</c>: the launcher chose the worker, so the runner never creates one.</param>
 /// <param name="Size">Hidden <c>tui --snapshot --size</c>.</param>
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false, bool StopNow = false, bool KeepWorker = false, WorkerFateChoice? WorkerFate = null, FrameSize? Size = null)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false, bool StopNow = false, bool KeepWorker = false, WorkerFateChoice? WorkerFate = null, FrameSize? Size = null, bool ExistingWorker = false)
 {
     public const string Usage = """
 Usage:
@@ -115,6 +117,7 @@ Usage:
         var stopNow = false;
         var keepWorker = false;
         WorkerFateChoice? workerFate = null;
+        var existingWorker = false;
         var snapshot = false;
         FrameSize? size = null;
         var modeOverrides = new List<ProcessingModeOverride>();
@@ -170,6 +173,9 @@ Usage:
                     break;
                 case "--worker-fate":
                     return Invalid("--worker-fate requires delete or keep.");
+                case BackgroundRunnerArguments.ExistingWorkerFlag:
+                    existingWorker = true;
+                    break;
                 case "--snapshot":
                     snapshot = true;
                     break;
@@ -279,6 +285,7 @@ Usage:
         if (keepWorker && kind != CliCommandKind.BackgroundStart) return Invalid("--keep-worker is only supported by background start.");
         if (workerFate is not null && kind != CliCommandKind.BackgroundRunner) return Invalid("--worker-fate is only supported by background runner.");
         if (workerFate is null && kind == CliCommandKind.BackgroundRunner) return Invalid("background runner requires --worker-fate delete or keep.");
+        if (existingWorker && kind != CliCommandKind.BackgroundRunner) return Invalid("--existing-worker is only supported by background runner.");
         if (snapshot && kind != CliCommandKind.TuiSnapshot) return Invalid("--snapshot is only supported by tui.");
         if (size is not null && kind != CliCommandKind.TuiSnapshot) return Invalid("--size is only supported by tui.");
         if (!snapshot && kind == CliCommandKind.TuiSnapshot) return Invalid("tui requires --snapshot.");
@@ -289,7 +296,7 @@ Usage:
             return Invalid($"{modeOverride.Flag} is only supported by run and immich run.");
         }
 
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueReject or CliCommandKind.QueueDismiss or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate, Size: size);
+        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueReject or CliCommandKind.QueueDismiss or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate, Size: size, ExistingWorker: existingWorker);
     }
 
     private static bool TryParseWorkerFate(string text, out WorkerFateChoice fate)

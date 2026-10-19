@@ -157,7 +157,7 @@ public sealed class RunFlowTests : IDisposable
         var requests = new SqliteRunRequestStore(new SqliteDatabaseInitializer());
         await requests.ResetAsync(DatabasePath, fate, CancellationToken.None);
 
-        _ = await RunAsync(processor, new BackgroundRunQuestions(requests, DatabasePath, fate), stopNow.Token, stopAfter.Token);
+        _ = await RunAsync(processor, new BackgroundRunQuestions(requests, DatabasePath, fate, mayCreateWorker: true), stopNow.Token, stopAfter.Token);
 
         _lifecycle.DeleteCalls.Should().Be(fate == WorkerFateChoice.Delete ? 1 : 0);
         // The end it was meant to reach, and what the worker's fate looked like there.
@@ -191,7 +191,7 @@ public sealed class RunFlowTests : IDisposable
         var processor = new ScriptedRunProcessor(remote: true);
         processor.During[0] = _ => requests.SetWorkerFateAsync(DatabasePath, changedTo, CancellationToken.None);
 
-        _ = await RunAsync(processor, new BackgroundRunQuestions(requests, DatabasePath, atStart), CancellationToken.None);
+        _ = await RunAsync(processor, new BackgroundRunQuestions(requests, DatabasePath, atStart, mayCreateWorker: true), CancellationToken.None);
 
         _lifecycle.DeleteCalls.Should().Be(changedTo == WorkerFateChoice.Delete ? 1 : 0);
     }
@@ -208,10 +208,35 @@ public sealed class RunFlowTests : IDisposable
         await RunCli.QueueJobsAsync(_repository, DatabasePath, 1);
         var processor = new ScriptedRunProcessor(remote: true);
 
-        _ = await RunAsync(processor, new BackgroundRunQuestions(new UnreadableRequests(), DatabasePath, atStart), CancellationToken.None);
+        _ = await RunAsync(processor, new BackgroundRunQuestions(new UnreadableRequests(), DatabasePath, atStart, mayCreateWorker: true), CancellationToken.None);
 
         _lifecycle.DeleteCalls.Should().Be(atStart == WorkerFateChoice.Delete ? 1 : 0);
         _observer.Events.Should().NotContain(e => e.StartsWith("RunFailed", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// VOPT-154: a runner launched to use the worker that was up finds none (it was deleted after the choice) and creates
+    /// none, so no server bills that nobody chose; a plain <c>background start</c> still creates its worker.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AMissingWorkerIsCreatedOnlyWhenTheLaunchLetTheRunnerCreateOne(bool mayCreateWorker)
+    {
+        await RunCli.QueueJobsAsync(_repository, DatabasePath, 1);
+        var requests = new SqliteRunRequestStore(new SqliteDatabaseInitializer());
+        await requests.ResetAsync(DatabasePath, WorkerFateChoice.Keep, CancellationToken.None);
+        var processor = new ScriptedRunProcessor(remote: true);
+        _lifecycle.Exists = false;
+        _lifecycle.Quote = new RemoteWorkerCreationQuote(new("cx43", "hel1", 0.031m), new("cx43", "hel1", 0.031m));
+
+        var code = await RunAsync(processor, new BackgroundRunQuestions(requests, DatabasePath, WorkerFateChoice.Keep, mayCreateWorker), CancellationToken.None);
+
+        _lifecycle.Approved.Should().Be(mayCreateWorker);
+        _lifecycle.Exists.Should().Be(mayCreateWorker);
+        processor.Calls.Should().Be(mayCreateWorker ? 1 : 0);
+        code.Should().Be(mayCreateWorker ? (int)ExitCode.Success : (int)ExitCode.GeneralFailure);
+        if (!mayCreateWorker) _observer.Events.Should().Contain("RunFailed").And.NotContain(e => e.StartsWith("Worker", StringComparison.Ordinal));
     }
 
     private sealed class UnreadableRequests : IRunRequestStore

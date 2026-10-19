@@ -289,6 +289,26 @@ public sealed class TuiActionKeysTests
         Notice(Update(Model() with { Worker = WorkerState.Unknown, Open = [Queued(1)] }, Letter('s'))).Should().Be("Still reading the worker.");
     }
 
+    /// <summary>
+    /// VOPT-154: while the worker pane deletes or creates the worker, s opens no dialog, since "Use X" could name a server
+    /// that is about to be gone and the runner would then have no worker.
+    /// </summary>
+    [Theory]
+    [InlineData(true, "The worker is being deleted. Start the run once it's gone.")]
+    [InlineData(false, "The worker is being created. Start the run once it's up.")]
+    public void SWhileTheWorkerIsBeingDeletedOrCreatedSaysSoAndOpensNoDialog(bool deleting, string notice)
+    {
+        var model = deleting
+            ? Choose(Update(Focused(Startable(AWorker()), Pane.Worker), Letter('d')).Model, Letter('y')).Model
+            : Choose(Update(Update(Focused(Startable(), Pane.Worker), Letter('c')).Model, new WorkerOptionsMsg(WorkerOptionsPurpose.Create, [Cx43], null)).Model, Enter).Model;
+
+        var step = Update(model, Letter('s'));
+
+        Notice(step).Should().Be(notice);
+        step.Model.Choice.Should().BeNull();
+        step.Effects.Should().BeEmpty();
+    }
+
     [Fact]
     public void SWorksFromEveryPane()
     {

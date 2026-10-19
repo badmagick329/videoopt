@@ -294,7 +294,7 @@ internal sealed class TuiActions(
         BackgroundLaunchResult result;
         try
         {
-            result = await launch.StartAsync(database, BackgroundRunnerArguments.For(configurationPath, plan.Fate, plan.Mode), Environment.CurrentDirectory, cancellationToken);
+            result = await launch.StartAsync(database, BackgroundRunnerArguments.For(configurationPath, plan.Fate, plan.Mode, existingWorker: plan.WorkerChosen), Environment.CurrentDirectory, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {

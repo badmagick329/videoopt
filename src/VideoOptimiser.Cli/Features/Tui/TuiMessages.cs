@@ -129,18 +129,32 @@ internal sealed record LoadWorkerOptions(WorkerOptionsPurpose Purpose) : TuiEffe
 
 internal sealed record CreateWorker(RemoteWorkerCreationOption Option) : TuiEffect
 {
+    /// <summary>Also how <c>s</c> tells this from the other actions that hold the <c>worker</c> key.</summary>
+    public const string Text = "Creating the worker.";
+
     public override string BusyKey => "worker";
-    public override string BusyText => "Creating the worker.";
+    public override string BusyText => Text;
 }
 
 internal sealed record DeleteWorker : TuiEffect
 {
+    /// <summary>Also how <c>s</c> tells this from the other actions that hold the <c>worker</c> key.</summary>
+    public const string Text = "Deleting the worker.";
+
     public override string BusyKey => "worker";
-    public override string BusyText => "Deleting the worker.";
+    public override string BusyText => Text;
 }
 
 /// <summary>What a started run needs, all answered before it launches: a server to create first (null: none), the worker's fate and the mode flag (null: the config's).</summary>
-internal sealed record StartPlan(RemoteWorkerCreationOption? Create, WorkerFateChoice Fate, ProcessingModeOverride? Mode);
+internal sealed record StartPlan(RemoteWorkerCreationOption? Create, WorkerFateChoice Fate, ProcessingModeOverride? Mode)
+{
+    /// <summary>
+    /// The user picked the worker: the one that is up, or a server created before launch. Only the fate list sets
+    /// <c>--remote</c>, and only for a managed worker, so a worker the runner finds missing was deleted after the choice, and
+    /// the runner must not create another (VOPT-154).
+    /// </summary>
+    public bool WorkerChosen => Mode == ProcessingModeOverride.Remote;
+}
 
 internal sealed record StartRun(StartPlan Plan) : TuiEffect
 {
