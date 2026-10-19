@@ -30,7 +30,6 @@ internal sealed class TuiActions(
     StopRunRequest stop,
     IRunRequestStore requests,
     FinalizationBatch batch,
-    IDatabaseLocks locks,
     IFileOpener opener,
     ICostReport cost)
 {
@@ -84,7 +83,7 @@ internal sealed class TuiActions(
             case JobMovedNext moved:
                 return Done(LogKind.Action, $"{name} {(moved.RunTakesIt ? "runs next" : "is now first in the queue")}{(moved.WasHeld ? "; it's no longer held" : string.Empty)}.");
             case VerbRefused refused:
-                return Done(LogKind.Warning, QueueWords.RefusalText(refused, NotWaitingAction(action), StopWords.HowToStop(locks.LiveRun(settings.Database.Path)), "finalising it"));
+                return Done(LogKind.Warning, QueueWords.RefusalText(refused, NotWaitingAction(action), StopWords.HowToStop(refused.Run, stopAfterVideoWorks: action == QueueAction.Drop), "finalising it"));
             case JobAlreadyEnded:
                 var cleanup = await verbs.CleanupDeletesFilesAsync(settings, job, cancellationToken) ? " " + QueueWords.TemporaryFilesLine(Cleanup) : string.Empty;
                 return Done(LogKind.Warning, $"{name} {QueueWords.StatusPhrase(job)}, so there is nothing to {verb}.{cleanup}");

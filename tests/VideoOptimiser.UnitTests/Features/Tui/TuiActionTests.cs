@@ -101,17 +101,21 @@ public sealed class TuiActionTests : IDisposable
         (await _rig.StoredAsync(ready)).Status.Should().Be(JobStatus.ReadyToFinalize);
     }
 
-    /// <summary>A video converting cannot be held; the refusal names how to stop the run that has it.</summary>
+    /// <summary>
+    /// A video converting cannot be held or dropped; the refusal names how to stop the run that has it. A stop after this
+    /// video lets a drop go but not a hold, so a hold is offered only the stop now.
+    /// </summary>
     [Theory]
-    [InlineData(LockHolders.BackgroundRun, "clip-c.mp4 is converting now (encoding). Press x to stop the run after this video, or X to stop it now.")]
-    [InlineData(LockHolders.Run, "clip-c.mp4 is converting now (encoding). Stop the run with Ctrl+C in its window.")]
-    public async Task AVerbOnAVideoConvertingNowNamesTheWayToStopTheRun(string holder, string expected)
+    [InlineData(LockHolders.BackgroundRun, "Hold", "clip-c.mp4 is converting now (encoding). Press X to stop the run now.")]
+    [InlineData(LockHolders.BackgroundRun, "Drop", "clip-c.mp4 is converting now (encoding). Press x to stop the run after this video, or X to stop it now.")]
+    [InlineData(LockHolders.Run, "Hold", "clip-c.mp4 is converting now (encoding). Stop the run with Ctrl+C in its window.")]
+    public async Task AVerbOnAVideoConvertingNowNamesTheWayToStopTheRun(string holder, string action, string expected)
     {
         var job = await _rig.QueuedAsync("clip-c.mp4");
         await _rig.MoveAsync(job, JobStatus.Encoding);
         _locks.Add(DatabaseLock.TryAcquire(DatabaseLock.RunPath(_rig.DatabasePath), holder, out _)!);
 
-        var result = await _rig.Actions.QueueAsync(Verb(QueueAction.Hold, job), _rig.Settings, default);
+        var result = await _rig.Actions.QueueAsync(Verb(Enum.Parse<QueueAction>(action), job), _rig.Settings, default);
 
         Texts(result).Should().Equal(expected);
     }

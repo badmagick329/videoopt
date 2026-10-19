@@ -40,7 +40,7 @@ internal static partial class TuiUpdate
             return Told(m, v.Group switch
             {
                 VideoGroup.Held => $"{q} is already held.",
-                VideoGroup.ConvertingNow => ConvertingNow(m, q),
+                VideoGroup.ConvertingNow => ConvertingNow(m, q, stopAfterVideoWorks: false),
                 _ => "Only a waiting or stopped video can be held."
             });
         }
@@ -48,7 +48,8 @@ internal static partial class TuiUpdate
             return v.Group == VideoGroup.Held ? Emit(m, new QueueActionEffect(QueueAction.Release, v.Id, q)) : Told(m, $"{q} isn't held.");
         if (keys.RunNext.Is(c))
         {
-            if (v.Group == VideoGroup.ConvertingNow) return Told(m, ConvertingNow(m, q));
+            // Already converting, so it is ahead of everything else; as queue next says, there is nothing to stop.
+            if (v.Group == VideoGroup.ConvertingNow) return Told(m, $"{q} is converting now.");
             return v.Group is VideoGroup.Queue or VideoGroup.Held
                 ? Emit(m, new QueueActionEffect(QueueAction.Next, v.Id, q))
                 : Told(m, "Only a waiting, stopped or held video can run next.");
@@ -57,7 +58,7 @@ internal static partial class TuiUpdate
         {
             return v.Group switch
             {
-                VideoGroup.ConvertingNow => Told(m, ConvertingNow(m, q)),
+                VideoGroup.ConvertingNow => Told(m, ConvertingNow(m, q, stopAfterVideoWorks: true)),
                 VideoGroup.Failed => DismissKey(m, v),
                 VideoGroup.Ready => Confirming(m, $"Drop {q}?", "The original is untouched. Its AV1 stays until cleanup deletes it.", new QueueActionEffect(QueueAction.Drop, v.Id, q)),
                 _ => Confirming(m, $"Drop {q}?", "It leaves the queue. The original is untouched.", new QueueActionEffect(QueueAction.Drop, v.Id, q))
@@ -83,7 +84,7 @@ internal static partial class TuiUpdate
         return Asking(m, new TuiChoice("Dismiss failures", DismissDetail, [new ChoiceOption($"Dismiss {video.Name}", one), new ChoiceOption(all, new DismissAllFailures())], 0));
     }
 
-    private static string ConvertingNow(TuiModel m, string name) => $"{name} is converting now. {StopWords.HowToStop(m.Run)}";
+    private static string ConvertingNow(TuiModel m, string name, bool stopAfterVideoWorks) => $"{name} is converting now. {StopWords.HowToStop(m.Run, stopAfterVideoWorks)}";
 
     // ---- worker -----------------------------------------------------------------------------
 

@@ -498,14 +498,16 @@ public sealed class TuiActionKeysTests
         Notice(Update(foreground, Letter(key))).Should().Be("That run is in another window; only Ctrl+C there stops it.");
     }
 
-    /// <summary>A video converting cannot be held, run next or dropped, and the notice says how to stop the run that converts it.</summary>
+    /// <summary>
+    /// A video converting cannot be held or dropped, and the notice says how to stop the run that converts it: a hold needs the
+    /// run stopped now, since a finished video is no longer waiting. Run next only says it is converting, as queue next does.
+    /// </summary>
     [Theory]
-    [InlineData('h', "Background", "clip-001.mp4 is converting now. Press x to stop the run after this video, or X to stop it now.")]
+    [InlineData('h', "Background", "clip-001.mp4 is converting now. Press X to stop the run now.")]
     [InlineData('d', "Background", "clip-001.mp4 is converting now. Press x to stop the run after this video, or X to stop it now.")]
-    [InlineData('n', "Background", "clip-001.mp4 is converting now. Press x to stop the run after this video, or X to stop it now.")]
     [InlineData('h', "Foreground", "clip-001.mp4 is converting now. Stop the run with Ctrl+C in its window.")]
     [InlineData('d', "Foreground", "clip-001.mp4 is converting now. Stop the run with Ctrl+C in its window.")]
-    [InlineData('n', "Foreground", "clip-001.mp4 is converting now. Stop the run with Ctrl+C in its window.")]
+    [InlineData('n', "Background", "clip-001.mp4 is converting now.")]
     public void ConvertingNowNoticesNameTheWayToStopTheRun(char key, string kind, string expected)
     {
         var holder = kind == "Background" ? Background : new LiveRunHolder(LockHolders.ImmichRun, Now, 99);

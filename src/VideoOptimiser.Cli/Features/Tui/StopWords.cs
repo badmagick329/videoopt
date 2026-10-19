@@ -9,10 +9,16 @@ namespace VideoOptimiser.Cli.Features.Tui;
 /// </summary>
 internal static class StopWords
 {
-    public static string HowToStop(LiveRunHolder? run) => run switch
+    /// <param name="stopAfterVideoWorks">
+    /// Whether a stop after this video also lets the refused action go: a drop takes the ready video it leaves, but a hold
+    /// cannot, since a finished video is no longer waiting. Without it only <c>X</c> is offered, as the CLI offers only
+    /// <c>run stop --now</c> (VOPT-170).
+    /// </param>
+    public static string HowToStop(LiveRunHolder? run, bool stopAfterVideoWorks) => run switch
     {
         null => "Wait for the run to stop.",
-        { IsBackground: true } => "Press x to stop the run after this video, or X to stop it now.",
+        { IsBackground: true } when stopAfterVideoWorks => "Press x to stop the run after this video, or X to stop it now.",
+        { IsBackground: true } => "Press X to stop the run now.",
         _ => "Stop the run with Ctrl+C in its window."
     };
 }
