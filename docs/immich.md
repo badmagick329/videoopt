@@ -35,7 +35,7 @@ immich:
   stagingDirectory: "immich-staging"
 ```
 
-- **`baseUrl`:** use the server's LAN address. A public hostname behind Cloudflare rejects uploads over 100 MB, so large AV1 uploads would fail. Leave it empty to turn Immich off; the `immich` commands then refuse to run.
+- **`baseUrl`:** use the server's LAN address. A public hostname behind Cloudflare rejects uploads over 100 MB, so large AV1 uploads would fail. Leave it empty to turn Immich off; the `immich` commands then refuse to run. VideoOptimiser doesn't follow redirects, so your API key is only ever sent to this address. If the server redirects, from `http` to `https` for example, `doctor` and the `immich` commands stop with an error that names the address to put here.
 - **`minimumAgeDays`:** only videos taken more than this many days ago are converted. See [The age rule](#the-age-rule).
 - **`skipFavorites`:** leaves favourites alone, matching the phone's "Free up space", which keeps them by default.
 - **`stagingDirectory`:** where full-size originals are downloaded while they convert. It needs room for the largest batch you run. Relative paths are relative to the config file.

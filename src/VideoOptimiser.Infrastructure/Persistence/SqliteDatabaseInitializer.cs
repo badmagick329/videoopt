@@ -27,7 +27,7 @@ public sealed class SqliteDatabaseInitializer : IDatabaseInitializer
         await connection.OpenAsync(cancellationToken);
 
         await ExecuteAsync(connection, "PRAGMA journal_mode=WAL;", cancellationToken);
-        await ExecuteAsync(connection, "PRAGMA synchronous=NORMAL;", cancellationToken);
+        // No synchronous pragma: every connection runs at SQLite's default FULL on purpose, since this database guards originals.
 
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         await ExecuteAsync(connection, """

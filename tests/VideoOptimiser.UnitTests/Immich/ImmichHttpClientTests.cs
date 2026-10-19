@@ -146,6 +146,31 @@ public sealed class ImmichHttpClientTests : IDisposable
         exception.Message.Should().Contain("http://192.168.1.113:2283");
     }
 
+    [Theory]
+    // The usual case: baseUrl names the http side of an https proxy, so the target's base is the one to set.
+    [InlineData("https://photos.example.com/api/users/me", "https://photos.example.com/api/users/me", "Set immich.baseUrl to https://photos.example.com.")]
+    // Anywhere else, such as a proxy's login page, no base can be worked out from the target.
+    [InlineData("/auth/login", "http://192.168.1.113:2283/auth/login", "Set immich.baseUrl to the address it redirects to.")]
+    public async Task ARedirectIsAnErrorNamingItsTargetAndIsNeverFollowed(string location, string target, string advice)
+    {
+        var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = new Uri(location, UriKind.RelativeOrAbsolute) } });
+
+        var call = () => CreateClient(handler).GetCurrentUserAsync();
+
+        var exception = (await call.Should().ThrowAsync<ImmichApiException>()).Which;
+        exception.Code.Should().Be("ImmichRedirected");
+        exception.Message.Should().Contain($"redirected GET /api/users/me to {target} (HTTP 302)").And.Contain(advice);
+        handler.Requests.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void TheFactorysClientDoesNotFollowRedirects()
+    {
+        using var handler = ImmichClientFactory.CreateHandler();
+
+        handler.AllowAutoRedirect.Should().BeFalse("a followed redirect carries x-api-key to whatever host it names");
+    }
+
     [Fact]
     public async Task SearchVideosSendsTheStructuredFilterAndFollowsTheCursorToTheEnd()
     {

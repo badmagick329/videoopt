@@ -46,9 +46,9 @@ internal static class CliOutput
         return false;
     }
 
-    /// <summary>The exit code for an Immich failure: the configuration when the key or its permissions are wrong, otherwise a processing failure.</summary>
+    /// <summary>The exit code for an Immich failure: the configuration when the key, its permissions or the URL (a redirect) are wrong, otherwise a processing failure.</summary>
     internal static int ImmichFailureExitCode(ImmichApiException exception) =>
-        exception.Code is "ImmichApiKeyMissing" or "ImmichApiKeyRejected" or "ImmichPermissionMissing" or ImmichTrash.DisabledCode
+        exception.Code is "ImmichApiKeyMissing" or "ImmichApiKeyRejected" or "ImmichPermissionMissing" or "ImmichRedirected" or ImmichTrash.DisabledCode
             ? (int)ExitCode.InvalidConfiguration
             : (int)ExitCode.ProcessingFailure;
 

@@ -16,7 +16,13 @@ public sealed class ImmichClientFactory : IImmichClientFactory, IDisposable
 {
     // Transfers of multi-GB originals outlast HttpClient's 100 s default, so the shared client has no overall timeout;
     // ImmichHttpClient times each request itself.
-    private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly HttpClient _http = new(CreateHandler()) { Timeout = Timeout.InfiniteTimeSpan };
+
+    /// <summary>
+    /// Redirects are never followed: .NET strips only <c>Authorization</c> on a redirect, so <c>x-api-key</c>, which gives full
+    /// access to the library, would reach whatever host the redirect names. ImmichHttpClient reports a 3xx answer instead.
+    /// </summary>
+    internal static HttpClientHandler CreateHandler() => new() { AllowAutoRedirect = false };
 
     public IImmichClient Create(ImmichSettings settings) => new ImmichHttpClient(_http, settings);
 
@@ -341,9 +347,26 @@ public sealed class ImmichHttpClient : IImmichClient
             {
                 HttpStatusCode.Unauthorized => new ImmichApiException("ImmichApiKeyRejected", $"Immich rejected the API key in {_settings.ApiKeyEnvironmentVariable} (HTTP 401). Create a new key in Immich under Account settings > API keys."),
                 HttpStatusCode.Forbidden => new ImmichApiException("ImmichPermissionMissing", $"The Immich API key lacks the {permission} permission (HTTP 403). Add it to the key in Immich under Account settings > API keys."),
+                var status when (int)status is >= 300 and < 400 && response.Headers.Location is { } location => Redirected(method, path, status, new Uri(request.RequestUri!, location)),
                 var status => new ImmichApiException("ImmichRequestFailed", $"Immich returned HTTP {(int)status} for {method} /api/{path}{await ErrorDetailAsync(response, cancellationToken)}", (int)status)
             };
         }
+    }
+
+    /// <summary>
+    /// A redirect fails every request alike, so it gets its own code rather than <c>ImmichRequestFailed</c>, which callers read
+    /// as one asset's failure. It almost always means <c>baseUrl</c> names the http side of an https proxy; when the target
+    /// is the same API path under another base, that base is the one to configure.
+    /// </summary>
+    private ImmichApiException Redirected(HttpMethod method, string path, HttpStatusCode status, Uri target)
+    {
+        var targetPath = target.GetLeftPart(UriPartial.Path);
+        var apiPath = "/api/" + path;
+        var address = targetPath.EndsWith(apiPath, StringComparison.OrdinalIgnoreCase) ? targetPath[..^apiPath.Length] : "the address it redirects to";
+        return new ImmichApiException(
+            "ImmichRedirected",
+            $"Immich at {_settings.BaseUrl} redirected {method} /api/{path} to {target} (HTTP {(int)status}). Set immich.baseUrl to {address}. VideoOptimiser doesn't follow redirects, so the API key goes only to the address you set.",
+            (int)status);
     }
 
     /// <summary>
