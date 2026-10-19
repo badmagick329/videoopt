@@ -1,9 +1,7 @@
-using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Config;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Cli;
-using VideoOptimiser.Cli.Features.Run;
 using VideoOptimiser.Cli.Features.Tui;
 
 internal enum CliCommandKind
@@ -102,152 +100,64 @@ Usage:
     /// <summary>A command to suggest, such as <c>queue release &lt;id&gt;</c>, with <c>--config</c> only when this one was given it.</summary>
     public string Hint(string verb) => CommandHints.Format(verb, ConfigurationPath);
 
+    /// <summary>
+    /// Every refusal happens here, before the host is built, so a mistyped command never takes a lock or touches the database.
+    /// </summary>
+    /// <remarks>
+    /// Any token that starts with <c>--</c> is an option: a known one from <see cref="CliOptions.All"/>, or an error. A value
+    /// that starts with a dash (<c>--limit -1</c>, <c>--config --odd.yaml</c>) is read by its option first, so it never gets
+    /// that far, and a file named like an option is given as <c>.\--name.mp4</c>, as a file named <c>immich</c> is.
+    /// </remarks>
     public static CliCommand Parse(string[] args)
     {
-        var remaining = new List<string>();
-        string? configurationPath = null;
-        var force = false;
-        var dryRun = false;
-        var first = false;
-        int? limit = null;
-        QualityLevel? quality = null;
-        var all = false;
-        var json = false;
-        var finalizeReady = false;
-        var stopNow = false;
-        var keepWorker = false;
-        WorkerFateChoice? workerFate = null;
-        var existingWorker = false;
-        var snapshot = false;
-        FrameSize? size = null;
-        var modeOverrides = new List<ProcessingModeOverride>();
+        var words = new List<string>();
+        var values = new CliOptionValues();
+        var given = new List<CliOption>();
+        string? unknown = null;
 
         for (var index = 0; index < args.Length; index++)
         {
-            switch (args[index])
+            var token = args[index];
+            switch (token)
             {
-                case "--config" when index + 1 < args.Length:
-                    configurationPath = args[++index];
-                    break;
-                case "--config":
-                    return Invalid("--config requires a path.");
-                case "--json":
-                    json = true;
-                    break;
-                case "--all":
-                    all = true;
-                    break;
-                case "--first":
-                    first = true;
-                    break;
-                case "--limit" when index + 1 < args.Length && int.TryParse(args[index + 1], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) && parsed > 0:
-                    limit = parsed;
-                    index++;
-                    break;
-                case "--limit":
-                    return Invalid("--limit requires a whole number of 1 or more.");
-                case "--quality" when index + 1 < args.Length && QualityLevels.TryParse(args[index + 1], out var level):
-                    quality = level;
-                    index++;
-                    break;
-                case "--quality":
-                    return Invalid("--quality requires archive, standard or compact.");
-                case "--dry-run":
-                    dryRun = true;
-                    break;
-                case "--force":
-                    force = true;
-                    break;
-                case "--ready":
-                    finalizeReady = true;
-                    break;
-                case "--now":
-                    stopNow = true;
-                    break;
-                case "--keep-worker":
-                    keepWorker = true;
-                    break;
-                case "--worker-fate" when index + 1 < args.Length && TryParseWorkerFate(args[index + 1], out var parsedFate):
-                    workerFate = parsedFate;
-                    index++;
-                    break;
-                case "--worker-fate":
-                    return Invalid("--worker-fate requires delete or keep.");
-                case BackgroundRunnerArguments.ExistingWorkerFlag:
-                    existingWorker = true;
-                    break;
-                case "--snapshot":
-                    snapshot = true;
-                    break;
-                case "--size" when index + 1 < args.Length && FrameSize.TryParse(args[index + 1], out var parsedSize):
-                    size = parsedSize;
-                    index++;
-                    break;
-                case "--size":
-                    return Invalid("--size requires WIDTHxHEIGHT, such as 140x40.");
-                case "--local":
-                    modeOverrides.Add(ProcessingModeOverride.Local);
-                    break;
-                case "--remote":
-                    modeOverrides.Add(ProcessingModeOverride.Remote);
-                    break;
-                case "--crf":
-                    return Invalid("--crf is no longer supported: run picks the CRF itself.");
-                case "--help" or "-h" or "help":
+                case "--help" or "-h":
                     return new CliCommand(CliCommandKind.Help, null, null, false, false, false, false, null);
                 case "--version":
                     return new CliCommand(CliCommandKind.Version, null, null, false, false, false, false, null);
-                default:
-                    remaining.Add(args[index]);
-                    break;
+                case "--crf":
+                    return Invalid("--crf is no longer supported: run picks the CRF itself.");
             }
+
+            if (CliOptions.Find(token) is { } option)
+            {
+                string? value = null;
+                if (option.TakesValue)
+                {
+                    if (index + 1 >= args.Length) return Invalid(option.ValueError!);
+                    value = args[++index];
+                }
+                if (!option.Set(values, value)) return Invalid(option.ValueError!);
+                given.Add(option);
+            }
+            // Kept for after the loop: a --help later on the line still wins, and the suggestion depends on the command.
+            else if (token.StartsWith("--", StringComparison.Ordinal)) unknown ??= token;
+            else words.Add(token);
         }
 
-        var kind = remaining switch
+        // Only as the first word, as the help documents it; `queue add help` is a file named help.
+        if (words is ["help", ..]) return new CliCommand(CliCommandKind.Help, null, null, false, false, false, false, null);
+
+        var (kind, jobId, filePath) = Match(words);
+        if (unknown is not null)
         {
-            [] => CliCommandKind.Status,
-            ["config", "init"] => CliCommandKind.ConfigInit,
-            ["config", "show"] => CliCommandKind.ConfigShow,
-            ["config", "validate"] => CliCommandKind.ConfigValidate,
-            ["version"] => CliCommandKind.Version,
-            ["doctor"] => CliCommandKind.Doctor,
-            ["worker", "create"] => CliCommandKind.WorkerCreate,
-            ["worker", "status"] => CliCommandKind.WorkerStatus,
-            ["worker", "delete"] => CliCommandKind.WorkerDelete,
-            ["remote", "setup"] => CliCommandKind.RemoteSetup,
-            ["queue", "add"] => CliCommandKind.QueueAdd,
-            // The word itself selects it; a file named "immich" is given as ".\immich".
-            ["queue", "add", "immich"] => CliCommandKind.QueueAddImmich,
-            ["queue", "add", _] => CliCommandKind.QueueAddFile,
-            ["run"] => CliCommandKind.Run,
-            ["run", "stop"] => CliCommandKind.StopRun,
-            ["background", "start"] => CliCommandKind.BackgroundStart,
-            ["background", "runner"] => CliCommandKind.BackgroundRunner,
-            ["tui"] => CliCommandKind.TuiSnapshot,
-            ["queue", "list"] => CliCommandKind.QueueList,
-            ["queue", "hold", _] => CliCommandKind.QueueHold,
-            ["queue", "release", _] => CliCommandKind.QueueRelease,
-            ["queue", "next", _] => CliCommandKind.QueueNext,
-            ["queue", "drop"] or ["queue", "drop", _] => CliCommandKind.QueueDrop,
-            ["queue", "reject", _] => CliCommandKind.QueueReject,
-            ["queue", "dismiss"] or ["queue", "dismiss", _] => CliCommandKind.QueueDismiss,
-            ["queue", "retry", _] => CliCommandKind.QueueRetry,
-            ["status"] => CliCommandKind.Status,
-            ["history"] => CliCommandKind.History,
-            ["calibrate"] => CliCommandKind.Calibrate,
-            ["cost"] => CliCommandKind.Cost,
-            ["validate", _] => CliCommandKind.Validate,
-            ["finalize"] or ["finalize", _] => CliCommandKind.Finalize,
-            ["cleanup"] => CliCommandKind.Cleanup,
-            ["immich", "run"] => CliCommandKind.ImmichRun,
-            ["immich", "finalize"] => CliCommandKind.ImmichFinalize,
-            _ => CliCommandKind.Invalid
-        };
+            var suggestion = CliOptions.Suggest(unknown, kind);
+            return Invalid(suggestion is null ? $"Unknown option '{unknown}'." : $"Unknown option '{unknown}'. Did you mean '{suggestion}'?");
+        }
 
         if (kind == CliCommandKind.Invalid)
         {
             // The names phase A replaced, with no aliases: each says what took its place.
-            return Invalid(remaining switch
+            return Invalid(words switch
             {
                 ["queue", "cancel", ..] => "'queue cancel' is now 'queue drop'.",
                 ["queue", "run", ..] => "'queue run' is now 'run'.",
@@ -257,58 +167,69 @@ Usage:
             });
         }
 
-        if (json && kind is not (CliCommandKind.Doctor or CliCommandKind.QueueList or CliCommandKind.Status or CliCommandKind.History or CliCommandKind.Calibrate or CliCommandKind.Cost))
-        {
-            return Invalid("--json is only supported by doctor, queue list, status, history, calibrate and cost.");
-        }
+        if (given.FirstOrDefault(option => !option.AcceptedBy(kind)) is { } unsupported) return Invalid(CliOptions.UnsupportedError(unsupported));
 
-        if (first && kind is not (CliCommandKind.QueueAdd or CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun)) return Invalid("--first is only supported by queue add, queue add immich and immich run.");
-        if (limit is not null && kind is not (CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun)) return Invalid("--limit is only supported by queue add immich and immich run.");
-        if (quality is not null && kind != CliCommandKind.ConfigInit) return Invalid("--quality is only supported by config init.");
-        if (first && limit is not null) return Invalid("--first and --limit cannot be used together.");
+        if (values.First && values.Limit is not null) return Invalid("--first and --limit cannot be used together.");
+        if (values.Modes.Distinct().Count() > 1) return Invalid("--local and --remote cannot be used together.");
+        if (kind == CliCommandKind.Finalize && values.Ready && jobId is not null) return Invalid("finalize --ready does not take a job ID.");
+        if (kind == CliCommandKind.Finalize && !values.Ready && jobId is null) return Invalid("finalize requires a job ID or --ready.");
+        if (kind == CliCommandKind.QueueDrop && values.All == (jobId is not null)) return Invalid("queue drop requires a job ID or --all.");
+        if (kind == CliCommandKind.QueueDismiss && values.All == (jobId is not null)) return Invalid("queue dismiss requires a job ID or --all.");
+        if (kind == CliCommandKind.BackgroundRunner && values.WorkerFate is null) return Invalid("background runner requires --worker-fate delete or keep.");
+        if (kind == CliCommandKind.TuiSnapshot && !values.Snapshot) return Invalid("tui requires --snapshot.");
+
         // --first is --limit 1 for the Immich commands; queue add keeps its own --first.
-        if (first && kind is CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun) limit = 1;
-        if (all && kind is not (CliCommandKind.QueueDrop or CliCommandKind.QueueDismiss)) return Invalid("--all is only supported by queue drop and queue dismiss.");
-
-        if (force && kind != CliCommandKind.QueueAddFile)
-        {
-            return Invalid("--force is only supported by queue add <file>.");
-        }
-
-        if (dryRun && kind != CliCommandKind.Cleanup) return Invalid("--dry-run is only supported by cleanup.");
-        if (finalizeReady && kind != CliCommandKind.Finalize) return Invalid("--ready is only supported by finalize.");
-        if (finalizeReady && remaining.Count != 1) return Invalid("finalize --ready does not take a job ID.");
-        if (kind == CliCommandKind.QueueDrop && all == (remaining.Count == 3)) return Invalid("queue drop requires a job ID or --all.");
-        if (kind == CliCommandKind.QueueDismiss && all == (remaining.Count == 3)) return Invalid("queue dismiss requires a job ID or --all.");
-        if (kind == CliCommandKind.QueueRetry && remaining.Count != 3) return Invalid("queue retry requires a job ID.");
-        if (stopNow && kind != CliCommandKind.StopRun) return Invalid("--now is only supported by run stop.");
-        if (keepWorker && kind != CliCommandKind.BackgroundStart) return Invalid("--keep-worker is only supported by background start.");
-        if (workerFate is not null && kind != CliCommandKind.BackgroundRunner) return Invalid("--worker-fate is only supported by background runner.");
-        if (workerFate is null && kind == CliCommandKind.BackgroundRunner) return Invalid("background runner requires --worker-fate delete or keep.");
-        if (existingWorker && kind != CliCommandKind.BackgroundRunner) return Invalid("--existing-worker is only supported by background runner.");
-        if (snapshot && kind != CliCommandKind.TuiSnapshot) return Invalid("--snapshot is only supported by tui.");
-        if (size is not null && kind != CliCommandKind.TuiSnapshot) return Invalid("--size is only supported by tui.");
-        if (!snapshot && kind == CliCommandKind.TuiSnapshot) return Invalid("tui requires --snapshot.");
-        if (modeOverrides.Distinct().Count() > 1) return Invalid("--local and --remote cannot be used together.");
-        var modeOverride = modeOverrides.FirstOrDefault();
-        if (modeOverride is not null && kind is not (CliCommandKind.Run or CliCommandKind.ImmichRun or CliCommandKind.BackgroundStart or CliCommandKind.BackgroundRunner))
-        {
-            return Invalid($"{modeOverride.Flag} is only supported by run and immich run.");
-        }
-
-        return new CliCommand(kind, configurationPath, null, false, first, all, json, null, kind == CliCommandKind.QueueAddFile ? remaining[2] : null, force, dryRun, (kind is CliCommandKind.Validate or CliCommandKind.Finalize or CliCommandKind.QueueHold or CliCommandKind.QueueRelease or CliCommandKind.QueueNext or CliCommandKind.QueueDrop or CliCommandKind.QueueReject or CliCommandKind.QueueDismiss or CliCommandKind.QueueRetry) && remaining.Count > 1 ? remaining[^1] : null, finalizeReady, modeOverride, limit, quality, Bare: remaining.Count == 0, StopNow: stopNow, KeepWorker: keepWorker, WorkerFate: workerFate, Size: size, ExistingWorker: existingWorker);
+        var limit = values.First && kind is CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun ? 1 : values.Limit;
+        return new CliCommand(kind, values.ConfigurationPath, null, false, values.First, values.All, values.Json, null, filePath, values.Force, values.DryRun, jobId, values.Ready, values.Modes.FirstOrDefault(), limit, values.Quality, Bare: words.Count == 0, StopNow: values.StopNow, KeepWorker: values.KeepWorker, WorkerFate: values.WorkerFate, Size: values.Size, ExistingWorker: values.ExistingWorker);
     }
 
-    private static bool TryParseWorkerFate(string text, out WorkerFateChoice fate)
+    /// <summary>
+    /// The command the words name, with the job ID or file taken from its place in that command's pattern, so a word that only
+    /// selects the command (<c>drop</c> in <c>queue drop --all</c>) is never read as one.
+    /// </summary>
+    private static (CliCommandKind Kind, string? JobId, string? FilePath) Match(List<string> words) => words switch
     {
-        (var parsed, fate) = text.ToLowerInvariant() switch
-        {
-            "delete" => (true, WorkerFateChoice.Delete),
-            "keep" => (true, WorkerFateChoice.Keep),
-            _ => (false, default)
-        };
-        return parsed;
-    }
+        [] => (CliCommandKind.Status, null, null),
+        ["config", "init"] => (CliCommandKind.ConfigInit, null, null),
+        ["config", "show"] => (CliCommandKind.ConfigShow, null, null),
+        ["config", "validate"] => (CliCommandKind.ConfigValidate, null, null),
+        ["version"] => (CliCommandKind.Version, null, null),
+        ["doctor"] => (CliCommandKind.Doctor, null, null),
+        ["worker", "create"] => (CliCommandKind.WorkerCreate, null, null),
+        ["worker", "status"] => (CliCommandKind.WorkerStatus, null, null),
+        ["worker", "delete"] => (CliCommandKind.WorkerDelete, null, null),
+        ["remote", "setup"] => (CliCommandKind.RemoteSetup, null, null),
+        ["queue", "add"] => (CliCommandKind.QueueAdd, null, null),
+        // The word itself selects it; a file named "immich" is given as ".\immich".
+        ["queue", "add", "immich"] => (CliCommandKind.QueueAddImmich, null, null),
+        ["queue", "add", var file] => (CliCommandKind.QueueAddFile, null, file),
+        ["run"] => (CliCommandKind.Run, null, null),
+        ["run", "stop"] => (CliCommandKind.StopRun, null, null),
+        ["background", "start"] => (CliCommandKind.BackgroundStart, null, null),
+        ["background", "runner"] => (CliCommandKind.BackgroundRunner, null, null),
+        ["tui"] => (CliCommandKind.TuiSnapshot, null, null),
+        ["queue", "list"] => (CliCommandKind.QueueList, null, null),
+        ["queue", "hold", var id] => (CliCommandKind.QueueHold, id, null),
+        ["queue", "release", var id] => (CliCommandKind.QueueRelease, id, null),
+        ["queue", "next", var id] => (CliCommandKind.QueueNext, id, null),
+        ["queue", "drop"] => (CliCommandKind.QueueDrop, null, null),
+        ["queue", "drop", var id] => (CliCommandKind.QueueDrop, id, null),
+        ["queue", "reject", var id] => (CliCommandKind.QueueReject, id, null),
+        ["queue", "dismiss"] => (CliCommandKind.QueueDismiss, null, null),
+        ["queue", "dismiss", var id] => (CliCommandKind.QueueDismiss, id, null),
+        ["queue", "retry", var id] => (CliCommandKind.QueueRetry, id, null),
+        ["status"] => (CliCommandKind.Status, null, null),
+        ["history"] => (CliCommandKind.History, null, null),
+        ["calibrate"] => (CliCommandKind.Calibrate, null, null),
+        ["cost"] => (CliCommandKind.Cost, null, null),
+        ["validate", var id] => (CliCommandKind.Validate, id, null),
+        ["finalize"] => (CliCommandKind.Finalize, null, null),
+        ["finalize", var id] => (CliCommandKind.Finalize, id, null),
+        ["cleanup"] => (CliCommandKind.Cleanup, null, null),
+        ["immich", "run"] => (CliCommandKind.ImmichRun, null, null),
+        ["immich", "finalize"] => (CliCommandKind.ImmichFinalize, null, null),
+        _ => (CliCommandKind.Invalid, null, null)
+    };
 
     private static CliCommand Invalid(string message) => new(CliCommandKind.Invalid, null, null, false, false, false, false, message);
 }

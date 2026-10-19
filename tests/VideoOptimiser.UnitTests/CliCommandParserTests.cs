@@ -22,9 +22,77 @@ public sealed class CliCommandParserTests
     [InlineData("QueueAddImmich", "immich")]
     [InlineData("QueueAddFile", @".\immich")]
     [InlineData("QueueAddFile", "clip.mp4")]
+    [InlineData("QueueAddFile", "-clip.mp4")]
+    [InlineData("QueueAddFile", "help")]
     public void QueueAddTakesTheWordImmichOrAFile(string kind, string argument)
     {
-        CliCommand.Parse(["queue", "add", argument]).Kind.ToString().Should().Be(kind);
+        var command = CliCommand.Parse(["queue", "add", argument]);
+
+        command.Kind.ToString().Should().Be(kind, command.Error);
+        command.FilePath.Should().Be(kind == "QueueAddFile" ? argument : null);
+        command.JobId.Should().BeNull();
+    }
+
+    /// <summary>
+    /// A token starting with <c>--</c> that no option claims is refused at parse time, before any lock, instead of becoming a
+    /// file or job ID. The suggestion prefers an option this command accepts, and never names a hidden one to a public command.
+    /// </summary>
+    [Theory]
+    [InlineData("Unknown option '--forse'. Did you mean '--force'?", "queue", "add", "--forse", "clip.mp4")]
+    [InlineData("Unknown option '--redy'. Did you mean '--ready'?", "finalize", "--redy")]
+    [InlineData("Unknown option '--frobnicate'.", "queue", "add", "--frobnicate", "clip.mp4")]
+    [InlineData("Unknown option '--forst'. Did you mean '--force'?", "queue", "add", "clip.mp4", "--forst")]
+    [InlineData("Unknown option '--forst'. Did you mean '--first'?", "queue", "add", "--forst")]
+    [InlineData("Unknown option '--JSON'. Did you mean '--json'?", "status", "--JSON")]
+    [InlineData("Unknown option '--hepl'. Did you mean '--help'?", "queue", "list", "--hepl")]
+    [InlineData("Unknown option '--snapshat'.", "status", "--snapshat")]
+    [InlineData("Unknown option '--snapshat'. Did you mean '--snapshot'?", "tui", "--snapshat")]
+    [InlineData("Unknown option '--alll'. Did you mean '--all'?", "queue", "nope", "--alll")]
+    [InlineData("Unknown option '--'.", "queue", "add", "--", "clip.mp4")]
+    public void AnUnknownOptionIsAnErrorThatNamesIt(string error, params string[] args)
+    {
+        var command = CliCommand.Parse(args);
+
+        command.IsValid.Should().BeFalse();
+        command.Error.Should().Be(error);
+    }
+
+    /// <summary>The job ID is the word in the job ID's place, so the verb of <c>queue drop --all</c> is never read as one.</summary>
+    [Theory]
+    [InlineData("QueueDrop", null, true, "queue", "drop", "--all")]
+    [InlineData("QueueDismiss", null, true, "queue", "dismiss", "--all", "--config", "my.yaml")]
+    [InlineData("QueueDrop", "3f2a", false, "queue", "drop", "3f2a")]
+    [InlineData("Finalize", "3f2a", false, "finalize", "3f2a", "--config", "my.yaml")]
+    [InlineData("Finalize", null, false, "finalize", "--ready")]
+    [InlineData("Validate", "3f2a", false, "--config", "my.yaml", "validate", "3f2a")]
+    [InlineData("QueueRetry", "3f2a", false, "queue", "retry", "3f2a")]
+    public void TheJobIdIsTakenFromItsPlace(string kind, string? jobId, bool all, params string[] args)
+    {
+        var command = CliCommand.Parse(args);
+
+        command.Kind.ToString().Should().Be(kind, command.Error);
+        command.JobId.Should().Be(jobId);
+        command.All.Should().Be(all);
+        command.FilePath.Should().BeNull();
+    }
+
+    /// <summary><c>--help</c> and <c>-h</c> work anywhere, even after a typo; the word <c>help</c> only as the first word.</summary>
+    [Theory]
+    [InlineData("help")]
+    [InlineData("help", "queue", "add")]
+    [InlineData("--config", "my.yaml", "help")]
+    [InlineData("queue", "drop", "-h")]
+    [InlineData("queue", "add", "--forse", "--help")]
+    public void HelpIsShownWhereTheHelpSaysItIs(params string[] args)
+    {
+        CliCommand.Parse(args).ShowHelp.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TheWordHelpAfterACommandIsNotHelp()
+    {
+        CliCommand.Parse(["queue", "hold", "help"]).Should().Match<CliCommand>(command => command.Kind == CliCommandKind.QueueHold && command.JobId == "help");
+        CliCommand.Parse(["status", "help"]).Error.Should().Be("Unknown or incomplete command.");
     }
 
     /// <summary><c>queue reject</c> (VOPT-112) takes exactly a job ID, like <c>queue hold</c>; it has no <c>--all</c> or <c>--json</c>, and the usage lists it.</summary>
@@ -110,6 +178,9 @@ public sealed class CliCommandParserTests
     [InlineData("--local and --remote cannot be used together.", "background", "start", "--local", "--remote")]
     [InlineData("--local is only supported by run and immich run.", "run", "stop", "--local")]
     [InlineData("--json is only supported by doctor, queue list, status, history, calibrate and cost.", "run", "stop", "--json")]
+    [InlineData("finalize requires a job ID or --ready.", "finalize")]
+    [InlineData("finalize --ready does not take a job ID.", "finalize", "3f2a", "--ready")]
+    [InlineData("queue drop requires a job ID or --all.", "queue", "drop")]
     public void RejectsWithTheReason(string error, params string[] args)
     {
         var command = CliCommand.Parse(args);
