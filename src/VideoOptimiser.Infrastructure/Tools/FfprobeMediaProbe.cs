@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using VideoOptimiser.Application.Tools;
 
@@ -8,49 +7,17 @@ public sealed class FfprobeMediaProbe(string ffprobePath) : IMediaProbe
 {
     public async Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = ffprobePath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        startInfo.ArgumentList.Add("-v");
-        startInfo.ArgumentList.Add("error");
-        startInfo.ArgumentList.Add("-print_format");
-        startInfo.ArgumentList.Add("json");
-        startInfo.ArgumentList.Add("-show_format");
-        startInfo.ArgumentList.Add("-show_streams");
-        startInfo.ArgumentList.Add(path);
-
-        using var process = new Process { StartInfo = startInfo };
-        if (!process.Start())
-        {
-            throw new InvalidOperationException($"Could not start ffprobe at '{ffprobePath}'.");
-        }
-
-        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        var output = await outputTask;
-        var error = await errorTask;
-        if (process.ExitCode != 0)
-        {
-            throw new MediaProbeException($"ffprobe exited with {process.ExitCode}: {FirstLine(error)}");
-        }
-
+        var result = await ChildProcess.RunAsync(new ExternalProcessRequest(ffprobePath, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", path]), cancellationToken);
+        FfprobeOutput.EnsureSuccess(result.ExitCode, result.StandardError);
         try
         {
-            return FfprobeJsonParser.Parse(output);
+            return FfprobeJsonParser.Parse(result.StandardOutput);
         }
         catch (JsonException exception)
         {
             throw new MediaProbeException("ffprobe returned malformed output.", exception);
         }
     }
-
-    private static string FirstLine(string message) => message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "No error output.";
 }
 
 public static class FfprobeJsonParser
@@ -65,8 +32,8 @@ public static class FfprobeJsonParser
 
         var videoStreams = streams.Where(stream => GetString(stream, "codec_type") == "video").ToArray();
         var primaryVideo = videoStreams
-            .Where(stream => !IsAttachedPicture(stream))
-            .OrderByDescending(IsDefaultStream)
+            .Where(stream => !FfprobeOutput.IsAttachedPicture(stream))
+            .OrderByDescending(FfprobeOutput.IsDefaultStream)
             .FirstOrDefault();
         if (primaryVideo.ValueKind == JsonValueKind.Undefined)
         {
@@ -77,7 +44,7 @@ public static class FfprobeJsonParser
         var size = root.TryGetProperty("format", out format) ? GetLong(format, "size") : null;
         return new MediaInfo(
             GetString(primaryVideo, "codec_name") ?? "unknown",
-            videoStreams.Count(stream => !IsAttachedPicture(stream)),
+            videoStreams.Count(stream => !FfprobeOutput.IsAttachedPicture(stream)),
             streams.Count(stream => GetString(stream, "codec_type") == "audio"),
             streams.Count(stream => GetString(stream, "codec_type") == "subtitle"),
             streams.Count(stream => GetString(stream, "codec_type") == "attachment"),
@@ -97,10 +64,6 @@ public static class FfprobeJsonParser
     private static long? OverallBitrate(JsonElement format, long? size, double? duration) =>
         (format.ValueKind == JsonValueKind.Object ? GetLong(format, "bit_rate") : null)
         ?? (size > 0 && duration > 0 ? (long)(size.Value * 8 / duration.Value) : null);
-
-    private static bool IsDefaultStream(JsonElement stream) => stream.TryGetProperty("disposition", out var disposition) && disposition.TryGetProperty("default", out var value) && GetInt(value) == 1;
-
-    private static bool IsAttachedPicture(JsonElement stream) => stream.TryGetProperty("disposition", out var disposition) && disposition.TryGetProperty("attached_pic", out var value) && GetInt(value) == 1;
 
     private static string? GetString(JsonElement element, string property) => element.TryGetProperty(property, out var value) ? value.GetString() : null;
 

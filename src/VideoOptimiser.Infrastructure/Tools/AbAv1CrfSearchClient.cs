@@ -30,68 +30,28 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
 
     public async Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = executablePath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        foreach (var argument in BuildArguments(inputPath, settings))
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
-
         var started = Stopwatch.StartNew();
-        using var process = new Process { StartInfo = startInfo };
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Could not start ab-av1.");
-        }
-
-        var outputTask = ReadLinesAsync(process.StandardOutput, progress, cancellationToken);
-        var errorTask = ReadLinesAsync(process.StandardError, progress, cancellationToken);
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-
-            throw;
-        }
-
-        var output = await outputTask;
-        var error = await errorTask;
+        // Each list is filled by its own stream's reader only, so neither needs a lock.
+        List<string> outputLines = [], errorLines = [];
+        var exitCode = await ChildProcess.StreamAsync(
+            new ExternalProcessRequest(executablePath, BuildArguments(inputPath, settings)),
+            line => { outputLines.Add(line); progress?.Report(JobProgress.Tool(line)); },
+            line => { errorLines.Add(line); progress?.Report(JobProgress.Tool(line)); },
+            cancellationToken);
+        var output = string.Join(Environment.NewLine, outputLines);
+        var error = string.Join(Environment.NewLine, errorLines);
         started.Stop();
-        if (process.ExitCode != 0)
+        if (exitCode != 0)
         {
             var log = output + Environment.NewLine + error;
             // Not a failure: no CRF both met the VMAF and shrank the video enough, and a retry would end the same way.
             if (AbAv1Output.NoWorthwhileCrf(log, settings) is { } noWorthwhileCrf) throw noWorthwhileCrf;
-            throw new InvalidOperationException($"ab-av1 crf-search failed with exit code {process.ExitCode}: {AbAv1Output.Summarise(error)}");
+            throw new InvalidOperationException($"ab-av1 crf-search failed with exit code {exitCode}: {AbAv1Output.Summarise(error)}");
         }
 
         var combined = output + Environment.NewLine + error;
         var crf = CrfSearchOutputParser.Parse(combined);
         return new CrfSearchResult(crf, output, error, started.Elapsed, CrfSearchOutputParser.TryParsePrediction(combined, crf, out var prediction) ? prediction : null);
-    }
-
-    private static async Task<string> ReadLinesAsync(StreamReader reader, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
-    {
-        var lines = new List<string>();
-        while (await reader.ReadLineAsync(cancellationToken) is { } line)
-        {
-            lines.Add(line);
-            progress?.Report(JobProgress.Tool(line));
-        }
-
-        return string.Join(Environment.NewLine, lines);
     }
 }
 

@@ -22,6 +22,7 @@
 - When a worker can't remove a video's files after the video is done, the run now says so in one line and carries on, and a later run removes them. It used to mark a video that had passed validation as failed, or stop the whole run if the worker had just stopped answering. It also hid the real reason a video failed on the worker, or that its original changed during the upload.
 - A run that fails while it starts, for example because the database is busy, now only reports the error. It used to go on to decide the worker's fate after it had already let go of the run lock, so a background run set to delete the worker could delete one that another run had just started using.
 - `quality.crfSearch.sampleCount` now sets how many samples every CRF search takes. It used to apply only to a video whose length ffprobe couldn't read; every other video got one sample per two minutes, from 2 to 12. Leave it out to keep that rule. A config that sets it, as `config init` used to write it with `5`, now gets exactly that many.
+- Stopping a run now always ends the ffprobe, ab-av1 or ssh it was waiting on, and a video stopped mid-encode is marked as stopped at once. ffprobe used to keep running after Ctrl+C, a stop could leave ssh running with half its commands sent, and a stop that hit an ab-av1 just as it exited could leave its video shown as encoding until the next run.
 
 ## [0.14.1] - 2026-10-18
 ### Remote workers

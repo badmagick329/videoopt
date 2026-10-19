@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using VideoOptimiser.Application.Tools;
@@ -15,78 +14,51 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
 
     private async Task<PrimaryStreams> ReadStreamSelectionAsync(string path, CancellationToken cancellationToken)
     {
-        var startInfo = CreateStartInfo(BuildStreamSelectionArguments(path));
-        using var process = Start(startInfo);
+        var result = await ChildProcess.RunAsync(new ExternalProcessRequest(ffprobePath, BuildStreamSelectionArguments(path)), cancellationToken);
+        FfprobeOutput.EnsureSuccess(result.ExitCode, result.StandardError);
+
         try
         {
-            var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
-            var output = await outputTask;
-            var error = await errorTask;
-            EnsureSuccess(process, error);
-
-            try
+            using var document = JsonDocument.Parse(result.StandardOutput);
+            if (!document.RootElement.TryGetProperty("streams", out var streamArray) || streamArray.ValueKind != JsonValueKind.Array)
             {
-                using var document = JsonDocument.Parse(output);
-                if (!document.RootElement.TryGetProperty("streams", out var streamArray) || streamArray.ValueKind != JsonValueKind.Array)
-                {
-                    throw new MediaProbeException("ffprobe did not report streams for timeline validation.");
-                }
-
-                var streams = streamArray.EnumerateArray().ToArray();
-                var video = streams
-                    .Where(stream => TypeIs(stream, "video") && !IsAttachedPicture(stream))
-                    .OrderByDescending(IsDefaultStream)
-                    .FirstOrDefault();
-                if (video.ValueKind == JsonValueKind.Undefined || !TryGetInt(video, "index", out var videoIndex))
-                {
-                    throw new MediaProbeException("ffprobe did not report a primary video stream for timeline validation.");
-                }
-
-                var audio = streams
-                    .Where(stream => TypeIs(stream, "audio"))
-                    .OrderByDescending(IsDefaultStream)
-                    .FirstOrDefault();
-                var audioIndex = audio.ValueKind != JsonValueKind.Undefined && TryGetInt(audio, "index", out var index)
-                    ? index
-                    : (int?)null;
-                return new PrimaryStreams(videoIndex, audioIndex);
+                throw new MediaProbeException("ffprobe did not report streams for timeline validation.");
             }
-            catch (JsonException exception)
+
+            var streams = streamArray.EnumerateArray().ToArray();
+            var video = streams
+                .Where(stream => TypeIs(stream, "video") && !FfprobeOutput.IsAttachedPicture(stream))
+                .OrderByDescending(FfprobeOutput.IsDefaultStream)
+                .FirstOrDefault();
+            if (video.ValueKind == JsonValueKind.Undefined || !FfprobeOutput.TryGetInt(video, "index", out var videoIndex))
             {
-                throw new MediaProbeException("ffprobe returned malformed stream metadata for timeline validation.", exception);
+                throw new MediaProbeException("ffprobe did not report a primary video stream for timeline validation.");
             }
+
+            var audio = streams
+                .Where(stream => TypeIs(stream, "audio"))
+                .OrderByDescending(FfprobeOutput.IsDefaultStream)
+                .FirstOrDefault();
+            var audioIndex = audio.ValueKind != JsonValueKind.Undefined && FfprobeOutput.TryGetInt(audio, "index", out var index)
+                ? index
+                : (int?)null;
+            return new PrimaryStreams(videoIndex, audioIndex);
         }
-        catch
+        catch (JsonException exception)
         {
-            await StopAsync(process);
-            throw;
+            throw new MediaProbeException("ffprobe returned malformed stream metadata for timeline validation.", exception);
         }
     }
 
     private async Task<MediaTimeline> ReadPacketTimelineAsync(string path, PrimaryStreams streams, CancellationToken cancellationToken)
     {
-        var startInfo = CreateStartInfo(BuildPacketTimelineArguments(path));
-        using var process = Start(startInfo);
-        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        // Packet lines are folded in as they arrive: a long video has hundreds of thousands, too many to hold as text.
+        // Malformed timing throws from Add; ffprobe is then drained to exit and that exception is the one reported.
         var accumulator = new PacketTimelineAccumulator(streams);
-        try
-        {
-            while (await process.StandardOutput.ReadLineAsync(cancellationToken) is { } line)
-            {
-                accumulator.Add(line);
-            }
-
-            await process.WaitForExitAsync(cancellationToken);
-            EnsureSuccess(process, await errorTask);
-            return accumulator.Build();
-        }
-        catch
-        {
-            await StopAsync(process);
-            throw;
-        }
+        var errorLines = new List<string>();
+        var exitCode = await ChildProcess.StreamAsync(new ExternalProcessRequest(ffprobePath, BuildPacketTimelineArguments(path)), accumulator.Add, errorLines.Add, cancellationToken);
+        FfprobeOutput.EnsureSuccess(exitCode, string.Join(Environment.NewLine, errorLines));
+        return accumulator.Build();
     }
 
     internal static IReadOnlyList<string> BuildStreamSelectionArguments(string path) =>
@@ -118,68 +90,7 @@ public sealed class FfprobeMediaTimelineProbe(string ffprobePath) : IMediaTimeli
         return accumulator.Build();
     }
 
-    private ProcessStartInfo CreateStartInfo(IReadOnlyList<string> arguments)
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = ffprobePath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        foreach (var argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
-        return startInfo;
-    }
-
-    private static Process Start(ProcessStartInfo startInfo)
-    {
-        var process = new Process { StartInfo = startInfo };
-        if (!process.Start())
-        {
-            process.Dispose();
-            throw new InvalidOperationException($"Could not start ffprobe at '{startInfo.FileName}'.");
-        }
-
-        return process;
-    }
-
-    private static void EnsureSuccess(Process process, string error)
-    {
-        if (process.ExitCode != 0)
-        {
-            throw new MediaProbeException($"ffprobe exited with {process.ExitCode}: {FirstLine(error)}");
-        }
-    }
-
-    private static async Task StopAsync(Process process)
-    {
-        if (!process.HasExited)
-        {
-            process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync(CancellationToken.None);
-        }
-    }
-
-    private static string FirstLine(string message) => message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "No error output.";
     private static bool TypeIs(JsonElement stream, string type) => stream.TryGetProperty("codec_type", out var value) && string.Equals(value.GetString(), type, StringComparison.OrdinalIgnoreCase);
-    private static bool IsDefaultStream(JsonElement stream) => stream.TryGetProperty("disposition", out var disposition) && disposition.TryGetProperty("default", out var value) && TryGetInt(value, out var result) && result == 1;
-    private static bool IsAttachedPicture(JsonElement stream) => stream.TryGetProperty("disposition", out var disposition) && disposition.TryGetProperty("attached_pic", out var value) && TryGetInt(value, out var result) && result == 1;
-    private static bool TryGetInt(JsonElement element, string property, out int value)
-    {
-        value = 0;
-        return element.TryGetProperty(property, out var propertyValue) && TryGetInt(propertyValue, out value);
-    }
-    private static bool TryGetInt(JsonElement element, out int value)
-    {
-        value = 0;
-        return element.ValueKind == JsonValueKind.Number
-            ? element.TryGetInt32(out value)
-            : int.TryParse(element.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
-    }
 
     private sealed record PrimaryStreams(int VideoIndex, int? AudioIndex);
 

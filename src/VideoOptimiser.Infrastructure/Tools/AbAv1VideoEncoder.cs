@@ -39,40 +39,13 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
 
     public async Task<EncodeResult> EncodeAsync(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        var info = new ProcessStartInfo { FileName = executablePath, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var argument in BuildArguments(inputPath, outputPath, crf, settings, audio))
-        {
-            info.ArgumentList.Add(argument);
-        }
-
         var stopwatch = Stopwatch.StartNew();
-        using var process = new Process { StartInfo = info };
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Could not start ab-av1.");
-        }
-
-        var outputTask = ReadLinesAsync(process.StandardOutput, progress, cancellationToken);
-        var errorTask = ReadLinesAsync(process.StandardError, progress, cancellationToken);
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-
-            throw;
-        }
-
-        _ = await Task.WhenAll(outputTask, errorTask);
+        void Report(string line) => progress?.Report(JobProgress.Tool(line));
+        var exitCode = await ChildProcess.StreamAsync(new ExternalProcessRequest(executablePath, BuildArguments(inputPath, outputPath, crf, settings, audio)), Report, Report, cancellationToken);
         stopwatch.Stop();
-        if (process.ExitCode != 0)
+        if (exitCode != 0)
         {
-            throw new InvalidOperationException($"ab-av1 encode failed with exit code {process.ExitCode}.");
+            throw new InvalidOperationException($"ab-av1 encode failed with exit code {exitCode}.");
         }
 
         if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
@@ -81,17 +54,5 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
         }
 
         return new EncodeResult(outputPath, stopwatch.Elapsed);
-    }
-
-    private static async Task<string> ReadLinesAsync(StreamReader reader, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
-    {
-        var lines = new List<string>();
-        while (await reader.ReadLineAsync(cancellationToken) is { } line)
-        {
-            lines.Add(line);
-            progress?.Report(JobProgress.Tool(line));
-        }
-
-        return string.Join(Environment.NewLine, lines);
     }
 }
