@@ -1,4 +1,5 @@
 using FluentAssertions;
+using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Infrastructure.Eligibility;
 
 namespace VideoOptimiser.UnitTests;
@@ -29,5 +30,26 @@ public sealed class FileReadinessServiceTests : IDisposable
         result.Reason.Should().Contain("no longer exists");
     }
 
-    public void Dispose() => Directory.Delete(_directory, recursive: true);
+    /// <summary>
+    /// A file another program is still writing is not ready. The check used to allow write sharing, so it passed against a
+    /// writer that lets others read, as copy tools do (VOPT-169). Once the writer closes, the file is ready.
+    /// </summary>
+    [Fact]
+    public async Task CheckAsyncRejectsAFileOpenForWriting()
+    {
+        var path = Path.Combine(_directory, "film.mkv");
+        await File.WriteAllTextAsync(path, "fixture");
+        var service = new FileReadinessService();
+
+        FileReadinessResult whileWriting;
+        using (new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read))
+        {
+            whileWriting = await service.CheckAsync(path);
+        }
+
+        whileWriting.Should().Be(new FileReadinessResult(false, "File is open in another program, which may still be writing it."));
+        (await service.CheckAsync(path)).IsReady.Should().BeTrue();
+    }
+
+    public void Dispose()=> Directory.Delete(_directory, recursive: true);
 }

@@ -48,6 +48,14 @@ public sealed class JobProcessor(
                 // The same choice as the exists check above, made on the resume point read before the job was requeued.
                 return await OriginalMissingAsync(job, databasePath, resumeStatus, path, progress, cancellationToken);
             }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // The fingerprint denies write sharing too, so a file another program is still writing fails here before
+                // CheckSourceAsync can say so (VOPT-169). The readiness check tells that apart from a read that failed, which
+                // keeps its own category.
+                if (await readiness.CheckAsync(path, cancellationToken) is { IsReady: false } notReady) return await FailAsync(job, databasePath, FailureCategories.SourceNotReady, NotReadyMessage(notReady), ExitCode.ProcessingFailure, progress, cancellationToken);
+                throw;
+            }
             // Settled before the plan decides what to reuse; an empty stored fingerprint has nothing to compare.
             var changed = ChangedSinceLastRun(job, fingerprint);
             if (changed) resumeStatus = await DiscardEarlierWorkAsync(job, resumeStatus, session, progress, cancellationToken);
@@ -429,6 +437,8 @@ public sealed class JobProcessor(
     private static string EncodingOutputPath(string sourcePath, JobRecord job) =>
         Path.Combine(Path.GetDirectoryName(sourcePath)!, TemporaryOutputClassifier.FolderName, $"{Path.GetFileNameWithoutExtension(sourcePath)}.{job.Id:N}.{job.Attempt}.encoding{OutputContainer.ExtensionFor(sourcePath)}");
 
+    private static string NotReadyMessage(FileReadinessResult readinessResult) => $"Original is not ready: {readinessResult.Reason}";
+
     /// <summary>
     /// The checks on the original before anything is staged, shared by <see cref="ProcessAsync"/> and <see cref="NeedsWorkerAsync"/>
     /// so the prediction cannot drift from processing. Reads only; a probe failure throws.
@@ -440,7 +450,7 @@ public sealed class JobProcessor(
         if (!force && kind == JobSourceKind.Immich && !(settings.Immich.StagingDirectory.Length > 0 && IsWithinRoot(path, settings.Immich.StagingDirectory))) return SourceVerdict.Fail(info, FailureCategories.SourceOutsideWatchRoot, "Staged Immich original is outside immich.stagingDirectory. Use --force to bypass this check.", ExitCode.ProcessingFailure);
         if (!force && kind == JobSourceKind.File && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return SourceVerdict.Fail(info, FailureCategories.SourceOutsideWatchRoot, "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure);
         var readinessResult = await readiness.CheckAsync(path, cancellationToken);
-        if (!readinessResult.IsReady) return SourceVerdict.Fail(info, FailureCategories.SourceNotReady, $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure);
+        if (!readinessResult.IsReady) return SourceVerdict.Fail(info, FailureCategories.SourceNotReady, NotReadyMessage(readinessResult), ExitCode.ProcessingFailure);
 
         var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
         // Whatever --force says, which overrides the rules, not this (OutputCodec). It catches a forced job queued before
