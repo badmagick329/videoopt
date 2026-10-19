@@ -30,7 +30,19 @@ public sealed class FileInstallBlockedException(string path, bool isOriginal, bo
     public bool InUse { get; } = inUse;
 }
 
+/// <summary>
+/// Where an install will put each file, worked out before anything moves so the caller can record <paramref name="DisplacedPath"/>
+/// first (VOPT-144): a crash between the installer's two moves leaves the original there, and nothing else names it.
+/// <paramref name="Action"/> is the original action; <paramref name="DisplacedPath"/> is the rollback file for <c>delete</c>,
+/// the archive path for <c>archive</c>, and null for <c>keep</c>, which never moves the original.
+/// </summary>
+public sealed record FileInstallPlan(string SourcePath, string OutputPath, string Action, string InstalledPath, string? DisplacedPath);
+
 public interface ISafeFileInstaller
 {
-    Task<FileInstallation> InstallAsync(string sourcePath, string outputPath, OriginalSettings original, CancellationToken cancellationToken = default);
+    /// <summary>Only reads the file system; nothing is created or moved.</summary>
+    FileInstallPlan Plan(string sourcePath, string outputPath, OriginalSettings original);
+
+    /// <summary>Its first line is its only cancellation point: once a file has moved, it runs to the end.</summary>
+    Task<FileInstallation> InstallAsync(FileInstallPlan plan, CancellationToken cancellationToken = default);
 }

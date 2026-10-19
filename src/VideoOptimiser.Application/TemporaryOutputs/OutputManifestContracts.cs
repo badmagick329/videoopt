@@ -8,6 +8,13 @@ public sealed class OutputManifest
     public int Crf { get; set; }
     public DateTimeOffset CreatedUtc { get; set; }
     public ValidationReport? Validation { get; set; }
+
+    /// <summary>
+    /// Where a file finalisation is about to move the original (the rollback file or the archive path), saved before the
+    /// first move (VOPT-144). A crash before the AV1 is installed leaves the original only there, so the next finalise can
+    /// put it back, or name it in the review message. Null when nothing is under way or the original stays put (<c>keep</c>).
+    /// </summary>
+    public string? DisplacedOriginalPath { get; set; }
 }
 
 /// <summary>
@@ -89,4 +96,10 @@ public static class OutputManifestStoreExtensions
 public interface IFileFingerprintService
 {
     Task<string> CreateAsync(string path, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The fingerprint the file at <paramref name="path"/> would have at <paramref name="fingerprintPath"/>: a fingerprint
+    /// covers the full path, so this is how an original moved aside is matched against the one recorded at its own path.
+    /// </summary>
+    Task<string> CreateAsync(string path, string fingerprintPath, CancellationToken cancellationToken = default);
 }

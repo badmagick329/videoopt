@@ -111,7 +111,7 @@ public sealed class SafeFileInstallerTests : IDisposable
     {
         var installer = new SafeFileInstaller((_, _, _) => throw new UnauthorizedAccessException("access denied"));
 
-        var installation = await installer.InstallAsync(_source, _output, new OriginalSettings { Action = action, ArchiveDirectory = "Archive" });
+        var installation = await installer.InstallAsync(installer.Plan(_source, _output, new OriginalSettings { Action = action, ArchiveDirectory = "Archive" }));
 
         installation.Warning.Should().Contain("file dates").And.Contain("access denied");
         (await File.ReadAllTextAsync(installation.InstalledPath)).Should().Be("av1");
@@ -193,6 +193,25 @@ public sealed class SafeFileInstallerTests : IDisposable
         Directory.EnumerateFiles(_directory, "*", SearchOption.AllDirectories).Should().Equal(mov);
     }
 
+    /// <summary>
+    /// VOPT-144: finalisation records the plan's displaced path before installing, so the original must land exactly there,
+    /// and planning alone must move and create nothing. A failed delete keeps delete's rollback file to look at.
+    /// </summary>
+    [Theory]
+    [InlineData(OriginalActions.Delete)]
+    [InlineData(OriginalActions.Archive)]
+    public async Task TheOriginalGoesExactlyWhereThePlanSaid(string action)
+    {
+        var installer = new SafeFileInstaller((_, _, _) => { }, _ => throw new IOException("in use"));
+        var plan = installer.Plan(_source, _output, new OriginalSettings { Action = action, ArchiveDirectory = "Archive" });
+        Directory.EnumerateFileSystemEntries(_directory, "*", SearchOption.AllDirectories).Should().BeEquivalentTo([_source, _output, Path.GetDirectoryName(_output)]);
+
+        var installation = await installer.InstallAsync(plan);
+
+        (installation.ArchivedOriginalPath ?? installation.LeftoverOriginalPath).Should().Be(plan.DisplacedPath);
+        (await File.ReadAllTextAsync(plan.DisplacedPath!)).Should().Be("original");
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     /// <summary>Makes the original a .mov, whose AV1 is the .mp4 in <c>_output</c>; the default source is already an .mp4.</summary>
@@ -214,6 +233,9 @@ public sealed class SafeFileInstallerTests : IDisposable
         File.SetLastWriteTimeUtc(_source, OriginalModified);
     }
 
-    private Task<FileInstallation> Install(string action, string archiveDirectory = "Archive") =>
-        new SafeFileInstaller().InstallAsync(_source, _output, new OriginalSettings { Action = action, ArchiveDirectory = archiveDirectory });
+    private Task<FileInstallation> Install(string action, string archiveDirectory = "Archive")
+    {
+        var installer = new SafeFileInstaller();
+        return installer.InstallAsync(installer.Plan(_source, _output, new OriginalSettings { Action = action, ArchiveDirectory = archiveDirectory }));
+    }
 }

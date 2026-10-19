@@ -11,6 +11,8 @@ namespace VideoOptimiser.Infrastructure.Features.Finalize;
 /// original and installs the AV1 next to it. The AV1 then takes the original's created and modified dates, so it does not look
 /// newly made; failing to set them, or to delete the original afterwards, only warns, because the AV1 is already safely in
 /// place. A move that fails with both files back where they started throws <see cref="FileInstallBlockedException"/>.
+/// <see cref="Plan"/> works out every path first and moves nothing, so the caller can record where the original goes before
+/// <see cref="InstallAsync"/> moves it: a crash between the two moves would otherwise leave it there with nothing naming it.
 /// </summary>
 public sealed class SafeFileInstaller : ISafeFileInstaller
 {
@@ -28,57 +30,71 @@ public sealed class SafeFileInstaller : ISafeFileInstaller
         _deleteFile = deleteFile ?? File.Delete;
     }
 
-    public Task<FileInstallation> InstallAsync(string sourcePath, string outputPath, OriginalSettings original, CancellationToken cancellationToken = default)
+    public FileInstallPlan Plan(string sourcePath, string outputPath, OriginalSettings original)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         var directory = Path.GetDirectoryName(sourcePath)!;
         var stem = Path.GetFileNameWithoutExtension(sourcePath);
         var extension = Path.GetExtension(sourcePath);
         var outputExtension = Path.GetExtension(outputPath);
+        if (Is(original.Action, OriginalActions.Keep))
+        {
+            return new FileInstallPlan(sourcePath, outputPath, OriginalActions.Keep, AvailablePath(directory, $"{stem}.av1", outputExtension), null);
+        }
+
+        var installedPath = InstalledPath(sourcePath, directory, stem, extension, outputExtension);
+        if (Is(original.Action, OriginalActions.Archive))
+        {
+            // The archive directory is created by the install; a path in a folder that does not exist yet is free all the same.
+            var archiveDirectory = Path.IsPathFullyQualified(original.ArchiveDirectory) ? original.ArchiveDirectory : Path.Combine(directory, original.ArchiveDirectory);
+            return new FileInstallPlan(sourcePath, outputPath, OriginalActions.Archive, installedPath, AvailablePath(archiveDirectory, stem, extension));
+        }
+
+        var rollback = Path.Combine(directory, $"{stem}.{Guid.NewGuid():N}.original.pending-delete{extension}");
+        return new FileInstallPlan(sourcePath, outputPath, OriginalActions.Delete, installedPath, rollback);
+    }
+
+    public Task<FileInstallation> InstallAsync(FileInstallPlan plan, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var (sourcePath, outputPath) = (plan.SourcePath, plan.OutputPath);
         // Read before the original moves or goes; afterwards there is nothing to copy them from.
         var created = File.GetCreationTimeUtc(sourcePath);
         var modified = File.GetLastWriteTimeUtc(sourcePath);
-        if (Is(original.Action, OriginalActions.Keep))
+        if (plan.DisplacedPath is not { } displaced)
         {
-            var installed = AvailablePath(directory, $"{stem}.av1", outputExtension);
             try
             {
-                File.Move(outputPath, installed);
+                File.Move(outputPath, plan.InstalledPath);
             }
             catch (Exception exception) when (BlockedIfNothingMoved(sourcePath, outputPath, outputPath, isOriginal: false, exception) is { } blocked)
             {
                 throw blocked;
             }
-            EnsureInstalled(installed);
-            return Task.FromResult(new FileInstallation(installed, null, CopyTimestamps(installed, created, modified)));
+            EnsureInstalled(plan.InstalledPath);
+            return Task.FromResult(new FileInstallation(plan.InstalledPath, null, CopyTimestamps(plan.InstalledPath, created, modified)));
         }
 
-        if (Is(original.Action, OriginalActions.Archive))
+        if (Is(plan.Action, OriginalActions.Archive))
         {
-            var archiveDirectory = Path.IsPathFullyQualified(original.ArchiveDirectory) ? original.ArchiveDirectory : Path.Combine(directory, original.ArchiveDirectory);
-            Directory.CreateDirectory(archiveDirectory);
-            var archived = AvailablePath(archiveDirectory, stem, extension);
-            var installedPath = InstalledPath(sourcePath, directory, stem, extension, outputExtension);
-            Replace(sourcePath, outputPath, archived, installedPath);
-            return Task.FromResult(new FileInstallation(installedPath, archived, CopyTimestamps(installedPath, created, modified)));
+            Directory.CreateDirectory(Path.GetDirectoryName(displaced)!);
+            Replace(sourcePath, outputPath, displaced, plan.InstalledPath);
+            return Task.FromResult(new FileInstallation(plan.InstalledPath, displaced, CopyTimestamps(plan.InstalledPath, created, modified)));
         }
 
-        var rollback = Path.Combine(directory, $"{stem}.{Guid.NewGuid():N}.original.pending-delete{extension}");
-        var deletedInstalledPath = InstalledPath(sourcePath, directory, stem, extension, outputExtension);
-        Replace(sourcePath, outputPath, rollback, deletedInstalledPath);
+        Replace(sourcePath, outputPath, displaced, plan.InstalledPath);
         // The AV1 is already in place, so a failed delete only leaves the original behind; failing the job here would record
         // a finalisation that worked as one that didn't (VOPT-143).
         string? deleteWarning = null;
         try
         {
-            _deleteFile(rollback);
+            _deleteFile(displaced);
         }
         catch (Exception exception)
         {
-            deleteWarning = $"the original could not be deleted ({exception.Message}), so it is still at {rollback}; delete it once you have checked the AV1";
+            deleteWarning = $"the original could not be deleted ({exception.Message}), so it is still at {displaced}; delete it once you have checked the AV1";
         }
-        var warning = string.Join(". Also, ", new[] { deleteWarning, CopyTimestamps(deletedInstalledPath, created, modified) }.OfType<string>());
-        return Task.FromResult(new FileInstallation(deletedInstalledPath, null, warning.Length == 0 ? null : warning, deleteWarning is null ? null : rollback));
+        var warning = string.Join(". Also, ", new[] { deleteWarning, CopyTimestamps(plan.InstalledPath, created, modified) }.OfType<string>());
+        return Task.FromResult(new FileInstallation(plan.InstalledPath, null, warning.Length == 0 ? null : warning, deleteWarning is null ? null : displaced));
     }
 
     /// <summary>

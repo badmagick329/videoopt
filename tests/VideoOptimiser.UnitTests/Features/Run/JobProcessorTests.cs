@@ -902,6 +902,7 @@ public sealed class JobProcessorTests : IDisposable
     private sealed class ThrowingFingerprints(Exception failure) : IFileFingerprintService
     {
         public Task<string> CreateAsync(string path, CancellationToken cancellationToken = default) => throw failure;
+        public Task<string> CreateAsync(string path, string fingerprintPath, CancellationToken cancellationToken = default) => throw failure;
     }
 
     private sealed class FailingLoggingCrfSearch : ICrfSearchClient

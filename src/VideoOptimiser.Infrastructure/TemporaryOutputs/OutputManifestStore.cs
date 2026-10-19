@@ -15,7 +15,9 @@ public sealed class OutputManifestStore : IOutputManifestStore
 
 public sealed class FileFingerprintService : IFileFingerprintService
 {
-    public async Task<string> CreateAsync(string path, CancellationToken cancellationToken = default)
+    public Task<string> CreateAsync(string path, CancellationToken cancellationToken = default) => CreateAsync(path, path, cancellationToken);
+
+    public async Task<string> CreateAsync(string path, string fingerprintPath, CancellationToken cancellationToken = default)
     {
         var info = new FileInfo(path);
         if (!info.Exists) throw new FileNotFoundException("Original does not exist.", path);
@@ -26,7 +28,7 @@ public sealed class FileFingerprintService : IFileFingerprintService
         stream.Position = Math.Max(0, stream.Length - edgeSize);
         var last = new byte[edgeSize];
         _ = await stream.ReadAsync(last, cancellationToken);
-        var text = $"{Path.GetFullPath(path)}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{Convert.ToHexString(SHA256.HashData(first))}|{Convert.ToHexString(SHA256.HashData(last))}";
+        var text = $"{Path.GetFullPath(fingerprintPath)}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{Convert.ToHexString(SHA256.HashData(first))}|{Convert.ToHexString(SHA256.HashData(last))}";
         return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
     }
 }

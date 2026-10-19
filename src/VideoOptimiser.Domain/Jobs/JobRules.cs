@@ -97,6 +97,12 @@ public static class FinalizationRules
     public const string ManualReviewMessage = "Finalisation was interrupted and requires manual review.";
 
     /// <summary>
+    /// <see cref="ManualReviewMessage"/> when the validation record names where finalisation moved the original and a file is
+    /// still there (VOPT-144): the rollback file's or archive copy's name is otherwise recorded nowhere the user would look.
+    /// </summary>
+    public static string ManualReviewMessageWithOriginal(string originalPath) => $"{ManualReviewMessage} The original is at {originalPath}.";
+
+    /// <summary>
     /// An Immich job that a crash left mid-finalisation: still <see cref="JobStatus.Finalizing"/>, or marked interrupted on
     /// its way out of it. Unlike a local file, nothing is half-moved, so it is ready again rather than needing review.
     /// </summary>

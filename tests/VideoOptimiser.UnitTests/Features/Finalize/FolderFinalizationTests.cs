@@ -60,6 +60,7 @@ public sealed class FolderFinalizationTests : IDisposable
         var stored = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
         stored.Status.Should().Be(JobStatus.ReadyToFinalize);
         stored.FailureMessage.Should().Be(result.Message);
+        (await _manifests.LoadAsync(output)).DisplacedOriginalPath.Should().BeNull("nothing moved, so the record names no original");
         (await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings)).ExitCode.Should().Be(ExitCode.Success);
     }
 
@@ -161,6 +162,60 @@ public sealed class FolderFinalizationTests : IDisposable
         stored.FailureCategory.Should().BeNull();
         (await File.ReadAllTextAsync(source)).Should().Be("original");
         File.Exists(output).Should().BeTrue();
+        (await _manifests.LoadAsync(output)).DisplacedOriginalPath.Should().BeNull("nothing moved, so the record names no original");
+    }
+
+    /// <summary>
+    /// VOPT-144: a crash after the original moved aside but before the AV1 took its place left the original at a path only
+    /// the validation record knows. The next finalise puts it back and finishes; it used to fail the job for review.
+    /// </summary>
+    [Theory]
+    [InlineData(OriginalActions.Delete)]
+    [InlineData(OriginalActions.Archive)]
+    public async Task AFinalisationCutOffBetweenTheMovesPutsTheOriginalBackAndFinishes(string action)
+    {
+        var (settings, job, source, output) = await ReadyJobAsync();
+        settings.Original = new OriginalSettings { Action = action, ArchiveDirectory = "Archive" };
+        var plan = await CrashDuringInstallAsync(settings, job, bothMoves: false);
+        (await _manifests.LoadAsync(output)).DisplacedOriginalPath.Should().Be(plan.DisplacedPath);
+        File.Exists(source).Should().BeFalse();
+
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        (await _repository.GetAsync(settings.Database.Path, job.Id))!.Status.Should().Be(JobStatus.Completed);
+        (await File.ReadAllTextAsync(source)).Should().Be("av1");
+        if (action == OriginalActions.Archive) (await File.ReadAllTextAsync(Path.Combine(_directory, "Archive", "movie.mp4"))).Should().Be("original");
+        else Directory.EnumerateFiles(_directory, "*.pending-delete*").Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// VOPT-144: cut off after the AV1 took the original's path, before the rollback file was deleted. Finalise can't tell
+    /// that apart from the user's own changes, so it is reviewed, and the message says where the original is. A job already
+    /// failed for review with the plain message gets the new one, and keeps its failure time.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFinalisationCutOffAfterBothMovesNeedsReviewAndNamesTheOriginal(bool alreadyFailedForReview)
+    {
+        var (settings, job, source, _) = await ReadyJobAsync();
+        var plan = await CrashDuringInstallAsync(settings, job, bothMoves: true);
+        if (alreadyFailedForReview) await FailInterruptedForReviewAsync(settings, job.Id);
+        var before = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+
+        var result = await CreateFinalizer(new SafeFileInstaller()).FinalizeAsync(settings.Database.Path, job.Id, settings);
+
+        var message = $"Finalisation was interrupted and requires manual review. The original is at {plan.DisplacedPath}.";
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Be(message);
+        var stored = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+        stored.Status.Should().Be(JobStatus.Failed);
+        stored.FailureCategory.Should().Be("ManualInterventionRequired");
+        stored.FailureMessage.Should().Be(message);
+        if (alreadyFailedForReview) stored.CompletedUtc.Should().Be(before.CompletedUtc);
+        (await File.ReadAllTextAsync(plan.DisplacedPath!)).Should().Be("original");
+        (await File.ReadAllTextAsync(source)).Should().Be("av1");
     }
 
     [Fact]
@@ -315,7 +370,13 @@ public sealed class FolderFinalizationTests : IDisposable
     private async Task FailAsAnOlderVersionDidAsync(AppSettings settings, JobRecord job)
     {
         await InterruptFinalizationAsync(settings, job);
-        job = (await _repository.GetAsync(settings.Database.Path, job.Id))!;
+        await FailInterruptedForReviewAsync(settings, job.Id);
+    }
+
+    /// <summary>An interrupted file finalisation failed for review an hour ago with the plain message.</summary>
+    private async Task FailInterruptedForReviewAsync(AppSettings settings, Guid jobId)
+    {
+        var job = (await _repository.GetAsync(settings.Database.Path, jobId))!;
         job.Status = JobStatus.Failed;
         job.FailureCategory = FailureCategories.ManualInterventionRequired;
         job.FailureMessage = FinalizationRules.ManualReviewMessage;
@@ -323,19 +384,51 @@ public sealed class FolderFinalizationTests : IDisposable
         await _repository.UpdateAsync(settings.Database.Path, job);
     }
 
+    /// <summary>
+    /// A crash partway through the install: the real plan, then the installer's first move (the original aside) and, with
+    /// <paramref name="bothMoves"/>, its second (the AV1 into place), then nothing more, as when the process dies. The job is
+    /// left <c>Finalizing</c> and the next run marks it interrupted, as after a real crash.
+    /// </summary>
+    private async Task<FileInstallPlan> CrashDuringInstallAsync(AppSettings settings, JobRecord job, bool bothMoves)
+    {
+        var crashing = new CrashingInstaller(bothMoves);
+        // Never completes: the crashed process never got to write anything after the moves.
+        _ = CreateFinalizer(crashing).FinalizeAsync(settings.Database.Path, job.Id, settings);
+        var plan = await crashing.Crashed.Task;
+        await _repository.MarkActiveJobsInterruptedAsync(settings.Database.Path, includeFinalizing: true);
+        return plan;
+    }
+
+    private sealed class CrashingInstaller(bool bothMoves) : ISafeFileInstaller
+    {
+        public TaskCompletionSource<FileInstallPlan> Crashed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public FileInstallPlan Plan(string sourcePath, string outputPath, OriginalSettings original) => new SafeFileInstaller().Plan(sourcePath, outputPath, original);
+        public Task<FileInstallation> InstallAsync(FileInstallPlan plan, CancellationToken cancellationToken = default)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(plan.DisplacedPath)!);
+            File.Move(plan.SourcePath, plan.DisplacedPath!);
+            if (bothMoves) File.Move(plan.OutputPath, plan.InstalledPath);
+            Crashed.SetResult(plan);
+            return new TaskCompletionSource<FileInstallation>().Task;
+        }
+    }
+
     private sealed class CancelledFingerprints : IFileFingerprintService
     {
         public Task<string> CreateAsync(string path, CancellationToken cancellationToken = default) => throw new OperationCanceledException();
+        public Task<string> CreateAsync(string path, string fingerprintPath, CancellationToken cancellationToken = default) => throw new OperationCanceledException();
     }
 
     private sealed class CancelledInstaller : ISafeFileInstaller
     {
-        public Task<FileInstallation> InstallAsync(string sourcePath, string outputPath, OriginalSettings original, CancellationToken cancellationToken = default) => throw new OperationCanceledException();
+        public FileInstallPlan Plan(string sourcePath, string outputPath, OriginalSettings original) => new SafeFileInstaller().Plan(sourcePath, outputPath, original);
+        public Task<FileInstallation> InstallAsync(FileInstallPlan plan, CancellationToken cancellationToken = default) => throw new OperationCanceledException();
     }
 
     private sealed class ThrowingInstaller(Exception exception) : ISafeFileInstaller
     {
-        public Task<FileInstallation> InstallAsync(string sourcePath, string outputPath, OriginalSettings original, CancellationToken cancellationToken = default) => throw exception;
+        public FileInstallPlan Plan(string sourcePath, string outputPath, OriginalSettings original) => new SafeFileInstaller().Plan(sourcePath, outputPath, original);
+        public Task<FileInstallation> InstallAsync(FileInstallPlan plan, CancellationToken cancellationToken = default) => throw exception;
     }
 
     private FinalizationService CreateFinalizer(ISafeFileInstaller installer) =>

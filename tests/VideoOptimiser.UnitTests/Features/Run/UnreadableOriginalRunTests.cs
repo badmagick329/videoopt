@@ -91,5 +91,6 @@ public sealed class UnreadableOriginalRunTests : IDisposable
     {
         public Task<string> CreateAsync(string candidate, CancellationToken cancellationToken = default) =>
             string.Equals(candidate, path, StringComparison.OrdinalIgnoreCase) ? throw failure : Task.FromResult("fingerprint");
+        public Task<string> CreateAsync(string candidate, string fingerprintPath, CancellationToken cancellationToken = default) => CreateAsync(candidate, cancellationToken);
     }
 }
