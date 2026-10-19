@@ -97,6 +97,8 @@ public sealed class OutputValidationServiceTests : IDisposable
         report.Failures.Should().Equal(expected == ValidationVerdict.Failed ? [message!] : []);
         report.NotWorthConverting.Should().Be(expected == ValidationVerdict.NotWorthConverting ? message : null);
         report.Warnings.Should().Equal(expected == ValidationVerdict.Warned ? [message!] : []);
+        // VOPT-145: only an AV1 that may be finalised carries the checksum Immich finalisation compares the upload with.
+        report.Av1Checksum.Should().Be(report.Passed ? InMemoryImmich.Checksum(new byte[scenario.OutputBytes]) : null);
     }
 
     [Fact]

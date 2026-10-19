@@ -79,7 +79,10 @@ internal sealed class InMemoryImmich(DateTimeOffset taken) : ImmichClientStub
 
     /// <summary>Immich's checksum of a file: the base64 SHA-1 of its bytes.</summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5350", Justification = "Immich's asset checksum is SHA-1.")]
-    public static string Checksum(string content) => Convert.ToBase64String(SHA1.HashData(Encoding.UTF8.GetBytes(content)));
+    public static string Checksum(string content) => Checksum(Encoding.UTF8.GetBytes(content));
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5350", Justification = "Immich's asset checksum is SHA-1.")]
+    public static string Checksum(byte[] bytes) => Convert.ToBase64String(SHA1.HashData(bytes));
 
     public ImmichAsset Add(string fileName, string content, bool isTrashed = false)
     {

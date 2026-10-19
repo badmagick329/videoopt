@@ -65,6 +65,14 @@ public sealed class ValidationReport
     public int RulesVersion { get; set; }
 
     public const int CurrentRulesVersion = 1;
+
+    /// <summary>
+    /// The AV1's checksum as validation read it, in Immich's form (base64 SHA-1), set only when it passed (VOPT-145). It sits
+    /// in the report, not beside it, so every validation replaces the verdict and the checksum together and one can never
+    /// describe a different AV1 than the other. Immich finalisation trashes an original only once the uploaded asset's
+    /// checksum equals this. Null in a record written before VOPT-145.
+    /// </summary>
+    public string? Av1Checksum { get; set; }
 }
 
 public interface IOutputManifestStore

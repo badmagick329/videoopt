@@ -8,6 +8,7 @@
 - If a crash or power cut stops a finalise after it moved the original aside but before the AV1 took its place, the next `finalize` now puts the original back and finishes. When it can't, the review message says where the original is. It used to say only that the video needed review.
 - `cleanup` now checks each video again after you answer `y`, and keeps the files of one that changed while it waited, such as a failed video that a background run found good and made ready to finalise. It used to delete that video's AV1, so the encode had to be done again.
 - `immich run` now leaves alone a video that another terminal queues while it is still searching Immich, for example with `queue retry`. It used to download that video again over the copy the other job reads, so its conversion started over, or `immich finalize` refused it because the original had changed.
+- `immich finalize` now moves an original to Immich's trash only after checking that Immich's copy of the AV1 has the same checksum as the AV1 that passed validation. If they differ, the original stays and the message says what to delete before you run it again. An AV1 changed on this PC after validation isn't uploaded. It used to trash the original without checking, so a damaged upload or a changed AV1 could take its place.
 
 ## [0.14.1] - 2026-10-18
 ### Remote workers

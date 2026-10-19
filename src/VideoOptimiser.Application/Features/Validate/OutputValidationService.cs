@@ -1,5 +1,6 @@
 using System.Globalization;
 using VideoOptimiser.Application.Configuration;
+using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Application.Tools;
 using VideoOptimiser.Domain;
@@ -64,7 +65,10 @@ public sealed class OutputValidationService(
         AddStreamCountWarning(warnings, "subtitle", source.SubtitleStreamCount, output.SubtitleStreamCount);
         // A warned AV1 is decoded too, so a decode problem is one more thing the user sees, not hidden behind the first doubt.
         await TestDecodingAsync(manifest.OutputPath, settings, output.DurationSeconds, warnings, cancellationToken);
-        return new ValidationReport { Passed = true, Warnings = warnings, SourceSizeBytes = sourceSize, OutputSizeBytes = outputSize, PercentageSaved = saved, ValidatedUtc = DateTimeOffset.UtcNow };
+        // Last, so the checksum is of the file every check above read. Here rather than where the record is saved: that step
+        // takes no token, and hashing a large AV1 should stay cancellable like the rest of validation.
+        var checksum = await ImmichStaging.Sha1Base64Async(manifest.OutputPath, cancellationToken);
+        return new ValidationReport { Passed = true, Warnings = warnings, SourceSizeBytes = sourceSize, OutputSizeBytes = outputSize, PercentageSaved = saved, ValidatedUtc = DateTimeOffset.UtcNow, Av1Checksum = checksum };
     }
 
     private static ValidationReport Failed(string failure, long sourceSize = 0, long outputSize = 0) =>

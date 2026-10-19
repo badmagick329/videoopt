@@ -66,6 +66,8 @@ public sealed class ImmichFinalizationTests : IDisposable
         _immich.Calls.Should().Equal(
             $"get {original.Id}",
             "upload",
+            // Read back to compare its checksum with the validated AV1's before the original goes (VOPT-145).
+            $"get {replacement.Id}",
             $"update {replacement.Id}",
             $"copy {original.Id} {replacement.Id}",
             $"tag {replacement.Id} tag-1,tag-2",
@@ -93,7 +95,106 @@ public sealed class ImmichFinalizationTests : IDisposable
 
         result.ExitCode.Should().Be(ExitCode.Success, result.Message);
         var replacement = _immich.Uploads.Single().Id;
-        _immich.Calls.Should().Equal($"get {original.Id}", "upload", $"copy {original.Id} {replacement}", $"trash {original.Id}");
+        _immich.Calls.Should().Equal($"get {original.Id}", "upload", $"get {replacement}", $"copy {original.Id} {replacement}", $"trash {original.Id}");
+    }
+
+    /// <summary>
+    /// VOPT-145. Only the trash makes the original's loss possible, so it waits for proof that the asset holds the AV1 that
+    /// passed validation: a fresh upload Immich received damaged, or a stored asset from an earlier run whose checksum differs.
+    /// The asset and its stored ID stay, so a rerun finds it again and refuses again rather than trashing against it.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnAv1AssetWhoseChecksumDiffersFromTheValidatedAv1LeavesTheOriginalAndTheJobReady(bool resumed)
+    {
+        var original = _immich.Add("PXL.mp4", "original");
+        var job = await ReadyJobAsync(original);
+        if (resumed)
+        {
+            _immich.FailOnce["copy"] = new ImmichApiException("ImmichRequestFailed", "Immich answered 500.", 500);
+            await FinalizeAsync(job);
+            var stored = _immich.Get((await JobAsync(job)).ImmichNewAssetId!);
+            _immich.Replace(stored with { Checksum = InMemoryImmich.Checksum("av") });
+        }
+        else
+        {
+            _immich.Received = "av";
+        }
+
+        var first = await FinalizeAsync(job);
+        var again = await FinalizeAsync(job);
+
+        var av1 = _immich.Uploads.Should().ContainSingle().Subject.Id;
+        var message = $"The AV1 in Immich ({Av1Name(job)}) doesn't match the one that passed validation: its checksum is {InMemoryImmich.Checksum("av")}, not {InMemoryImmich.Checksum("av1")}. The original stays in Immich. Delete {Av1Name(job)} from Immich permanently, then run 'video-optimiser immich finalize' to upload the AV1 again.";
+        foreach (var result in new[] { first, again })
+        {
+            result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+            result.Message.Should().Be(message);
+        }
+        _immich.Calls.Should().NotContain(call => call.StartsWith("trash"));
+        _immich.Get(original.Id).IsTrashed.Should().BeFalse();
+        var waiting = await JobAsync(job);
+        (waiting.Status, waiting.ImmichNewAssetId).Should().Be((JobStatus.ReadyToFinalize, av1));
+        Directory.Exists(StagingFolder(original)).Should().BeTrue();
+
+        // What the message asks for: once the bad asset is gone for good, the next finalize uploads afresh.
+        _immich.Remove(av1);
+        _immich.Received = null;
+        var fixedUp = await FinalizeAsync(job);
+
+        fixedUp.ExitCode.Should().Be(ExitCode.Success, fixedUp.Message);
+        _immich.Get(original.Id).IsTrashed.Should().BeTrue();
+    }
+
+    /// <summary>VOPT-145: checked before the upload, so an AV1 edited after validation never becomes a second video in Immich.</summary>
+    [Fact]
+    public async Task AnAv1ThatChangedAfterValidationIsNotUploaded()
+    {
+        var original = _immich.Add("PXL.mp4", "original");
+        var job = await ReadyJobAsync(original);
+        await File.WriteAllTextAsync(job.OutputPath!, "edited");
+
+        var result = await FinalizeAsync(job);
+
+        result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+        result.Message.Should().Be($"The AV1 at {job.OutputPath} changed after it passed validation, so it wasn't uploaded and the original stays in Immich. Run 'video-optimiser validate {job.Id:N}' to check it again, then 'video-optimiser immich finalize'.");
+        _immich.Calls.Should().Equal($"get {original.Id}");
+        (await JobAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
+    }
+
+    /// <summary>
+    /// VOPT-145. A record written before the checksum was recorded falls back to the local AV1's checksum now, so a job ready
+    /// before the change still finalises; without the local AV1 there is nothing to compare, and the original stays.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARecordWithoutTheAv1ChecksumComparesTheUploadWithTheLocalAv1(bool localAv1Gone)
+    {
+        var original = _immich.Add("PXL.mp4", "original");
+        var job = await ReadyJobAsync(original, recordChecksum: false);
+        if (localAv1Gone)
+        {
+            _immich.FailOnce["copy"] = new ImmichApiException("ImmichRequestFailed", "Immich answered 500.", 500);
+            await FinalizeAsync(job);
+            File.Delete(job.OutputPath!);
+        }
+
+        var result = await FinalizeAsync(job);
+
+        if (localAv1Gone)
+        {
+            result.ExitCode.Should().Be(ExitCode.FinalisationFailure);
+            result.Message.Should().Be($"PXL.mp4 was validated before VideoOptimiser recorded checksums, and its AV1 is no longer at {job.OutputPath}, so the copy in Immich ({Av1Name(job)}) can't be checked and the original stays in Immich. Put the AV1 back at that path, then run 'video-optimiser immich finalize' again.");
+            _immich.Get(original.Id).IsTrashed.Should().BeFalse();
+            (await JobAsync(job)).Status.Should().Be(JobStatus.ReadyToFinalize);
+        }
+        else
+        {
+            result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+            _immich.Get(original.Id).IsTrashed.Should().BeTrue();
+        }
     }
 
     // A lost response matters where repeating the call is not harmless (a second upload, a second trash); the other
@@ -426,8 +527,11 @@ public sealed class ImmichFinalizationTests : IDisposable
 
     private string StagingFolder(ImmichAsset asset) => Path.Combine(_settings.Immich.StagingDirectory, asset.Id);
 
-    /// <summary>A validated job laid out as discovery and the processor leave it: staged original, output and manifest in the asset's folder.</summary>
-    private async Task<JobRecord> ReadyJobAsync(ImmichAsset original, string? folder = null)
+    /// <summary>
+    /// A validated job laid out as discovery and the processor leave it: staged original, output and manifest in the asset's
+    /// folder. Without <paramref name="recordChecksum"/>, the record is one written before VOPT-145, with no AV1 checksum.
+    /// </summary>
+    private async Task<JobRecord> ReadyJobAsync(ImmichAsset original, string? folder = null, bool recordChecksum = true)
     {
         var id = Guid.NewGuid();
         folder ??= StagingFolder(original);
@@ -444,7 +548,7 @@ public sealed class ImmichFinalizationTests : IDisposable
             OutputPath = outputPath,
             Crf = 30,
             CreatedUtc = DateTimeOffset.UtcNow,
-            Validation = new ValidationReport { Passed = true }
+            Validation = new ValidationReport { Passed = true, Av1Checksum = recordChecksum ? InMemoryImmich.Checksum("av1") : null }
         });
         return await _repository.CreateAsync(_settings.Database.Path, new JobRecord
         {
@@ -479,6 +583,12 @@ public sealed class ImmichFinalizationTests : IDisposable
         public Dictionary<string, Exception> LoseResponseOnce { get; } = [];
         public Func<Task>? BeforeCopy { get; set; }
 
+        /// <summary>
+        /// What Immich receives of every upload in place of the file's bytes, as a body damaged in transit; its checksum, which
+        /// Immich computes from what it received, then differs from the AV1's. Null receives the file whole.
+        /// </summary>
+        public string? Received { get; set; }
+
         public ImmichAsset Add(string fileName, string content, bool isTrashed = false, bool favourite = false, string? description = null, int? rating = null, string[]? tags = null)
         {
             var asset = new ImmichAsset(
@@ -500,7 +610,7 @@ public sealed class ImmichFinalizationTests : IDisposable
 
         public override Task<ImmichUploadResult> UploadAsync(ImmichUpload upload, IProgress<long>? progress = null, CancellationToken cancellationToken = default) => Step("upload", "upload", () =>
         {
-            var content = File.ReadAllText(upload.FilePath);
+            var content = Received ?? File.ReadAllText(upload.FilePath);
             if (_assets.FirstOrDefault(asset => asset.Checksum == InMemoryImmich.Checksum(content)) is { } existing) return new ImmichUploadResult(existing.Id, IsDuplicate: true);
             var asset = Add(upload.FileName, content);
             Uploads.Add(new Uploaded(asset.Id, upload));

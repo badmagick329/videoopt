@@ -11,7 +11,8 @@ namespace VideoOptimiser.Application.Features.Finalize;
 /// (description, rating, albums, favourite, shared links, stack, sidecar, tags), and only then moves the original to
 /// Immich's trash. Swapping the file inside the original asset is not an option: Immich's integrity check flags a file
 /// that no longer matches its checksum, and a changed checksum makes the phone upload the original again.
-/// Every step before the trash can run again, so any failure leaves the original live and the job resumable.
+/// Every step before the trash can run again, so any failure leaves the original live and the job resumable. The trash waits
+/// until the new asset's checksum matches the AV1 that passed validation (VOPT-145).
 /// </summary>
 public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository jobs, IOutputManifestStore manifests, ICommandHints hints)
 {
@@ -47,11 +48,11 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
             // Most likely an earlier run trashed it and stopped before marking the job completed, but the user may have
             // trashed it by hand before the copy finished, so the copy steps run again below.
             if (job.ImmichNewAssetId is not { } replaced) throw new FinalizationWaitsException($"The original of {OriginalName(job)} is in Immich's trash. Restore it, then run '{hints.Command("immich finalize")}' again.");
-            replacement = await RequireLiveAsync(client, job, replaced, originalId, cancellationToken);
+            replacement = await RequireLiveAsync(client, job, replaced, originalId, manifest, cancellationToken);
         }
         else
         {
-            replacement = await ReplacementAsync(client, databasePath, job, original, manifest.OutputPath, cancellationToken);
+            replacement = await ReplacementAsync(client, databasePath, job, original, manifest, cancellationToken);
         }
 
         // Description and rating exist only in Immich; setting them through the API locks them, so the metadata extraction
@@ -100,13 +101,13 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
     /// the asset: discovery leaves every job's AV1 asset alone, and without the ID the next run would treat this old-dated
     /// video as a candidate and convert it again.
     /// </summary>
-    private async Task<string> ReplacementAsync(IImmichClient client, string databasePath, JobRecord job, ImmichAsset original, string outputPath, CancellationToken cancellationToken)
+    private async Task<string> ReplacementAsync(IImmichClient client, string databasePath, JobRecord job, ImmichAsset original, OutputManifest manifest, CancellationToken cancellationToken)
     {
         if (job.ImmichNewAssetId is { } stored)
         {
             try
             {
-                return await RequireLiveAsync(client, job, stored, original.Id, cancellationToken);
+                return await RequireLiveAsync(client, job, stored, original.Id, manifest, cancellationToken);
             }
             catch (ImmichApiException exception) when (exception.Code == "ImmichRequestFailed")
             {
@@ -114,12 +115,20 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
             }
         }
 
+        var outputPath = manifest.OutputPath;
+        // An AV1 that changed after validation would only be refused once uploaded, leaving a second video beside the
+        // original for the user to delete; checked first, nothing reaches Immich.
+        if (manifest.Validation?.Av1Checksum is { } validated && await ImmichStaging.Sha1Base64Async(outputPath, cancellationToken) != validated)
+        {
+            throw new FinalizationWaitsException($"The AV1 at {outputPath} changed after it passed validation, so it wasn't uploaded and the original stays in Immich. Run '{hints.Command($"validate {job.Id:N}")}' to check it again, then '{hints.Command("immich finalize")}'.");
+        }
         var fileName = Path.ChangeExtension(original.OriginalFileName, Path.GetExtension(outputPath));
         var upload = await client.UploadAsync(new ImmichUpload(outputPath, fileName, original.FileCreatedAt, original.FileModifiedAt, original.IsFavorite), cancellationToken: cancellationToken);
         job.ImmichNewAssetId = upload.AssetId;
         await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
-        // A duplicate answer names whichever asset already holds these bytes, which may be in the trash.
-        return upload.IsDuplicate ? await RequireLiveAsync(client, job, upload.AssetId, original.Id, cancellationToken) : upload.AssetId;
+        // Read back even when new: Immich computes the checksum from the bytes it received, so this is what proves the upload
+        // arrived whole. A duplicate answer names whichever asset already holds those bytes, which may be in the trash.
+        return await RequireLiveAsync(client, job, upload.AssetId, original.Id, manifest, cancellationToken);
     }
 
     /// <summary>The file names the user finds the original and its AV1 under in Immich: the asset IDs are no use to someone looking at the web app.</summary>
@@ -127,13 +136,40 @@ public sealed class ImmichFinalizer(IImmichClientFactory clients, IJobRepository
 
     private static string Av1Name(JobRecord job) => Path.ChangeExtension(OriginalName(job), Path.GetExtension(job.OutputPath));
 
-    private async Task<string> RequireLiveAsync(IImmichClient client, JobRecord job, string assetId, string originalId, CancellationToken cancellationToken)
+    /// <summary>
+    /// The AV1's asset ID once it is shown to be the AV1 that passed validation (VOPT-145): live, not the original, and with
+    /// the validated checksum. Every path to the trash call and to the job's completion passes here, a fresh upload and a
+    /// resume alike, because once Immich empties its trash the original is gone and this asset is all that is left.
+    /// </summary>
+    /// <remarks>
+    /// A mismatched asset is left in Immich with its ID still stored: deleting it automatically could remove a video the user
+    /// owns if a duplicate answer named one, and the stored ID keeps discovery off it. Rerunning reaches this check again,
+    /// so the original stays until the user deletes the asset for good and the next run uploads afresh.
+    /// </remarks>
+    private async Task<string> RequireLiveAsync(IImmichClient client, JobRecord job, string assetId, string originalId, OutputManifest manifest, CancellationToken cancellationToken)
     {
         var asset = await client.GetAssetAsync(assetId, cancellationToken);
+        var finalizeAgain = hints.Command("immich finalize");
         if (asset.Id == originalId) throw new FinalizationRefusedException($"Immich returned the original of {OriginalName(job)} as its AV1.");
-        if (asset.IsTrashed) throw new FinalizationWaitsException($"The uploaded AV1 ({Av1Name(job)}) is in Immich's trash. Restore it or delete it permanently, then run '{hints.Command("immich finalize")}' again.");
+        if (asset.IsTrashed) throw new FinalizationWaitsException($"The uploaded AV1 ({Av1Name(job)}) is in Immich's trash. Restore it or delete it permanently, then run '{finalizeAgain}' again.");
+        var expected = await ValidatedChecksumAsync(manifest, cancellationToken)
+            ?? throw new FinalizationWaitsException($"{OriginalName(job)} was validated before VideoOptimiser recorded checksums, and its AV1 is no longer at {manifest.OutputPath}, so the copy in Immich ({Av1Name(job)}) can't be checked and the original stays in Immich. Put the AV1 back at that path, then run '{finalizeAgain}' again.");
+        if (!string.Equals(asset.Checksum, expected, StringComparison.Ordinal))
+        {
+            throw new FinalizationWaitsException($"The AV1 in Immich ({Av1Name(job)}) doesn't match the one that passed validation: its checksum is {asset.Checksum}, not {expected}. The original stays in Immich. Delete {Av1Name(job)} from Immich permanently, then run '{finalizeAgain}' to upload the AV1 again.");
+        }
         return asset.Id;
     }
+
+    /// <summary>
+    /// The checksum validation recorded, or, for a record written before VOPT-145, the local AV1's checksum now. Hashing the
+    /// file rather than refusing keeps every job already ready finalisable without a second validation: it still proves the
+    /// upload arrived whole, and leaves unproven only that the file is the one validated, which nothing proved before either.
+    /// Null when neither exists: such a job can't be checked, and the caller refuses.
+    /// </summary>
+    private static async Task<string?> ValidatedChecksumAsync(OutputManifest manifest, CancellationToken cancellationToken) =>
+        manifest.Validation?.Av1Checksum
+        ?? (File.Exists(manifest.OutputPath) ? await ImmichStaging.Sha1Base64Async(manifest.OutputPath, cancellationToken) : null);
 
     /// <summary>
     /// F5. The job stays ready: if the original went to the Locked Folder, finalising works once it is moved out. If it was

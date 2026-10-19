@@ -163,7 +163,7 @@ public sealed class ValidateCommandTests : IDisposable
         await _repository.UpdateAsync(DatabasePath, job);
         job.Notes = ["Audio track 2 (apac) left out: FFmpeg can't copy it. The other audio tracks are kept."];
         await _repository.UpdateAsync(DatabasePath, job);
-        _validation.Report = new ValidationReport { Passed = true, SourceSizeBytes = 1000, OutputSizeBytes = 400, PercentageSaved = 60m };
+        _validation.Report = new ValidationReport { Passed = true, SourceSizeBytes = 1000, OutputSizeBytes = 400, PercentageSaved = 60m, Av1Checksum = InMemoryImmich.Checksum("av1") };
 
         var (code, stdout, stderr) = await RunAsync(job.Id.ToString("N"));
 
@@ -174,7 +174,9 @@ public sealed class ValidateCommandTests : IDisposable
         stored.Status.Should().Be(JobStatus.ReadyToFinalize);
         (stored.ValidationPassed, stored.SourceSizeBytes, stored.OutputSizeBytes, stored.PercentageSaved).Should().Be((true, 1000L, 400L, 60m));
         (stored.FailureCategory, stored.FailureMessage, stored.CompletedUtc).Should().Be((null, null, null));
-        (await new OutputManifestStore().LoadAsync(job.OutputPath!)).Validation!.Passed.Should().BeTrue();
+        // VOPT-145: Immich finalisation compares the uploaded asset with this checksum, so it must survive the record's save.
+        var recorded = (await new OutputManifestStore().LoadAsync(job.OutputPath!)).Validation!;
+        (recorded.Passed, recorded.Av1Checksum).Should().Be((true, InMemoryImmich.Checksum("av1")));
     }
 
     [Fact]

@@ -99,7 +99,7 @@ The converted files are in the staging directory, under `<asset ID>\.video-optim
 
 It lists each ready video with its capture date, so you can find it in Immich, plus its sizes and savings, then asks once. For each video it:
 
-1. Uploads the AV1 as a new asset with the original's capture date.
+1. Uploads the AV1 as a new asset with the original's capture date, then checks that Immich's copy has the same checksum as the AV1 that passed validation.
 2. Copies the original's albums, tags, favourite, description, rating, shared links, stack and sidecar to it.
 3. Moves the original to Immich's trash.
 4. Deletes the video's staging folder.
@@ -112,7 +112,9 @@ A video that cannot be finalised yet stays ready, and the others carry on. The m
 
 - **Immich can't find the original.** It was deleted for good or moved to the Locked Folder; Immich gives the same answer for both. Move it out of the Locked Folder and run `immich finalize` again. If it was deleted, the message names the copies that are left: the AV1 already in Immich (restore it first if it is in the trash), or the download and the AV1 on this PC. Move local copies somewhere safe before you `queue drop` the job, because `cleanup` deletes a dropped job's files; until then `queue drop` refuses.
 - **The original or the AV1 is in Immich's trash.** Restore it, then run `immich finalize` again.
-- **The local AV1 is missing.** Put it back, or drop and retry the job to convert it again. Once the AV1 is uploaded, the local file is no longer needed.
+- **The AV1 in Immich doesn't match the one that passed validation.** The upload arrived damaged, or the stored copy changed. Delete that AV1 from Immich permanently (trash it, then delete it from the trash) and run `immich finalize` again to upload it afresh.
+- **The AV1 on this PC changed after validation.** It isn't uploaded. Run `validate <job-id>` to check it again, then `immich finalize`.
+- **The local AV1 is missing.** Put it back, or drop and retry the job to convert it again. Once the AV1 is uploaded, the local file is no longer needed, unless the video was validated by version 0.14.1 or earlier: those records hold no checksum, so finalising compares the upload with the local file.
 - **The download in the staging directory is missing.** Nothing is wrong: finalising compares the original in Immich with the one that was converted, not with the download.
 
 ## What you should know
