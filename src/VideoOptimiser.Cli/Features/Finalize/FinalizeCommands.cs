@@ -57,8 +57,17 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
 
         report.Summary(ready.Length, failed);
         WriteLeftOut("Left out with validation warnings:", leftOut, command);
-        return failed == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;
+        return BatchExitCode(ready.Length - failed, failed);
     }
+
+    /// <summary>
+    /// The exit code of a bulk finalise that went through its whole batch, the same for <c>finalize --ready</c> and
+    /// <c>immich finalize</c> so a script reads one outcome one way: all finalised is success, some is partial, none is a
+    /// finalisation failure. A batch with nothing to finalise, or answered "no", exits success before it gets here; a
+    /// <c>Ctrl+C</c> part-way throws past it, so it exits cancelled whatever the counts.
+    /// </summary>
+    private static int BatchExitCode(int finalised, int failed) =>
+        (int)(failed == 0 ? ExitCode.Success : finalised > 0 ? ExitCode.PartialSuccess : ExitCode.FinalisationFailure);
 
     private const string ImmichTrashLine = "Each Immich original goes to Immich's trash once its AV1 is uploaded with its albums, tags and other relations.";
 
@@ -155,9 +164,7 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
         if (failed == 0) await PrintTrashRetentionAsync(client, cancellationToken);
         // Last, so what is still to do is the last thing the user reads.
         WriteLeftOut("Left out with validation warnings:", leftOut, command);
-        return failed == 0 ? (int)ExitCode.Success
-            : failed < ready.Length ? (int)ExitCode.PartialSuccess
-            : (int)ExitCode.FinalisationFailure;
+        return BatchExitCode(ready.Length - failed, failed);
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Finalize;
+using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Immich;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain;
@@ -19,6 +20,7 @@ public sealed class FinalizeCommandsTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"VideoOptimiser.Tests.{Guid.NewGuid():N}");
     private readonly FakeFinalizer _finalizer = new();
     private readonly FakeImmich _immich = new();
+    private readonly RunStop _stop = new();
     private readonly List<JobRecord> _jobs = [];
 
     public FinalizeCommandsTests() => Directory.CreateDirectory(_directory);
@@ -298,7 +300,7 @@ public sealed class FinalizeCommandsTests : IDisposable
     }
 
     [Fact]
-    public async Task ReadyWhereEveryJobFailsEndsInPartialSuccessUnlikeImmichFinalize()
+    public async Task ReadyWhereEveryJobFailsEndsInFinalisationFailureLikeImmichFinalize()
     {
         var first = FileJob("clip-a.mp4", null, null, null);
         var second = FileJob("clip-b.mp4", null, null, null);
@@ -308,12 +310,35 @@ public sealed class FinalizeCommandsTests : IDisposable
 
         var (code, stdout, stderr) = await RunAsync("y\n", "finalize", "--ready");
 
-        // Only immich finalize tells a total failure from a partial one; finalize --ready ends in PartialSuccess either way.
-        code.Should().Be((int)ExitCode.PartialSuccess);
+        // A script reads the same exit code from both bulk finalises: nothing finalised is a failure, not a partial success.
+        code.Should().Be((int)ExitCode.FinalisationFailure);
         stderr.ReplaceLineEndings("\n").Should().Be(
             "Failed  clip-a.mp4: Original changed after encoding.\n" +
             "Failed  clip-b.mp4: Original changed after encoding.\n");
         stdout.ReplaceLineEndings("\n").Should().EndWith("Finalise these jobs? [y/N] Failed: 2.\n");
+    }
+
+    /// <summary>
+    /// Every job tried so far failed, but the batch was stopped, not finished: both bulk finalises exit cancelled rather than
+    /// calling it a finalisation failure, and the job after the stop is not tried.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CtrlCPartWayThroughABatchWhoseJobsFailedEndsInCancelled(bool immich)
+    {
+        JobRecord Job(string name) => immich ? ImmichJob(name, "asset-" + name) : FileJob(name, null, null, null);
+        var failed = Job("clip-a.mp4");
+        var stopped = Job("clip-b.mp4");
+        var untried = Job("clip-c.mp4");
+        _jobs.AddRange([failed, stopped, untried]);
+        _finalizer.Results[failed.Id] = new(failed, ExitCode.FinalisationFailure, "Original changed after encoding.");
+        _finalizer.PressDuring = (stopped.Id, _stop);
+
+        var (code, _, _) = immich ? await RunAsync("y\n", "immich", "finalize") : await RunAsync("y\n", "finalize", "--ready");
+
+        code.Should().Be((int)ExitCode.Cancelled);
+        _finalizer.Calls.Should().Equal(failed.Id, stopped.Id);
     }
 
     [Fact]
@@ -516,6 +541,7 @@ public sealed class FinalizeCommandsTests : IDisposable
     private void Configure(IServiceCollection services)
     {
         services.AddSingleton<IFinalizationService>(_finalizer);
+        services.AddSingleton(_stop);
         services.AddSingleton<IImmichClientFactory>(_immich);
         services.AddSingleton<IJobRepository>(new FixedList(new SqliteJobRepository(new SqliteDatabaseInitializer()), _jobs));
     }
@@ -558,7 +584,11 @@ public sealed class FinalizeCommandsTests : IDisposable
         new DateTimeOffset(2025, 5, 1, 14, 30, 0, TimeSpan.Zero), new DateTimeOffset(2025, 5, 1, 14, 30, 0, TimeSpan.Zero), new DateTimeOffset(2025, 5, 1, 14, 30, 0, TimeSpan.Zero),
         null, new ImmichExif(null, null, null, null, null, null, null, null), []);
 
-    public void Dispose() => Directory.Delete(_directory, recursive: true);
+    public void Dispose()
+    {
+        _stop.Dispose();
+        Directory.Delete(_directory, recursive: true);
+    }
 
     /// <summary>
     /// The real repository with the list fixed, so the order the command prints in does not depend on timestamps. It splits the
@@ -581,9 +611,17 @@ public sealed class FinalizeCommandsTests : IDisposable
         public Dictionary<Guid, FinalizationResult> Results { get; } = [];
         public List<Guid> Calls { get; } = [];
 
+        /// <summary>A job whose finalisation presses Ctrl+C and then stops as the real service does, by throwing on the token.</summary>
+        public (Guid Job, RunStop Stop)? PressDuring { get; set; }
+
         public Task<FinalizationResult> FinalizeAsync(string databasePath, Guid jobId, AppSettings settings, CancellationToken cancellationToken = default)
         {
             Calls.Add(jobId);
+            if (PressDuring is { } press && press.Job == jobId)
+            {
+                press.Stop.Press();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             return Task.FromResult(Results[jobId]);
         }
     }

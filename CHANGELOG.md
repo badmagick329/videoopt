@@ -34,6 +34,7 @@
 - `queue add <file> --force` no longer queues a video that is already AV1, and a run no longer converts one. After a finalise with `original.action: delete` or `archive`, the AV1 sits at the original's path as the only copy, and `--force` used to queue it for a second, lossier encode that `finalize` would then put in its place. `queue add` now refuses it with or without `--force`, and a run fails an AV1 that was already queued and says why.
 - `queue add` now leaves out a video that another program still has open for writing, such as a copy or a phone sync in progress, and its `Issue:` line says the file is open in another program. It used to judge the file on the part written so far, or count it under `Issues` without naming it. A run that reaches such a video now fails it as not ready, so the next `queue add` checks it again. The run used to fail it with a .NET error about the file being in use.
 - When a background run is converting the video, `queue hold` and `queue drop` now tell you to stop it with `run stop --now`, or, for a drop, with `run stop` to let the video finish first. They used to say to press Ctrl+C twice in the run's window, and a background run has none.
+- `finalize --ready` now exits `8` when every video it tries fails, as `immich finalize` already did. It used to exit `10`, the code for a partial success, even when nothing was finalised. This changes what scripts see: one that checks `finalize --ready` for `10` should check for `8` too.
 
 ## [0.14.1] - 2026-10-18
 ### Remote workers

@@ -232,11 +232,13 @@ Failed, dropped, rejected and skipped jobs stay settled: discovery skips them un
 | `5` | `queue add <file>` refused the file: outside the watch roots or the rules (the line gives the `--force` command), too small to save `savings.minimumBytesSaved`, already AV1 (`<file> is already AV1, so it can't be queued.`), or a file video-optimiser made or archived (`--force` lifts none of these) |
 | `6` | Processing failed and nothing is ready; `queue add <file>` on a file that is missing or unreadable; an Immich request failed; ffprobe could not read a file; Hetzner had no server capacity; Hetzner didn't answer a request in time (`Hetzner didn't answer <method> <path> within 100 seconds.`); a new worker's bootstrap script failed or ran out `bootstrapTimeout`; a worker's create request got no answer and Hetzner couldn't be asked whether it made the server (the output names `worker status` and `worker delete`); `validate` or `finalize <job-id>` named a job that does not exist; or `validate` named a job that is not ready to finalise, is held (`queue release` first), or whose original, AV1 or validation record is missing or unreadable |
 | `7` | `validate` failed the output: missing, empty, unreadable by ffprobe, or not AV1 (a run counts such a video as failed: `6` or `10`); or `finalize <job-id>` named a job that is not ready. Warnings and a not-worth-converting verdict exit `0` |
-| `8` | `finalize <job-id>` failed, or `immich finalize` failed for every job |
+| `8` | `finalize <job-id>` failed, or `finalize --ready` or `immich finalize` failed for every job it tried |
 | `9` | Stopped with `Ctrl+C`; a Hetzner request that times out is `6`, never `9` |
-| `10` | Partial success: `run` or `immich run` with some failed and some ready, any failure in `finalize --ready`, `immich finalize` with some jobs failed, or `queue add`, `queue add immich`, `immich run`, `cleanup` or `calibrate` hit issues; read the output |
+| `10` | Partial success: `run` or `immich run` with some failed and some ready, `finalize --ready` or `immich finalize` with some jobs failed and some finalised, or `queue add`, `queue add immich`, `immich run`, `cleanup` or `calibrate` hit issues; read the output |
 
 `run` and `immich run` exit `0` when no job failed, `10` when some failed and some are ready, `6` when some failed and none is ready; a worker that stopped answering counts as one failure. `9` and `1` (a failed worker delete) override those, and `immich run` also exits `10` with no failure when its re-upload guard or discovery had issues or left videos out.
+
+`finalize --ready` and `immich finalize` share one rule: `0` when every job finalised, when nothing was ready or every ready job was left out for its warnings, or when the answer was "no"; `10` when some failed and some finalised; `8` when every job failed. `Ctrl+C` part-way exits `9` whatever already finalised.
 
 ### Job statuses
 
