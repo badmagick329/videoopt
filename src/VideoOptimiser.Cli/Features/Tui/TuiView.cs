@@ -562,7 +562,7 @@ internal static partial class TuiView
     private static Line RunLine(TuiModel m)
     {
         if (m.Run is not { } run) return new Line();
-        var kind = run.Command == LockHolders.BackgroundRun ? "Background run" : $"Foreground run ({run.Command.Replace("video-optimiser ", string.Empty, StringComparison.Ordinal)})";
+        var kind = run.IsBackground ? "Background run" : $"Foreground run ({run.Command.Replace("video-optimiser ", string.Empty, StringComparison.Ordinal)})";
         return new Line().Flex($"{kind}, started {CliLocks.FormatStarted(run.StartedUtc)} (process {run.ProcessId.ToString(CultureInfo.InvariantCulture)})", Theme.Of(Theme.Dim));
     }
 
@@ -576,7 +576,7 @@ internal static partial class TuiView
         if (m.Run is null) return scroll;
         if (m.Requests is { StopNow: true }) return scroll + " · stopping now";
         if (m.Requests is { StopAfterThisVideo: true }) return scroll + " · stopping after this video";
-        if (m.Run.Command == LockHolders.BackgroundRun && m.Worker.Managed && TuiUpdate.FateOf(m) is { } fate)
+        if (m.Run.IsBackground && m.Worker.Managed && TuiUpdate.FateOf(m) is { } fate)
             return scroll + (fate == WorkerFateChoice.Delete ? " · worker deleted at the end" : " · worker kept at the end");
         return scroll;
     }

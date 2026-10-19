@@ -38,7 +38,7 @@ internal sealed class RunWorkerEnd(RunFlow flow, RunStart start, RunWorkerState 
             WriteError("Another run is starting on this database. Try again in a few seconds.");
             return;
         }
-        if (holder.Command == LockHolders.BackgroundRun)
+        if (holder.IsBackground)
         {
             WriteError($"Another run is using this database: a background run, started {FormatStarted(holder.StartedUtc)} (process {holder.ProcessId}).");
             WriteError($"Wait for it to finish, or stop it with '{command.Hint("run stop")}'.");

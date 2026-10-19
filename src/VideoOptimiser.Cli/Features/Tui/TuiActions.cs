@@ -6,7 +6,6 @@ using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Cli.Features.Finalize;
 using VideoOptimiser.Cli.Features.Queue;
 using VideoOptimiser.Cli.Features.Run;
@@ -17,8 +16,9 @@ namespace VideoOptimiser.Cli.Features.Tui;
 
 /// <summary>
 /// What each effect does: calls the Application use case the CLI's own command calls, and words the outcome for the log and the
-/// footer. The wording keeps the meaning of the CLI's lines for the same outcomes (<c>QueueCommands</c>, <c>FinalizeCommands</c>)
-/// and shortens them: the screen has no command to type, so a line that names one says what to press or what the next run does.
+/// footer. A queue verb's refusals and left-file lines are <see cref="QueueWords"/>' sentences, shared with <c>QueueCommands</c>;
+/// the rest keep the meaning of the CLI's lines for the same outcomes (<c>QueueCommands</c>, <c>FinalizeCommands</c>) and shorten
+/// them: the screen has no command to type, so a line that names one says what to press or what the next run does.
 /// Changed wording goes through the humanizer gate (docs index). One per command; it holds no state of its own.
 /// </summary>
 internal sealed class TuiActions(
@@ -60,13 +60,17 @@ internal sealed class TuiActions(
             QueueAction.Dismiss => await verbs.DismissAsync(database, job, cancellationToken),
             _ => await verbs.DropAsync(settings, job, cancellationToken)
         };
-        return await WordAsync(outcome, settings, rejecting: effect.Action == QueueAction.Reject, cancellationToken);
+        return await WordAsync(outcome, settings, effect.Action, cancellationToken);
     }
 
-    private async Task<ActionResult> WordAsync(QueueVerbOutcome outcome, AppSettings settings, bool rejecting, CancellationToken cancellationToken)
+    /// <summary>The screen names the cleanup command in plain words: there is no command line to type it into.</summary>
+    private const string Cleanup = "cleanup";
+
+    private async Task<ActionResult> WordAsync(QueueVerbOutcome outcome, AppSettings settings, QueueAction action, CancellationToken cancellationToken)
     {
         var job = outcome.Job;
         var name = FileName(job);
+        var verb = action == QueueAction.Reject ? "reject" : "drop";
         switch (outcome)
         {
             case JobHeld:
@@ -80,28 +84,24 @@ internal sealed class TuiActions(
             case JobMovedNext moved:
                 return Done(LogKind.Action, $"{name} {(moved.RunTakesIt ? "runs next" : "is now first in the queue")}{(moved.WasHeld ? "; it's no longer held" : string.Empty)}.");
             case VerbRefused refused:
-                return Done(LogKind.Warning, Refusal(refused, locks.LiveRun(settings.Database.Path)));
+                return Done(LogKind.Warning, QueueWords.RefusalText(refused, NotWaitingAction(action), StopWords.HowToStop(locks.LiveRun(settings.Database.Path)), "finalising it"));
             case JobAlreadyEnded:
-                var cleanup = await verbs.CleanupDeletesFilesAsync(settings, job, cancellationToken) ? " Cleanup deletes its temporary files." : string.Empty;
-                return Done(LogKind.Warning, $"{name} {QueueWords.StatusPhrase(job)}, so there is nothing to {(rejecting ? "reject" : "drop")}.{cleanup}");
+                var cleanup = await verbs.CleanupDeletesFilesAsync(settings, job, cancellationToken) ? " " + QueueWords.TemporaryFilesLine(Cleanup) : string.Empty;
+                return Done(LogKind.Warning, $"{name} {QueueWords.StatusPhrase(job)}, so there is nothing to {verb}.{cleanup}");
             case FinaliseRunning:
-                return Done(LogKind.Warning, $"A finalise is running on this database. Wait for it to finish, then {(rejecting ? "reject" : "drop")} {name}.");
+                return Done(LogKind.Warning, $"A finalise is running on this database. Wait for it to finish, then {verb} {name}.");
             case OnlyCopyAtRisk onlyCopy:
-                return Done(LogKind.Warning, OnlyCopy(onlyCopy, rejecting ? "reject" : "drop"));
+                return Done(LogKind.Warning, QueueWords.OnlyCopyText(onlyCopy, verb));
             case JobDropped dropped:
                 var lines = new List<LogLine> { new(LogKind.Action, $"Dropped {name}.") };
-                if (dropped.RemoteStage is { } remote) lines.Add(new LogLine(LogKind.Info, $"Its {(remote.Stage == RemoteStage.Encode ? "encode" : "CRF search")} may still be running on the worker; the next run on that worker stops it."));
-                if (await verbs.LeftFilesAsync(settings, dropped.Job, dropped.HadFinishedAv1, cancellationToken) is { } files) lines.Add(new LogLine(LogKind.Info, LeftFiles(files)));
+                if (dropped.RemoteStage is { } remote) lines.Add(new LogLine(LogKind.Info, QueueWords.RemoteStageLine(remote)));
+                if (await verbs.LeftFilesAsync(settings, dropped.Job, dropped.HadFinishedAv1, cancellationToken) is { } files) lines.Add(new LogLine(LogKind.Info, QueueWords.LeftFilesLine(files, Cleanup)));
                 if (dropped.UploadedAssetId is { } uploaded) lines.Add(new LogLine(LogKind.Warning, $"The AV1 already uploaded to Immich as asset {uploaded} stays there; delete it in Immich if you do not want it."));
                 return new ActionResult(lines, $"Dropped {name}.");
             case JobRejected rejected:
                 var rejectLines = new List<LogLine> { new(LogKind.Action, $"Rejected {name}. The original{(job.SourceKind == JobSourceKind.Immich ? " in Immich" : string.Empty)} is untouched.") };
                 if (rejected.Deleted.Any) rejectLines.Add(new LogLine(LogKind.Info, $"Deleted its {QueueWords.FilesPhrase(rejected.Deleted)}."));
-                if (rejected.LeftForCleanup is { } left)
-                {
-                    var both = left is { Av1: true, DownloadedCopy: true };
-                    rejectLines.Add(new LogLine(LogKind.Warning, $"Couldn't delete its {QueueWords.FilesPhrase(left)}; {(both ? "they may be" : "it may be")} open in another program. {(both ? "They stay" : "It stays")} until cleanup deletes {(both ? "them" : "it")}."));
-                }
+                if (rejected.LeftForCleanup is { } left) rejectLines.Add(new LogLine(LogKind.Warning, QueueWords.LeftForCleanupLine(left, Cleanup)));
                 return new ActionResult(rejectLines, $"Rejected {name}.");
             case JobDismissed:
                 return Done(LogKind.Action, $"Dismissed {name}. Its original stays skipped. To try it again: video-optimiser queue retry {job.Id:N}");
@@ -112,50 +112,13 @@ internal sealed class TuiActions(
         }
     }
 
-    private static string Refusal(VerbRefused refused, LiveRunHolder? run)
+    /// <summary>How a verb ends "Only waiting and stopped videos can …"; only hold and next refuse a job for not waiting.</summary>
+    private static string? NotWaitingAction(QueueAction action) => action switch
     {
-        var job = refused.Job;
-        var name = FileName(job);
-        return refused.Reason switch
-        {
-            VerbRefusal.ConvertingNow => $"{name} is converting now ({QueueWords.StatusWord(job.Status)}). {StopWords.HowToStop(run)}",
-            VerbRefusal.StoppedWhileFinalising => $"{name} was stopped while being finalised; finalising it checks and resumes it.",
-            VerbRefusal.BeingFinalised => $"{name} is being finalised now.",
-            VerbRefusal.NotReady => $"Only a video that is ready to finalise can be rejected; {name} {QueueWords.StatusPhrase(job)}.",
-            VerbRefusal.NotFailed => $"Only a failed video can be dismissed; {name} {QueueWords.StatusPhrase(job)}.",
-            _ => $"Only waiting and stopped videos can be held or run next; {name} {QueueWords.StatusPhrase(job)}."
-        };
-    }
-
-    /// <summary>The refusals that protect a video whose AV1 may be the only copy keep their meaning and their paths.</summary>
-    private static string OnlyCopy(OnlyCopyAtRisk onlyCopy, string verb)
-    {
-        var job = onlyCopy.Job;
-        var name = FileName(job);
-        return onlyCopy.Reason switch
-        {
-            OnlyCopyReason.OriginalMissing => $"The original of {name} is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then {verb} the video.",
-            OnlyCopyReason.ImmichNotConfigured => $"Immich can't be used (immich.baseUrl isn't set), so the original of {name} can't be checked. Try again once it answers.",
-            OnlyCopyReason.ImmichUnavailable => $"Immich can't be used ({onlyCopy.Detail?.TrimEnd('.')}), so the original of {name} can't be checked. Try again once it answers.",
-            _ => $"The original of {name} is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then {verb} the video."
-        };
-    }
-
-    private static string LeftFiles(LeftFiles files)
-    {
-        var av1 = files.Av1 switch
-        {
-            LeftAv1.Finished => "AV1",
-            LeftAv1.Unfinished => "unfinished AV1",
-            _ => null
-        };
-        return (av1, files.DownloadedCopy) switch
-        {
-            (null, _) => "Its downloaded copy stays until cleanup deletes it.",
-            (_, false) => $"Its {av1} stays until cleanup deletes it.",
-            _ => $"Its {av1} and downloaded copy stay until cleanup deletes them."
-        };
-    }
+        QueueAction.Hold => "be held",
+        QueueAction.Next => "run next",
+        _ => null
+    };
 
     public async Task<ActionResult> DismissAllAsync(AppSettings settings, CancellationToken cancellationToken)
     {

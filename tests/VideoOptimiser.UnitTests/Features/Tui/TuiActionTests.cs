@@ -59,15 +59,20 @@ public sealed class TuiActionTests : IDisposable
         Texts(await _rig.Actions.QueueAsync(Verb(QueueAction.Release, job), _rig.Settings, default)).Should().Equal("Released clip-a.mp4; runs take it again.");
     }
 
-    /// <summary>The verbs' refusals are the CLI's: a video that is ready is not held or run next, and the line says what it is.</summary>
-    [Fact]
-    public async Task AVerbOnAVideoThatIsNotWaitingSaysWhatItIs()
+    /// <summary>
+    /// The verbs' refusals are the CLI's sentences (<c>QueueWords</c>): a video that is ready is not held or run next, and the
+    /// line names the verb pressed and says what the video is.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(QueueAction.Hold), "be held")]
+    [InlineData(nameof(QueueAction.Next), "run next")]
+    public async Task AVerbOnAVideoThatIsNotWaitingSaysWhatItIs(string action, string verb)
     {
         var ready = await _rig.ReadyAsync("clip-r.mp4");
 
-        var result = await _rig.Actions.QueueAsync(Verb(QueueAction.Hold, ready), _rig.Settings, default);
+        var result = await _rig.Actions.QueueAsync(Verb(Enum.Parse<QueueAction>(action), ready), _rig.Settings, default);
 
-        result.Lines.Should().ContainSingle().Which.Should().Be(new LogLine(LogKind.Warning, "Only waiting and stopped videos can be held or run next; clip-r.mp4 is ready to finalise."));
+        result.Lines.Should().ContainSingle().Which.Should().Be(new LogLine(LogKind.Warning, $"Only waiting and stopped videos can {verb}; clip-r.mp4 is ready to finalise."));
     }
 
     [Fact]

@@ -52,11 +52,9 @@ internal sealed class StatusCommand(IStatusCard card)
     private static string RunLine(StatusRun? run)
     {
         if (run is null) return "Run: none.";
-        var line = $"Run: {(IsBackground(run) ? "background run" : run.Holder.Command)}, started {CliLocks.FormatStarted(run.Holder.StartedUtc)} (process {run.Holder.ProcessId.ToString(CultureInfo.InvariantCulture)})";
+        var line = $"Run: {(run.Holder.IsBackground ? "background run" : run.Holder.Command)}, started {CliLocks.FormatStarted(run.Holder.StartedUtc)} (process {run.Holder.ProcessId.ToString(CultureInfo.InvariantCulture)})";
         return run.Converting.Count == 0 ? line + "." : $"{line}, converting {string.Join(", ", run.Converting.Select(video => Path.GetFileName(video.SourcePath)))}.";
     }
-
-    private static bool IsBackground(StatusRun run) => run.Holder.Command == LockHolders.BackgroundRun;
 
     private static string WorkerLine(StatusWorker worker)
     {
@@ -106,7 +104,7 @@ internal sealed class StatusCommand(IStatusCard card)
         return new StatusJsonOutput(
             new StatusJsonQueue(queue.Converting, queue.Waiting, queue.Stopped, queue.Held, queue.ReadyToFinalise, queue.ToCheck),
             report.Run is { } run
-                ? new StatusJsonRun(run.Holder.Command, run.Holder.StartedUtc, run.Holder.ProcessId, IsBackground(run), [.. run.Converting.Select(video => new StatusJsonConverting(video.Id.ToString("N"), Path.GetFileName(video.SourcePath), video.Status.ToString()))])
+                ? new StatusJsonRun(run.Holder.Command, run.Holder.StartedUtc, run.Holder.ProcessId, run.Holder.IsBackground, [.. run.Converting.Select(video => new StatusJsonConverting(video.Id.ToString("N"), Path.GetFileName(video.SourcePath), video.Status.ToString()))])
                 : null,
             report.Worker is { } worker ? WorkerJson(worker) : null,
             [.. report.Next.Select(step => command.Hint(Words(step, queue).Verb))]);

@@ -1,5 +1,6 @@
 using System.Globalization;
 using VideoOptimiser.Application.Features.Queue;
+using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Cli.Features.Queue;
@@ -159,6 +160,84 @@ internal static class QueueWords
         // A managed worker may be gone by the next run, which then starts the step again on a new one; a manual one is the same host.
         return stopped.Where == ResumeWhere.ManagedWorker ? $"{pickUp}, or {again}" : pickUp;
     }
+
+    // ---- a queue verb's outcome, for the CLI's queue commands and the TUI's queue keys ----------------------------------
+    // One sentence serves both front ends, so they cannot drift (VOPT-174). Each passes in what differs: the CLI names a
+    // command to type, quoted from CliCommand.Hint; the TUI has no command line, so it names a key or the command in plain words.
+
+    /// <summary>Why a verb did not act.</summary>
+    /// <param name="notWaitingAction">How the verb ends "Only waiting and stopped videos can …", such as <c>be held</c>; null for a verb that never refuses a job for not waiting.</param>
+    /// <param name="howToStop">How to stop the run converting the video: <c>run stop</c> or Ctrl+C in the CLI, the stop keys in the TUI.</param>
+    /// <param name="finaliseIt">What checks and resumes a stopped finalisation, as the subject of "… checks and resumes it".</param>
+    public static string RefusalText(VerbRefused refused, string? notWaitingAction, string howToStop, string finaliseIt)
+    {
+        var job = refused.Job;
+        var name = Path.GetFileName(job.SourcePath);
+        return refused.Reason switch
+        {
+            VerbRefusal.ConvertingNow => $"{name} is converting now ({StatusWord(job.Status)}). {howToStop}",
+            VerbRefusal.StoppedWhileFinalising => $"{name} was stopped while being finalised; {finaliseIt} checks and resumes it.",
+            VerbRefusal.BeingFinalised => $"{name} is being finalised now.",
+            VerbRefusal.NotReady => $"Only a video that is ready to finalise can be rejected; {name} {StatusPhrase(job)}.",
+            VerbRefusal.NotFailed => $"Only a failed video can be dismissed; {name} {StatusPhrase(job)}.",
+            _ => $"Only waiting and stopped videos can {notWaitingAction ?? throw new InvalidOperationException("This verb never refuses a job for not waiting.")}; {name} {StatusPhrase(job)}."
+        };
+    }
+
+    /// <summary>The refusals that protect a video whose AV1 may be the only copy keep their meaning and their paths.</summary>
+    /// <param name="verb">The verb as it ends "then … the video", such as <c>drop</c>.</param>
+    public static string OnlyCopyText(OnlyCopyAtRisk onlyCopy, string verb)
+    {
+        var job = onlyCopy.Job;
+        var name = Path.GetFileName(job.SourcePath);
+        return onlyCopy.Reason switch
+        {
+            OnlyCopyReason.OriginalMissing => $"The original of {name} is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then {verb} the video.",
+            OnlyCopyReason.ImmichNotConfigured => ImmichUnusable("immich.baseUrl isn't set", name),
+            OnlyCopyReason.ImmichUnavailable => ImmichUnusable(onlyCopy.Detail!.TrimEnd('.'), name),
+            _ => $"The original of {name} is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then {verb} the video."
+        };
+    }
+
+    private static string ImmichUnusable(string why, string name) =>
+        $"Immich can't be used ({why}), so video-optimiser can't check that the original of {name} is still there. Try again once it answers.";
+
+    /// <summary>
+    /// W3: a remote CRF search or encode runs detached, so a stop leaves it going. The next run that reaches the worker, managed
+    /// or manual, stops it and removes its workspace (VOPT-90), so one line serves both.
+    /// </summary>
+    public static string RemoteStageLine(RemoteStageNote note) =>
+        $"Its {(note.Stage == RemoteStage.Encode ? "encode" : "CRF search")} may still be running on the worker; the next run on that worker stops it.";
+
+    /// <summary>The files a drop left for cleanup.</summary>
+    /// <param name="cleanup">How the front end names the <c>cleanup</c> command, as the subject of "… deletes it".</param>
+    public static string LeftFilesLine(LeftFiles files, string cleanup)
+    {
+        var av1 = files.Av1 switch
+        {
+            LeftAv1.Finished => "AV1",
+            LeftAv1.Unfinished => "unfinished AV1",
+            _ => null
+        };
+        return (av1, files.DownloadedCopy) switch
+        {
+            (null, _) => $"Its downloaded copy stays until {cleanup} deletes it.",
+            (_, false) => $"Its {av1} stays until {cleanup} deletes it.",
+            _ => $"Its {av1} and downloaded copy stay until {cleanup} deletes them."
+        };
+    }
+
+    /// <summary>A file a reject could not delete is almost always open in a player; the reject stands and cleanup finishes the job.</summary>
+    /// <param name="cleanup">How the front end names the <c>cleanup</c> command, as the subject of "… deletes it".</param>
+    public static string LeftForCleanupLine(RejectedFiles left, string cleanup)
+    {
+        var both = left is { Av1: true, DownloadedCopy: true };
+        return $"Couldn't delete its {FilesPhrase(left)}; {(both ? "they may be" : "it may be")} open in another program. {(both ? "They stay" : "It stays")} until {cleanup} deletes {(both ? "them" : "it")}.";
+    }
+
+    /// <summary>After "there is nothing to drop": an ended job whose temporary files cleanup would still delete.</summary>
+    /// <param name="cleanup">How the front end names the <c>cleanup</c> command; it starts the sentence, so its first letter is raised.</param>
+    public static string TemporaryFilesLine(string cleanup) => $"{char.ToUpperInvariant(cleanup[0])}{cleanup[1..]} deletes its temporary files.";
 
     /// <summary>A scanner reason ("Extension is not allowed.") as the end of a sentence.</summary>
     public static string Fragment(string reason) => reason.Length == 0 ? reason : char.ToLowerInvariant(reason[0]) + reason[1..].TrimEnd('.');

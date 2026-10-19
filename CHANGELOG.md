@@ -14,6 +14,7 @@
 ### Other changes
 
 - `finalize --ready` and `immich finalize` now list and finalise videos in the order they were queued, with any you moved up through `queue next` first, as the full-screen view's `F` already did. They used to go by when each video last changed. When one video fails with an unexpected error, such as a failed database read, the command now counts it as failed and goes on to the next one, as the full-screen view does. It used to stop the whole command.
+- When the full-screen view refuses to hold, move up, drop or reject a video, it now words the refusal as the `queue` commands do. Two messages changed: a refused hold or `n` names only the action you asked for, and a drop or reject while Immich can't be reached says that video-optimiser can't check the original is still there.
 
 ### Fixes
 

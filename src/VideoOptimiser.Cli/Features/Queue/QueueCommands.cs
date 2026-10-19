@@ -2,7 +2,6 @@ using System.Text.Json;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Jobs;
-using VideoOptimiser.Application.TemporaryOutputs;
 using VideoOptimiser.Domain;
 using VideoOptimiser.Domain.Jobs;
 using static CliOutput;
@@ -28,7 +27,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         switch (outcome)
         {
             case VerbRefused refused:
-                return Refuse(RefusalText(refused, command, verb: "hold", notWaitingAction: "be held", stopAfterVideoWorks: false));
+                return Refuse(Refusal(refused, command, verb: "hold", notWaitingAction: "be held", stopAfterVideoWorks: false));
             case JobAlreadyHeld:
                 CliConsole.WriteLine($"{name} is already held.");
                 return (int)ExitCode.Success;
@@ -58,7 +57,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                 CliConsole.WriteLine($"{name} is converting now.");
                 return (int)ExitCode.Success;
             case VerbRefused refused:
-                return Refuse(RefusalText(refused, command, verb: "run next", notWaitingAction: "run next", stopAfterVideoWorks: false));
+                return Refuse(Refusal(refused, command, verb: "run next", notWaitingAction: "run next", stopAfterVideoWorks: false));
             case JobMovedNext moved:
                 CliConsole.WriteLine($"{name} {(moved.RunTakesIt ? "runs next" : "is now first in the queue")}{(moved.WasHeld ? "; it's no longer held" : string.Empty)}.");
                 return (int)ExitCode.Success;
@@ -76,10 +75,10 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         switch (outcome)
         {
             case VerbRefused refused:
-                return Refuse(RefusalText(refused, command, verb: "drop", notWaitingAction: null, stopAfterVideoWorks: true));
+                return Refuse(Refusal(refused, command, verb: "drop", notWaitingAction: null, stopAfterVideoWorks: true));
             case JobAlreadyEnded ended:
                 WriteError($"{name} {StatusPhrase(ended.Job)}, so there is nothing to drop.");
-                if (await verbs.CleanupDeletesFilesAsync(configuration.Settings, ended.Job, cancellationToken)) WriteError($"'{command.Hint("cleanup")}' deletes its temporary files.");
+                if (await verbs.CleanupDeletesFilesAsync(configuration.Settings, ended.Job, cancellationToken)) WriteError(TemporaryFilesLine(Cleanup(command)));
                 return (int)ExitCode.GeneralFailure;
             case FinaliseRunning:
                 return Refuse($"A finalise is running on this database. Wait for it to finish, then drop {name}.");
@@ -88,7 +87,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             case JobDropped dropped:
                 CliConsole.WriteLine($"Dropped {name}.");
                 if (dropped.RemoteStage is { } remote) CliConsole.WriteLine(RemoteStageLine(remote));
-                if (await verbs.LeftFilesAsync(configuration.Settings, dropped.Job, dropped.HadFinishedAv1, cancellationToken) is { } files) CliConsole.WriteLine(LeftFilesLine(files, command));
+                if (await verbs.LeftFilesAsync(configuration.Settings, dropped.Job, dropped.HadFinishedAv1, cancellationToken) is { } files) CliConsole.WriteLine(LeftFilesLine(files, Cleanup(command)));
                 if (dropped.UploadedAssetId is { } uploaded) CliConsole.WriteLine($"The AV1 already uploaded to Immich as asset {uploaded} stays there; delete it in Immich if you do not want it.");
                 return (int)ExitCode.Success;
             default:
@@ -108,10 +107,10 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         switch (outcome)
         {
             case VerbRefused refused:
-                return Refuse(RefusalText(refused, command, verb: "reject", notWaitingAction: null, stopAfterVideoWorks: false));
+                return Refuse(Refusal(refused, command, verb: "reject", notWaitingAction: null, stopAfterVideoWorks: false));
             case JobAlreadyEnded ended:
                 WriteError($"{name} {StatusPhrase(ended.Job)}, so there is nothing to reject.");
-                if (await verbs.CleanupDeletesFilesAsync(configuration.Settings, ended.Job, cancellationToken)) WriteError($"'{command.Hint("cleanup")}' deletes its temporary files.");
+                if (await verbs.CleanupDeletesFilesAsync(configuration.Settings, ended.Job, cancellationToken)) WriteError(TemporaryFilesLine(Cleanup(command)));
                 return (int)ExitCode.GeneralFailure;
             case FinaliseRunning:
                 return Refuse($"A finalise is running on this database. Wait for it to finish, then reject {name}.");
@@ -121,7 +120,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                 var immich = rejected.Job.SourceKind == JobSourceKind.Immich;
                 CliConsole.WriteLine($"Rejected {name}. The original{(immich ? " in Immich" : string.Empty)} is untouched.");
                 if (rejected.Deleted.Any) CliConsole.WriteLine($"Deleted its {FilesPhrase(rejected.Deleted)}.");
-                if (rejected.LeftForCleanup is { } left) CliConsole.WriteLine(LeftForCleanupLine(left, command));
+                if (rejected.LeftForCleanup is { } left) CliConsole.WriteLine(LeftForCleanupLine(left, Cleanup(command)));
                 CliConsole.WriteLine($"To try it again: {command.Hint($"queue retry {rejected.Job.Id:N}")}");
                 return (int)ExitCode.Success;
             default:
@@ -154,7 +153,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         switch (outcome)
         {
             case VerbRefused refused:
-                return Refuse($"Only a failed video can be dismissed; {name} {StatusPhrase(refused.Job)}.");
+                return Refuse(Refusal(refused, command, verb: "dismiss", notWaitingAction: null, stopAfterVideoWorks: false));
             case JobAlreadyDismissed:
                 CliConsole.WriteLine($"{name} is already dismissed.");
                 return (int)ExitCode.Success;
@@ -164,13 +163,6 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             default:
                 throw new InvalidOperationException($"queue dismiss cannot end as {outcome.GetType().Name}.");
         }
-    }
-
-    /// <summary>A file that cannot be deleted is almost always open in a player; the reject stands and cleanup finishes the job.</summary>
-    private static string LeftForCleanupLine(RejectedFiles left, CliCommand command)
-    {
-        var both = left is { Av1: true, DownloadedCopy: true };
-        return $"Couldn't delete its {FilesPhrase(left)}; {(both ? "they may be" : "it may be")} open in another program. {(both ? "They stay" : "It stays")} until '{command.Hint("cleanup")}' deletes {(both ? "them" : "it")}.";
     }
 
     /// <summary>Each step is printed as it happens, so a long drop shows its progress and a failure keeps what was already said.</summary>
@@ -225,19 +217,11 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
     /// <param name="verb">How the verb names itself in "To hold it, press Ctrl+C twice".</param>
     /// <param name="notWaitingAction">How the verb ends the sentence "Only waiting and stopped videos can …", such as <c>be held</c>; null for a verb that never says it.</param>
     /// <param name="stopAfterVideoWorks">Whether a stop after this video also lets the verb act: a drop takes the ready video it leaves, a hold does not.</param>
-    private static string RefusalText(VerbRefused refused, CliCommand command, string verb, string? notWaitingAction, bool stopAfterVideoWorks)
-    {
-        var job = refused.Job;
-        var name = Path.GetFileName(job.SourcePath);
-        return refused.Reason switch
-        {
-            VerbRefusal.ConvertingNow => $"{name} is converting now ({StatusWord(job.Status)}). {HowToStop(refused.Run, command, verb, stopAfterVideoWorks)}",
-            VerbRefusal.StoppedWhileFinalising => $"{name} was stopped while being finalised; '{command.Hint($"finalize {job.Id:N}")}' checks and resumes it.",
-            VerbRefusal.BeingFinalised => $"{name} is being finalised now.",
-            VerbRefusal.NotReady => $"Only a video that is ready to finalise can be rejected; {name} {StatusPhrase(job)}.",
-            _ => $"Only waiting and stopped videos can {notWaitingAction ?? throw new InvalidOperationException($"{verb} never refuses a job for not waiting.")}; {name} {StatusPhrase(job)}."
-        };
-    }
+    private static string Refusal(VerbRefused refused, CliCommand command, string verb, string? notWaitingAction, bool stopAfterVideoWorks) =>
+        RefusalText(refused, notWaitingAction, HowToStop(refused.Run, command, verb, stopAfterVideoWorks), $"'{command.Hint($"finalize {refused.Job.Id:N}")}'");
+
+    /// <summary>The <c>cleanup</c> command as the queue verbs' lines name it.</summary>
+    private static string Cleanup(CliCommand command) => $"'{command.Hint("cleanup")}'";
 
     /// <summary>
     /// The CLI's side of <see cref="Tui.StopWords"/>: a background run has no window, so it is stopped with <c>run stop</c>
@@ -250,46 +234,6 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         { IsBackground: true } => $"To {verb} it, stop the run first with '{command.Hint("run stop --now")}'.",
         _ => $"To {verb} it, press Ctrl+C twice in the run's window first."
     };
-
-    private static string OnlyCopyText(OnlyCopyAtRisk onlyCopy, string verb)
-    {
-        var job = onlyCopy.Job;
-        var name = Path.GetFileName(job.SourcePath);
-        return onlyCopy.Reason switch
-        {
-            OnlyCopyReason.OriginalMissing => $"The original of {name} is missing, so its AV1 at {job.OutputPath} may be the only copy. Put the original back, or move the AV1 somewhere safe, then {verb} the video.",
-            OnlyCopyReason.ImmichNotConfigured => ImmichUnusable("immich.baseUrl isn't set", name),
-            OnlyCopyReason.ImmichUnavailable => ImmichUnusable(onlyCopy.Detail!.TrimEnd('.'), name),
-            _ => $"The original of {name} is gone from Immich, so its AV1 and downloaded copy may be the only copies: {job.OutputPath}, {job.SourcePath}. Move them somewhere safe, then {verb} the video."
-        };
-    }
-
-    private static string ImmichUnusable(string why, string name) =>
-        $"Immich can't be used ({why}), so video-optimiser can't check that the original of {name} is still there. Try again once it answers.";
-
-    /// <summary>
-    /// W3: a remote CRF search or encode runs detached, so a stop leaves it going. The next run that reaches the worker, managed
-    /// or manual, stops it and removes its workspace (VOPT-90), so one line serves both.
-    /// </summary>
-    private static string RemoteStageLine(RemoteStageNote note) =>
-        $"Its {(note.Stage == RemoteStage.Encode ? "encode" : "CRF search")} may still be running on the worker; the next run on that worker stops it.";
-
-    private static string LeftFilesLine(LeftFiles files, CliCommand command)
-    {
-        var cleanup = command.Hint("cleanup");
-        var av1 = files.Av1 switch
-        {
-            LeftAv1.Finished => "AV1",
-            LeftAv1.Unfinished => "unfinished AV1",
-            _ => null
-        };
-        return (av1, files.DownloadedCopy) switch
-        {
-            (null, _) => $"Its downloaded copy stays until '{cleanup}' deletes it.",
-            (_, false) => $"Its {av1} stays until '{cleanup}' deletes it.",
-            _ => $"Its {av1} and downloaded copy stay until '{cleanup}' deletes them."
-        };
-    }
 
     public async Task<int> AddAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {

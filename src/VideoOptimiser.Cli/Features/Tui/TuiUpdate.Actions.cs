@@ -186,7 +186,7 @@ internal static partial class TuiUpdate
     {
         if (c != 'w') return TuiStep.Of(m);
         if (m.Run is not { } run) return Told(m, "No run is going.");
-        if (run.Command != LockHolders.BackgroundRun) return Told(m, "That run asks about its worker in its own window.");
+        if (!run.IsBackground) return Told(m, "That run asks about its worker in its own window.");
         // With no managed worker the fate means nothing: the run has no worker to delete or keep.
         if (!m.Worker.Managed) return Told(m, "There is no worker whose fate to set.");
         var current = FateOf(m) ?? WorkerFateChoice.Delete;
@@ -199,7 +199,7 @@ internal static partial class TuiUpdate
     private static TuiStep StopKey(TuiModel m, char c)
     {
         if (m.Run is not { } run) return Told(m, "No run is going.");
-        if (run.Command != LockHolders.BackgroundRun) return Told(m, "That run is in another window; only Ctrl+C there stops it.");
+        if (!run.IsBackground) return Told(m, "That run is in another window; only Ctrl+C there stops it.");
         if (c == 'x')
         {
             if (m.Requests is { StopNow: true } or { StopAfterThisVideo: true }) return Told(m, "A stop is already asked of the run.");

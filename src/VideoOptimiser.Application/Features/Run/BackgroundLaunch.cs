@@ -41,7 +41,7 @@ public sealed class BackgroundLaunch(IDatabaseLocks locks, IDetachedLauncher lau
         while (true)
         {
             // The lock first: a runner that took it and then died shows as exited, not as started.
-            if (locks.LiveRun(databasePath) is { Command: LockHolders.BackgroundRun } holder && holder.ProcessId == process.ProcessId)
+            if (locks.LiveRun(databasePath) is { IsBackground: true } holder && holder.ProcessId == process.ProcessId)
             {
                 return new BackgroundLaunchResult(BackgroundLaunchOutcome.Started, holder, process.ProcessId);
             }
