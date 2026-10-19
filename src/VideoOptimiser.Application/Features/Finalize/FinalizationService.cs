@@ -139,7 +139,7 @@ public sealed class FinalizationService(IJobRepository jobs, IOutputManifestStor
         catch (Exception exception)
         {
             job.Status = JobStatus.Failed;
-            job.FailureCategory = "FinalizationFailed";
+            job.FailureCategory = FailureCategories.FinalizationFailed;
             job.FailureMessage = exception.Message;
             job.CompletedUtc = DateTimeOffset.UtcNow;
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);

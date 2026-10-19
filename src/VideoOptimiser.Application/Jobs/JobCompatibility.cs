@@ -37,7 +37,6 @@ public sealed record SkippedJobAdvice(SkippedJobResume Resume, string JobWhere, 
 
 public static class JobCompatibility
 {
-    public const string RemoteConfigurationChangedCategory = "RemoteConfigurationChanged";
     public const string RemoteConfigurationChangedMessage = "The processing mode, remote host, or remote workspace differs from the configuration captured for this job.";
 
     /// <param name="mode">The mode to judge the job under instead of <c>processing.mode</c>; see <see cref="AdviseSkipped"/>.</param>

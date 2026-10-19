@@ -249,9 +249,9 @@ public sealed class QueueServiceTests : IDisposable
         var result = await PrepareAsync(ManagedWorker.Settings(DatabasePath));
 
         result.RunnableJobs.Should().BeEmpty();
-        result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be(JobCompatibility.RemoteConfigurationChangedCategory);
+        result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be(FailureCategories.RemoteConfigurationChanged);
         (await _repository.GetAsync(DatabasePath, job.Id)).Should().Match<JobRecord>(stored =>
-            stored.Status == JobStatus.Failed && stored.FailureCategory == JobCompatibility.RemoteConfigurationChangedCategory && stored.FailureMessage == JobCompatibility.RemoteConfigurationChangedMessage);
+            stored.Status == JobStatus.Failed && stored.FailureCategory == FailureCategories.RemoteConfigurationChanged && stored.FailureMessage == JobCompatibility.RemoteConfigurationChangedMessage);
     }
 
     [Fact]
@@ -297,7 +297,7 @@ public sealed class QueueServiceTests : IDisposable
         var result = await PrepareAsync(settings, modeOverridden: true);
 
         result.SkippedJobs.Should().BeEmpty();
-        result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be(JobCompatibility.RemoteConfigurationChangedCategory);
+        result.FailedJobs.Should().ContainSingle().Which.FailureCategory.Should().Be(FailureCategories.RemoteConfigurationChanged);
     }
 
     /// <summary>A job that never started is bound to the mode of the override; a started one is not (see the tests above).</summary>

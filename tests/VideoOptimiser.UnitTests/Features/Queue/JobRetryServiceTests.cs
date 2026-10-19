@@ -27,7 +27,7 @@ public sealed class JobRetryServiceTests : IDisposable
             Attempt = 2,
             OutputPath = "old-output.mp4",
             ManifestPath = "old-output.manifest.json",
-            FailureCategory = JobCompatibility.RemoteConfigurationChangedCategory,
+            FailureCategory = FailureCategories.RemoteConfigurationChanged,
             FailureMessage = JobCompatibility.RemoteConfigurationChangedMessage,
             CompletedUtc = DateTimeOffset.UtcNow,
             ExecutionMode = ProcessingModes.RemoteSsh,
@@ -58,7 +58,7 @@ public sealed class JobRetryServiceTests : IDisposable
         });
         var storedOriginal = (await _repository.GetAsync(DatabasePath, original.Id))!;
         storedOriginal.Status.Should().Be(JobStatus.Failed);
-        storedOriginal.FailureCategory.Should().Be(JobCompatibility.RemoteConfigurationChangedCategory);
+        storedOriginal.FailureCategory.Should().Be(FailureCategories.RemoteConfigurationChanged);
         storedOriginal.OutputPath.Should().Be("old-output.mp4");
         (await _repository.ListAsync(DatabasePath, terminal: true)).Should().ContainSingle(job => job.Id == original.Id);
         (await _repository.ListAsync(DatabasePath, terminal: false)).Should().ContainSingle(job => job.Id == replacement.Id);

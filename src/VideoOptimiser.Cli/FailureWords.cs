@@ -11,26 +11,26 @@ internal static class FailureWords
     // A category whose message already says what happened has no prefix: "Original does not exist: ..." needs no "the original is missing:" before it.
     private static readonly Dictionary<string, string?> Prefixes = new(StringComparer.Ordinal)
     {
-        ["ProcessingFailed"] = "failed",
-        ["StagingFailed"] = "the upload failed",
-        ["CrfSearchFailed"] = "the CRF search failed",
-        ["EncodeFailed"] = "encoding failed",
-        ["DownloadFailed"] = "the download failed",
-        ["ValidationFailed"] = "validation failed",
-        ["FinalizationFailed"] = "finalising failed",
+        [FailureCategories.ProcessingFailed] = "failed",
+        [FailureCategories.StagingFailed] = "the upload failed",
+        [FailureCategories.CrfSearchFailed] = "the CRF search failed",
+        [FailureCategories.EncodeFailed] = "encoding failed",
+        [FailureCategories.DownloadFailed] = "the download failed",
+        [FailureCategories.ValidationFailed] = "validation failed",
+        [FailureCategories.FinalizationFailed] = "finalising failed",
         [FailureCategories.ManualInterventionRequired] = "needs your review",
-        ["Ineligible"] = "doesn't fit your rules",
+        [FailureCategories.Ineligible] = "doesn't fit your rules",
         [FailureCategories.RemoteUnavailable] = "the worker couldn't be reached",
         [FailureCategories.StageStalled] = null,
         [FailureCategories.SourceMissing] = null,
         [FailureCategories.SourceNotReady] = null,
-        ["SourceOutsideWatchRoot"] = null,
-        ["SourceChanged"] = null,
-        ["RemoteConfigurationChanged"] = null,
+        [FailureCategories.SourceOutsideWatchRoot] = null,
+        [FailureCategories.SourceChanged] = null,
+        [FailureCategories.RemoteConfigurationChanged] = null,
         [FailureCategories.NotWorthConverting] = null,
         [FailureCategories.UnsupportedAudio] = null,
         [FailureCategories.FinalizationIncomplete] = null,
-        ["Interrupted"] = null
+        [FailureCategories.Interrupted] = null
     };
 
     /// <summary>
@@ -39,7 +39,7 @@ internal static class FailureWords
     /// </summary>
     public static string? Describe(string? category, string? message, bool sentence)
     {
-        if (category is "Cancelled" or FailureCategories.Rejected) return null;
+        if (category is FailureCategories.Cancelled or FailureCategories.Rejected) return null;
         if (!Prefixes.TryGetValue(category ?? string.Empty, out var prefix) || prefix is null) return message;
         if (sentence) prefix = char.ToUpperInvariant(prefix[0]) + prefix[1..];
         return message is null ? prefix : $"{prefix}: {message}";

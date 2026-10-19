@@ -16,7 +16,7 @@ public sealed class ProcessingSessionFactory(
 {
     public IProcessingSession Create(JobRecord job, AppSettings settings)
     {
-        if (!string.Equals(settings.Processing.Mode, "remoteSsh", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(settings.Processing.Mode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
         {
             return new LocalProcessingSession(job, crfSearchFactory(settings.Tools.AbAv1Path), encoderFactory(settings.Tools.AbAv1Path));
         }
@@ -33,7 +33,7 @@ public sealed class ProcessingSessionFactory(
 internal sealed class LocalProcessingSession(JobRecord job, ICrfSearchClient crfSearch, IVideoEncoder encoder) : IProcessingSession
 {
     public bool IsRemote => false;
-    public string ExecutionMode => "local";
+    public string ExecutionMode => ProcessingModes.Local;
     public string? RemoteHost => null;
     public string? RemoteWorkspace => null;
 

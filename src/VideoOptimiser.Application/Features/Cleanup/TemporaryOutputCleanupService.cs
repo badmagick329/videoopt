@@ -110,7 +110,7 @@ public sealed class TemporaryOutputCleanupService(IJobRepository jobs, IOnlyCopy
         {
             var path = Path.GetFullPath(job.SourcePath);
             if (openPaths.Contains(path) || (job.ImmichAssetId is { } assetId && openAssets.Contains(assetId))) continue;
-            if (job.FailureCategory == "FinalizationFailed") continue;
+            if (job.FailureCategory == FailureCategories.FinalizationFailed) continue;
             var reason = job.Status switch
             {
                 JobStatus.Completed => "staged Immich original; job completed",

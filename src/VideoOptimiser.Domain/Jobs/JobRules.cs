@@ -41,18 +41,55 @@ public static class JobStateTransitions
 }
 
 /// <summary>
-/// The <see cref="JobRecord.FailureCategory"/> values that more than one command reads. They are stored on the job, so
-/// renaming one strands the jobs that already carry it.
+/// Every <see cref="JobRecord.FailureCategory"/> value the code writes or matches. They are stored on the job, so renaming
+/// one strands the jobs that already carry it; <c>FailureCategoriesTests</c> pins each value.
 /// </summary>
 public static class FailureCategories
 {
     /// <summary>An open job's original was gone when it was about to run. Its asset or file is queued again once it is back.</summary>
     public const string SourceMissing = "SourceMissing";
 
+    /// <summary>The original was still being written or otherwise not ready when the job ran. Queued again once it is.</summary>
     public const string SourceNotReady = "SourceNotReady";
+
+    /// <summary>The original lay outside the watch roots (or, for Immich, the staging directory) when the job ran.</summary>
+    public const string SourceOutsideWatchRoot = "SourceOutsideWatchRoot";
+
+    /// <summary>The original no longer fit the eligibility rules when the job ran.</summary>
+    public const string Ineligible = "Ineligible";
+
+    /// <summary>The original changed while it was being uploaded to the worker.</summary>
+    public const string SourceChanged = "SourceChanged";
+
+    /// <summary>A job that failed outside any named stage.</summary>
+    public const string ProcessingFailed = "ProcessingFailed";
+
+    /// <summary>A job whose upload to the worker failed.</summary>
+    public const string StagingFailed = "StagingFailed";
+
+    /// <summary>A job whose CRF search failed.</summary>
+    public const string CrfSearchFailed = "CrfSearchFailed";
+
+    /// <summary>A job whose encode failed.</summary>
+    public const string EncodeFailed = "EncodeFailed";
+
+    /// <summary>A job whose AV1 could not be downloaded from the worker.</summary>
+    public const string DownloadFailed = "DownloadFailed";
+
+    /// <summary>
+    /// An <see cref="JobStatus.Interrupted"/> job: the run was stopped, or the application exited, before the job finished.
+    /// It resumes from its stage.
+    /// </summary>
+    public const string Interrupted = "Interrupted";
 
     /// <summary>An <see cref="JobStatus.Interrupted"/> job whose worker stopped answering; it resumes from its stage.</summary>
     public const string RemoteUnavailable = "RemoteUnavailable";
+
+    /// <summary>A job that started under a different processing mode, worker or remote workspace than the config now names.</summary>
+    public const string RemoteConfigurationChanged = "RemoteConfigurationChanged";
+
+    /// <summary>A <see cref="JobStatus.Cancelled"/> job, dropped by <c>queue drop</c>. Lists show it as dropped.</summary>
+    public const string Cancelled = "Cancelled";
 
     /// <summary>
     /// A <see cref="JobStatus.Skipped"/> job: AV1 cannot meet the quality bar and the size cap together, or the finished AV1
@@ -86,6 +123,12 @@ public static class FailureCategories
     /// <summary>A ready Immich job whose last finalisation stopped early carries this category until it completes.</summary>
     public const string FinalizationIncomplete = "FinalizationIncomplete";
 
+    /// <summary>
+    /// A file finalisation that failed in a way that may have moved a file. Cleanup and temporary-output classification match
+    /// it to keep that job's AV1, which may be the only copy left.
+    /// </summary>
+    public const string FinalizationFailed = "FinalizationFailed";
+
     /// <summary>A file finalisation that was cut off after something moved; its kept resume status stops cleanup deleting the AV1.</summary>
     public const string ManualInterventionRequired = "ManualInterventionRequired";
 
@@ -93,7 +136,7 @@ public static class FailureCategories
     /// Failures that judged the file's state or the settings at run time rather than an attempt to convert it. Discovery has
     /// just found the file eligible inside a watch root, so the earlier verdict no longer holds and the file is queued again.
     /// </summary>
-    public static readonly IReadOnlySet<string> Requeued = new HashSet<string>(StringComparer.Ordinal) { SourceNotReady, "Ineligible", "SourceOutsideWatchRoot", SourceMissing };
+    public static readonly IReadOnlySet<string> Requeued = new HashSet<string>(StringComparer.Ordinal) { SourceNotReady, Ineligible, SourceOutsideWatchRoot, SourceMissing };
 }
 
 /// <summary>The rules for a finalisation that stopped before completing, which finalize, a run and the queue all apply.</summary>

@@ -38,7 +38,7 @@ public sealed class JobProcessor(
         var compatibility = JobCompatibility.Evaluate(job, settings);
         if (compatibility.Status == JobCompatibilityStatus.Incompatible)
         {
-            return await FailAsync(job, databasePath, JobCompatibility.RemoteConfigurationChangedCategory, compatibility.Message!, ExitCode.InvalidConfiguration, progress, cancellationToken);
+            return await FailAsync(job, databasePath, FailureCategories.RemoteConfigurationChanged, compatibility.Message!, ExitCode.InvalidConfiguration, progress, cancellationToken);
         }
         if (compatibility.Status == JobCompatibilityStatus.Adopted)
         {
@@ -54,7 +54,7 @@ public sealed class JobProcessor(
                 job.OutputPath = null;
                 job.ManifestPath = null;
             }
-            else if (resumeStatus == JobStatus.CrfSearching && !string.Equals(job.ExecutionMode, "remoteSsh", StringComparison.OrdinalIgnoreCase))
+            else if (resumeStatus == JobStatus.CrfSearching && !string.Equals(job.ExecutionMode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
             {
                 job.Crf = null;
             }
@@ -65,7 +65,7 @@ public sealed class JobProcessor(
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
         }
 
-        var stage = "ProcessingFailed";
+        var stage = FailureCategories.ProcessingFailed;
         await using var session = sessions.Create(job, settings);
         try
         {
@@ -113,20 +113,20 @@ public sealed class JobProcessor(
                 && await session.HasFinishedEncodeAsync(EncodingOutputPath(path, job), job.Attempt, cancellationToken);
             if (session.IsRemote && !canReuseOutput && !finishedOnWorker)
             {
-                stage = "StagingFailed";
+                stage = FailureCategories.StagingFailed;
                 job.Status = JobStatus.Staging;
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
                 await session.StageAsync(path, fingerprint, progress, cancellationToken);
                 if (!string.Equals(await fingerprints.CreateAsync(path, cancellationToken), fingerprint, StringComparison.Ordinal))
                 {
                     await WorkspaceCleanup.TryAsync(session.CleanupAsync, progress, cancellationToken);
-                    return await FailAsync(job, databasePath, "SourceChanged", "Original changed while it was being uploaded.", ExitCode.ProcessingFailure, progress, cancellationToken);
+                    return await FailAsync(job, databasePath, FailureCategories.SourceChanged, "Original changed while it was being uploaded.", ExitCode.ProcessingFailure, progress, cancellationToken);
                 }
             }
             CrfPrediction? prediction = null;
             if (job.Crf is null)
             {
-                stage = "CrfSearchFailed";
+                stage = FailureCategories.CrfSearchFailed;
                 job.Status = JobStatus.CrfSearching;
                 await jobs.UpdateAsync(databasePath, job, cancellationToken);
                 var samples = HumanReadableValues.TryParseDuration(quality.CrfSearch.SampleDuration, out var sampleDuration) && CrfSampleCountCalculator.TestsWholeVideo(media.DurationSeconds, quality.CrfSearch.SampleCount, sampleDuration)
@@ -154,7 +154,7 @@ public sealed class JobProcessor(
             }
             else
             {
-                stage = "EncodeFailed";
+                stage = FailureCategories.EncodeFailed;
                 if (!reattachAttempt) job.Attempt++;
                 var outputPath = EncodingOutputPath(path, job);
                 job.OutputPath = outputPath;
@@ -162,7 +162,7 @@ public sealed class JobProcessor(
                 var encodedPath = outputPath;
                 if (finishedOnWorker)
                 {
-                    stage = "DownloadFailed";
+                    stage = FailureCategories.DownloadFailed;
                     job.Status = JobStatus.Downloading;
                     await jobs.UpdateAsync(databasePath, job, cancellationToken);
                     // A rerun after a stopped download watched the encode end; one after a stopped encode did not.
@@ -179,7 +179,7 @@ public sealed class JobProcessor(
                     encodedPath = encodeResult.OutputPath;
                     if (session.IsRemote)
                     {
-                        stage = "DownloadFailed";
+                        stage = FailureCategories.DownloadFailed;
                         job.Status = JobStatus.Downloading;
                         await jobs.UpdateAsync(databasePath, job, cancellationToken);
                     }
@@ -218,7 +218,7 @@ public sealed class JobProcessor(
             var stoppedIn = ResumePoint(job.Status, resumeStatus);
             job.ResumeStatus = stoppedIn;
             job.Status = JobStatus.Interrupted;
-            job.FailureCategory = "Interrupted";
+            job.FailureCategory = FailureCategories.Interrupted;
             job.FailureMessage = "Stopped before it finished.";
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
             throw new JobInterruptedException(job, stoppedIn, session.IsRemote, cancellationToken);
@@ -394,13 +394,13 @@ public sealed class JobProcessor(
     {
         var info = new FileInfo(path);
         // An Immich job's original is the staged copy, which lives under immich.stagingDirectory rather than a watch root.
-        if (!force && kind == JobSourceKind.Immich && !(settings.Immich.StagingDirectory.Length > 0 && IsWithinRoot(path, settings.Immich.StagingDirectory))) return SourceVerdict.Fail(info, "SourceOutsideWatchRoot", "Staged Immich original is outside immich.stagingDirectory. Use --force to bypass this check.", ExitCode.ProcessingFailure);
-        if (!force && kind == JobSourceKind.File && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return SourceVerdict.Fail(info, "SourceOutsideWatchRoot", "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure);
+        if (!force && kind == JobSourceKind.Immich && !(settings.Immich.StagingDirectory.Length > 0 && IsWithinRoot(path, settings.Immich.StagingDirectory))) return SourceVerdict.Fail(info, FailureCategories.SourceOutsideWatchRoot, "Staged Immich original is outside immich.stagingDirectory. Use --force to bypass this check.", ExitCode.ProcessingFailure);
+        if (!force && kind == JobSourceKind.File && !settings.Watch.Roots.Any(root => IsWithinRoot(path, root.Path))) return SourceVerdict.Fail(info, FailureCategories.SourceOutsideWatchRoot, "Original is outside configured watch roots. Use --force to bypass this check.", ExitCode.ProcessingFailure);
         var readinessResult = await readiness.CheckAsync(path, cancellationToken);
         if (!readinessResult.IsReady) return SourceVerdict.Fail(info, FailureCategories.SourceNotReady, $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure);
 
         var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
-        if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return SourceVerdict.Fail(info, "Ineligible", eligibilityReason, ExitCode.NoEligibleFiles) with { Media = media };
+        if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return SourceVerdict.Fail(info, FailureCategories.Ineligible, eligibilityReason, ExitCode.NoEligibleFiles) with { Media = media };
 
         // Before staging, and whatever --force says: an AV1 with no audio would pass validation, which expects none, and replace
         // the original at finalise; and a person who chose skip wants the original's spatial audio kept (VOPT-125).
@@ -500,10 +500,10 @@ public sealed class JobProcessor(
         progress?.Report(JobProgress.Outcome(JobTone.Failure, category switch
         {
             FailureCategories.ValidationFailed => $"Failed validation: {message}",
-            "StagingFailed" => $"Failed during the upload: {message}",
-            "CrfSearchFailed" => $"Failed during the CRF search: {message}",
-            "EncodeFailed" => $"Failed during encoding: {message}",
-            "DownloadFailed" => $"Failed during the download: {message}",
+            FailureCategories.StagingFailed => $"Failed during the upload: {message}",
+            FailureCategories.CrfSearchFailed => $"Failed during the CRF search: {message}",
+            FailureCategories.EncodeFailed => $"Failed during encoding: {message}",
+            FailureCategories.DownloadFailed => $"Failed during the download: {message}",
             FailureCategories.StageStalled => message,
             _ => $"Failed: {message}"
         }));

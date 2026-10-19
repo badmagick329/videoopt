@@ -66,7 +66,7 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
                 }
 
                 var id = Guid.NewGuid();
-                var remote = string.Equals(settings.Processing.Mode, "remoteSsh", StringComparison.OrdinalIgnoreCase);
+                var remote = string.Equals(settings.Processing.Mode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase);
                 await jobs.CreateAsync(databasePath, new JobRecord
                 {
                     Id = id,
@@ -75,7 +75,7 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
                     Status = JobStatus.Queued,
                     // An eligible item always carries the probe it was judged on, cached or fresh.
                     VideoFacts = item.MediaInfo!.ToVideoFacts(item.SizeBytes!.Value),
-                    ExecutionMode = remote ? "remoteSsh" : "local",
+                    ExecutionMode = remote ? ProcessingModes.RemoteSsh : ProcessingModes.Local,
                     RemoteHost = remote ? RemoteExecutionIdentity.Host(settings.Processing.RemoteSsh) : null,
                     RemoteWorkspace = remote ? $"{settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/')}/{id:N}" : null
                 }, cancellationToken);

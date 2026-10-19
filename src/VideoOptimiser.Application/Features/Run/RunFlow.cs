@@ -223,7 +223,7 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         return restage;
     }
 
-    private static FailedQueueJob ToFailedQueueJob(JobRecord job, string message) => new(job.Id, job.SourcePath, job.FailureCategory ?? "ProcessingFailed", job.FailureMessage ?? message);
+    private static FailedQueueJob ToFailedQueueJob(JobRecord job, string message) => new(job.Id, job.SourcePath, job.FailureCategory ?? FailureCategories.ProcessingFailed, job.FailureMessage ?? message);
 
     /// <summary>In run order, stopping at the first job that needs the worker: usually only the first job is probed twice.</summary>
     private async Task<bool> AnyJobNeedsWorkerAsync(AppSettings settings, IReadOnlyList<JobRecord> jobs, CancellationToken cancellationToken)

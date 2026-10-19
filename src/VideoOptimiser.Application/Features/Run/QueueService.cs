@@ -56,7 +56,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
                 else if (compatibility.Status == JobCompatibilityStatus.Incompatible)
                 {
                     job.Status = JobStatus.Failed;
-                    job.FailureCategory = JobCompatibility.RemoteConfigurationChangedCategory;
+                    job.FailureCategory = FailureCategories.RemoteConfigurationChanged;
                     job.FailureMessage = compatibility.Message!;
                     job.CompletedUtc = DateTimeOffset.UtcNow;
                     await jobs.UpdateAsync(databasePath, job, cancellationToken);
@@ -141,7 +141,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
             }
             else if (result.ExitCode != ExitCode.Success)
             {
-                failed.Add(new FailedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureCategory ?? "ProcessingFailed", result.Job.FailureMessage ?? result.Message));
+                failed.Add(new FailedQueueJob(result.Job.Id, result.Job.SourcePath, result.Job.FailureCategory ?? FailureCategories.ProcessingFailed, result.Job.FailureMessage ?? result.Message));
             }
             previous = job;
         }

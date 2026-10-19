@@ -65,7 +65,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     }
 
     public bool IsRemote => true;
-    public string ExecutionMode => "remoteSsh";
+    public string ExecutionMode => ProcessingModes.RemoteSsh;
     public string? RemoteHost => _shell.Host;
     public string? RemoteWorkspace { get; }
 

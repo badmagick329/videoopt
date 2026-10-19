@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
+using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
 using VideoOptimiser.Domain.Jobs;
 
@@ -73,15 +74,16 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         var completedUtc = DateTimeOffset.UtcNow;
         // Released too: a held flag on an ended job would mean nothing and could only mislead.
-        return WriteQueueFieldsAsync(databasePath, job, "status = $cancelled, held = 0, failure_category = 'Cancelled', failure_message = 'Dropped by user.', completed_utc = $completedUtc", command =>
+        return WriteQueueFieldsAsync(databasePath, job, "status = $cancelled, held = 0, failure_category = $category, failure_message = 'Dropped by user.', completed_utc = $completedUtc", command =>
         {
             command.Parameters.AddWithValue("$cancelled", (int)JobStatus.Cancelled);
+            command.Parameters.AddWithValue("$category", FailureCategories.Cancelled);
             command.Parameters.AddWithValue("$completedUtc", completedUtc.ToString("O"));
         }, () =>
         {
             job.Status = JobStatus.Cancelled;
             job.Held = false;
-            job.FailureCategory = "Cancelled";
+            job.FailureCategory = FailureCategories.Cancelled;
             job.FailureMessage = "Dropped by user.";
             job.CompletedUtc = completedUtc;
         }, cancellationToken);
@@ -170,10 +172,11 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
             UPDATE jobs
-            SET resume_status = status, status = $interrupted, failure_category = 'Interrupted', failure_message = 'Application stopped before the job completed.', updated_utc = $updatedUtc, row_version = row_version + 1
+            SET resume_status = status, status = $interrupted, failure_category = $category, failure_message = 'Application stopped before the job completed.', updated_utc = $updatedUtc, row_version = row_version + 1
             WHERE status IN ($staging, $crfSearching, $encoding, $downloading, $validating{(includeFinalizing ? ", $finalizing" : string.Empty)});
             """;
         command.Parameters.AddWithValue("$interrupted", (int)JobStatus.Interrupted);
+        command.Parameters.AddWithValue("$category", FailureCategories.Interrupted);
         command.Parameters.AddWithValue("$crfSearching", (int)JobStatus.CrfSearching);
         command.Parameters.AddWithValue("$staging", (int)JobStatus.Staging);
         command.Parameters.AddWithValue("$encoding", (int)JobStatus.Encoding);
@@ -360,7 +363,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
             new("failure_message", JobColumnWrites.Both, job => job.FailureMessage, (reader, i, job) => job.FailureMessage = NullableString(reader, i)),
             new("updated_utc", JobColumnWrites.Both, job => job.UpdatedUtc.ToString("O"), (reader, i, job) => job.UpdatedUtc = ParseUtc(reader.GetString(i))),
             new("completed_utc", JobColumnWrites.Both, job => job.CompletedUtc?.ToString("O"), (reader, i, job) => job.CompletedUtc = NullableString(reader, i) is { } completed ? ParseUtc(completed) : null),
-            new("execution_mode", JobColumnWrites.Both, job => job.ExecutionMode, (reader, i, job) => job.ExecutionMode = NullableString(reader, i) ?? "local"),
+            new("execution_mode", JobColumnWrites.Both, job => job.ExecutionMode, (reader, i, job) => job.ExecutionMode = NullableString(reader, i) ?? ProcessingModes.Local),
             new("remote_host", JobColumnWrites.Both, job => job.RemoteHost, (reader, i, job) => job.RemoteHost = NullableString(reader, i)),
             new("remote_workspace", JobColumnWrites.Both, job => job.RemoteWorkspace, (reader, i, job) => job.RemoteWorkspace = NullableString(reader, i)),
             new("source_kind", JobColumnWrites.Both, job => SourceKindText(job.SourceKind), (reader, i, job) => job.SourceKind = ParseSourceKind(reader.GetString(i))),

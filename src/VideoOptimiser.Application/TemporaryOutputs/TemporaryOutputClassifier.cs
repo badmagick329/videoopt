@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Domain.Jobs;
 
 namespace VideoOptimiser.Application.TemporaryOutputs;
@@ -34,7 +35,7 @@ public static partial class TemporaryOutputClassifier
     /// </summary>
     public static string? AbandonedReason(JobRecord job, int attempt)
     {
-        if (job.FailureCategory == "FinalizationFailed" || job.ResumeStatus == JobStatus.Finalizing) return null;
+        if (job.FailureCategory == FailureCategories.FinalizationFailed || job.ResumeStatus == JobStatus.Finalizing) return null;
         return job.Status switch
         {
             JobStatus.Completed => "job completed",
@@ -52,7 +53,7 @@ public static partial class TemporaryOutputClassifier
     public static bool RestartsEncode(JobRecord job) =>
         job.Status == JobStatus.Interrupted &&
         job.ResumeStatus == JobStatus.Encoding &&
-        !string.Equals(job.ExecutionMode, "remoteSsh", StringComparison.OrdinalIgnoreCase);
+        !string.Equals(job.ExecutionMode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase);
 
     [GeneratedRegex(@"\.(?<id>[0-9a-f]{32})\.(?<attempt>[0-9]{1,9})\.encoding(\.[^.]+)*$", RegexOptions.CultureInvariant)]
     private static partial Regex FileNamePattern();
