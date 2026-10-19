@@ -68,7 +68,7 @@ public sealed class CleanupCommandTests : IDisposable
     [Fact]
     public async Task AnsweringYDeletesAndReportsTheCount()
     {
-        var cleanup = new FakeCleanup(Plan(), new(2, 3 * 1024 * 1024, []));
+        var cleanup = new FakeCleanup(Plan(), new(2, 3 * 1024 * 1024, [], []));
 
         // Capital Y too: the answer is not case-sensitive.
         var (code, stdout, stderr) = await RunAsync(cleanup, "Y\n", "cleanup");
@@ -103,7 +103,7 @@ public sealed class CleanupCommandTests : IDisposable
     [Fact]
     public async Task AFailedDeleteIsReportedOnStderrAndEndsInPartialSuccess()
     {
-        var cleanup = new FakeCleanup(Plan(abandoned: false), new(1, 2 * 1024 * 1024, ["clip-b.mp4: access denied"]));
+        var cleanup = new FakeCleanup(Plan(abandoned: false), new(1, 2 * 1024 * 1024, ["clip-b.mp4: access denied"], []));
 
         var (code, stdout, stderr) = await RunAsync(cleanup, "y\n", "cleanup");
 
@@ -116,6 +116,22 @@ public sealed class CleanupCommandTests : IDisposable
             "Staged Immich originals: 1. Total: 2.0 MiB.\n" +
             "Staged Immich originals are local copies of Immich assets. After 'queue retry', 'immich run' downloads the copy again.\n" +
             "Delete these files? [y/N] Deleted 1 file, 2.0 MiB.\n");
+    }
+
+    [Fact]
+    public async Task AFileWhoseJobChangedDuringThePromptIsNamedAsKept()
+    {
+        var changed = Path.Combine(_directory, "out", "clip-a.mp4.tmp");
+        var cleanup = new FakeCleanup(Plan(staged: false), new(1, 3 * 1024 * 1024, [], [changed]));
+
+        var (code, stdout, stderr) = await RunAsync(cleanup, "y\n", "cleanup");
+
+        code.Should().Be((int)ExitCode.Success);
+        stderr.Should().BeEmpty();
+        stdout.ReplaceLineEndings("\n").Should().EndWith(
+            "Delete these files? [y/N] " +
+            $"Kept  {changed} (its job changed while cleanup waited for your answer)\n" +
+            "Deleted 1 file, 3.0 MiB.\n");
     }
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
@@ -151,10 +167,10 @@ public sealed class CleanupCommandTests : IDisposable
             return Task.FromResult(plan);
         }
 
-        public TemporaryOutputCleanupResult Delete(TemporaryOutputCleanupPlan plan)
+        public Task<TemporaryOutputCleanupResult> DeleteAsync(string databasePath, TemporaryOutputCleanupPlan plan, CancellationToken cancellationToken = default)
         {
             DeleteCalls++;
-            return result ?? new(0, 0, []);
+            return Task.FromResult(result ?? new(0, 0, [], []));
         }
     }
 }

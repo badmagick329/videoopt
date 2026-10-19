@@ -696,7 +696,7 @@ public sealed class QueueVerbTests : QueueTestBase
         var cleanupService = new TemporaryOutputCleanupService(Repository, new OnlyCopyGuard(_immich));
         var plan = await cleanupService.FindAsync(DatabasePath, new ImmichSettings());
         plan.Abandoned.Should().ContainSingle(file => file.Path == job.OutputPath).Which.Reason.Should().Be("job rejected");
-        cleanupService.Delete(plan).Failures.Should().BeEmpty();
+        (await cleanupService.DeleteAsync(DatabasePath, plan)).Failures.Should().BeEmpty();
         File.Exists(job.OutputPath!).Should().BeFalse();
     }
 
@@ -783,7 +783,7 @@ public sealed class QueueVerbTests : QueueTestBase
         public Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, ImmichSettings immich, CancellationToken cancellationToken = default) =>
             throw new IOException("plan unreadable");
 
-        public TemporaryOutputCleanupResult Delete(TemporaryOutputCleanupPlan plan) => throw new NotSupportedException();
+        public Task<TemporaryOutputCleanupResult> DeleteAsync(string databasePath, TemporaryOutputCleanupPlan plan, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     /// <summary>

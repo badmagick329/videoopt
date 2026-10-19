@@ -36,7 +36,9 @@ internal sealed class CleanupCommand(ITemporaryOutputCleanupService cleanup)
 
         CliConsole.Write("Delete these files? [y/N] ");
         if (!string.Equals(CliConsole.ReadLine(), "y", StringComparison.OrdinalIgnoreCase)) { CliConsole.WriteLine("Cleanup cancelled."); return (int)ExitCode.Success; }
-        var result = cleanup.Delete(plan);
+        // No lock is held across the prompt, so the delete reads the jobs again and leaves any whose status moved meanwhile.
+        var result = await cleanup.DeleteAsync(settings.Database.Path, plan, cancellationToken);
+        foreach (var path in result.JobChanged) CliConsole.WriteLine($"Kept  {path} (its job changed while cleanup waited for your answer)");
         foreach (var failure in result.Failures) WriteError($"Could not delete {failure}");
         CliConsole.WriteLine($"Deleted {OutputWords.Count(result.Deleted, "file", "files")}, {HumanReadableValues.FormatSize(result.DeletedBytes)}.");
         return result.Failures.Count == 0 ? (int)ExitCode.Success : (int)ExitCode.PartialSuccess;

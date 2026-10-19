@@ -129,7 +129,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
             [.. plan.StagedOriginals.Where(file => file.JobId == job.Id)],
             [],
             []);
-        cleanup.Delete(mine);
+        await cleanup.DeleteAsync(databasePath, mine, cancellationToken);
         // What is still there afterwards could not be deleted; the delete reports its failures as text only.
         var av1Left = mine.Abandoned.Count(file => File.Exists(file.Path));
         var copyLeft = mine.StagedOriginals.Count(file => File.Exists(file.Path));

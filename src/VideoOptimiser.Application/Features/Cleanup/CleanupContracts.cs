@@ -9,14 +9,15 @@ namespace VideoOptimiser.Application.Features.Cleanup;
 /// </summary>
 public sealed record KeptOnlyCopy(string Path, Guid JobId, bool IsAv1, OnlyCopyRisk Risk);
 
-/// <param name="Kept">Files left alone because they may be the only copy. They are in neither of the deletable lists, so <see cref="ITemporaryOutputCleanupService.Delete"/> never touches them.</param>
+/// <param name="Kept">Files left alone because they may be the only copy. They are in neither of the deletable lists, so <see cref="ITemporaryOutputCleanupService.DeleteAsync"/> never touches them.</param>
 public sealed record TemporaryOutputCleanupPlan(IReadOnlyList<AbandonedTemporaryOutput> Abandoned, IReadOnlyList<StagedImmichOriginal> StagedOriginals, IReadOnlyList<string> UnknownJobFiles, IReadOnlyList<KeptOnlyCopy> Kept)
 {
     public int Count => Abandoned.Count + StagedOriginals.Count;
     public long TotalBytes => Abandoned.Sum(file => file.SizeBytes) + StagedOriginals.Sum(file => file.SizeBytes);
 }
 
-public sealed record TemporaryOutputCleanupResult(int Deleted, long DeletedBytes, IReadOnlyList<string> Failures);
+/// <param name="JobChanged">Planned files left alone because their job, read again at delete time, no longer lets cleanup delete them.</param>
+public sealed record TemporaryOutputCleanupResult(int Deleted, long DeletedBytes, IReadOnlyList<string> Failures, IReadOnlyList<string> JobChanged);
 
 public interface ITemporaryOutputCleanupService
 {
@@ -28,5 +29,10 @@ public interface ITemporaryOutputCleanupService
     /// such a job.
     /// </summary>
     Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, ImmichSettings immich, CancellationToken cancellationToken = default);
-    TemporaryOutputCleanupResult Delete(TemporaryOutputCleanupPlan plan);
+
+    /// <summary>
+    /// Deletes the plan's files, except those whose job, read again now, no longer qualifies: they are left and listed in
+    /// <see cref="TemporaryOutputCleanupResult.JobChanged"/>.
+    /// </summary>
+    Task<TemporaryOutputCleanupResult> DeleteAsync(string databasePath, TemporaryOutputCleanupPlan plan, CancellationToken cancellationToken = default);
 }

@@ -16,10 +16,7 @@ public sealed class TemporaryOutputCleanupService(IJobRepository jobs, IOnlyCopy
 {
     public async Task<TemporaryOutputCleanupPlan> FindAsync(string databasePath, ImmichSettings immich, CancellationToken cancellationToken = default)
     {
-        var openJobs = await jobs.ListAsync(databasePath, terminal: false, cancellationToken);
-        var allJobs = openJobs
-            .Concat(await jobs.ListAsync(databasePath, terminal: true, cancellationToken))
-            .ToDictionary(job => job.Id);
+        var (openJobs, allJobs) = await ReadJobsAsync(databasePath, cancellationToken);
         var folders = allJobs.Values
             .Select(job => Path.Combine(Path.GetDirectoryName(job.SourcePath)!, TemporaryOutputClassifier.FolderName))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -90,9 +87,22 @@ public sealed class TemporaryOutputCleanupService(IJobRepository jobs, IOnlyCopy
     /// </summary>
     private static StagedImmichOriginal[] FindStagedOriginals(IEnumerable<JobRecord> allJobs, IReadOnlyList<JobRecord> openJobs, string stagingDirectory)
     {
+        var staged = new List<StagedImmichOriginal>();
+        foreach (var (job, path, reason) in DeletableStagedPaths(allJobs, openJobs))
+        {
+            if (!ImmichStaging.IsStagedOriginal(stagingDirectory, job.ImmichAssetId, path)) continue;
+            var file = new FileInfo(path);
+            if (file.Exists) staged.Add(new StagedImmichOriginal(path, job.Id, file.Length, reason));
+        }
+
+        return staged.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    /// <summary>The job rules of <see cref="FindStagedOriginals"/>, without the file checks, so a delete can apply them to the jobs as they are now.</summary>
+    private static IEnumerable<(JobRecord Job, string Path, string Reason)> DeletableStagedPaths(IEnumerable<JobRecord> allJobs, IReadOnlyList<JobRecord> openJobs)
+    {
         var openPaths = openJobs.Select(job => Path.GetFullPath(job.SourcePath)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var openAssets = openJobs.Select(job => job.ImmichAssetId).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var staged = new List<StagedImmichOriginal>();
         foreach (var job in allJobs
                      .Where(job => job.SourceKind == JobSourceKind.Immich)
                      .GroupBy(job => Path.GetFullPath(job.SourcePath), StringComparer.OrdinalIgnoreCase)
@@ -110,21 +120,39 @@ public sealed class TemporaryOutputCleanupService(IJobRepository jobs, IOnlyCopy
                 JobStatus.Rejected => "staged Immich original; job rejected",
                 _ => null
             };
-            if (reason is null || !ImmichStaging.IsStagedOriginal(stagingDirectory, job.ImmichAssetId, path)) continue;
-            var file = new FileInfo(path);
-            if (file.Exists) staged.Add(new StagedImmichOriginal(path, job.Id, file.Length, reason));
+            if (reason is not null) yield return (job, path, reason);
         }
-
-        return staged.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public TemporaryOutputCleanupResult Delete(TemporaryOutputCleanupPlan plan)
+    /// <summary>
+    /// <c>cleanup</c> shows the plan and then waits at a y/N for as long as the user takes, holding no lock: the finalise lock
+    /// would block a run for that long. Meanwhile a run's validation recheck can turn a failed job ready to finalise, and
+    /// <c>queue retry</c> can open a job on a staged copy's path, so each file is checked again against its job as it is
+    /// now. The only-copy guard is not asked again: it judges the original, not the job's status, so a status change alone
+    /// cannot turn its answer.
+    /// </summary>
+    public async Task<TemporaryOutputCleanupResult> DeleteAsync(string databasePath, TemporaryOutputCleanupPlan plan, CancellationToken cancellationToken = default)
     {
+        var (openJobs, allJobs) = await ReadJobsAsync(databasePath, cancellationToken);
+        var stagedJobs = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (job, path, _) in DeletableStagedPaths(allJobs.Values, openJobs)) stagedJobs[path] = job.Id;
+        var abandoned = plan.Abandoned
+            .Where(file => allJobs.TryGetValue(file.JobId, out var job) && TemporaryOutputClassifier.AbandonedReason(job, file.Attempt) is not null)
+            .Select(file => (file.Path, file.SizeBytes));
+        var staged = plan.StagedOriginals
+            .Where(file => stagedJobs.TryGetValue(file.Path, out var jobId) && jobId == file.JobId)
+            .Select(file => (file.Path, file.SizeBytes))
+            .ToArray();
+        var deletable = abandoned.Concat(staged).ToArray();
+        var jobChanged = plan.Abandoned.Select(file => file.Path)
+            .Concat(plan.StagedOriginals.Select(file => file.Path))
+            .Except(deletable.Select(file => file.Path), StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
         var deleted = 0;
         var deletedBytes = 0L;
         var failures = new List<string>();
-        foreach (var (path, sizeBytes) in plan.Abandoned.Select(file => (file.Path, file.SizeBytes))
-                     .Concat(plan.StagedOriginals.Select(file => (file.Path, file.SizeBytes))))
+        foreach (var (path, sizeBytes) in deletable)
         {
             try
             {
@@ -140,13 +168,22 @@ public sealed class TemporaryOutputCleanupService(IJobRepository jobs, IOnlyCopy
         }
 
         // The asset folder goes once nothing is left in it; one still holding a kept output or a stray file stays.
-        foreach (var folder in plan.StagedOriginals.Select(file => Path.GetDirectoryName(file.Path)!).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var folder in staged.Select(file => Path.GetDirectoryName(file.Path)!).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             DeleteIfEmpty(Path.Combine(folder, TemporaryOutputClassifier.FolderName));
             DeleteIfEmpty(folder);
         }
 
-        return new TemporaryOutputCleanupResult(deleted, deletedBytes, failures);
+        return new TemporaryOutputCleanupResult(deleted, deletedBytes, failures, jobChanged);
+    }
+
+    private async Task<(IReadOnlyList<JobRecord> Open, Dictionary<Guid, JobRecord> All)> ReadJobsAsync(string databasePath, CancellationToken cancellationToken)
+    {
+        var openJobs = await jobs.ListAsync(databasePath, terminal: false, cancellationToken);
+        var allJobs = openJobs
+            .Concat(await jobs.ListAsync(databasePath, terminal: true, cancellationToken))
+            .ToDictionary(job => job.Id);
+        return (openJobs, allJobs);
     }
 
     private static void DeleteIfEmpty(string folder)

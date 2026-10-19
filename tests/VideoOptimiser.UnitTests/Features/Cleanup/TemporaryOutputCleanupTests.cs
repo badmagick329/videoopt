@@ -78,7 +78,7 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var service = new TemporaryOutputCleanupService(_repository, new OnlyCopyGuard(new PresentImmich()));
 
         var plan = await service.FindAsync(_databasePath, Immich(string.Empty));
-        var result = service.Delete(plan);
+        var result = await service.DeleteAsync(_databasePath, plan);
 
         plan.Abandoned.Select(file => file.Path).Should().BeEquivalentTo([superseded, completedManifest, partialEncode]);
         plan.UnknownJobFiles.Should().Equal(unknown);
@@ -100,12 +100,51 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         TemporaryOutputCleanupResult result;
         using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
-            result = service.Delete(plan);
+            result = await service.DeleteAsync(_databasePath, plan);
         }
 
         result.Deleted.Should().Be(1);
         result.Failures.Should().ContainSingle(failure => failure.StartsWith(locked));
         File.Exists(manifest).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task KeepsTheAv1OfAJobThatBecameReadyAfterThePlanWasMade()
+    {
+        var rechecked = await CreateJobAsync(JobStatus.Failed, attempt: 1);
+        var stillCancelled = await CreateJobAsync(JobStatus.Cancelled, attempt: 1);
+        var av1 = Write(rechecked, 1, ".mp4");
+        var other = Write(stillCancelled, 1, ".mp4");
+        var service = new TemporaryOutputCleanupService(_repository, new OnlyCopyGuard(new PresentImmich()));
+        var plan = await service.FindAsync(_databasePath, Immich(string.Empty));
+        // A background run's validation recheck turns the failed job ready while cleanup waits at its prompt.
+        rechecked.Status = JobStatus.ReadyToFinalize;
+        await _repository.UpdateAsync(_databasePath, rechecked);
+
+        var result = await service.DeleteAsync(_databasePath, plan);
+
+        plan.Abandoned.Select(file => file.Path).Should().BeEquivalentTo([av1, other]);
+        result.JobChanged.Should().Equal(av1);
+        result.Deleted.Should().Be(1);
+        File.Exists(av1).Should().BeTrue();
+        File.Exists(other).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task KeepsAStagedOriginalThatARetryOpenedAfterThePlanWasMade()
+    {
+        var staging = Path.Combine(_directory, "staging");
+        var failed = await CreateStagedJobAsync(staging, JobStatus.Failed, "EncodeFailed");
+        var service = new TemporaryOutputCleanupService(_repository, new OnlyCopyGuard(new PresentImmich()));
+        var plan = await service.FindAsync(_databasePath, Immich(staging));
+        await CreateJobAtAsync(failed.SourcePath, JobStatus.Queued, failed.ImmichAssetId);
+
+        var result = await service.DeleteAsync(_databasePath, plan);
+
+        plan.StagedOriginals.Select(file => file.Path).Should().Equal(failed.SourcePath);
+        result.JobChanged.Should().Equal(failed.SourcePath);
+        result.Deleted.Should().Be(0);
+        File.Exists(failed.SourcePath).Should().BeTrue();
     }
 
     [Fact]
@@ -128,7 +167,7 @@ public sealed class TemporaryOutputCleanupTests : IDisposable
         var service = new TemporaryOutputCleanupService(_repository, new OnlyCopyGuard(new PresentImmich()));
 
         var plan = await service.FindAsync(_databasePath, Immich(staging));
-        var result = service.Delete(plan);
+        var result = await service.DeleteAsync(_databasePath, plan);
 
         plan.StagedOriginals.Select(file => file.Path).Should().BeEquivalentTo([failed.SourcePath, cancelled.SourcePath, completed.SourcePath, skipped.SourcePath, rejected.SourcePath]);
         plan.StagedOriginals.Single(file => file.Path == skipped.SourcePath).Reason.Should().Be("staged Immich original; job skipped");
