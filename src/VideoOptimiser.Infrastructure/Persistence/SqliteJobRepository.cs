@@ -17,7 +17,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT * FROM jobs WHERE source_path = $sourcePath COLLATE NOCASE AND status NOT IN ({TerminalStatuses}) ORDER BY created_utc DESC LIMIT 1;";
+        command.CommandText = $"SELECT {JobsTable.Select} FROM jobs WHERE source_path = $sourcePath COLLATE NOCASE AND status NOT IN ({TerminalStatuses}) ORDER BY created_utc DESC LIMIT 1;";
         command.Parameters.AddWithValue("$sourcePath", sourcePath);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
@@ -27,7 +27,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM jobs WHERE id = $id;";
+        command.CommandText = $"SELECT {JobsTable.Select} FROM jobs WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString("N"));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
@@ -157,7 +157,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT * FROM jobs WHERE status {(terminal ? "IN" : "NOT IN")} ({TerminalStatuses}) ORDER BY updated_utc DESC;";
+        command.CommandText = $"SELECT {JobsTable.Select} FROM jobs WHERE status {(terminal ? "IN" : "NOT IN")} ({TerminalStatuses}) ORDER BY updated_utc DESC;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var jobs = new List<JobRecord>();
         while (await reader.ReadAsync(cancellationToken)) jobs.Add(Read(reader));
@@ -188,7 +188,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT * FROM jobs WHERE immich_asset_id = $assetId AND status NOT IN ({TerminalStatuses}) ORDER BY created_utc DESC LIMIT 1;";
+        command.CommandText = $"SELECT {JobsTable.Select} FROM jobs WHERE immich_asset_id = $assetId AND status NOT IN ({TerminalStatuses}) ORDER BY created_utc DESC LIMIT 1;";
         command.Parameters.AddWithValue("$assetId", assetId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
@@ -198,7 +198,7 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     {
         await using var connection = await OpenAsync(databasePath, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM jobs WHERE source_kind = 'immich' AND status = $completed ORDER BY completed_utc;";
+        command.CommandText = $"SELECT {JobsTable.Select} FROM jobs WHERE source_kind = 'immich' AND status = $completed ORDER BY completed_utc;";
         command.Parameters.AddWithValue("$completed", (int)JobStatus.Completed);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var jobs = new List<JobRecord>();
@@ -258,42 +258,14 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
     private static async Task<int> ExecuteWriteAsync(SqliteConnection connection, JobRecord job, bool insert, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = insert
-            // One statement, so two commands queueing the same original at once cannot both insert an open job for it.
-            ? $"""INSERT INTO jobs (id, source_path, source_fingerprint, status, resume_status, attempt, crf, output_path, manifest_path, validation_passed, source_size_bytes, output_size_bytes, percentage_saved, failure_category, failure_message, created_utc, updated_utc, completed_utc, execution_mode, remote_host, remote_workspace, source_kind, immich_asset_id, immich_checksum, immich_new_asset_id, quality_fingerprint, video_codec, video_width, video_height, video_bitrate, video_duration_seconds, video_size_bytes, forced, validation_warnings, notes) SELECT $id, $sourcePath, $sourceFingerprint, $status, $resumeStatus, $attempt, $crf, $outputPath, $manifestPath, $validationPassed, $sourceSizeBytes, $outputSizeBytes, $percentageSaved, $failureCategory, $failureMessage, $createdUtc, $updatedUtc, $completedUtc, $executionMode, $remoteHost, $remoteWorkspace, $sourceKind, $immichAssetId, $immichChecksum, $immichNewAssetId, $qualityFingerprint, $videoCodec, $videoWidth, $videoHeight, $videoBitrate, $videoDurationSeconds, $videoSizeBytes, $forced, $validationWarnings, $notes WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE status NOT IN ({TerminalStatuses}) AND (source_path = $sourcePath COLLATE NOCASE OR ($immichAssetId IS NOT NULL AND immich_asset_id = $immichAssetId)));"""
-            : """UPDATE jobs SET source_path = $sourcePath, source_fingerprint = $sourceFingerprint, status = $status, resume_status = $resumeStatus, attempt = $attempt, crf = $crf, output_path = $outputPath, manifest_path = $manifestPath, validation_passed = $validationPassed, source_size_bytes = $sourceSizeBytes, output_size_bytes = $outputSizeBytes, percentage_saved = $percentageSaved, failure_category = $failureCategory, failure_message = $failureMessage, updated_utc = $updatedUtc, completed_utc = $completedUtc, execution_mode = $executionMode, remote_host = $remoteHost, remote_workspace = $remoteWorkspace, source_kind = $sourceKind, immich_asset_id = $immichAssetId, immich_checksum = $immichChecksum, immich_new_asset_id = $immichNewAssetId, quality_fingerprint = $qualityFingerprint, video_codec = $videoCodec, video_width = $videoWidth, video_height = $videoHeight, video_bitrate = $videoBitrate, video_duration_seconds = $videoDurationSeconds, video_size_bytes = $videoSizeBytes, validation_warnings = $validationWarnings, notes = $notes, dismissed_utc = CASE WHEN $status = $failed THEN dismissed_utc END, row_version = row_version + 1 WHERE id = $id AND row_version = $rowVersion AND held = 0;""";
-        // A dismissal is of a failure: a job that leaves Failed (a resumed finalisation) and fails again shows again.
-        if (!insert) Add(command, "$failed", (int)JobStatus.Failed);
-        Add(command, "$id", job.Id.ToString("N"));
-        Add(command, "$sourcePath", job.SourcePath);
-        Add(command, "$sourceFingerprint", job.SourceFingerprint);
-        Add(command, "$status", (int)job.Status);
-        Add(command, "$resumeStatus", job.ResumeStatus is null ? null : (int)job.ResumeStatus.Value);
-        Add(command, "$attempt", job.Attempt);
-        Add(command, "$crf", job.Crf);
-        Add(command, "$outputPath", job.OutputPath);
-        Add(command, "$manifestPath", job.ManifestPath);
-        Add(command, "$validationPassed", job.ValidationPassed is null ? null : job.ValidationPassed.Value ? 1 : 0);
-        Add(command, "$validationWarnings", job.ValidationWarnings.Count == 0 ? null : string.Join('\n', job.ValidationWarnings));
-        Add(command, "$notes", job.Notes.Count == 0 ? null : string.Join('\n', job.Notes));
-        Add(command, "$sourceSizeBytes", job.SourceSizeBytes);
-        Add(command, "$outputSizeBytes", job.OutputSizeBytes);
-        Add(command, "$percentageSaved", job.PercentageSaved?.ToString(CultureInfo.InvariantCulture));
-        Add(command, "$failureCategory", job.FailureCategory);
-        Add(command, "$failureMessage", job.FailureMessage);
-        Add(command, "$createdUtc", job.CreatedUtc.ToString("O"));
-        Add(command, "$updatedUtc", job.UpdatedUtc.ToString("O"));
-        Add(command, "$completedUtc", job.CompletedUtc?.ToString("O"));
-        Add(command, "$executionMode", job.ExecutionMode);
-        Add(command, "$remoteHost", job.RemoteHost);
-        Add(command, "$remoteWorkspace", job.RemoteWorkspace);
-        Add(command, "$sourceKind", SourceKindText(job.SourceKind));
-        Add(command, "$immichAssetId", job.ImmichAssetId);
-        Add(command, "$immichChecksum", job.ImmichChecksum);
-        Add(command, "$immichNewAssetId", job.ImmichNewAssetId);
-        Add(command, "$qualityFingerprint", job.QualityFingerprint);
-        AddVideoFacts(command, job.VideoFacts);
-        Add(command, "$forced", job.Forced ? 1 : 0);
+        command.CommandText = insert ? JobsTable.Insert : JobsTable.Update;
+        // Every bound column, for either statement: the UPDATE's WHERE needs $id, which its SET leaves out.
+        foreach (var column in JobsTable.Columns)
+        {
+            if (column.Bind is { } bind) Add(command, column.Parameter, bind(job));
+        }
+
+        Add(command, "$failed", (int)JobStatus.Failed);
         Add(command, "$rowVersion", job.RowVersion);
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -308,11 +280,15 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         Add(command, "$videoSizeBytes", facts?.SizeBytes);
     }
 
-    // The codec and size are always written together, so a row with either missing predates migration 8.
-    private static VideoFacts? ReadVideoFacts(SqliteDataReader reader) =>
-        NullableString(reader, "video_codec") is { } codec && NullableLong(reader, "video_size_bytes") is { } size
-            ? new VideoFacts(codec, NullableInt(reader, "video_width"), NullableInt(reader, "video_height"), NullableLong(reader, "video_bitrate"), NullableDouble(reader, "video_duration_seconds"), size)
+    // The codec and size are always written together, so a row with either missing predates migration 8. By name: both the
+    // jobs and immich_skipped_assets tables hold these columns.
+    private static VideoFacts? ReadVideoFacts(SqliteDataReader reader)
+    {
+        int At(string column) => reader.GetOrdinal(column);
+        return NullableString(reader, At("video_codec")) is { } codec && NullableLong(reader, At("video_size_bytes")) is { } size
+            ? new VideoFacts(codec, NullableInt(reader, At("video_width")), NullableInt(reader, At("video_height")), NullableLong(reader, At("video_bitrate")), NullableDouble(reader, At("video_duration_seconds")), size)
             : null;
+    }
 
     private static async Task<(JobStatus Status, long RowVersion, bool Held)?> GetStateAsync(SqliteConnection connection, Guid id, CancellationToken cancellationToken)
     {
@@ -325,44 +301,109 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
 
     private static void Add(SqliteCommand command, string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
 
-    private static JobRecord Read(SqliteDataReader reader) => new()
+    /// <summary>Reads a row selected with <see cref="JobsTable.Select"/>; by name, so the table's order is free to change.</summary>
+    private static JobRecord Read(SqliteDataReader reader)
     {
-        Id = Guid.ParseExact(reader.GetString(reader.GetOrdinal("id")), "N"),
-        SourcePath = reader.GetString(reader.GetOrdinal("source_path")),
-        SourceFingerprint = reader.GetString(reader.GetOrdinal("source_fingerprint")),
-        Status = (JobStatus)reader.GetInt32(reader.GetOrdinal("status")),
-        ResumeStatus = NullableInt(reader, "resume_status") is { } resumeStatus ? (JobStatus)resumeStatus : null,
-        Attempt = reader.GetInt32(reader.GetOrdinal("attempt")),
-        Crf = NullableInt(reader, "crf"),
-        OutputPath = NullableString(reader, "output_path"),
-        ManifestPath = NullableString(reader, "manifest_path"),
-        ValidationPassed = NullableBool(reader, "validation_passed"),
-        // One warning per line: validation words each as a single line.
-        ValidationWarnings = NullableString(reader, "validation_warnings")?.Split('\n') ?? [],
-        Notes = NullableString(reader, "notes")?.Split('\n') ?? [],
-        SourceSizeBytes = NullableLong(reader, "source_size_bytes"),
-        OutputSizeBytes = NullableLong(reader, "output_size_bytes"),
-        PercentageSaved = NullableDecimal(reader, "percentage_saved"),
-        FailureCategory = NullableString(reader, "failure_category"),
-        FailureMessage = NullableString(reader, "failure_message"),
-        CreatedUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("created_utc")), CultureInfo.InvariantCulture),
-        UpdatedUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("updated_utc")), CultureInfo.InvariantCulture),
-        CompletedUtc = NullableString(reader, "completed_utc") is { } completed ? DateTimeOffset.Parse(completed, CultureInfo.InvariantCulture) : null,
-        ExecutionMode = NullableString(reader, "execution_mode") ?? "local",
-        RemoteHost = NullableString(reader, "remote_host"),
-        RemoteWorkspace = NullableString(reader, "remote_workspace"),
-        SourceKind = ParseSourceKind(reader.GetString(reader.GetOrdinal("source_kind"))),
-        ImmichAssetId = NullableString(reader, "immich_asset_id"),
-        ImmichChecksum = NullableString(reader, "immich_checksum"),
-        ImmichNewAssetId = NullableString(reader, "immich_new_asset_id"),
-        QualityFingerprint = NullableString(reader, "quality_fingerprint"),
-        VideoFacts = ReadVideoFacts(reader),
-        Held = reader.GetInt32(reader.GetOrdinal("held")) != 0,
-        Priority = reader.GetInt32(reader.GetOrdinal("priority")),
-        Forced = reader.GetInt32(reader.GetOrdinal("forced")) != 0,
-        DismissedUtc = NullableString(reader, "dismissed_utc") is { } dismissed ? DateTimeOffset.Parse(dismissed, CultureInfo.InvariantCulture) : null,
-        RowVersion = reader.GetInt64(reader.GetOrdinal("row_version"))
-    };
+        var job = new JobRecord();
+        foreach (var column in JobsTable.Columns) column.Read?.Invoke(reader, reader.GetOrdinal(column.Name), job);
+        return job;
+    }
+
+    /// <summary>Which of <see cref="ExecuteWriteAsync"/>'s statements set a column.</summary>
+    [Flags]
+    private enum JobColumnWrites
+    {
+        None = 0,
+        Insert = 1,
+        Update = 2,
+        Both = Insert | Update
+    }
+
+    /// <summary>One <c>jobs</c> column. Its parameter is <c>$</c> and its name.</summary>
+    /// <param name="Bind">The parameter's value from the record; null when nothing binds it (an expression or another method writes it).</param>
+    /// <param name="Read">Sets the record's property from the column at the ordinal given; null when another column's entry reads it.</param>
+    /// <param name="UpdateExpression">What the UPDATE sets the column to instead of its parameter.</param>
+    private sealed record JobColumn(string Name, JobColumnWrites Writes, Func<JobRecord, object?>? Bind, Action<SqliteDataReader, int, JobRecord>? Read, string? UpdateExpression = null)
+    {
+        public string Parameter => "$" + Name;
+    }
+
+    /// <summary>
+    /// The single list of the <c>jobs</c> columns a <see cref="JobRecord"/> maps to. The INSERT, the UPDATE's SET, the
+    /// parameters, every <c>SELECT</c> of a whole job and <see cref="SqliteJobRepository.Read"/> come from it, so adding a
+    /// column is one entry here plus its migration. A nested class so its statics need nothing declared after them.
+    /// </summary>
+    private static class JobsTable
+    {
+        public static readonly JobColumn[] Columns =
+        [
+            // Created once: an UPDATE neither moves a job's identity nor its creation, and only queue add --force sets forced.
+            new("id", JobColumnWrites.Insert, job => job.Id.ToString("N"), (reader, i, job) => job.Id = Guid.ParseExact(reader.GetString(i), "N")),
+            new("created_utc", JobColumnWrites.Insert, job => job.CreatedUtc.ToString("O"), (reader, i, job) => job.CreatedUtc = ParseUtc(reader.GetString(i))),
+            new("forced", JobColumnWrites.Insert, job => job.Forced ? 1 : 0, (reader, i, job) => job.Forced = reader.GetInt32(i) != 0),
+            new("source_path", JobColumnWrites.Both, job => job.SourcePath, (reader, i, job) => job.SourcePath = reader.GetString(i)),
+            new("source_fingerprint", JobColumnWrites.Both, job => job.SourceFingerprint, (reader, i, job) => job.SourceFingerprint = reader.GetString(i)),
+            new("status", JobColumnWrites.Both, job => (int)job.Status, (reader, i, job) => job.Status = (JobStatus)reader.GetInt32(i)),
+            new("resume_status", JobColumnWrites.Both, job => job.ResumeStatus is null ? null : (int)job.ResumeStatus.Value, (reader, i, job) => job.ResumeStatus = NullableInt(reader, i) is { } status ? (JobStatus)status : null),
+            new("attempt", JobColumnWrites.Both, job => job.Attempt, (reader, i, job) => job.Attempt = reader.GetInt32(i)),
+            new("crf", JobColumnWrites.Both, job => job.Crf, (reader, i, job) => job.Crf = NullableInt(reader, i)),
+            new("output_path", JobColumnWrites.Both, job => job.OutputPath, (reader, i, job) => job.OutputPath = NullableString(reader, i)),
+            new("manifest_path", JobColumnWrites.Both, job => job.ManifestPath, (reader, i, job) => job.ManifestPath = NullableString(reader, i)),
+            new("validation_passed", JobColumnWrites.Both, job => job.ValidationPassed is null ? null : job.ValidationPassed.Value ? 1 : 0, (reader, i, job) => job.ValidationPassed = NullableInt(reader, i) is { } passed ? passed != 0 : null),
+            // One warning per line: validation words each as a single line. None stores as null.
+            new("validation_warnings", JobColumnWrites.Both, job => JoinLines(job.ValidationWarnings), (reader, i, job) => job.ValidationWarnings = SplitLines(reader, i)),
+            new("notes", JobColumnWrites.Both, job => JoinLines(job.Notes), (reader, i, job) => job.Notes = SplitLines(reader, i)),
+            new("source_size_bytes", JobColumnWrites.Both, job => job.SourceSizeBytes, (reader, i, job) => job.SourceSizeBytes = NullableLong(reader, i)),
+            new("output_size_bytes", JobColumnWrites.Both, job => job.OutputSizeBytes, (reader, i, job) => job.OutputSizeBytes = NullableLong(reader, i)),
+            new("percentage_saved", JobColumnWrites.Both, job => job.PercentageSaved?.ToString(CultureInfo.InvariantCulture), (reader, i, job) => job.PercentageSaved = NullableString(reader, i) is { } saved ? decimal.Parse(saved, CultureInfo.InvariantCulture) : null),
+            new("failure_category", JobColumnWrites.Both, job => job.FailureCategory, (reader, i, job) => job.FailureCategory = NullableString(reader, i)),
+            new("failure_message", JobColumnWrites.Both, job => job.FailureMessage, (reader, i, job) => job.FailureMessage = NullableString(reader, i)),
+            new("updated_utc", JobColumnWrites.Both, job => job.UpdatedUtc.ToString("O"), (reader, i, job) => job.UpdatedUtc = ParseUtc(reader.GetString(i))),
+            new("completed_utc", JobColumnWrites.Both, job => job.CompletedUtc?.ToString("O"), (reader, i, job) => job.CompletedUtc = NullableString(reader, i) is { } completed ? ParseUtc(completed) : null),
+            new("execution_mode", JobColumnWrites.Both, job => job.ExecutionMode, (reader, i, job) => job.ExecutionMode = NullableString(reader, i) ?? "local"),
+            new("remote_host", JobColumnWrites.Both, job => job.RemoteHost, (reader, i, job) => job.RemoteHost = NullableString(reader, i)),
+            new("remote_workspace", JobColumnWrites.Both, job => job.RemoteWorkspace, (reader, i, job) => job.RemoteWorkspace = NullableString(reader, i)),
+            new("source_kind", JobColumnWrites.Both, job => SourceKindText(job.SourceKind), (reader, i, job) => job.SourceKind = ParseSourceKind(reader.GetString(i))),
+            new("immich_asset_id", JobColumnWrites.Both, job => job.ImmichAssetId, (reader, i, job) => job.ImmichAssetId = NullableString(reader, i)),
+            new("immich_checksum", JobColumnWrites.Both, job => job.ImmichChecksum, (reader, i, job) => job.ImmichChecksum = NullableString(reader, i)),
+            new("immich_new_asset_id", JobColumnWrites.Both, job => job.ImmichNewAssetId, (reader, i, job) => job.ImmichNewAssetId = NullableString(reader, i)),
+            new("quality_fingerprint", JobColumnWrites.Both, job => job.QualityFingerprint, (reader, i, job) => job.QualityFingerprint = NullableString(reader, i)),
+            // The video facts are six columns and one property: the codec's entry reads all six.
+            new("video_codec", JobColumnWrites.Both, job => job.VideoFacts?.Codec, (reader, _, job) => job.VideoFacts = ReadVideoFacts(reader)),
+            new("video_width", JobColumnWrites.Both, job => job.VideoFacts?.Width, null),
+            new("video_height", JobColumnWrites.Both, job => job.VideoFacts?.Height, null),
+            new("video_bitrate", JobColumnWrites.Both, job => job.VideoFacts?.Bitrate, null),
+            new("video_duration_seconds", JobColumnWrites.Both, job => job.VideoFacts?.DurationSeconds, null),
+            new("video_size_bytes", JobColumnWrites.Both, job => job.VideoFacts?.SizeBytes, null),
+            // The queue verbs alone write these (WriteQueueFieldsAsync), so a run's copy can never undo a hold or a "run next".
+            new("held", JobColumnWrites.None, null, (reader, i, job) => job.Held = reader.GetInt32(i) != 0),
+            new("priority", JobColumnWrites.None, null, (reader, i, job) => job.Priority = reader.GetInt32(i)),
+            // Set by the dismiss verbs. A dismissal is of a failure: a job that leaves Failed (a resumed finalisation) and fails again shows again.
+            new("dismissed_utc", JobColumnWrites.Update, null, (reader, i, job) => job.DismissedUtc = NullableString(reader, i) is { } dismissed ? ParseUtc(dismissed) : null, "CASE WHEN $status = $failed THEN dismissed_utc END"),
+            // The compare-and-swap's version: the insert leaves the column's default of 0, and every write raises it.
+            new("row_version", JobColumnWrites.Update, null, (reader, i, job) => job.RowVersion = reader.GetInt64(i), "row_version + 1")
+        ];
+
+        /// <summary>The column list of every <c>SELECT</c> that <see cref="SqliteJobRepository.Read"/> reads.</summary>
+        public static readonly string Select = string.Join(", ", Columns.Select(column => column.Name));
+
+        private static readonly JobColumn[] Inserted = [.. Columns.Where(column => column.Writes.HasFlag(JobColumnWrites.Insert))];
+
+        // One statement, so two commands queueing the same original at once cannot both insert an open job for it.
+        public static readonly string Insert =
+            $"INSERT INTO jobs ({string.Join(", ", Inserted.Select(column => column.Name))}) SELECT {string.Join(", ", Inserted.Select(column => column.Parameter))} " +
+            $"WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE status NOT IN ({TerminalStatuses}) AND (source_path = $source_path COLLATE NOCASE OR ($immich_asset_id IS NOT NULL AND immich_asset_id = $immich_asset_id)));";
+
+        public static readonly string Update =
+            $"UPDATE jobs SET {string.Join(", ", Columns.Where(column => column.Writes.HasFlag(JobColumnWrites.Update)).Select(column => $"{column.Name} = {column.UpdateExpression ?? column.Parameter}"))} " +
+            "WHERE id = $id AND row_version = $rowVersion AND held = 0;";
+    }
+
+    private static DateTimeOffset ParseUtc(string value) => DateTimeOffset.Parse(value, CultureInfo.InvariantCulture);
+
+    private static string? JoinLines(IReadOnlyList<string> lines) => lines.Count == 0 ? null : string.Join('\n', lines);
+
+    private static string[] SplitLines(SqliteDataReader reader, int ordinal) => NullableString(reader, ordinal)?.Split('\n') ?? [];
 
     private static string SourceKindText(JobSourceKind kind) => kind switch
     {
@@ -379,10 +420,8 @@ public sealed class SqliteJobRepository(IDatabaseInitializer databaseInitializer
         _ => throw new InvalidOperationException($"The job database holds an unknown source kind '{value}'.")
     };
 
-    private static string? NullableString(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetString(reader.GetOrdinal(column));
-    private static int? NullableInt(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetInt32(reader.GetOrdinal(column));
-    private static long? NullableLong(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetInt64(reader.GetOrdinal(column));
-    private static double? NullableDouble(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetDouble(reader.GetOrdinal(column));
-    private static bool? NullableBool(SqliteDataReader reader, string column) => reader.IsDBNull(reader.GetOrdinal(column)) ? null : reader.GetInt32(reader.GetOrdinal(column)) != 0;
-    private static decimal? NullableDecimal(SqliteDataReader reader, string column) => NullableString(reader, column) is { } value ? decimal.Parse(value, CultureInfo.InvariantCulture) : null;
+    private static string? NullableString(SqliteDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    private static int? NullableInt(SqliteDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
+    private static long? NullableLong(SqliteDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetInt64(ordinal);
+    private static double? NullableDouble(SqliteDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetDouble(ordinal);
 }
