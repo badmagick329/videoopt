@@ -88,7 +88,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
         var finished = job.HasFinishedAv1;
         // Under the finalise lock, so a finalisation cannot start installing the AV1 this drop hands to cleanup. One that ran
         // while this waited changed the job, and the drop's compare-and-swap refuses it.
-        using var finalizeLock = finished ? await locks.TakeFinalizeAsync(databasePath, LockHolders.QueueDrop, cancellationToken) : null;
+        using var finalizeLock = finished ? (await locks.TakeFinalizeAsync(databasePath, LockHolders.QueueDrop, cancellationToken)).Lock : null;
         if (finished)
         {
             if (finalizeLock is null) return new FinaliseRunning(job);
@@ -118,7 +118,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
 
         // Under the finalise lock, so a finalisation cannot start installing the AV1 this deletes. One that ran while this
         // waited changed the job, and the write's compare-and-swap refuses it.
-        using var finalizeLock = await locks.TakeFinalizeAsync(databasePath, LockHolders.QueueReject, cancellationToken);
+        using var finalizeLock = (await locks.TakeFinalizeAsync(databasePath, LockHolders.QueueReject, cancellationToken)).Lock;
         if (finalizeLock is null) return new FinaliseRunning(job);
         if (await onlyCopy.CheckAsync(settings.Immich, job, cancellationToken) is { } risk) return new OnlyCopyAtRisk(job, risk.Reason, risk.Detail);
         if (!await repository.RejectAsync(databasePath, job, cancellationToken)) throw new JobChangedException(job.Id);

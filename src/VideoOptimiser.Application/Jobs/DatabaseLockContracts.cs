@@ -45,10 +45,24 @@ public sealed record LiveRunHolder(string Command, DateTimeOffset StartedUtc, in
     public bool IsBackground => Command == LockHolders.BackgroundRun;
 }
 
+/// <summary>The command holding the finalise lock, as its lock file records it, so a refused command can say who has it.</summary>
+/// <param name="Command">How the holder names itself, such as <c>finalize</c> or <see cref="LockHolders.QueueReject"/>.</param>
+/// <param name="StartedUtc">When it took the lock.</param>
+/// <param name="ProcessId">The process holding the lock, so a user can find or stop it.</param>
+public sealed record FinalizeLockHolder(string Command, DateTimeOffset StartedUtc, int ProcessId);
+
 /// <summary>
-/// The database's lock files as use cases take them. They are OS file locks, so they live behind this port. A run holds the
-/// run lock for the whole command and the finalise lock while it prepares; a finalisation holds the finalise lock. What
-/// the CLI takes for a whole command, with the wording of a refusal, it still takes from <c>DatabaseLock</c> itself.
+/// One attempt at the finalise lock: the lock, or null with who holds it. The holder is data, not wording, so a use case can
+/// hand it back and leave the refusal to its front end.
+/// </summary>
+/// <param name="Lock">Held until disposed; null when refused.</param>
+/// <param name="Holder">Who refused it; null when taken, or when the holder was still writing its details.</param>
+public sealed record FinalizeLockAttempt(IDisposable? Lock, FinalizeLockHolder? Holder);
+
+/// <summary>
+/// The database's lock files as every command takes them. They are OS file locks, so they live behind this port. A run
+/// holds the run lock for the whole command and the finalise lock while it prepares; a finalisation holds the finalise lock.
+/// A refusal hands back the holder, and the front end words it.
 /// </summary>
 public interface IDatabaseLocks
 {
@@ -81,8 +95,8 @@ public interface IDatabaseLocks
     LiveRunHolder? LiveRun(string databasePath);
 
     /// <summary>
-    /// The finalise lock for a command, waiting through a run that is preparing, however long it takes. Null when a
-    /// finalisation holds it.
+    /// The finalise lock for a command, waiting through a run that is preparing, however long it takes. Refused only while
+    /// another finalisation holds it, which the attempt names.
     /// </summary>
-    Task<IDisposable?> TakeFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken);
+    Task<FinalizeLockAttempt> TakeFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken);
 }

@@ -13,11 +13,11 @@ namespace VideoOptimiser.Cli.Features.Finalize;
 /// <c>finalize</c> and <c>immich finalize</c>: replace the originals with their AV1s after the user has reviewed them. Both
 /// hold the finalise lock for the whole command, so a run leaves the jobs alone while they are being finalised.
 /// </summary>
-internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationService finalizer, IImmichClientFactory immichClients)
+internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationService finalizer, IImmichClientFactory immichClients, IDatabaseLocks locks)
 {
     public async Task<int> FinalizeAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
-        using var finalizeLock = await TakeFinalizeLockAsync(configuration, "finalize", cancellationToken);
+        using var finalizeLock = await TakeFinalizeLockAsync(locks, configuration, "finalize", cancellationToken);
         if (finalizeLock is null) return (int)ExitCode.GeneralFailure;
         if (!command.FinalizeReady)
         {
@@ -109,7 +109,7 @@ internal sealed class FinalizeCommands(IJobRepository repository, IFinalizationS
     public async Task<int> ImmichFinalizeAsync(LoadedConfiguration configuration, CliCommand command, CancellationToken cancellationToken)
     {
         if (!RequireImmich(configuration, command)) return (int)ExitCode.InvalidConfiguration;
-        using var finalizeLock = await TakeFinalizeLockAsync(configuration, "immich finalize", cancellationToken);
+        using var finalizeLock = await TakeFinalizeLockAsync(locks, configuration, "immich finalize", cancellationToken);
         if (finalizeLock is null) return (int)ExitCode.GeneralFailure;
         var settings = configuration.Settings;
         var finalisable = (await repository.ListAsync(settings.Database.Path, terminal: false, cancellationToken))

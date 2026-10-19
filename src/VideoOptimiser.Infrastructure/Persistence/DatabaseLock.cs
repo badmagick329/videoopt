@@ -27,8 +27,11 @@ public sealed class DatabaseLocks : IDatabaseLocks
             ? new LiveRunHolder(holder.Command, holder.StartedUtc, holder.ProcessId)
             : null;
 
-    public async Task<IDisposable?> TakeFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken) =>
-        (await DatabaseLock.AcquireFinalizeAsync(databasePath, command, cancellationToken)).Lock;
+    public async Task<FinalizeLockAttempt> TakeFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken)
+    {
+        var (taken, holder) = await DatabaseLock.AcquireFinalizeAsync(databasePath, command, cancellationToken);
+        return new FinalizeLockAttempt(taken, holder is null ? null : new FinalizeLockHolder(holder.Command, holder.StartedUtc, holder.ProcessId));
+    }
 }
 
 /// <summary>
@@ -59,9 +62,9 @@ public sealed class DatabaseLock : IDisposable
     public sealed record Holder(string Command, DateTimeOffset StartedUtc, int ProcessId);
 
     /// <summary>
-    /// How long one attempt at the finalise lock waits for another finalise before refusing. A seam for tests: the CLI takes the
-    /// lock through the static <see cref="AcquireFinalizeAsync"/>, so a test that wants a refusal without paying the wait
-    /// shortens it here once, for the whole process.
+    /// How long one attempt at the finalise lock waits for another finalise before refusing. A seam for tests: every command
+    /// takes the lock through <see cref="DatabaseLocks.TakeFinalizeAsync"/>, which uses the static <see cref="AcquireFinalizeAsync"/>,
+    /// so a test that wants a refusal without paying the wait shortens it here once, for the whole process.
     /// </summary>
     internal static TimeSpan FinalizeWait { get; set; } = TimeSpan.FromSeconds(5);
 
@@ -143,8 +146,8 @@ public sealed class DatabaseLock : IDisposable
 
     /// <summary>
     /// The finalise lock for a command. A run holds it only while it prepares, which takes moments, so this waits for a run
-    /// however long it takes and gives up only on another finalise, whose holder it returns. One place for the loop, so the
-    /// CLI's finalize (which words the refusal from the holder) and the queue verbs wait alike.
+    /// however long it takes and gives up only on another finalise, whose holder it returns. One place for the loop, so
+    /// finalize, the TUI and the queue verbs wait alike.
     /// </summary>
     public static async Task<(DatabaseLock? Lock, Holder? Holder)> AcquireFinalizeAsync(string databasePath, string command, CancellationToken cancellationToken, TimeSpan? wait = null)
     {

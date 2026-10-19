@@ -113,6 +113,20 @@ public sealed class RunLockTests : IDisposable
         error.Should().Be($"Another finalise is running on this database, started {started} (process 4321). Wait for it to finish.{Environment.NewLine}");
     }
 
+    /// <summary>A finalise that has opened the lock but not yet written its details is still refused, without a start or process.</summary>
+    [Fact]
+    public async Task AFinalisationRefusedByAHolderStillWritingItsDetailsNamesNobody()
+    {
+        var config = await WriteConfigAsync();
+        using var starting = new FileStream(DatabaseLock.FinalizePath(DatabasePath), FileMode.Create, FileAccess.Write, FileShare.Read);
+
+        var (code, output, error) = await ConsoleCapture.RunCliAsync(CliFakes.AcceptAnySettings, "finalize", "--ready", "--config", config);
+
+        code.Should().Be((int)ExitCode.GeneralFailure);
+        output.Should().BeEmpty();
+        error.Should().Be($"Another finalise is running on this database. Wait for it to finish.{Environment.NewLine}");
+    }
+
     /// <summary>A run holds the finalise lock only while it prepares, so finalize waits for it rather than calling it a finalise.</summary>
     [Fact]
     public async Task AFinalisationWaitsForARunToFinishPreparing()

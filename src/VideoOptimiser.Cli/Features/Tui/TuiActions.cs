@@ -423,7 +423,7 @@ internal sealed class TuiActions(
     {
         var database = settings.Database.Path;
         // The lock a finalise holds, so a run leaves these videos alone while they are finalised.
-        using var finaliseLock = await locks.TakeFinalizeAsync(database, "finalize", cancellationToken);
+        using var finaliseLock = (await locks.TakeFinalizeAsync(database, "finalize", cancellationToken)).Lock;
         if (finaliseLock is null) return Done(LogKind.Warning, "Another finalise is running on this database, so nothing was finalised. Wait for it to finish.");
 
         var lines = new List<LogLine>();
