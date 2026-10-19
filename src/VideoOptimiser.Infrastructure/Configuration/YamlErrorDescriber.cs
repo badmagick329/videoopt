@@ -21,16 +21,22 @@ internal static class YamlErrorDescriber
         var match = FindNode(yaml, exception.Start);
         return match switch
         {
-            (var path, true) when Replacements.TryGetValue(path, out var replacement) => $"Unknown setting '{path}' at {location}. {replacement}",
-            (var path, true) => $"Unknown setting '{path}' at {location}. Check its spelling, or remove it if it is no longer supported.",
-            (var path, false) => $"Invalid value for '{path}' at {location}: {Reason(exception)}",
+            // A null for a number or switch fails at its key, like an unknown key, but as a NullReferenceException from storing it.
+            (var path, true, var value) when IsNull(value) && exception.GetBaseException() is NullReferenceException => NullSettings.Message(path),
+            (var path, true, _) when Replacements.TryGetValue(path, out var replacement) => $"Unknown setting '{path}' at {location}. {replacement}",
+            (var path, true, _) => $"Unknown setting '{path}' at {location}. Check its spelling, or remove it if it is no longer supported.",
+            (var path, false, _) => $"Invalid value for '{path}' at {location}: {Reason(exception)}",
             _ => $"{Reason(exception)} ({location})"
         };
     }
 
     private static string Reason(YamlException exception) => exception.InnerException?.Message ?? exception.Message;
 
-    private static (string Path, bool IsKey)? FindNode(string yaml, Mark position)
+    // The YAML 1.2 core schema's nulls: nothing after the colon, ~ and null, unquoted and untagged.
+    private static bool IsNull(YamlNode? node) =>
+        node is YamlScalarNode { Style: ScalarStyle.Plain or ScalarStyle.Any, Value: null or "" or "~" or "null" or "Null" or "NULL" } scalar && scalar.Tag.IsEmpty;
+
+    private static (string Path, bool IsKey, YamlNode? Value)? FindNode(string yaml, Mark position)
     {
         var stream = new YamlStream();
         try
@@ -46,7 +52,7 @@ internal static class YamlErrorDescriber
         return stream.Documents.Count == 0 ? null : Search(stream.Documents[0].RootNode, "", position);
     }
 
-    private static (string Path, bool IsKey)? Search(YamlNode node, string path, Mark position)
+    private static (string Path, bool IsKey, YamlNode? Value)? Search(YamlNode node, string path, Mark position)
     {
         switch (node)
         {
@@ -54,7 +60,7 @@ internal static class YamlErrorDescriber
                 foreach (var (key, value) in mapping.Children)
                 {
                     var childPath = path.Length == 0 ? key.ToString() : $"{path}.{key}";
-                    if (key.Start.Index == position.Index) return (childPath, true);
+                    if (key.Start.Index == position.Index) return (childPath, true, value);
                     if (Search(value, childPath, position) is { } found) return found;
                 }
                 break;
@@ -66,6 +72,6 @@ internal static class YamlErrorDescriber
                 break;
         }
 
-        return node.Start.Index == position.Index && path.Length > 0 ? (path, false) : null;
+        return node.Start.Index == position.Index && path.Length > 0 ? (path, false, null) : null;
     }
 }

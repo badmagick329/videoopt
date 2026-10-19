@@ -15,7 +15,7 @@ public sealed class WorkerLifecycleGateTests : IDisposable
     [Theory]
     [InlineData("create", "\"manual\"", "it is \"manual\".", false, 3)]
     [InlineData("delete", "\"manual\"", "it is \"manual\".", false, 3)]
-    [InlineData("status", "", "it is not set.", true, 0)]
+    [InlineData("status", "\"\"", "it is not set.", true, 0)]
     public async Task AWorkerCommandWithoutTheHetznerLifecycleNamesTheSettingAndItsValue(string verb, string lifecycle, string clause, bool stdout, int exitCode)
     {
         var config = await WriteConfigAsync("remoteSsh", lifecycle);

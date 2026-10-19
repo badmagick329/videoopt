@@ -60,7 +60,7 @@ A run that finishes follows `deleteAfterRun` alone, failed videos included. A ru
 
 1. The config is found by `--config <path>`, then `VIDEO_OPTIMISER_CONFIG`, then `%ProgramData%\VideoOptimiser\config.yaml`, then `video-optimiser.yaml` in the current folder. `config show` prints the one in use. If several may exist, suggest `--config` on every command.
 2. With no config, `config init --config <path> --quality <level>`: `archive` (VMAF 97, indistinguishable from the original), `standard` (95, hard to tell apart; the default) or `compact` (93, small visible loss, bigger savings). It never overwrites a file.
-3. `doctor` is done when no diagnostic has `Fail`; each `message` says what to fix. Config fixes are the person's to choose: propose the YAML. A config from an older version can fail with `Unknown setting '<path>' at line N, column M.`; the setting was removed, so propose deleting the line. The GitHub release notes list each one under **Breaking config change**.
+3. `doctor` is done when no diagnostic has `Fail`; each `message` says what to fix. Config fixes are the person's to choose: propose the YAML. A config from an older version can fail with `Unknown setting '<path>' at line N, column M.`; the setting was removed, so propose deleting the line. The GitHub release notes list each one under **Breaking config change**. A config that fails with `<path> can't be empty.` has that setting or list item set to `~`, `null` or nothing; propose a value, or deleting the line to get the default.
 
 ## The rounds
 

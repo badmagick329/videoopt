@@ -86,5 +86,21 @@ public sealed class ConfigCommandsTests : IDisposable
         stderr.ReplaceLineEndings("\n").Should().Be("[NoRoots] Add a watch root.\n[NoTools] Set tools.ffprobe.\n");
     }
 
+    /// <summary>A setting left null is a config error naming it, through the loader or the validator, never an unexpected failure (VOPT-164).</summary>
+    [Theory]
+    [InlineData("processing:\n  mode: ~", "Configuration could not be read: processing.mode can't be empty.")]
+    [InlineData("watch:\n  roots: [~]", "Configuration could not be read: watch.roots[0] can't be empty.")]
+    [InlineData("eligibility:\n  excludedNamePatterns: [~]", "Configuration could not be read: eligibility.excludedNamePatterns[0] can't be empty.")]
+    [InlineData("eligibility:\n  rules:\n    - codecs: ~", "[EligibilityRuleCodecsRequired] Every eligibility.rules entry requires codecs.")]
+    public async Task ValidateNamesANullSettingAsAConfigError(string yaml, string expected)
+    {
+        await File.WriteAllTextAsync(ConfigPath, $"version: 1\n{yaml}\n");
+
+        var (code, _, stderr) = await ConsoleCapture.RunCliAsync("config", "validate", "--config", ConfigPath);
+
+        code.Should().Be((int)ExitCode.InvalidConfiguration);
+        stderr.ReplaceLineEndings("\n").Split('\n').Should().Contain(expected);
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 }

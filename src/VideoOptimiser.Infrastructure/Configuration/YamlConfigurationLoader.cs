@@ -39,6 +39,7 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         if (settings is null) throw new InvalidDataException("The configuration file is empty.");
 
         NormalizeDefaults(settings);
+        NullSettings.Resolve(settings);
         return settings;
     }
 
@@ -113,36 +114,22 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
         }
     }
 
+    // A section left empty keeps its defaults. What a null inside a section means is NullSettings' call.
     private static void NormalizeDefaults(AppSettings settings)
     {
         settings.Tools ??= new ToolSettings();
         settings.Processing ??= new ProcessingSettings();
         settings.Processing.RemoteSsh ??= new RemoteSshSettings();
         settings.Processing.RemoteSsh.Hetzner ??= new HetznerSettings();
-        settings.Processing.RemoteSsh.Hetzner.Locations ??= ["hel1", "fsn1", "nbg1"];
-        // An explicit empty value must fail validation rather than quietly become the default list.
-        settings.Processing.RemoteSsh.Hetzner.ServerTypes ??= [];
         settings.Database ??= new DatabaseSettings();
         settings.Watch ??= new WatchSettings();
         settings.Immich ??= new ImmichSettings();
-        settings.Immich.BaseUrl ??= string.Empty;
-        settings.Immich.ApiKeyEnvironmentVariable ??= string.Empty;
-        settings.Immich.ApiKeyFile ??= string.Empty;
-        settings.Immich.StagingDirectory ??= string.Empty;
         settings.Eligibility ??= new EligibilitySettings();
         settings.Quality ??= new QualitySettings();
+        settings.Quality.CrfSearch ??= new CrfSearchSettings();
         settings.Savings ??= new SavingsSettings();
         settings.Original ??= new OriginalSettings();
         settings.Validation ??= new ValidationSettings();
-        settings.Watch.Roots ??= [];
-        settings.Eligibility.Extensions ??= [];
-        settings.Eligibility.Rules ??= [];
-        settings.Eligibility.ExcludedExtensions ??= [];
-        settings.Eligibility.ExcludedNamePatterns ??= [];
-        settings.Eligibility.ExcludedDirectories ??= [];
-        settings.Original.Action ??= string.Empty;
-        settings.Original.ArchiveDirectory ??= string.Empty;
-        settings.Quality.CrfSearch ??= new CrfSearchSettings();
     }
 
     private static string ResolvePath(string path, string configurationDirectory)

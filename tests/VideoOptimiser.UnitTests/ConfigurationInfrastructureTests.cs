@@ -1,6 +1,8 @@
+using System.Reflection;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Infrastructure.Configuration;
+using YamlDotNet.Serialization;
 
 namespace VideoOptimiser.UnitTests;
 
@@ -152,7 +154,118 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         loaded.Settings.Quality.CrfSearch.ConfiguredSampleCount.Should().Be(expected);
     }
 
+    /// <summary>
+    /// The null shapes the per-setting cases below don't reach: nothing after the colon inside a list item, a number, which
+    /// fails while deserialising, and several at once, each named (VOPT-164).
+    /// </summary>
+    [Theory]
+    [InlineData("eligibility:\n  rules:\n    - codecs: [\"h264\"]\n      resolution:", "eligibility.rules[0].resolution can't be empty.")]
+    [InlineData("processing:\n  remoteSsh:\n    minimumCpuCount: null", "processing.remoteSsh.minimumCpuCount can't be empty.")]
+    [InlineData("database:\n  path: ~\nquality:\n  encoder: ~", "database.path can't be empty. quality.encoder can't be empty.")]
+    public async Task LoadAsyncNamesEachSettingLeftEmpty(string yaml, string expected)
+    {
+        var load = () => LoadAsync($"version: 1\n{yaml}");
+
+        (await load.Should().ThrowAsync<InvalidDataException>()).Which.Message.Should().Be(expected);
+    }
+
+    /// <summary>The settings where a null is not an error: an optional text setting is unset, and a list is empty or, for locations, the default.</summary>
+    [Fact]
+    public async Task LoadAsyncTakesANullOptionalSettingAsUnsetAndANullListAsEmpty()
+    {
+        var settings = (await LoadAsync("""
+            version: 1
+            processing:
+              remoteSsh:
+                host: ~
+                hetzner:
+                  locations: ~
+            eligibility:
+              rules:
+                - codecs: ~
+            """)).Settings;
+
+        settings.Processing.RemoteSsh.Host.Should().BeEmpty();
+        settings.Processing.RemoteSsh.Hetzner.Locations.Should().Equal("hel1", "fsn1", "nbg1");
+        settings.Eligibility.Rules.Single().Codecs.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Every setting in the model, and every list's item, written as null, either fails to load with a message naming it or
+    /// loads with nothing null left in the settings. A setting added later without a decision for null fails here (VOPT-164).
+    /// </summary>
+    [Fact]
+    public void ParseUnresolvedLetsNoNullThrough()
+    {
+        var failures = new List<string>();
+        foreach (var (path, yaml) in NullCases(typeof(AppSettings), "", inner => $"{{{inner}}}"))
+        {
+            try
+            {
+                var settings = YamlConfigurationLoader.ParseUnresolved(yaml);
+                failures.AddRange(NullsIn(settings, "").Select(found => $"{yaml} loaded with {found} null"));
+            }
+            catch (InvalidDataException exception)
+            {
+                if (exception.Message != $"{path} can't be empty.") failures.Add($"{yaml} failed with: {exception.Message}");
+            }
+        }
+
+        failures.Should().BeEmpty();
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
+
+    /// <summary>One flow-style YAML document per setting and list item, with only that one null; <paramref name="wrap"/> nests it in its parents.</summary>
+    private static IEnumerable<(string Path, string Yaml)> NullCases(Type type, string parent, Func<string, string> wrap)
+    {
+        foreach (var property in type.GetProperties())
+        {
+            if (property.GetCustomAttribute<YamlMemberAttribute>()?.Alias is not { } alias) continue;
+            var path = parent.Length == 0 ? alias : $"{parent}.{alias}";
+            yield return (path, wrap($"{alias}: null"));
+
+            var propertyType = property.PropertyType;
+            if (IsSection(propertyType))
+            {
+                foreach (var nested in NullCases(propertyType, path, inner => wrap($"{alias}: {{{inner}}}"))) yield return nested;
+            }
+            else if (propertyType.IsGenericType && propertyType.GetGenericTypeDefinition() == typeof(List<>))
+            {
+                yield return ($"{path}[0]", wrap($"{alias}: [null]"));
+                var item = propertyType.GetGenericArguments()[0];
+                if (!IsSection(item)) continue;
+                foreach (var nested in NullCases(item, $"{path}[0]", inner => wrap($"{alias}: [{{{inner}}}]"))) yield return nested;
+            }
+        }
+    }
+
+    private static IEnumerable<string> NullsIn(object settings, string parent)
+    {
+        foreach (var property in settings.GetType().GetProperties())
+        {
+            if (property.GetCustomAttribute<YamlMemberAttribute>()?.Alias is not { } alias || property.PropertyType.IsValueType) continue;
+            var path = parent.Length == 0 ? alias : $"{parent}.{alias}";
+            switch (property.GetValue(settings))
+            {
+                case null:
+                    yield return path;
+                    break;
+                case System.Collections.IList list:
+                    for (var index = 0; index < list.Count; index++)
+                    {
+                        if (list[index] is not { } item) yield return $"{path}[{index}]";
+                        else if (IsSection(item.GetType())) foreach (var nested in NullsIn(item, $"{path}[{index}]")) yield return nested;
+                    }
+                    break;
+                case var section when IsSection(section.GetType()):
+                    foreach (var nested in NullsIn(section, path)) yield return nested;
+                    break;
+            }
+        }
+    }
+
+    private static bool IsSection(Type type) => type.GetCustomAttribute<YamlSerializableAttribute>() is not null;
 
     private async Task<LoadedConfiguration> LoadAsync(string yaml)
     {
