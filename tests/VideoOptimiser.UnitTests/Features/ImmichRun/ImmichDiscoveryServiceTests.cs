@@ -396,21 +396,39 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
     }
 
     /// <summary>
-    /// R11: an asset queued from another terminal after discovery read the open jobs counts as queued, and keeps its staged
-    /// copy, which that job reads at the same path.
+    /// R11: an asset queued from another terminal during its download counts as queued, and keeps its staged copy, which that
+    /// job reads at the same path.
     /// </summary>
     [Fact]
-    public async Task AnAssetQueuedMeanwhileCountsAsQueuedAndKeepsItsCopy()
+    public async Task AnAssetQueuedDuringItsDownloadCountsAsQueuedAndKeepsItsCopy()
     {
         var asset = _immich.Add("clip.mp4", "hevc video");
         var job = await CreateJobAsync(asset, JobStatus.Queued);
 
-        var result = await DiscoverAsync(repository: new BlindToOpenJobs(_repository));
+        var result = await DiscoverAsync(repository: new BlindToOpenJobs(_repository, seenBeforeTheDownload: false));
 
         result.AlreadyQueued.Should().Be(1);
         result.Queued.Should().BeEmpty();
         File.Exists(job.SourcePath).Should().BeTrue();
         (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().ContainSingle();
+    }
+
+    /// <summary>
+    /// VOPT-147: an asset queued from another terminal after discovery read the open jobs, but before its download, is not
+    /// downloaded. The download would replace that job's staged copy and change its fingerprint.
+    /// </summary>
+    [Fact]
+    public async Task AnAssetQueuedBeforeItsDownloadIsNotDownloadedAndItsCopyIsUntouched()
+    {
+        var asset = _immich.Add("clip.mp4", "hevc video");
+        var job = await CreateJobAsync(asset, JobStatus.Queued);
+
+        var result = await DiscoverAsync(repository: new BlindToOpenJobs(_repository, seenBeforeTheDownload: true));
+
+        result.AlreadyQueued.Should().Be(1);
+        result.Queued.Should().BeEmpty();
+        _immich.Downloads.Should().BeEmpty();
+        (await File.ReadAllTextAsync(job.SourcePath)).Should().Be("staged");
     }
 
     /// <summary>R7, R10: a held video is parked. It is not downloaded or failed behind the user's back, and its asset is not queued a second time.</summary>
@@ -534,11 +552,18 @@ public sealed class ImmichDiscoveryServiceTests : IDisposable
         new ImmichDiscoveryService(_immich, repository ?? _repository, _ => new ContentProbe(), new FileFingerprintService(), () => Now)
             .DiscoverAsync(_settings.Database.Path, _settings, limit, progress);
 
-    /// <summary>Reads open jobs as if there were none yet, as discovery would just before a retry from another terminal queued one.</summary>
-    private sealed class BlindToOpenJobs(IJobRepository inner) : DelegatingJobRepository(inner)
+    /// <summary>
+    /// Lists open jobs as if there were none yet, as discovery would just before a retry from another terminal queued one.
+    /// With <paramref name="seenBeforeTheDownload"/> the retry lands before the check ahead of the download; without it,
+    /// during the download, so that check misses it too.
+    /// </summary>
+    private sealed class BlindToOpenJobs(IJobRepository inner, bool seenBeforeTheDownload) : DelegatingJobRepository(inner)
     {
         public override async Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default) =>
             terminal ? await Inner.ListAsync(databasePath, terminal, cancellationToken) : [];
+
+        public override Task<JobRecord?> FindOpenByImmichAssetAsync(string databasePath, string assetId, CancellationToken cancellationToken = default) =>
+            seenBeforeTheDownload ? Inner.FindOpenByImmichAssetAsync(databasePath, assetId, cancellationToken) : Task.FromResult<JobRecord?>(null);
     }
 
     /// <summary>An Immich job for the asset. An open one has its staged copy unless <paramref name="staged"/> is false.</summary>

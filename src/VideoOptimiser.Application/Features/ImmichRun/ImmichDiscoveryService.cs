@@ -90,6 +90,16 @@ public sealed class ImmichDiscoveryService(
                 continue;
             }
 
+            // The open jobs were read when the search started, and a long search gives another terminal time to queue this
+            // asset (a queue retry). Its job reads this staged path, so a download now would replace its copy and change its
+            // fingerprint: its run would start over, or its finalise would refuse. Checked before the try, whose cleanup
+            // would delete that copy.
+            if (await jobs.FindOpenByImmichAssetAsync(databasePath, asset.Id, cancellationToken) is not null)
+            {
+                alreadyQueued++;
+                continue;
+            }
+
             // Only a queued job keeps its staged copy. Every other outcome, including cancellation and errors that end the
             // run, removes it, so staging never holds a file nothing will read.
             var keepStaged = false;
@@ -140,8 +150,8 @@ public sealed class ImmichDiscoveryService(
                 }
                 catch (OpenJobExistsException)
                 {
-                    // A queue retry from another terminal queued the asset since the history was read. Its job reads the
-                    // same staged path, so the copy stays, and the asset is queued either way.
+                    // A queue retry from another terminal queued the asset during its download, after the check above. Its
+                    // job reads the same staged path, so the copy stays, and the asset is queued either way.
                     alreadyQueued++;
                 }
                 keepStaged = true;
