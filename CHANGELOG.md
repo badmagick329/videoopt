@@ -23,6 +23,7 @@
 - A run that fails while it starts, for example because the database is busy, now only reports the error. It used to go on to decide the worker's fate after it had already let go of the run lock, so a background run set to delete the worker could delete one that another run had just started using.
 - `quality.crfSearch.sampleCount` now sets how many samples every CRF search takes. It used to apply only to a video whose length ffprobe couldn't read; every other video got one sample per two minutes, from 2 to 12. Leave it out to keep that rule. A config that sets it, as `config init` used to write it with `5`, now gets exactly that many.
 - Stopping a run now always ends the ffprobe, ab-av1 or ssh it was waiting on, and a video stopped mid-encode is marked as stopped at once. ffprobe used to keep running after Ctrl+C, a stop could leave ssh running with half its commands sent, and a stop that hit an ab-av1 just as it exited could leave its video shown as encoding until the next run.
+- A video whose encode started on a worker now stays stopped when its original can't be found, for example on a network or USB drive that is offline, and resumes once the original is back. It used to fail, and the next run deleted the encode from the worker, so the video needed `queue retry` and a whole new encode.
 
 ## [0.14.1] - 2026-10-18
 ### Remote workers

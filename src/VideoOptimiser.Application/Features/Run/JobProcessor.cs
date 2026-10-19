@@ -25,8 +25,13 @@ public sealed class JobProcessor(
     {
         var path = Path.GetFullPath(job.SourcePath);
         // Left queued, the job would fail the same way on every run, and keep discovery from queueing the file or asset
-        // again once it is back.
-        if (!File.Exists(path)) return await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
+        // again once it is back. A job with an encode on the worker stays stopped instead, before anything below changes it.
+        if (!File.Exists(path))
+        {
+            return MayHaveEncodeOnWorker(job, job.ResumeStatus)
+                ? await KeepStoppedAsync(job, databasePath, job.ResumeStatus!.Value, path, progress, cancellationToken)
+                : await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
+        }
 
         var resumeStatus = job.ResumeStatus;
         var force = job.Forced;
@@ -73,7 +78,10 @@ public sealed class JobProcessor(
             }
             catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
             {
-                return await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
+                // The same choice as the exists check above, made on the resume point read before the job was requeued.
+                return MayHaveEncodeOnWorker(job, resumeStatus)
+                    ? await KeepStoppedAsync(job, databasePath, resumeStatus!.Value, path, progress, cancellationToken)
+                    : await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
             }
             // Settled before anything below decides what to reuse; an empty stored fingerprint has nothing to compare.
             if (ChangedSinceLastRun(job, fingerprint))
@@ -97,7 +105,7 @@ public sealed class JobProcessor(
             // resume that only has to download or check what is already finished needs neither (VOPT-72, VOPT-89).
             var canReuseOutput = CanReuseOutput(job, resumeStatus);
             if (session.IsRemote && !canReuseOutput) await SweepFinishedWorkspacesOnceAsync(session, databasePath, cancellationToken);
-            var reattachAttempt = session.IsRemote && resumeStatus is JobStatus.Encoding or JobStatus.Downloading && job.Attempt > 0;
+            var reattachAttempt = MayHaveEncodeOnWorker(job, resumeStatus);
             // The finished encode is looked for on the worker, not assumed from the status, so the job is recorded as
             // Downloading only once that is known: a stop in between would otherwise say an encode is still running that is not
             // (VOPT-86). A worker that lost it, such as a deleted managed server, answers no and the stages run again.
@@ -300,6 +308,33 @@ public sealed class JobProcessor(
     /// <summary>A job stopped while its AV1 was being checked, with that AV1 and its manifest still on this PC: nothing is left to encode or fetch.</summary>
     private bool CanReuseOutput(JobRecord job, JobStatus? resumeStatus) =>
         resumeStatus == JobStatus.Validating && job.OutputPath is not null && File.Exists(job.OutputPath) && File.Exists(manifests.GetPath(job.OutputPath));
+
+    /// <summary>
+    /// A remote job stopped in or after an encode it started: the worker may hold that encode, finished or still running, which
+    /// a rerun reattaches to rather than paying for again. Read from the job's own mode, because the exists check asks before
+    /// a session is open; past the compatibility check a started job's mode is the session's.
+    /// </summary>
+    private static bool MayHaveEncodeOnWorker(JobRecord job, JobStatus? resumeStatus) =>
+        string.Equals(job.ExecutionMode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase)
+        && resumeStatus is JobStatus.Encoding or JobStatus.Downloading && job.Attempt > 0;
+
+    /// <summary>
+    /// Leaves a job whose original can't be reached stopped where it was, rather than failing it (VOPT-160). A failed job is
+    /// ended, so the next run's sweep would delete its workspace on the worker and the encode with it; an original on a NAS or
+    /// USB drive that is offline comes back. It counts as neither failed nor done, so the run goes on to the next video. The
+    /// category replaces whatever an earlier stop left, such as RemoteUnavailable, which would make the run stop as if the
+    /// worker had gone; the requeue of the next run clears it.
+    /// </summary>
+    private async Task<JobProcessingResult> KeepStoppedAsync(JobRecord job, string databasePath, JobStatus resumeStatus, string path, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    {
+        job.Status = JobStatus.Interrupted;
+        job.ResumeStatus = resumeStatus;
+        job.FailureCategory = FailureCategories.SourceMissing;
+        job.FailureMessage = $"Original isn't reachable: {path}";
+        await jobs.UpdateAsync(databasePath, job, cancellationToken);
+        progress?.Report(JobProgress.Outcome(JobTone.Warning, "Original isn't reachable. The video stays stopped and resumes once it's back."));
+        return new JobProcessingResult(job, ExitCode.Success, job.FailureMessage);
+    }
 
     /// <summary>Whether the original differs from the one the job last read; a job with no stored fingerprint has nothing to compare.</summary>
     private static bool ChangedSinceLastRun(JobRecord job, string fingerprint) =>

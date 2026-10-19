@@ -772,6 +772,37 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     /// <summary>
+    /// VOPT-160: an original on a drive that is offline, missing at the exists check or gone by the fingerprint read after it,
+    /// leaves a job stopped with an encode on the worker as it was. Failing it would end it, and the next run's sweep would
+    /// delete that encode. Nothing is asked of the worker, the run is not stopped or told of a failure, and a worker-unreachable
+    /// category an earlier stop left is replaced, since the run would stop on it.
+    /// </summary>
+    [Theory]
+    [InlineData(JobStatus.Encoding, false)]
+    [InlineData(JobStatus.Downloading, false)]
+    [InlineData(JobStatus.Encoding, true)]
+    public async Task AnUnreachableOriginalLeavesAJobWithAnEncodeOnTheWorkerStopped(JobStatus stoppedIn, bool vanishesAfterCheck)
+    {
+        var source = await SourceAsync();
+        var settings = Settings(remote: true);
+        var job = await StopRemoteJobAsync(source, settings, stoppedIn);
+        job.FailureCategory = FailureCategories.RemoteUnavailable;
+        await _repository.UpdateAsync(DatabasePath, job);
+        if (!vanishesAfterCheck) File.Delete(source);
+        var session = new ResumedWorkerSession();
+        var reported = new List<JobProgress>();
+        var processor = Processor(session: session, fingerprints: vanishesAfterCheck ? new ThrowingFingerprints(new FileNotFoundException("Original does not exist.", source)) : null);
+
+        var result = await processor.ProcessAsync(DatabasePath, job, settings, new ListProgress(reported));
+
+        result.ExitCode.Should().Be(ExitCode.Success);
+        var stored = (await _repository.GetAsync(DatabasePath, job.Id))!;
+        (stored.Status, stored.ResumeStatus, stored.FailureCategory, stored.Crf, stored.Attempt).Should().Be((JobStatus.Interrupted, stoppedIn, FailureCategories.SourceMissing, 42, 1));
+        session.Calls.Should().BeEmpty();
+        Steps(reported).Should().Equal("Original isn't reachable. The video stays stopped and resumes once it's back.");
+    }
+
+    /// <summary>
     /// A downloaded Immich copy that <c>cleanup</c> deleted comes back with the same bytes but a new last-write time, so a
     /// different fingerprint. Restaging stores the new one, so the stopped encode is fetched rather than thrown away as the
     /// encode of an edited original. The processor gets the job from the database, as the run does.
