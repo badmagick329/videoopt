@@ -267,3 +267,44 @@ internal static class ManagedWorker
         };
     }
 }
+
+/// <summary>Answers each ssh or sftp call with the next of <paramref name="results"/>, in order, and keeps every request.</summary>
+internal sealed class ScriptedProcessRunner(IEnumerable<ExternalProcessResult> results) : IExternalProcessRunner
+{
+    private readonly Queue<ExternalProcessResult> _results = new(results);
+    public List<ExternalProcessRequest> Requests { get; } = [];
+
+    public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
+    {
+        Requests.Add(request);
+        return Task.FromResult(_results.Dequeue());
+    }
+}
+
+/// <summary>
+/// A remote session's clock and its poll wait. A tick moves time on by <see cref="TickLength"/> without waiting, so a
+/// 30 s transfer takes no time to test; <see cref="StepPerReading"/> moves it on every reading, to make hashing look slow.
+/// </summary>
+internal sealed class ManualClock
+{
+    private TimeSpan _now;
+
+    public TimeSpan TickLength { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan StepPerReading { get; init; }
+    public int Ticks { get; private set; }
+    public Action<int>? OnTick { get; set; }
+
+    public TimeSpan Read()
+    {
+        _now += StepPerReading;
+        return _now;
+    }
+
+    public async Task TickAsync(CancellationToken cancellationToken)
+    {
+        _now += TickLength;
+        Ticks++;
+        OnTick?.Invoke(Ticks);
+        await Task.Yield();
+    }
+}

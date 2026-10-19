@@ -1,5 +1,4 @@
 using FluentAssertions;
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,6 +12,10 @@ using VideoOptimiser.Infrastructure.Tools;
 
 namespace VideoOptimiser.UnitTests.Features.Run;
 
+/// <summary>
+/// The session's transfers and workspace, and what it makes of a stage's result, through the real transport. The transport's
+/// resends are in <see cref="RemoteShellTests"/>, the stage protocol in <see cref="RemoteStageRunnerTests"/>.
+/// </summary>
 public sealed class RemoteSshProcessingSessionTests : IDisposable
 {
     /// <summary>A 100-byte original whose bytes count up from 0, so every prefix has its own checksum.</summary>
@@ -27,48 +30,17 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
 
     private string Output => Path.Combine(_directory, "output.mkv");
 
-    /// <summary>Every ssh and sftp call goes through Build, so its keepalive is what stops a dead worker hanging the run.</summary>
-    [Fact]
-    public void ManagedConnectionOptionsAreValidForBothSshAndSftp()
-    {
-        var arguments = OpenSshConnectionArguments.Build(new RemoteSshSettings
-        {
-            User = "videoopt",
-            IdentityFile = "C:\\keys\\worker",
-            KnownHostsFile = "C:\\state\\known_hosts"
-        });
-
-        arguments.Should().ContainInOrder("-o", "User=videoopt", "-i", "C:\\keys\\worker", "-o", "IdentitiesOnly=yes");
-        arguments.Should().NotContain("-l");
-        arguments.Should().ContainInOrder("-o", "UserKnownHostsFile=C:\\state\\known_hosts", "-o", "StrictHostKeyChecking=yes");
-        arguments.Should().ContainInOrder("-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4");
-    }
-
-    [Fact]
-    public void ConnectionArgumentsPinTheConfiguredKnownHostsFile()
-    {
-        var arguments = OpenSshConnectionArguments.Build(new RemoteSshSettings { KnownHostsFile = "C:\\state\\known_hosts" }, true);
-
-        arguments.Should().ContainInOrder("-o", "UserKnownHostsFile=C:\\state\\known_hosts", "-o", "StrictHostKeyChecking=accept-new");
-    }
-
     [Fact]
     public void UsesDeterministicGuidWorkspaceAndAttemptPaths()
     {
         var id = Guid.Parse("11111111-2222-3333-4444-555555555555");
-        var session = CreateSession(id, new QueueRunner([]));
+        var session = CreateSession(id, new ScriptedProcessRunner([]));
 
         session.RemoteWorkspace.Should().Be("/var/tmp/video-optimiser/11111111222233334444555555555555");
         session.RemoteSourcePath.Should().Be("/var/tmp/video-optimiser/11111111222233334444555555555555/source.mkv");
         session.CrfDirectory.Should().EndWith("/crf");
         session.EncodeDirectory(3).Should().EndWith("/encode-3");
     }
-
-    [Fact]
-    public void PosixQuotePreservesArguments() => RemoteSshProcessingSession.Quote("a'b").Should().Be("'a'\"'\"'b'");
-
-    [Fact]
-    public void SftpQuoteNormalizesWindowsSeparators() => RemoteSshProcessingSession.SftpQuote("C:\\Video Files\\a.mkv").Should().Be("\"C:/Video Files/a.mkv\"");
 
     [Fact]
     public void RequiredDiskRoundsUp() => RemoteSshProcessingSession.CalculateRequiredDisk(101, 2.5).Should().Be(253);
@@ -80,7 +52,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task RejectsInsufficientRemoteResourcesBeforeTransfer(string probeOutput, string expectedMessage)
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok(probeOutput), Ok()]);
+        var runner = new ScriptedProcessRunner([Ok(probeOutput), Ok()]);
 
         var action = async () => await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint");
 
@@ -92,7 +64,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task ReusesAValidatedPartialUploadPrefixWithReput()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok("8 20000000000 100000"), Ok(), Ok($"40 {Sha256(Original.AsSpan(0, 40))}"), Ok(), Ok()]);
+        var runner = new ScriptedProcessRunner([Ok("8 20000000000 100000"), Ok(), Ok($"40 {Sha256(Original.AsSpan(0, 40))}"), Ok(), Ok()]);
         var progress = new ListProgress();
 
         await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", progress);
@@ -170,7 +142,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var worker = new VerifyWorker(uploaded: Original, cutOffFirstVerify: true);
         var progress = new ListProgress();
 
-        await CreateSession(Guid.NewGuid(), worker, source, new FakeClock(), ShortTimeouts).StageAsync(source, "fingerprint", progress);
+        await CreateSession(Guid.NewGuid(), worker, source, new ManualClock(), ShortTimeouts).StageAsync(source, "fingerprint", progress);
 
         worker.Verifies.Should().Be(2);
         worker.Source.Should().Equal(Original);
@@ -188,7 +160,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var source = await SourceAsync();
         var worker = new VerifyWorker(uploaded: [.. Original.Select(value => (byte)~value)], cutOffFirstVerify: false);
 
-        var action = async () => await CreateSession(Guid.NewGuid(), worker, source, new FakeClock(), ShortTimeouts).StageAsync(source, "fingerprint");
+        var action = async () => await CreateSession(Guid.NewGuid(), worker, source, new ManualClock(), ShortTimeouts).StageAsync(source, "fingerprint");
 
         await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote original verification failed*");
         worker.Source.Should().BeNull();
@@ -312,9 +284,9 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var source = await SourceAsync();
         // A partial longer than the original cannot be a prefix of it, even when its checksum equals the whole file's.
         var partialHash = hashMatchesTheWholeOriginal ? Sha256(Original) : new string('0', 64);
-        var runner = new QueueRunner([Ok("8 20000000000 100000"), Ok(), Ok($"{partialLength} {partialHash}"), Ok(), Ok(), Ok()]);
+        var runner = new ScriptedProcessRunner([Ok("8 20000000000 100000"), Ok(), Ok($"{partialLength} {partialHash}"), Ok(), Ok(), Ok()]);
         var progress = new ListProgress();
-        var session = CreateSession(Guid.NewGuid(), runner, source, new FakeClock());
+        var session = CreateSession(Guid.NewGuid(), runner, source, new ManualClock());
 
         await session.StageAsync(source, "fingerprint", progress);
 
@@ -334,11 +306,11 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task StagesWithResumableSftpAndAtomicRemoteRename()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok("8 20000000000 100000000000"), Ok(), Ok(), Ok(), Ok()]);
+        var runner = new ScriptedProcessRunner([Ok("8 20000000000 100000000000"), Ok(), Ok(), Ok(), Ok()]);
         var progress = new ListProgress();
 
         // The checks (CPU, hash, existing upload, verification) and the quick transfer all run inside the first second.
-        await CreateSession(Guid.NewGuid(), runner, clock: new FakeClock()).StageAsync(source, "fingerprint", progress);
+        await CreateSession(Guid.NewGuid(), runner, clock: new ManualClock()).StageAsync(source, "fingerprint", progress);
 
         progress.Lines.Should().Equal(
             JobProgress.Step("Uploading 100 B to the worker."),
@@ -352,7 +324,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task UploadProgressAppearsOnlyAfterTenSecondsThenAtMostOnceEveryTenSeconds()
     {
         var source = await SourceAsync(new byte[1_048_576]);
-        var clock = new FakeClock();
+        var clock = new ManualClock();
         var runner = new UploadRunner(clock, remoteSizes: [262_144, 524_288], finishAtTick: 6);
         var progress = new ListProgress();
 
@@ -372,7 +344,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task AnOriginalAlreadyOnTheWorkerIsOneLineAndNoTransfer()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok("8 20000000000 100000000000"), Ok($"100 {Sha256(Original)}")]);
+        var runner = new ScriptedProcessRunner([Ok("8 20000000000 100000000000"), Ok($"100 {Sha256(Original)}")]);
         var progress = new ListProgress();
 
         await CreateSession(Guid.NewGuid(), runner).StageAsync(source, "fingerprint", progress);
@@ -386,10 +358,10 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     {
         var bytes = new byte[3 * 1_048_576];
         var source = await SourceAsync(bytes);
-        var runner = new QueueRunner([Ok("8 20000000000 100000000000"), Ok($"{bytes.Length} {Sha256(bytes)}")]);
+        var runner = new ScriptedProcessRunner([Ok("8 20000000000 100000000000"), Ok($"{bytes.Length} {Sha256(bytes)}")]);
         var progress = new ListProgress();
         // A clock that moves on every reading makes each read of the file look ten seconds apart.
-        var clock = new FakeClock { StepPerReading = TimeSpan.FromSeconds(10) };
+        var clock = new ManualClock { StepPerReading = TimeSpan.FromSeconds(10) };
 
         await CreateSession(Guid.NewGuid(), runner, clock: clock).StageAsync(source, "fingerprint", progress);
 
@@ -406,7 +378,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     {
         var source = await SourceAsync();
         var runner = new FailingSizePollRunner();
-        var session = CreateSession(Guid.NewGuid(), runner, clock: new FakeClock { TickLength = TimeSpan.FromSeconds(10) });
+        var session = CreateSession(Guid.NewGuid(), runner, clock: new ManualClock { TickLength = TimeSpan.FromSeconds(10) });
 
         // Progress is what makes the session poll at all, and only a poll that is due: the tick is 10 s, so the first one is.
         await session.StageAsync(source, "fingerprint", new ListProgress());
@@ -421,7 +393,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     {
         var source = await SourceAsync();
         var log = AbAv1OutputTests.Fixture("remote-crf-search.log");
-        var runner = new QueueRunner([Ok(AtEnd("completed 0", log)), Ok(log)]);
+        var runner = new ScriptedProcessRunner([Ok(AtEnd("completed 0", log)), Ok(log)]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
         var progress = new ListProgress();
 
@@ -435,70 +407,11 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         Steps(progress).Should().Equal("The CRF search on the worker had already finished.");
     }
 
-    /// <summary>A launch that ran on the worker but lost its reply is resent by the SSH retry; the resend must not start a
-    /// second script, and the stage reads as missing until the first one writes its pid.</summary>
-    [Fact]
-    public async Task AResentLaunchAfterALostReplyStartsNoSecondScript()
-    {
-        var source = await SourceAsync();
-        var worker = new StageWorker(["missing", "missing", "running", "completed 0"]) { DropFirstLaunchReply = true };
-
-        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
-
-        result.Crf.Should().Be(42);
-        worker.Launches.Should().HaveCount(2);
-        worker.Launches[1].Should().Be(worker.Launches[0]);
-        worker.ScriptsStarted.Should().Be(1);
-    }
-
-    /// <summary>A script that died without an exit code (a reboot, an OOM kill) leaves its marker behind; the next command
-    /// must still launch the stage again.</summary>
-    [Fact]
-    public async Task AStageWhoseScriptDiedLeavingItsMarkerIsLaunchedAgainByTheNextCommand()
-    {
-        var source = await SourceAsync();
-        var worker = new StageWorker(["missing", "missing", "missing", "missing", "missing", "missing", "running", "completed 0"]);
-        var id = Guid.NewGuid();
-
-        var died = async () => await CreateSession(id, worker, source).SearchCrfAsync(source, new QualitySettings());
-        await died.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote stage has neither*");
-        var result = await CreateSession(id, worker, source).SearchCrfAsync(source, new QualitySettings());
-
-        result.Crf.Should().Be(42);
-        worker.Launches.Should().HaveCount(2);
-        worker.ScriptsStarted.Should().Be(2);
-    }
-
-    [Fact]
-    public async Task FreshStageUsesWritableCacheInsideItsGuidWorkspace()
-    {
-        var source = await SourceAsync();
-        var runner = new QueueRunner([Ok(AtEnd("missing", "")), Ok(), Ok(), Ok(Sent("completed 0", "crf 42 successful\n")), Ok("crf 42 successful\n")]);
-        var session = CreateSession(Guid.NewGuid(), runner, source);
-
-        _ = await session.SearchCrfAsync(source, new QualitySettings());
-
-        var script = runner.Requests.Single(request => request.StandardInput?.StartsWith("#!/usr/bin/env bash", StringComparison.Ordinal) == true).StandardInput!;
-        var expectedCache = $"{session.CrfDirectory}/cache";
-        script.Should().Contain($"mkdir -p -- '{expectedCache}'");
-        script.Should().Contain($"export XDG_CACHE_HOME='{expectedCache}'");
-        expectedCache.StartsWith(session.RemoteWorkspace + "/", StringComparison.Ordinal).Should().BeTrue();
-        script.IndexOf("export XDG_CACHE_HOME", StringComparison.Ordinal).Should().BeLessThan(script.IndexOf("'/usr/bin/time'", StringComparison.Ordinal));
-
-        // Backgrounding the whole `cd && nohup …` list keeps a subshell on the SSH channel until ab-av1 exits, which
-        // turns live progress into one dump at the end of each stage (VOPT-41). Only the braced script may be backgrounded.
-        var launch = runner.Requests[2].Arguments[^1];
-        launch.Should().Contain("{ nohup setsid bash ");
-        launch.Should().Contain("</dev/null >/dev/null 2>&1 & }");
-        launch.Should().Contain($"cd -- '\"'\"'{session.CrfDirectory}'\"'\"' && ");
-        RemoteSshProcessingSession.BuildLaunchCommand("/w/a b", "/w/a b/run.sh", "launch-1").Should().Be("cd -- '/w/a b' && if mkdir -- 'launch-1'; then { nohup setsid bash '/w/a b/run.sh' </dev/null >/dev/null 2>&1 & }; elif ! test -d 'launch-1'; then exit 1; fi");
-    }
-
     [Fact]
     public async Task ReattachesToCompletedEncodingAndVerifiesItsOutput()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok(AtEnd("completed 0", "encode complete\n")), Ok("encode complete\n"), Ok()]);
+        var runner = new ScriptedProcessRunner([Ok(AtEnd("completed 0", "encode complete\n")), Ok("encode complete\n"), Ok()]);
 
         var result = await CreateSession(Guid.NewGuid(), runner, source).EncodeAsync(source, Output, 42, new QualitySettings(), 3, new AudioPlan([], [], 1));
 
@@ -514,7 +427,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task ARemoteChecksumThatIsMissingOrNotSha256HexStopsBeforeAnythingIsDownloadedOrInstalled(string remoteOutput, string expectedMessage)
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok(remoteOutput)]);
+        var runner = new ScriptedProcessRunner([Ok(remoteOutput)]);
 
         var action = async () => await CreateSession(Guid.NewGuid(), runner, source).RetrieveOutputAsync(Output, 1);
 
@@ -580,7 +493,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     {
         var source = await SourceAsync();
         await File.WriteAllBytesAsync(Output, Good);
-        var runner = new QueueRunner([Ok($"{Good.Length}\n{Sha256(Good)}")]);
+        var runner = new ScriptedProcessRunner([Ok($"{Good.Length}\n{Sha256(Good)}")]);
         var progress = new ListProgress();
 
         await CreateSession(Guid.NewGuid(), runner, source).RetrieveOutputAsync(Output, 1, progress);
@@ -606,7 +519,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task FailedRemoteStageRetainsLogThenCleansItsGuidWorkspace()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok(AtEnd("completed 9", "fatal encode error\n")), Ok("fatal encode error\n"), Ok()]);
+        var runner = new ScriptedProcessRunner([Ok(AtEnd("completed 9", "fatal encode error\n")), Ok("fatal encode error\n"), Ok()]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
         var action = async () => await session.SearchCrfAsync(source, new QualitySettings());
@@ -622,7 +535,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task ACrfStageThatFoundNoWorthwhileCrfThrowsTheSkipExceptionAndStillCleansTheWorkspace()
     {
         var source = await SourceAsync();
-        var runner = new QueueRunner([Ok(AtEnd("completed 1", NoWorthwhileCrfLog.Text)), Ok(NoWorthwhileCrfLog.Text), Ok()]);
+        var runner = new ScriptedProcessRunner([Ok(AtEnd("completed 1", NoWorthwhileCrfLog.Text)), Ok(NoWorthwhileCrfLog.Text), Ok()]);
         var session = CreateSession(Guid.NewGuid(), runner, source);
 
         var action = async () => await session.SearchCrfAsync(source, new QualitySettings { MinimumVmaf = 97, MaxEncodedPercent = 80 });
@@ -633,129 +546,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Requests[^1].Arguments[^1].Should().Contain("rm -rf --").And.Contain(session.RemoteWorkspace);
     }
 
-    [Fact]
-    public async Task AnotherFailedRemoteStageReportsTheErrorLineOfItsLog()
-    {
-        var source = await SourceAsync();
-        const string log = "[2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] starting\nError: ffmpeg exited with status 1\nCommand exited with non-zero status 1\n\tExit status: 1\n";
-        var runner = new QueueRunner([Ok(AtEnd("completed 1", log)), Ok(log), Ok()]);
-
-        var action = async () => await CreateSession(Guid.NewGuid(), runner, source).SearchCrfAsync(source, new QualitySettings());
-
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote processing stage failed with exit code 1: ffmpeg exited with status 1");
-    }
-
-    [Fact]
-    public async Task RepeatedSsh255BecomesRemoteConnectionFailure()
-    {
-        var source = await SourceAsync();
-        var runner = new QueueRunner(Enumerable.Repeat(new ExternalProcessResult(255, string.Empty, "connection refused"), 3));
-        var progress = new ListProgress();
-
-        var action = async () => await CreateSession(Guid.NewGuid(), runner, source).StageAsync(source, "fingerprint", progress);
-
-        await action.Should().ThrowAsync<RemoteConnectionException>();
-        runner.Requests.Should().HaveCount(3);
-        // Each resend says so, so a run that is recovering does not look stuck.
-        progress.Lines.Should().Equal(
-            JobProgress.Detail("Lost the connection to the worker (connection refused); trying again (try 2 of 3).", JobTone.Warning),
-            JobProgress.Detail("Lost the connection to the worker (connection refused); trying again (try 3 of 3).", JobTone.Warning));
-    }
-
-    /// <summary>
-    /// An ssh whose connection stays up but whose command never returns held a run for over half an hour; past the command
-    /// timeout it counts as a lost connection, is resent, and the stage goes on from the resent poll's answer.
-    /// </summary>
-    [Fact]
-    public async Task AnSshCommandWithNoReplyIsResentAfterTheTimeout()
-    {
-        var source = await SourceAsync();
-        const string log = "Error: ffmpeg exited with status 1\n";
-        var runner = new HangingRunner([null, Ok(AtEnd("completed 1", log)), Ok(log), Ok()]);
-        var progress = new ListProgress();
-
-        var action = async () => await CreateSession(Guid.NewGuid(), runner, source, commandTimeouts: ShortTimeouts).SearchCrfAsync(source, new QualitySettings(), progress);
-
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote processing stage failed with exit code 1: ffmpeg exited with status 1");
-        runner.Requests.Should().HaveCount(4).And.OnlyContain(request => request.Arguments.Contains("-n"));
-        // The resend and the answer that ends it are both said; the timeout here is 50 ms.
-        progress.Lines.Where(line => line.Kind == JobProgressKind.Detail).Should().Equal(
-            JobProgress.Detail("The worker didn't answer within 0s; asking again (try 2 of 3).", JobTone.Warning),
-            JobProgress.Detail("The worker answered again."));
-    }
-
-    /// <summary>
-    /// ab-av1 can go minutes without a line during a CRF search, so the stage's polls say the worker answered, at most once
-    /// per <see cref="RemoteSshProcessingSession.WorkerAnsweredInterval"/>: each is a line in the event file the TUI rereads.
-    /// </summary>
-    [Fact]
-    public async Task AQuietStagesPollsSayTheWorkerAnsweredAtMostEveryInterval()
-    {
-        var source = await SourceAsync();
-        const string log = "Error: ffmpeg exited with status 1\n";
-        var clock = new FakeClock { TickLength = TimeSpan.FromSeconds(10) };
-        var polls =Enumerable.Repeat(Ok(AtEnd("running", string.Empty)), 7).Append(Ok(AtEnd("completed 1", log))).Append(Ok(log)).Append(Ok());
-        var runner = new QueueRunner(polls);
-        var progress = new ListProgress();
-        // Each poll waits 10 s, as the real one does.
-        var session = new RemoteSshProcessingSession(new JobRecord { Id = Guid.NewGuid(), SourcePath = source }, CreateSettings(), runner, clock.TickAsync, clock.Read);
-
-        var action = async () => await session.SearchCrfAsync(source, new QualitySettings(), progress);
-
-        await action.Should().ThrowAsync<InvalidOperationException>();
-        // The first state read is at 0 s, then polls every 10 s to 70 s, when the stage has ended: answers at 30 s and 60 s.
-        progress.Lines.Count(line => line.Kind == JobProgressKind.WorkerAnswered).Should().Be(2);
-    }
-
-    [Fact]
-    public async Task ThreeSshCommandsWithNoReplyBecomeARemoteConnectionFailure()
-    {
-        var source = await SourceAsync();
-        var runner = new HangingRunner([null, null, null]);
-
-        var action = async () => await CreateSession(Guid.NewGuid(), runner, source, commandTimeouts: ShortTimeouts).StageAsync(source, "fingerprint");
-
-        await action.Should().ThrowAsync<RemoteConnectionException>();
-        runner.Requests.Should().HaveCount(3);
-    }
-
-    /// <summary>
-    /// A command too slow for the first tries, such as a checksum of a large video, would be too slow for an equal resend; the
-    /// last, longer try lets it finish instead of failing the video as an unreachable worker.
-    /// </summary>
-    [Fact]
-    public async Task ACommandTooSlowForTheFirstTriesFinishesOnTheLongerLastTry()
-    {
-        var source = await SourceAsync();
-        const string log = "Error: ffmpeg exited with status 1\n";
-        var runner = new SlowRunner(TimeSpan.FromMilliseconds(300), [Ok(AtEnd("completed 1", log)), Ok(log), Ok()]);
-
-        var action = async () => await CreateSession(Guid.NewGuid(), runner, source, commandTimeouts: ShortTimeouts).SearchCrfAsync(source, new QualitySettings());
-
-        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote processing stage failed with exit code 1: ffmpeg exited with status 1");
-        runner.Requests.Should().HaveCount(9, "each of the three commands is cut off twice and answers on its third try");
-    }
-
     private static readonly IReadOnlyList<TimeSpan> ShortTimeouts = [TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(1)];
-
-    [Fact]
-    public async Task CtrlCDuringAStageLeavesItRunningOnTheWorker()
-    {
-        var source = await SourceAsync();
-        var runner = new QueueRunner([Ok(AtEnd("running", ""))]);
-        using var cancellation = new CancellationTokenSource();
-        var session = new RemoteSshProcessingSession(new JobRecord { Id = Guid.NewGuid(), SourcePath = source }, CreateSettings(), runner, _ =>
-        {
-            cancellation.Cancel();
-            return Task.FromCanceled(cancellation.Token);
-        });
-
-        var action = async () => await session.EncodeAsync(source, Output, 30, new QualitySettings(), 1, new AudioPlan([], [], 1), cancellationToken: cancellation.Token);
-
-        await action.Should().ThrowAsync<OperationCanceledException>();
-        runner.Requests.Should().ContainSingle();
-    }
-
 
     /// <summary>
     /// A dropped video's stage keeps running on the worker with its workspace (VOPT-90). Only the workspaces of jobs this database
@@ -770,7 +561,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var stopped = Guid.NewGuid();
         var unknown = Guid.NewGuid();
         var upper = new string('A', 32);
-        var runner = new QueueRunner([Ok($"{dropped:N}\n{stopped:N}\n{unknown:N}\nlost+found\nnotes.txt\n{upper}\n{Guid.NewGuid():N}.tmp\n"), Ok()]);
+        var runner = new ScriptedProcessRunner([Ok($"{dropped:N}\n{stopped:N}\n{unknown:N}\nlost+found\nnotes.txt\n{upper}\n{Guid.NewGuid():N}.tmp\n"), Ok()]);
 
         await CreateSession(Guid.NewGuid(), runner).StopAndRemoveWorkspacesAsync(new HashSet<Guid> { dropped });
 
@@ -788,211 +579,59 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     public async Task NothingEndedCostsOnlyTheListing()
     {
         var unknown = Guid.NewGuid();
-        var runner = new QueueRunner([Ok($"{unknown:N}\n")]);
+        var runner = new ScriptedProcessRunner([Ok($"{unknown:N}\n")]);
 
         await CreateSession(Guid.NewGuid(), runner).StopAndRemoveWorkspacesAsync(new HashSet<Guid> { Guid.NewGuid() });
 
         runner.Requests.Should().ContainSingle();
     }
 
-    /// <summary>
-    /// A rerun says what it found: a stage still running, which it follows until it completes, or one that ended while no command
-    /// watched it. A stage whose log is already kept ended under the command that kept it, such as a rerun after a stopped
-    /// download. Either way it reads the result without launching another script.
-    /// </summary>
-    [Theory]
-    [InlineData("running", false, "Picked up the CRF search running on the worker.")]
-    [InlineData("completed 0", false, "The CRF search on the worker had already finished.")]
-    [InlineData("completed 0", true, null)]
-    public async Task AReattachedStageSaysWhetherItIsStillRunningOrFinishedUnwatched(string state, bool logAlreadyKept, string? expected)
-    {
-        var source = await SourceAsync();
-        var worker = new StageWorker(state == "running" ? [state, "completed 0"] : [state]);
-        var id = Guid.NewGuid();
-        if (logAlreadyKept)
-        {
-            Directory.CreateDirectory(Path.Combine(_directory, ".video-optimiser"));
-            await File.WriteAllTextAsync(Path.Combine(_directory, ".video-optimiser", $"{id:N}.crf.remote.log"), "crf 42 successful\n");
-        }
-        var progress = new ListProgress();
-
-        var result = await CreateSession(id, worker, source).SearchCrfAsync(source, new QualitySettings(), progress);
-
-        Steps(progress).Should().Equal(expected is null ? [] : [expected]);
-        result.Crf.Should().Be(42);
-        worker.ScriptsStarted.Should().Be(0);
-    }
-
-    /// <summary>
-    /// The worker's log already holds what an earlier command showed. Replaying it printed a finished encode's first progress
-    /// line again, measured the time left from it, and reported a duration of the reattach alone (VOPT-72). Each poll also read
-    /// the whole log, so a long encode cost more with every line.
-    /// </summary>
-    [Fact]
-    public async Task AReattachedEncodeShowsOnlyWhatIsNewAndNamesNoDurationItCannotKnow()
-    {
-        var source = await SourceAsync();
-        const string before = "[2026-10-13T10:06:43Z INFO  ab_av1::command::encode] encoding movie.mkv\n[2026-10-13T10:06:59Z INFO  ab_av1::command::encode] 20%, 54 fps, eta 3 minutes\n[2026-10-13T10:07:15Z INFO  ab_av1::command::encode] 42%, 57 fps, eta 2 minutes\n";
-        const string progressLine = "[2026-10-13T10:07:31Z INFO  ab_av1::command::encode] 60%, 58 fps, eta 1 minute\n";
-        const string encoded = "Encoded 99.8 MiB (29%)\n";
-        var worker = new StageWorker([new("running"), new("running", progressLine), new("completed 0", encoded)], before);
-        var progress = new ListProgress();
-        var translator = new AbAv1OutputTranslator(AbAv1Stage.Encode, 95, 80, () => TimeSpan.Zero).Wrap(progress);
-
-        await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, new AudioPlan([], [], 1), translator);
-
-        progress.Lines.Should().Equal(
-            JobProgress.Step("Picked up the encode running on the worker."),
-            JobProgress.Reading("60%, 58 fps", 60),
-            JobProgress.Step("Encoded 99.8 MiB (29% of the original)."));
-        var beforeBytes = Encoding.UTF8.GetByteCount(before);
-        worker.Polls.Should().Equal([(-1, 0), (beforeBytes, Encoding.UTF8.GetByteCount(progressLine)), (beforeBytes + Encoding.UTF8.GetByteCount(progressLine), Encoding.UTF8.GetByteCount(encoded))],
-            "after joining at the end of the log each poll asks only for the bytes past the last one it read");
-        worker.WholeLogReads.Should().Be(1, "the whole log is read once, when the stage has ended");
-    }
-
+    /// <summary>The session times a CRF search only when this command launched it.</summary>
     [Fact]
     public async Task AFreshlyLaunchedStageHasNoPickUpLineAndAKnownDuration()
     {
         var source = await SourceAsync();
-        var worker = new StageWorker(["missing", "missing", "running", new("completed 0", "crf 42 successful\n")], log: string.Empty);
+        var runner = new ScriptedProcessRunner([Ok(AtEnd("missing", "")), Ok(), Ok(), Ok(Sent("completed 0", "crf 42 successful\n")), Ok("crf 42 successful\n")]);
         var progress = new ListProgress();
 
-        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings(), progress);
+        var result = await CreateSession(Guid.NewGuid(), runner, source).SearchCrfAsync(source, new QualitySettings(), progress);
 
         Steps(progress).Should().BeEmpty();
         result.Duration.Should().NotBeNull();
-        worker.ScriptsStarted.Should().Be(1);
+        runner.Requests.Should().ContainSingle(request => request.StandardInput != null, "one stage script is uploaded");
     }
 
     [Fact]
     public async Task AReattachedCrfSearchHasNoDuration()
     {
         var source = await SourceAsync();
-        var worker = new StageWorker(["running", "completed 0"]);
+        var runner = new ScriptedProcessRunner([Ok(AtEnd("running", "")), Ok(Sent("completed 0", "crf 42 successful\n")), Ok("crf 42 successful\n")]);
 
-        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
+        var result = await CreateSession(Guid.NewGuid(), runner, source).SearchCrfAsync(source, new QualitySettings());
 
         result.Duration.Should().BeNull();
     }
 
-    /// <summary>A poll can land in the middle of a line ab-av1 is writing; the half is kept for the next poll, not printed as a line.</summary>
-    [Fact]
-    public async Task ALineStillBeingWrittenIsReportedWholeOnTheNextPoll()
-    {
-        var source = await SourceAsync();
-        const string start = "[2026-10-13T10:06:59Z INFO  ab_av1::command::encode] 20%, 54 fps, e";
-        const string rest = "ta 2 minutes\n";
-        var worker = new StageWorker([new("running"), new("running", start), new("running", rest), new("completed 0")], log: string.Empty);
-        var progress = new ListProgress();
-
-        await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, new AudioPlan([], [], 1), progress);
-
-        progress.Lines.Where(line => line.Kind == JobProgressKind.ToolOutput).Select(line => line.Text).Should().Equal(start + rest.TrimEnd('\n'));
-    }
-
-    /// <summary>
-    /// A stage whose process is alive but whose log has gone quiet for longer than <c>stageSilenceTimeout</c> (30 minutes by
-    /// default) and 1.5 times its age at the last write is hung (VOPT-153): it is stopped on the worker, its log kept, its
-    /// workspace removed, and the job fails. Rows: early on, past the setting; no log yet, timed from the stage's start; late
-    /// on, past the scaled limit.
-    /// </summary>
-    [Theory]
-    [InlineData(60, 1801, "30m 01s")]
-    [InlineData(null, 1801, "30m 01s")]
-    [InlineData(7200, 10801, "3h 00m")]
-    public async Task AStageSilentPastItsLimitIsStoppedKeptAndFailedAsStalled(int? lastWriteSeconds, int silentSeconds, string silence)
-    {
-        var source = await SourceAsync();
-        var worker = new StageWorker(["missing", RunningFor(Seconds(lastWriteSeconds), TimeSpan.FromSeconds(silentSeconds))], log: "stuck on test clip 2\n");
-        var session = CreateSession(Guid.NewGuid(), worker, source);
-
-        var action = async () => await session.SearchCrfAsync(source, new QualitySettings());
-
-        var thrown = (await action.Should().ThrowAsync<RemoteStageStalledException>()).Which;
-        thrown.Message.Should().Be($"The CRF search on the worker wrote nothing to its log for {silence}, so it was stopped.");
-        worker.Stops.Should().ContainSingle().Which.Should().Contain($"{session.CrfDirectory}").And.Contain("kill -s TERM");
-        (await File.ReadAllTextAsync(thrown.LogPath!)).Should().Be("stuck on test clip 2\n");
-        worker.Removals.Should().ContainSingle().Which.Should().Contain(session.RemoteWorkspace);
-    }
-
-    /// <summary>
-    /// A healthy step's log goes quiet for at most as long as the stage has run, so a long encode is allowed a long silence.
-    /// Rows: at the setting; 40 minutes silent two hours in (past the setting, inside 1.5 times the age); at the scaled limit.
-    /// </summary>
-    [Theory]
-    [InlineData(60, 1800)]
-    [InlineData(7200, 2400)]
-    [InlineData(7200, 10800)]
-    public async Task AStageWithinItsLimitIsLeftRunning(int? lastWriteSeconds, int silentSeconds)
-    {
-        var source = await SourceAsync();
-        var worker = new StageWorker(["missing", RunningFor(Seconds(lastWriteSeconds), TimeSpan.FromSeconds(silentSeconds)), "completed 0"]);
-
-        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
-
-        result.Crf.Should().Be(42);
-        worker.Stops.Should().BeEmpty();
-    }
-
-    /// <summary>Hours of work whose log keeps growing is never taken for a hung stage, however long the stage has run.</summary>
-    [Fact]
-    public async Task AStageWhoseLogKeepsGrowingIsNeverStopped()
-    {
-        var source = await SourceAsync();
-        var polls = Enumerable.Range(1, 6).Select(hour => new WorkerStep("running", $"{hour}h in\n", $"times {StageStart + (hour * 3600) + 60} {StageStart + (hour * 3600)} {StageStart}"));
-        var worker = new StageWorker([new WorkerStep("missing"), .. polls, new WorkerStep("completed 0")], log: string.Empty);
-
-        _ = await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, new AudioPlan([], [], 1));
-
-        worker.Stops.Should().BeEmpty();
-    }
-
     /// <summary>
     /// A later command that picks up a running stage knows nothing of when it started; the worker's own times say, so a stage
-    /// that hung while no command watched it is stopped at the first look, with no script launched.
+    /// that hung while no command watched it is stopped at the first look, with no script launched. Through the session, so the
+    /// default <c>stageSilenceTimeout</c> and the workspace removal reach the stage runner (its own cases are in
+    /// <see cref="RemoteStageRunnerTests"/>).
     /// </summary>
     [Fact]
     public async Task AReattachedStageIsJudgedByTheWorkersTimes()
     {
         var source = await SourceAsync();
-        var worker = new StageWorker([RunningFor(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(47))]);
-        var session = CreateSession(Guid.NewGuid(), worker, source);
+        const long started = 1_000_000;
+        var runner = new ScriptedProcessRunner([Ok($"running\n\ntimes {started + 300 + 2820} {started + 300} {started}\n\u001e0\u001e0\u001e"), Ok("stopped"), Ok(), Ok()]);
+        var session = CreateSession(Guid.NewGuid(), runner, source);
 
         var action = async () => await session.EncodeAsync(source, Output, 42, new QualitySettings(), 1, new AudioPlan([], [], 1));
 
         await action.Should().ThrowAsync<RemoteStageStalledException>().WithMessage("The encode on the worker wrote nothing to its log for 47m 00s, so it was stopped.");
-        worker.ScriptsStarted.Should().Be(0);
-        worker.Stops.Should().ContainSingle().Which.Should().Contain(session.EncodeDirectory(1));
-    }
-
-    /// <summary>A stage that wrote its exit code between the poll and the stop has finished, and goes on as finished.</summary>
-    [Fact]
-    public async Task AStageThatEndedJustBeforeItsStopIsNotFailed()
-    {
-        var source = await SourceAsync();
-        var worker = new StageWorker(["missing", RunningFor(TimeSpan.FromMinutes(1), TimeSpan.FromHours(1)), "completed 0"]) { EndsBeforeStop = true };
-
-        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
-
-        result.Crf.Should().Be(42);
-        worker.Stops.Should().ContainSingle();
-        worker.Removals.Should().BeEmpty();
-    }
-
-    /// <summary>A times line this cannot read gives no verdict: a stage is never stopped on a reading it cannot trust.</summary>
-    [Theory]
-    [InlineData("times 9000000 1000000")]
-    [InlineData("times 9000000 soon 1000000")]
-    public async Task AStageWhoseTimesCannotBeReadIsNeverStopped(string times)
-    {
-        var source = await SourceAsync();
-        var worker = new StageWorker(["missing", new WorkerStep("running", Times: times), "completed 0"]);
-
-        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
-
-        result.Crf.Should().Be(42);
-        worker.Stops.Should().BeEmpty();
+        runner.Requests.Should().NotContain(request => request.StandardInput != null, "no stage script is uploaded");
+        runner.Requests[1].Arguments[^1].Should().Contain("stop_stage").And.Contain(session.EncodeDirectory(1));
+        runner.Requests[^1].Arguments[^1].Should().Contain("rm -rf --").And.Contain(session.RemoteWorkspace);
     }
 
     /// <summary>A mode given for one run (<c>--remote</c>) can bring settings the validator skipped; the session refuses a bad limit.</summary>
@@ -1004,12 +643,10 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         var settings = CreateSettings();
         settings.Processing.RemoteSsh.StageSilenceTimeout = timeout;
 
-        var create = () => new RemoteSshProcessingSession(new JobRecord { Id = Guid.NewGuid(), SourcePath = "C:\\Videos\\movie.mkv" }, settings, new QueueRunner([]));
+        var create = () => new RemoteSshProcessingSession(new JobRecord { Id = Guid.NewGuid(), SourcePath = "C:\\Videos\\movie.mkv" }, settings, new ScriptedProcessRunner([]));
 
         create.Should().Throw<InvalidOperationException>().WithMessage(SettingsValidator.StageSilenceTimeoutMessage);
     }
-
-    private static TimeSpan? Seconds(int? seconds) => seconds is { } value ? TimeSpan.FromSeconds(value) : null;
 
     /// <summary>Exit 1 is the worker's answer no; any other failure is not an answer.</summary>
     [Theory]
@@ -1017,7 +654,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     [InlineData(1, false)]
     public async Task TheWorkerSaysWhetherAnAttemptsEncodeFinished(int exitCode, bool finished)
     {
-        var runner = new QueueRunner([new ExternalProcessResult(exitCode, string.Empty, string.Empty)]);
+        var runner = new ScriptedProcessRunner([new ExternalProcessResult(exitCode, string.Empty, string.Empty)]);
         var session = CreateSession(Guid.NewGuid(), runner);
 
         (await session.HasFinishedEncodeAsync(Output, 3)).Should().Be(finished);
@@ -1029,16 +666,16 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
     [Fact]
     public async Task AFailedEncodeCheckIsNotTakenForNo()
     {
-        var runner = new QueueRunner([new ExternalProcessResult(2, string.Empty, "bash: broken")]);
+        var runner = new ScriptedProcessRunner([new ExternalProcessResult(2, string.Empty, "bash: broken")]);
 
         var action = async () => await CreateSession(Guid.NewGuid(), runner).HasFinishedEncodeAsync(Output, 3);
 
         await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote encode check failed: bash: broken");
     }
 
-    private static RemoteSshProcessingSession CreateSession(Guid id, IExternalProcessRunner runner, string sourcePath = "C:\\Videos\\movie.mkv", FakeClock? clock = null, IReadOnlyList<TimeSpan>? commandTimeouts = null)
+    private static RemoteSshProcessingSession CreateSession(Guid id, IExternalProcessRunner runner, string sourcePath = "C:\\Videos\\movie.mkv", ManualClock? clock = null, IReadOnlyList<TimeSpan>? commandTimeouts = null)
     {
-        clock ??= new FakeClock();
+        clock ??= new ManualClock();
         return new RemoteSshProcessingSession(new JobRecord { Id = id, SourcePath = sourcePath }, CreateSettings(), runner, _ => Task.CompletedTask, clock.Read, clock.TickAsync, commandTimeouts, _ => Task.CompletedTask);
     }
 
@@ -1099,47 +736,6 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
             """;
     }
 
-    private sealed class QueueRunner(IEnumerable<ExternalProcessResult> results) : IExternalProcessRunner
-    {
-        private readonly Queue<ExternalProcessResult> _results = new(results);
-        public List<ExternalProcessRequest> Requests { get; } = [];
-
-        public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
-        {
-            Requests.Add(request);
-            return Task.FromResult(_results.Dequeue());
-        }
-    }
-
-    /// <summary>Answers in order; a null answer is an ssh that never returns until its token is cancelled.</summary>
-    private sealed class HangingRunner(IEnumerable<ExternalProcessResult?> results) : IExternalProcessRunner
-    {
-        private readonly Queue<ExternalProcessResult?> _results = new(results);
-        public List<ExternalProcessRequest> Requests { get; } = [];
-
-        public async Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
-        {
-            Requests.Add(request);
-            if (_results.Dequeue() is { } result) return result;
-            await Task.Delay(Timeout.Infinite, cancellationToken);
-            throw new System.Diagnostics.UnreachableException();
-        }
-    }
-
-    /// <summary>Answers in order, each after <paramref name="delay"/>; a request cut off first leaves its answer for the resend.</summary>
-    private sealed class SlowRunner(TimeSpan delay, IEnumerable<ExternalProcessResult> results) : IExternalProcessRunner
-    {
-        private readonly Queue<ExternalProcessResult> _results = new(results);
-        public List<ExternalProcessRequest> Requests { get; } = [];
-
-        public async Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
-        {
-            Requests.Add(request);
-            await Task.Delay(delay, cancellationToken);
-            return _results.Dequeue();
-        }
-    }
-
     /// <summary>
     /// The worker's side of a download: ssh answers the output's size and checksum, and each transfer writes the partial, with
     /// every byte flipped for the first <paramref name="corruptTransfers"/>.
@@ -1197,99 +793,6 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
                 return Task.FromResult(new ExternalProcessResult(1, string.Empty, "size poll failed"));
             }
             return OkAsync();
-        }
-    }
-
-    /// <summary>
-    /// What the stage's state check finds at one poll: its state, what ab-av1 had written to the log by then, and the
-    /// <c>times</c> line the worker printed, if any.
-    /// </summary>
-    private sealed record WorkerStep(string Header, string Appended = "", string? Times = null)
-    {
-        public static implicit operator WorkerStep(string header) => new(header);
-    }
-
-    /// <summary>The stage's start, in seconds on the worker's clock; any value does, since only differences count.</summary>
-    private const long StageStart = 1_000_000;
-
-    /// <summary>
-    /// A running stage's poll whose log was last written <paramref name="lastWrite"/> after <see cref="StageStart"/> (null: no
-    /// log yet) and has been silent for <paramref name="silent"/> since.
-    /// </summary>
-    private static WorkerStep RunningFor(TimeSpan? lastWrite, TimeSpan silent)
-    {
-        var written = lastWrite is { } after ? StageStart + (long)after.TotalSeconds : (long?)null;
-        var now = (written ?? StageStart) + (long)silent.TotalSeconds;
-        return new WorkerStep("running", Times: $"times {now} {written} {StageStart}");
-    }
-
-    /// <summary>
-    /// A worker for one stage that keeps the launch markers it was asked to create, as <c>mkdir</c> would, and answers the state
-    /// check as the remote command does: the log from the byte offset it was asked for, or from the end for -1, or from the
-    /// start when the offset is past the end. A launch command without a marker starts a script every time it arrives.
-    /// </summary>
-    /// <param name="log">The log already on the worker before the first poll.</param>
-    private sealed class StageWorker(IEnumerable<WorkerStep> steps, string log = "crf 42 successful\n") : IExternalProcessRunner
-    {
-        // The marker as it appears once the command is quoted for `bash -lc`.
-        private static readonly Regex MarkerPattern = new(@"mkdir -- '""'""'([^']+)'""'""'", RegexOptions.CultureInvariant);
-        private static readonly Regex OffsetPattern = new(@"off=(-?\d+);", RegexOptions.CultureInvariant);
-        private readonly Queue<WorkerStep> _steps = new(steps);
-        private readonly HashSet<string> _markers = [];
-        private string _log = log;
-
-        public bool DropFirstLaunchReply { get; set; }
-
-        /// <summary>The stage wrote its exit code just before a stop arrived, so the stop finds it ended.</summary>
-        public bool EndsBeforeStop { get; init; }
-
-        public List<string> Launches { get; } = [];
-        public List<string> Stops { get; } = [];
-        public List<string> Removals { get; } = [];
-        public int ScriptsStarted { get; private set; }
-
-        /// <summary>For each state check, the offset it asked for and how many bytes of log it was sent.</summary>
-        public List<(long Asked, int Sent)> Polls { get; } = [];
-
-        public int WholeLogReads { get; private set; }
-
-        public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
-        {
-            var command = request.Arguments[^1];
-            if (command.Contains("nohup setsid bash", StringComparison.Ordinal))
-            {
-                Launches.Add(command);
-                var marker = MarkerPattern.Match(command);
-                if (!marker.Success || _markers.Add(marker.Groups[1].Value)) ScriptsStarted++;
-                if (!DropFirstLaunchReply) return OkAsync();
-                DropFirstLaunchReply = false;
-                return Task.FromResult(new ExternalProcessResult(255, string.Empty, "Connection reset by peer"));
-            }
-            if (command.Contains("kill -0", StringComparison.Ordinal)) return OkAsync(Poll(command));
-            if (command.Contains("stop_stage \"$s/pid\"", StringComparison.Ordinal))
-            {
-                Stops.Add(command);
-                return OkAsync(EndsBeforeStop ? "ended" : "stopped");
-            }
-            if (command.Contains("rm -rf --", StringComparison.Ordinal)) Removals.Add(command);
-            if (command.Contains("cat '", StringComparison.Ordinal) && command.Contains("/log", StringComparison.Ordinal))
-            {
-                WholeLogReads++;
-                return OkAsync(_log);
-            }
-            return OkAsync();
-        }
-
-        private string Poll(string command)
-        {
-            var step = _steps.Dequeue();
-            _log += step.Appended;
-            var bytes = Encoding.UTF8.GetBytes(_log);
-            var asked = long.Parse(OffsetPattern.Match(command).Groups[1].Value, CultureInfo.InvariantCulture);
-            var start = asked < 0 ? bytes.Length : asked > bytes.Length ? 0 : (int)asked;
-            Polls.Add((asked, bytes.Length - start));
-            var times = step.Times is null ? string.Empty : $"\n{step.Times}\n";
-            return $"{step.Header}\n{times}\u001e{start}\u001e{bytes.Length}\u001e{Encoding.UTF8.GetString(bytes[start..])}";
         }
     }
 
@@ -1384,34 +887,6 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         }
     }
 
-    /// <summary>
-    /// The session's clock and its transfer-poll wait. A tick moves time on by <see cref="TickLength"/> without waiting, so a
-    /// 30 s transfer takes no time to test; <see cref="StepPerReading"/> moves it on every reading, to make hashing look slow.
-    /// </summary>
-    private sealed class FakeClock
-    {
-        private TimeSpan _now;
-
-        public TimeSpan TickLength { get; init; } = TimeSpan.FromSeconds(5);
-        public TimeSpan StepPerReading { get; init; }
-        public int Ticks { get; private set; }
-        public Action<int>? OnTick { get; set; }
-
-        public TimeSpan Read()
-        {
-            _now += StepPerReading;
-            return _now;
-        }
-
-        public async Task TickAsync(CancellationToken cancellationToken)
-        {
-            _now += TickLength;
-            Ticks++;
-            OnTick?.Invoke(Ticks);
-            await Task.Yield();
-        }
-    }
-
     /// <summary>An SFTP transfer that stays pending until the clock reaches the tick it is given (<c>finishAtTick</c>), with the remote partial's size growing per poll.</summary>
     private sealed class UploadRunner : IExternalProcessRunner
     {
@@ -1419,7 +894,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         private readonly TaskCompletionSource<ExternalProcessResult> _sftp = new();
         private readonly Queue<long> _remoteSizes;
 
-        public UploadRunner(FakeClock clock, IEnumerable<long> remoteSizes, int finishAtTick)
+        public UploadRunner(ManualClock clock, IEnumerable<long> remoteSizes, int finishAtTick)
         {
             _remoteSizes = new Queue<long>(remoteSizes);
             clock.OnTick = tick => { if (tick == finishAtTick) _sftp.TrySetResult(Ok()); };

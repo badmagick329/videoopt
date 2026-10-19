@@ -78,7 +78,7 @@ public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifie
 
     internal static IReadOnlyList<string> BuildArguments(RemoteSshSettings settings)
     {
-        var remoteCommand = $"bash -lc {PosixQuote(BuildProbeScript(settings.WorkingDirectory))}";
+        var remoteCommand = $"bash -lc {PosixShell.Quote(BuildProbeScript(settings.WorkingDirectory))}";
         var arguments = OpenSshConnectionArguments.Build(settings, connectTimeoutSeconds: 10);
         arguments.Add("--");
         arguments.Add(settings.Host);
@@ -183,7 +183,7 @@ public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifie
 
     private static string BuildProbeScript(string workingDirectory)
     {
-        var workspace = PosixQuote(workingDirectory);
+        var workspace = PosixShell.Quote(workingDirectory);
         return $$"""
             probe_tool() { if command -v "$1" >/dev/null 2>&1; then printf '{{Prefix}}tool_%s=1\n' "$2"; else printf '{{Prefix}}tool_%s=0\n' "$2"; fi; }
             probe_tool bash bash
@@ -219,8 +219,6 @@ public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifie
             printf '{{Prefix}}workspace_free_bytes=%s\n' "$workspace_free_bytes"
             """;
     }
-
-    private static string PosixQuote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
 
     private static bool TryReadLong(Dictionary<string, string> values, string key, out long value)
     {
