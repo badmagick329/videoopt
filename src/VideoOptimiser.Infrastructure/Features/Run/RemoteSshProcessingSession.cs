@@ -632,6 +632,12 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         new($"SFTP connection failed: {FirstLine(result.StandardError)}");
 
     internal static string Quote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
+    /// <summary>
+    /// Quotes a path for an sftp batch line. Inside quotes sftp escapes <c>?</c>, <c>[</c> and <c>*</c> itself before it globs
+    /// (<c>makeargv</c> in OpenSSH's sftp.c), so a name such as <c>clip [1].mp4</c> matches only itself; adding backslashes here
+    /// would make them literal backslashes in the name. A backslash inside quotes is kept and then eaten by the glob, hence
+    /// Windows separators become <c>/</c>.
+    /// </summary>
     internal static string SftpQuote(string value) => "\"" + value.Replace('\\', '/').Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
     internal static long CalculateRequiredDisk(long sourceBytes, double multiplier) => checked((long)Math.Ceiling(sourceBytes * multiplier));
 
