@@ -1,4 +1,5 @@
 using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 using YamlDotNet.RepresentationModel;
 
 namespace VideoOptimiser.Infrastructure.Configuration;
@@ -6,6 +7,7 @@ namespace VideoOptimiser.Infrastructure.Configuration;
 /// <summary>
 /// Turns a deserialisation error into a message that names the setting's full path (e.g. <c>processing.remoteSsh.hetzner.locations</c>).
 /// YamlDotNet reports only the offending key or value and its position, so the path is recovered by finding the node at that position.
+/// It also names settings written twice, which the deserialiser doesn't treat as an error.
 /// </summary>
 internal static class YamlErrorDescriber
 {
@@ -29,6 +31,68 @@ internal static class YamlErrorDescriber
             _ => $"{Reason(exception)} ({location})"
         };
     }
+
+    /// <summary>
+    /// Names every setting written twice in one section, or returns null. The deserialiser keeps the last value without a
+    /// word, so <c>action: keep</c> then <c>action: delete</c> deleted originals (VOPT-165). YamlDotNet's own duplicate check
+    /// compares keys case-sensitively, but settings match case-insensitively, so <c>Action:</c> and <c>action:</c> are one.
+    /// This reads parser events because <see cref="YamlStream"/> fails on an exact duplicate before its nodes can be walked.
+    /// </summary>
+    public static string? DescribeDuplicates(string yaml)
+    {
+        var parser = new Parser(new StringReader(yaml));
+        var messages = new List<string>();
+        try
+        {
+            parser.Consume<StreamStart>();
+            // An empty file has no document, and the loader has its own message for that.
+            if (!parser.TryConsume<DocumentStart>(out _)) return null;
+            Walk("");
+        }
+        catch (YamlException)
+        {
+            // Malformed YAML: the deserialiser reports the parser's own message and position.
+            return null;
+        }
+
+        return messages.Count == 0 ? null : string.Join(" ", messages);
+
+        void Walk(string path)
+        {
+            if (parser.TryConsume<MappingStart>(out _))
+            {
+                var seen = new Dictionary<string, Mark>(StringComparer.OrdinalIgnoreCase);
+                while (!parser.TryConsume<MappingEnd>(out _))
+                {
+                    if (!parser.TryConsume<Scalar>(out var key))
+                    {
+                        // A key that isn't text, and its value, are left for the deserialiser to reject.
+                        parser.SkipThisAndNestedEvents();
+                        parser.SkipThisAndNestedEvents();
+                        continue;
+                    }
+
+                    if (!seen.TryAdd(key.Value, key.Start))
+                    {
+                        messages.Add($"Duplicate setting '{ChildPath(path, key.Value)}' at line {key.Start.Line}, column {key.Start.Column}. It is already set at line {seen[key.Value].Line}; keep only one.");
+                    }
+
+                    Walk(ChildPath(path, key.Value));
+                }
+            }
+            else if (parser.TryConsume<SequenceStart>(out _))
+            {
+                for (var index = 0; !parser.TryConsume<SequenceEnd>(out _); index++) Walk($"{path}[{index}]");
+            }
+            else
+            {
+                // A scalar or an alias holds no keys.
+                parser.SkipThisAndNestedEvents();
+            }
+        }
+    }
+
+    private static string ChildPath(string path, string key) => path.Length == 0 ? key : $"{path}.{key}";
 
     private static string Reason(YamlException exception) => exception.InnerException?.Message ?? exception.Message;
 
@@ -59,7 +123,7 @@ internal static class YamlErrorDescriber
             case YamlMappingNode mapping:
                 foreach (var (key, value) in mapping.Children)
                 {
-                    var childPath = path.Length == 0 ? key.ToString() : $"{path}.{key}";
+                    var childPath = ChildPath(path, key.ToString());
                     if (key.Start.Index == position.Index) return (childPath, true, value);
                     if (Search(value, childPath, position) is { } found) return found;
                 }

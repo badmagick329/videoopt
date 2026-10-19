@@ -26,6 +26,9 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
     /// </summary>
     internal static AppSettings ParseUnresolved(string yaml)
     {
+        // Checked before deserialising, which would keep the last of two values unnoticed.
+        if (YamlErrorDescriber.DescribeDuplicates(yaml) is { } duplicates) throw new InvalidDataException(duplicates);
+
         AppSettings? settings;
         try
         {

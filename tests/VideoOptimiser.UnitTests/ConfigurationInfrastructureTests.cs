@@ -138,6 +138,28 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         (await load.Should().ThrowAsync<InvalidDataException>()).WithMessage("Invalid value for 'quality.crfSearch.minCrf' at line 4, column 13:*");
     }
 
+    /// <summary>
+    /// A repeated key would otherwise take its last value unnoticed, so <c>action: keep</c> then <c>action: delete</c> ran as
+    /// delete. Matching ignores case, so a case-only repeat is the same setting. A repeated section counts too, and every repeat is named at once (VOPT-165).
+    /// </summary>
+    [Theory]
+    [InlineData("original:\n  action: keep\n  action: delete",
+        "Duplicate setting 'original.action' at line 4, column 3. It is already set at line 3; keep only one.")]
+    [InlineData("original:\n  Action: keep\n  action: delete",
+        "Duplicate setting 'original.action' at line 4, column 3. It is already set at line 3; keep only one.")]
+    [InlineData("eligibility:\n  rules:\n    - codecs: [\"h264\"]\n      resolution: \"4k+\"\n      resolution: \"1080p-1440p\"",
+        "Duplicate setting 'eligibility.rules[0].resolution' at line 6, column 7. It is already set at line 5; keep only one.")]
+    [InlineData("database:\n  path: a.db\noriginal:\n  action: keep\ndatabase:\n  path: b.db",
+        "Duplicate setting 'database' at line 6, column 1. It is already set at line 2; keep only one.")]
+    [InlineData("database:\n  path: a.db\n  path: b.db\noriginal:\n  action: keep\n  action: delete",
+        "Duplicate setting 'database.path' at line 4, column 3. It is already set at line 3; keep only one. Duplicate setting 'original.action' at line 7, column 3. It is already set at line 6; keep only one.")]
+    public async Task LoadAsyncRejectsASettingSetTwiceAndNamesBothLines(string yaml, string expected)
+    {
+        var load = () => LoadAsync($"version: 1\n{yaml}");
+
+        (await load.Should().ThrowAsync<InvalidDataException>()).Which.Message.Should().Be(expected);
+    }
+
     /// <summary>An absent count must stay null, not a default, or every config would opt out of the duration rule (VOPT-159).</summary>
     [Theory]
     [InlineData("", null)]
