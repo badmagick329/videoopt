@@ -200,7 +200,7 @@ internal static partial class TuiUpdate
         {
             case TuiConfirm confirm:
                 // A question being answered stays: ? is for the screen, not for the dialog.
-                if (key.KeyChar == '?') return TuiStep.Of(m);
+                if (TuiKeys.Anywhere.Guide.Is(key.KeyChar)) return TuiStep.Of(m);
                 // Only an explicit y confirms; anything else, Enter included, is the [y/N] default.
                 var yes = key.Key == ConsoleKey.Y && key.Modifiers == 0;
                 m = m with { Dialog = null };
@@ -212,9 +212,9 @@ internal static partial class TuiUpdate
 
         // The cost page takes the keys after the dialogs, which an effect may open over it (the quit question among them).
         if (m.Cost is { } page) return CostKey(m, page, key);
-        if (TuiKeys.CostPage.Contains(key.KeyChar)) return OpenCost(m);
+        if (TuiKeys.Anywhere.Cost.Is(key.KeyChar)) return OpenCost(m);
 
-        if (key.KeyChar == '?') return TuiStep.Of(m with { Help = true });
+        if (TuiKeys.Anywhere.Guide.Is(key.KeyChar)) return TuiStep.Of(m with { Help = true });
         // The dialogs above take Esc as cancel; with none open it is the finalise's stop, from every pane like x.
         if (key.Key == ConsoleKey.Escape) return StopFinaliseKey(m);
 
@@ -226,7 +226,7 @@ internal static partial class TuiUpdate
                 return TuiStep.Of(Navigate(m, key.Key));
         }
 
-        if (char.ToLowerInvariant(key.KeyChar) != 'q') return ActionKey(m, key.KeyChar);
+        if (!TuiKeys.Anywhere.Quit.Is(key.KeyChar)) return ActionKey(m, key.KeyChar);
         return m.Busy.IsEmpty ? TuiStep.Of(m with { Quit = true }) : TuiStep.Of(ConfirmQuit(m));
     }
 

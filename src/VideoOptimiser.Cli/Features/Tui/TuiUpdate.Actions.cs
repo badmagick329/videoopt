@@ -15,8 +15,8 @@ internal static partial class TuiUpdate
 {
     private static TuiStep ActionKey(TuiModel m, char c)
     {
-        if (c == 's') return StartKey(m);
-        if (c is 'x' or 'X') return StopKey(m, c);
+        if (TuiKeys.Anywhere.Start.Is(c)) return StartKey(m);
+        if (TuiKeys.Anywhere.StopAfter.Is(c) || TuiKeys.Anywhere.StopNow.Is(c)) return StopKey(m, c);
         return m.Focus switch
         {
             Pane.Queue => QueueKey(m, c),
@@ -30,39 +30,42 @@ internal static partial class TuiUpdate
 
     private static TuiStep QueueKey(TuiModel m, char c)
     {
-        if (c is not ('h' or 'r' or 'd' or 'n' or 't')) return TuiStep.Of(m);
+        var keys = TuiKeys.Queue;
+        if (!(keys.Hold.Is(c) || keys.Release.Is(c) || keys.Drop.Is(c) || keys.RunNext.Is(c) || keys.Retry.Is(c))) return TuiStep.Of(m);
         if (m.Ordered().FirstOrDefault(video => video.Id == m.QueueSelection) is not { } v) return Told(m, "Nothing is selected.");
         var q = v.Name;
-        switch (c)
+        if (keys.Hold.Is(c))
         {
-            case 'h':
-                if (v.Group == VideoGroup.Queue) return Emit(m, new QueueActionEffect(QueueAction.Hold, v.Id, q));
-                return Told(m, v.Group switch
-                {
-                    VideoGroup.Held => $"{q} is already held.",
-                    VideoGroup.ConvertingNow => ConvertingNow(m, q),
-                    _ => "Only a waiting or stopped video can be held."
-                });
-            case 'r':
-                return v.Group == VideoGroup.Held ? Emit(m, new QueueActionEffect(QueueAction.Release, v.Id, q)) : Told(m, $"{q} isn't held.");
-            case 'n':
-                if (v.Group == VideoGroup.ConvertingNow) return Told(m, ConvertingNow(m, q));
-                return v.Group is VideoGroup.Queue or VideoGroup.Held
-                    ? Emit(m, new QueueActionEffect(QueueAction.Next, v.Id, q))
-                    : Told(m, "Only a waiting, stopped or held video can run next.");
-            case 'd':
-                return v.Group switch
-                {
-                    VideoGroup.ConvertingNow => Told(m, ConvertingNow(m, q)),
-                    VideoGroup.Failed => DismissKey(m, v),
-                    VideoGroup.Ready => Confirming(m, $"Drop {q}?", "The original is untouched. Its AV1 stays until cleanup deletes it.", new QueueActionEffect(QueueAction.Drop, v.Id, q)),
-                    _ => Confirming(m, $"Drop {q}?", "It leaves the queue. The original is untouched.", new QueueActionEffect(QueueAction.Drop, v.Id, q))
-                };
-            default:
-                return v.Group == VideoGroup.Failed
-                    ? Confirming(m, $"Retry {q}?", "A fresh job starts from scratch. The failed one stays in history.", new QueueActionEffect(QueueAction.Retry, v.Id, q))
-                    : Told(m, "Only a failed video can be retried.");
+            if (v.Group == VideoGroup.Queue) return Emit(m, new QueueActionEffect(QueueAction.Hold, v.Id, q));
+            return Told(m, v.Group switch
+            {
+                VideoGroup.Held => $"{q} is already held.",
+                VideoGroup.ConvertingNow => ConvertingNow(m, q),
+                _ => "Only a waiting or stopped video can be held."
+            });
         }
+        if (keys.Release.Is(c))
+            return v.Group == VideoGroup.Held ? Emit(m, new QueueActionEffect(QueueAction.Release, v.Id, q)) : Told(m, $"{q} isn't held.");
+        if (keys.RunNext.Is(c))
+        {
+            if (v.Group == VideoGroup.ConvertingNow) return Told(m, ConvertingNow(m, q));
+            return v.Group is VideoGroup.Queue or VideoGroup.Held
+                ? Emit(m, new QueueActionEffect(QueueAction.Next, v.Id, q))
+                : Told(m, "Only a waiting, stopped or held video can run next.");
+        }
+        if (keys.Drop.Is(c))
+        {
+            return v.Group switch
+            {
+                VideoGroup.ConvertingNow => Told(m, ConvertingNow(m, q)),
+                VideoGroup.Failed => DismissKey(m, v),
+                VideoGroup.Ready => Confirming(m, $"Drop {q}?", "The original is untouched. Its AV1 stays until cleanup deletes it.", new QueueActionEffect(QueueAction.Drop, v.Id, q)),
+                _ => Confirming(m, $"Drop {q}?", "It leaves the queue. The original is untouched.", new QueueActionEffect(QueueAction.Drop, v.Id, q))
+            };
+        }
+        return v.Group == VideoGroup.Failed
+            ? Confirming(m, $"Retry {q}?", "A fresh job starts from scratch. The failed one stays in history.", new QueueActionEffect(QueueAction.Retry, v.Id, q))
+            : Told(m, "Only a failed video can be retried.");
     }
 
     private const string DismissDetail = "Dismissed failures leave this list and stay in history. Their originals stay skipped; queue retry <job-id> still queues one again.";
@@ -88,24 +91,27 @@ internal static partial class TuiUpdate
 
     private static TuiStep WorkerKey(TuiModel m, char c)
     {
-        switch (c)
+        var keys = TuiKeys.Worker;
+        if (keys.Check.Is(c))
         {
-            case 'r':
-                if (!m.Worker.Managed) return Told(m, "There is no managed worker to check.");
-                return AskHetznerByHand(m);
-            case 'c':
-                if (!m.Worker.Managed) return Told(m, NoManagedWorker);
-                if (WorkerView.Of(m.Worker).Info is { } up) return Told(m, $"The worker {up.Name} is already up.");
-                return Emit(m, new LoadWorkerOptions(WorkerOptionsPurpose.Create));
-            case 'd':
-                if (!m.Worker.Managed) return Told(m, NoManagedWorker);
-                if (WorkerView.Of(m.Worker).Info is not { } worker) return Told(m, "There is no worker to delete.");
-                return Confirming(m, $"Delete the worker {worker.Name}?", m.Run is null
-                    ? "It stops billing at once."
-                    : "It stops billing at once. The video converting now stops and starts again from its stage on the next worker.", new DeleteWorker());
-            default:
-                return TuiStep.Of(m);
+            if (!m.Worker.Managed) return Told(m, "There is no managed worker to check.");
+            return AskHetznerByHand(m);
         }
+        if (keys.Create.Is(c))
+        {
+            if (!m.Worker.Managed) return Told(m, NoManagedWorker);
+            if (WorkerView.Of(m.Worker).Info is { } up) return Told(m, $"The worker {up.Name} is already up.");
+            return Emit(m, new LoadWorkerOptions(WorkerOptionsPurpose.Create));
+        }
+        if (keys.Delete.Is(c))
+        {
+            if (!m.Worker.Managed) return Told(m, NoManagedWorker);
+            if (WorkerView.Of(m.Worker).Info is not { } worker) return Told(m, "There is no worker to delete.");
+            return Confirming(m, $"Delete the worker {worker.Name}?", m.Run is null
+                ? "It stops billing at once."
+                : "It stops billing at once. The video converting now stops and starts again from its stage on the next worker.", new DeleteWorker());
+        }
+        return TuiStep.Of(m);
     }
 
     private static string PriceOf(RemoteWorkerCreationOption option) => option.HourlyGross is { } price ? HourlyPrice.Format(price) : "price not listed";
@@ -114,7 +120,7 @@ internal static partial class TuiUpdate
 
     private static TuiStep OnWorkerOptions(TuiModel m, WorkerOptionsMsg msg)
     {
-        m = m with { Busy = m.Busy.Remove("worker") };
+        m = m with { Busy = m.Busy.Remove(BusyKeys.Worker) };
         var found = msg.Options is { Count: > 0 } options ? options : null;
         var why = found is not null ? null : msg.Error ?? "No server qualifies.";
 
@@ -127,7 +133,7 @@ internal static partial class TuiUpdate
             }
             var create = new TuiChoice("Create a worker", "Pick the server. Prices include VAT, and it bills hourly until it is deleted.",
                 [.. found.Select(option => new ChoiceOption($"{option.ServerType}  {option.Location}", new CreateWorker(option), Hint: PriceOf(option)))], 0);
-            return TuiStep.Of(OpenAnswer(m, create, ServerListDropped('c')));
+            return TuiStep.Of(OpenAnswer(m, create, ServerListDropped(TuiKeys.Worker.Create)));
         }
 
         // Starting a run: every server, the first selected (the one `worker create` would take), and always the way out.
@@ -135,10 +141,10 @@ internal static partial class TuiUpdate
         choices = choices.Add(NoWorkerOption);
         var detail = why is null ? "Pick the server the run uses. Prices include VAT." : $"Couldn't list the servers: {FirstLine(why)}";
         if (why is not null) m = AppendLines(m, [new LogLine(LogKind.Warning, $"Couldn't list the servers: {FirstLine(why)}")]);
-        return TuiStep.Of(OpenAnswer(m, new TuiChoice("Which worker converts?", detail, choices, 0), ServerListDropped('s')));
+        return TuiStep.Of(OpenAnswer(m, new TuiChoice("Which worker converts?", detail, choices, 0), ServerListDropped(TuiKeys.Anywhere.Start)));
     }
 
-    private static string ServerListDropped(char again) => $"The server list came in while a question was open. Press {again} again.";
+    private static string ServerListDropped(TuiKey again) => $"The server list came in while a question was open. Press {again.Name} again.";
 
     private static ChoiceOption NoWorkerOption { get; } =
         new("No worker: convert on this PC", new StartRun(new StartPlan(null, WorkerFateChoice.Delete, ProcessingModeOverride.Local)));
@@ -163,7 +169,7 @@ internal static partial class TuiUpdate
         if (!m.Worker.Managed) return Emit(m, new StartRun(new StartPlan(null, WorkerFateChoice.Delete, null)));
         // VOPT-154: a delete or create from the worker pane would change the worker under the choice, so "Use X" could name a
         // server that is about to be gone. The runner refuses to replace a missing chosen worker too; this saves the wasted launch.
-        if (m.Busy.TryGetValue("worker", out var working)) return Told(m, WorkerBusyAtStart(working));
+        if (m.Busy.TryGetValue(BusyKeys.Worker, out var working)) return Told(m, WorkerBusyAtStart(working));
 
         if (WorkerView.Of(m.Worker).Info is { } worker)
         {
@@ -184,7 +190,7 @@ internal static partial class TuiUpdate
 
     private static TuiStep ActivityKey(TuiModel m, char c)
     {
-        if (c != 'w') return TuiStep.Of(m);
+        if (!TuiKeys.Activity.Fate.Is(c)) return TuiStep.Of(m);
         if (m.Run is not { } run) return Told(m, "No run is going.");
         if (!run.IsBackground) return Told(m, "That run asks about its worker in its own window.");
         // With no managed worker the fate means nothing: the run has no worker to delete or keep.
@@ -200,7 +206,7 @@ internal static partial class TuiUpdate
     {
         if (m.Run is not { } run) return Told(m, "No run is going.");
         if (!run.IsBackground) return Told(m, "That run is in another window; only Ctrl+C there stops it.");
-        if (c == 'x')
+        if (TuiKeys.Anywhere.StopAfter.Is(c))
         {
             if (m.Requests is { StopNow: true } or { StopAfterThisVideo: true }) return Told(m, "A stop is already asked of the run.");
             return Emit(m, new StopRun(Now: false));
@@ -220,14 +226,17 @@ internal static partial class TuiUpdate
 
     private static TuiStep ReviewKey(TuiModel m, char c)
     {
-        if (c is not ('o' or 'a' or 'f' or 'F' or 'r')) return TuiStep.Of(m);
-        if (c is 'f' or 'F' or 'r' && m.Finalising is { } batch) return WhileFinalising(m, c, batch);
+        var keys = TuiKeys.Review;
+        var opens = keys.OpenOriginal.Is(c) || keys.OpenAv1.Is(c);
+        var changes = keys.Finalise.Is(c) || keys.FinaliseAll.Is(c) || keys.Reject.Is(c);
+        if (!(opens || changes)) return TuiStep.Of(m);
+        if (changes && m.Finalising is { } batch) return WhileFinalising(m, c, batch);
         var ready = m.Ready();
         if (ready.Count == 0) return Told(m, "Nothing is ready to finalise.");
-        if (c == 'F') return Emit(m, new PrepareFinalise(null));
+        if (keys.FinaliseAll.Is(c)) return Emit(m, new PrepareFinalise(null));
         var video = ready.FirstOrDefault(candidate => candidate.Id == m.ReviewSelection) ?? ready[0];
-        if (c == 'r') return RejectKey(m, video);
-        return c == 'f' ? Emit(m, new PrepareFinalise(video.Id)) : Emit(m, new OpenFile(video.Id, Original: c == 'o', video.Name));
+        if (keys.Reject.Is(c)) return RejectKey(m, video);
+        return keys.Finalise.Is(c) ? Emit(m, new PrepareFinalise(video.Id)) : Emit(m, new OpenFile(video.Id, Original: keys.OpenOriginal.Is(c), video.Name));
     }
 
     // ---- stopping a finalise ----------------------------------------------------------------
@@ -247,7 +256,7 @@ internal static partial class TuiUpdate
         m = m with
         {
             Finalising = batch with { StopAsked = true },
-            Busy = m.Busy.SetItem("finalise", "Stopping the finalise after this video.")
+            Busy = m.Busy.SetItem(BusyKeys.Finalise, "Stopping the finalise after this video.")
         };
         return new TuiStep(Tell(m, "The finalise stops after this video."), [new StopFinalise()]);
     }
@@ -263,7 +272,7 @@ internal static partial class TuiUpdate
         var video = ready.FirstOrDefault(candidate => candidate.Id == m.ReviewSelection) ?? ready.FirstOrDefault();
         if (video is not null && video.Id == batch.Current) return Told(m, $"{video.Name} is being finalised now.");
         if (video is not null && batch.IsWaiting(video.Id)) return Told(m, $"{video.Name} is queued to be finalised.");
-        return Told(m, c == 'r' ? "A finalise is going. You can reject once it ends." : "A finalise is going. You can start another once it ends.");
+        return Told(m, TuiKeys.Review.Reject.Is(c) ? "A finalise is going. You can reject once it ends." : "A finalise is going. You can start another once it ends.");
     }
 
     /// <summary>
@@ -304,7 +313,7 @@ internal static partial class TuiUpdate
     private static TuiStep OnActionDone(TuiModel m, ActionDoneMsg done)
     {
         m = AppendLines(m with { Busy = m.Busy.Remove(done.Key) }, done.Result.Lines);
-        if (done.Key == "finalise") m = m with { Finalising = null };
+        if (done.Key == BusyKeys.Finalise) m = m with { Finalising = null };
         if (done.Result.Notice is { } notice) m = Tell(m, notice);
         // What Hetzner said about the worker is stale once an action touched it: forget it, drop an answer still on its way,
         // and ask again at the next tick.
@@ -339,8 +348,8 @@ internal static partial class TuiUpdate
         if (prepared.Lines is { } lines) m = AppendLines(m, lines);
         if (prepared.Confirm is { } confirm)
         {
-            var again = prepared.Asked.Id is null ? 'F' : 'f';
-            m = OpenAnswer(m, confirm, $"The finalise question came in while another was open. Press {again} again.");
+            var again = prepared.Asked.Id is null ? TuiKeys.Review.FinaliseAll : TuiKeys.Review.Finalise;
+            m = OpenAnswer(m, confirm, $"The finalise question came in while another was open. Press {again.Name} again.");
         }
         return prepared.Notice is { } notice ? Tell(m, notice) : m;
     }

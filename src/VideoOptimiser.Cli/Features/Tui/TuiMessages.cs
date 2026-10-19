@@ -99,7 +99,7 @@ internal enum QueueAction { Hold, Release, Next, Drop, Retry, Reject, Dismiss }
 
 internal sealed record QueueActionEffect(QueueAction Action, Guid Id, string Name) : TuiEffect
 {
-    public override string BusyKey => $"queue:{Id:N}";
+    public override string BusyKey => BusyKeys.Queue(Id);
 
     public override string BusyText => Action switch
     {
@@ -116,14 +116,14 @@ internal sealed record QueueActionEffect(QueueAction Action, Guid Id, string Nam
 /// <summary><c>queue dismiss --all</c>: every failure not dismissed yet, not only the ones the Failed group shows.</summary>
 internal sealed record DismissAllFailures : TuiEffect
 {
-    public override string BusyKey => "dismiss";
+    public override string BusyKey => BusyKeys.Dismiss;
     public override string BusyText => "Dismissing the failures.";
 }
 
 /// <summary>List the servers a creation may choose from; Hetzner is asked, so it runs off the loop thread.</summary>
 internal sealed record LoadWorkerOptions(WorkerOptionsPurpose Purpose) : TuiEffect
 {
-    public override string BusyKey => "worker";
+    public override string BusyKey => BusyKeys.Worker;
     public override string BusyText => "Asking Hetzner for the servers.";
 }
 
@@ -132,7 +132,7 @@ internal sealed record CreateWorker(RemoteWorkerCreationOption Option) : TuiEffe
     /// <summary>Also how <c>s</c> tells this from the other actions that hold the <c>worker</c> key.</summary>
     public const string Text = "Creating the worker.";
 
-    public override string BusyKey => "worker";
+    public override string BusyKey => BusyKeys.Worker;
     public override string BusyText => Text;
 }
 
@@ -141,7 +141,7 @@ internal sealed record DeleteWorker : TuiEffect
     /// <summary>Also how <c>s</c> tells this from the other actions that hold the <c>worker</c> key.</summary>
     public const string Text = "Deleting the worker.";
 
-    public override string BusyKey => "worker";
+    public override string BusyKey => BusyKeys.Worker;
     public override string BusyText => Text;
 }
 
@@ -158,19 +158,19 @@ internal sealed record StartPlan(RemoteWorkerCreationOption? Create, WorkerFateC
 
 internal sealed record StartRun(StartPlan Plan) : TuiEffect
 {
-    public override string BusyKey => "run";
+    public override string BusyKey => BusyKeys.Run;
     public override string BusyText => Plan.Create is null ? "Starting the run." : "Creating the worker, then starting the run.";
 }
 
 internal sealed record StopRun(bool Now) : TuiEffect
 {
-    public override string BusyKey => "stop";
+    public override string BusyKey => BusyKeys.Stop;
     public override string BusyText => Now ? "Asking the run to stop now." : "Asking the run to stop after this video.";
 }
 
 internal sealed record SetWorkerFate(WorkerFateChoice Fate) : TuiEffect
 {
-    public override string BusyKey => "fate";
+    public override string BusyKey => BusyKeys.Fate;
     public override string BusyText => "Changing what happens to the worker.";
 }
 
@@ -179,7 +179,7 @@ internal sealed record OpenFile(Guid Id, bool Original, string Name) : TuiEffect
 /// <summary>Read what is ready to finalise and prepare the confirmation; <paramref name="Id"/> null means every ready video, as <c>finalize --ready</c>.</summary>
 internal sealed record PrepareFinalise(Guid? Id) : TuiEffect
 {
-    public override string BusyKey => "finalise";
+    public override string BusyKey => BusyKeys.Finalise;
     public override string BusyText => "Reading what is ready to finalise.";
 }
 
@@ -188,7 +188,7 @@ internal sealed record PrepareFinalise(Guid? Id) : TuiEffect
 /// </param>
 internal sealed record FinaliseVideos(IReadOnlyList<Guid> Ids, IReadOnlyList<string>? LeftOut = null) : TuiEffect
 {
-    public override string BusyKey => "finalise";
+    public override string BusyKey => BusyKeys.Finalise;
     public override string BusyText => "Finalising.";
 }
 

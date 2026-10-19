@@ -37,7 +37,7 @@ internal static partial class TuiUpdate
     /// </summary>
     private static TuiStep CostKey(TuiModel m, CostPage page, ConsoleKeyInfo key)
     {
-        if (key.Key == ConsoleKey.Escape || TuiKeys.CostPage.Contains(key.KeyChar)) return TuiStep.Of(m with { Cost = null });
+        if (key.Key == ConsoleKey.Escape || TuiKeys.Anywhere.Cost.Is(key.KeyChar)) return TuiStep.Of(m with { Cost = null });
         var runs = page.Report?.Runs ?? [];
         switch (key.Key)
         {

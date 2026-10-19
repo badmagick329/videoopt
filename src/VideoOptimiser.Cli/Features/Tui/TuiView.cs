@@ -125,10 +125,11 @@ internal static partial class TuiView
 
     private static IRenderable Footer(TuiModel m)
     {
+        var anywhere = TuiKeys.Anywhere;
         // The stop keys work from every pane, so every footer offers them while a run is going.
-        (string Key, string What)[] stop = m.Run is null ? [] : [("x", "stop after"), ("X", "stop now")];
+        (string Key, string What)[] stop = m.Run is null ? [] : [anywhere.StopAfter.Hint, anywhere.StopNow.Hint];
         // Esc works from every pane, but Review is where the batch shows, so its footer offers it.
-        (string Key, string What)[] stopFinalise = m.Finalising is { CanStop: true } ? [("esc", "stop")] : [];
+        (string Key, string What)[] stopFinalise = m.Finalising is { CanStop: true } ? [TuiKeys.Review.StopFinalise.Hint] : [];
         (string Key, string What)[] hints = m.Help
             ? [("any key", "close the help")]
             : m.Dialog is TuiConfirm
@@ -137,13 +138,13 @@ internal static partial class TuiView
                 ? [("↑↓", "move"), ("enter", "choose"), ("esc", "cancel")]
                 : m.Cost is { } page
                 ? [.. page.Report is { Runs.Count: > 0 } ? [("↑↓", "select a run"), ("pgup pgdn", "scroll its videos")] : Array.Empty<(string, string)>(),
-                    (TuiKeys.Name(TuiKeys.CostPage) + " / esc", "close"), ("ctrl+c", "quit")]
+                    (TuiKeys.Anywhere.Cost.Name + " / esc", "close"), ("ctrl+c", "quit")]
                 : m.Focus switch
                 {
-                    Pane.Queue => [("↑↓", "select"), ("h", "hold"), ("r", "release"), ("n", "run next"), ("d", FailedSelected(m) ? "dismiss" : "drop"), ("t", "retry"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
-                    Pane.Worker => [("c", "create"), ("d", "delete"), ("r", "check now"), .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")],
-                    Pane.Activity => [("↑↓", "scroll"), ("w", "worker fate"), .. stop, ("s", "start run"), ("end", "follow"), ("tab", ""), ("?", "help"), ("q", "quit")],
-                    _ => [("↑↓", "select"), ("o", "original"), ("a", "AV1"), ("f", "finalise"), ("F", "all"), ("r", "reject"), .. stopFinalise, .. stop, ("s", "start run"), ("tab", ""), ("?", "help"), ("q", "quit")]
+                    Pane.Queue => QueueHints(m, stop),
+                    Pane.Worker => WorkerHints(stop),
+                    Pane.Activity => ActivityHints(stop),
+                    _ => ReviewHints(stop, stopFinalise)
                 };
 
         // A notice says why a key did nothing; a read problem stays until the next read works.
@@ -173,6 +174,38 @@ internal static partial class TuiView
         }
         if (noticeText.Length > 0) line.Right(noticeText, Theme.Of(Theme.Held));
         return line.Build(m.Width);
+    }
+
+    // Each pane's hints: its own keys first, then the ones that work from every pane, in the order the footer has room for.
+
+    private static (string Key, string What)[] Closing() =>
+        [TuiKeys.Anywhere.Start.Hint, TuiKeys.Anywhere.NextPane.Hint, TuiKeys.Anywhere.Guide.Hint, TuiKeys.Anywhere.Quit.Hint];
+
+    private static (string Key, string What)[] QueueHints(TuiModel m, (string Key, string What)[] stop)
+    {
+        var keys = TuiKeys.Queue;
+        var drop = FailedSelected(m) ? keys.Drop.HintAs(TuiKeys.QueueKeys.DismissFooter) : keys.Drop.Hint;
+        return [keys.Select.Hint, keys.Hold.Hint, keys.Release.Hint, keys.RunNext.Hint, drop, keys.Retry.Hint, .. stop, .. Closing()];
+    }
+
+    private static (string Key, string What)[] WorkerHints((string Key, string What)[] stop)
+    {
+        var keys = TuiKeys.Worker;
+        return [keys.Create.Hint, keys.Delete.Hint, keys.Check.Hint, .. stop, .. Closing()];
+    }
+
+    /// <summary>End sits after start here, beside the scroll it undoes.</summary>
+    private static (string Key, string What)[] ActivityHints((string Key, string What)[] stop)
+    {
+        var keys = TuiKeys.Activity;
+        var anywhere = TuiKeys.Anywhere;
+        return [keys.Scroll.Hint, keys.Fate.Hint, .. stop, anywhere.Start.Hint, keys.Follow.Hint, anywhere.NextPane.Hint, anywhere.Guide.Hint, anywhere.Quit.Hint];
+    }
+
+    private static (string Key, string What)[] ReviewHints((string Key, string What)[] stop, (string Key, string What)[] stopFinalise)
+    {
+        var keys = TuiKeys.Review;
+        return [keys.Select.Hint, keys.OpenOriginal.Hint, keys.OpenAv1.Hint, keys.Finalise.Hint, keys.FinaliseAll.Hint, keys.Reject.Hint, .. stopFinalise, .. stop, .. Closing()];
     }
 
     // ---- panes ------------------------------------------------------------------------------
@@ -351,7 +384,7 @@ internal static partial class TuiView
     private static List<IRenderable> WorkerRows(TuiModel m, int width, int capacity)
     {
         var rows = WorkerRowsCore(m, width, capacity);
-        if (!m.Busy.TryGetValue("worker", out var working)) return rows;
+        if (!m.Busy.TryGetValue(BusyKeys.Worker, out var working)) return rows;
         var busy = new Line().Left(" ", Style.Plain).Flex(working, Theme.Of(Theme.Held)).Build(width);
         if (rows.Count >= capacity) rows[^1] = busy;
         else rows.Add(busy);
