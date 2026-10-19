@@ -9,7 +9,7 @@ public sealed class SettingsValidator : ISettingsValidator
     /// <summary>Also the remote session's refusal, for a mode given for one run that skipped this check.</summary>
     public const string StageSilenceTimeoutMessage = "processing.remoteSsh.stageSilenceTimeout must be a positive duration such as 30m.";
 
-    // Plausibility bounds for the quality settings (VOPT-166), provisional until the user confirms them; every message and
+    // Plausibility bounds for the quality settings (VOPT-166), agreed with the user; every message and
     // test reads them from here. Nothing after the encode checks quality, so a typo such as minimumVmaf 9.5 for 95 would
     // otherwise replace originals with visibly worse AV1s that only the user's review stands in front of.
     public const double LowestMinimumVmaf = 50;
