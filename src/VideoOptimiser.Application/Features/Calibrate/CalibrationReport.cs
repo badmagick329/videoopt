@@ -180,7 +180,8 @@ public sealed record CalibrationReport(
 
         foreach (var video in videos)
         {
-            if (video.AlreadyConverted || (video.Codec is { } known && IsAv1(known) && Rule(video.SizeBytes, Media(video.Codec, video.Width, video.Height, video.Bitrate, video.SizeBytes), eligibility) is null))
+            // No rule can admit AV1 (the validator refuses it), so every AV1 video is already converted.
+            if (video.AlreadyConverted || video.Codec is { } known && IsAv1(known))
             {
                 alreadyAv1Videos++;
                 alreadyAv1Bytes += video.SizeBytes;
@@ -229,7 +230,8 @@ public sealed record CalibrationReport(
 
         foreach (var group in keptOut)
         {
-            if (group.History is { } history && history.Results >= MinimumResults && history.Converted * 2 > history.Results &&
+            // AV1 results come from a rule that admitted AV1 before the validator refused it; suggesting that rule again would break the config.
+            if (group.History is { } history && history.Results >= MinimumResults && history.Converted * 2 > history.Results && !IsAv1(group.Codec!) &&
                 group.Resolution.IsRuleBand && group.Bitrate.MinimumMbps is > 0 and { } minimum)
                 suggestions.Add(new AddRuleSuggestion(group, minimum));
         }

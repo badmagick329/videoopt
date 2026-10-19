@@ -38,16 +38,13 @@ public sealed class CalibrationReportTests
     }
 
     [Fact]
-    public void AV1TheRulesKeepOutAndConvertedImmichAssetsAreCountedAsAlreadyAV1()
+    public void AV1VideosAndConvertedImmichAssetsAreCountedAsAlreadyAV1()
     {
-        var av1Rule = new EligibilityRuleSettings { Codecs = ["av1"], Resolution = "4k+", MinimumVideoBitrate = "50Mbps", MinimumFileSize = "1MiB" };
-        var report = Build([H264Rule(), av1Rule], [
+        var report = Build([H264Rule()], [
             Video("output.mkv", "av1", 3840, 2160, 10),
-            Immich("replacement.mp4", null, 3840, 2160, 10) with { AlreadyConverted = true },
-            Video("big-av1.mkv", "av1", 3840, 2160, 60)]);
+            Immich("replacement.mp4", null, 3840, 2160, 10) with { AlreadyConverted = true }]);
 
         (report.AlreadyAv1Videos, report.AlreadyAv1Bytes).Should().Be((2, 4 * GiB));
-        report.Rules[1].Videos.Should().Be(1, "an AV1 video a rule admits is a candidate like any other");
         report.KeptOut.Should().BeEmpty();
         report.CodecUnknown.Should().BeEmpty();
     }
@@ -153,10 +150,12 @@ public sealed class CalibrationReportTests
         Build([H264Rule()], [], [.. results]).Suggestions.Should().BeEmpty();
     }
 
-    [Fact]
-    public void NoRuleSuggestionForAResolutionNoRuleCanName()
+    [Theory]
+    [InlineData("h264", 1080, 1440)]
+    [InlineData("av1", 3840, 2160)]
+    public void NoRuleSuggestionForAResolutionOrCodecNoRuleCanName(string codec, int width, int height)
     {
-        var results = Enumerable.Range(0, 3).Select(_ => Result(true, 12, "h264", 1080, 1440, 50m));
+        var results = Enumerable.Range(0, 3).Select(_ => Result(true, 45, codec, width, height, 50m));
 
         Build([H264Rule()], [], [.. results]).Suggestions.Should().BeEmpty();
     }

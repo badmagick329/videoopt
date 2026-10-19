@@ -19,7 +19,7 @@ eligibility:
       minimumFileSize: "800MiB"
 ```
 
-- `codecs` takes any codec name ffprobe reports, such as `h264`, `hevc`, `mpeg4`, `vp9` or `prores`.
+- `codecs` takes any codec name ffprobe reports, such as `h264`, `hevc`, `mpeg4`, `vp9` or `prores`. It can't list `av1`, since every conversion makes AV1.
 - `resolution` is `1080p-1440p`, `1440p-4k` or `4k+`, measured by total pixels.
 - `minimumVideoBitrate` is the video stream's bitrate as ffprobe reports it. Many MKV files don't record one, so the whole file's bitrate is used instead. That figure includes the audio, so it reads slightly high.
 - Only files with an extension in `eligibility.extensions` are scanned. The default is `.mkv`, `.mp4`, `.mov` and `.m4v`.
@@ -50,6 +50,17 @@ A suggestion based on earlier runs needs at least 3 results, and only results at
 When there is nothing to suggest, the last line says why: no videos were found, every video found is already AV1, no video has been converted at your quality settings yet, there are too few results to judge, or the results call for no change. `calibrate --json` gives the same reason in `noSuggestions`.
 
 If Immich cannot be searched, the report still covers your watch folders. `calibrate` then prints `Immich couldn't be searched, so its videos are not in this report: <reason>.` on standard error and exits with the same code as any other Immich failure.
+
+## Quality settings
+
+| Setting | Default | Allowed values |
+| --- | --- | --- |
+| `quality.minimumVmaf` | `95`, or what you chose in `config init`: `97`, `95` or `93` | 50 to 100 |
+| `quality.preset` | `6` | -1 to 13. Lower is slower and usually gives smaller files. |
+| `quality.crfSearch.minCrf` | `8` | 1 to 63, and no higher than `maxCrf` |
+| `quality.crfSearch.maxCrf` | `50` | 1 to 63 |
+
+A value outside its range fails `config validate`, and `run` and the other commands that check the config refuse to start. Below about VMAF 80 the AV1 looks visibly worse than the original. The floor of 50 catches a typo such as `9.5` for `95` before it reaches your originals.
 
 ## When a video is not worth converting
 

@@ -24,6 +24,62 @@ public sealed class SettingsValidatorTests
         Codes(settings).Contains("InvalidMaxEncodedPercent").Should().Be(!valid);
     }
 
+    [Theory]
+    [InlineData(SettingsValidator.LowestMinimumVmaf - 0.01, false)]
+    [InlineData(SettingsValidator.LowestMinimumVmaf, true)]
+    [InlineData(SettingsValidator.HighestMinimumVmaf, true)]
+    [InlineData(SettingsValidator.HighestMinimumVmaf + 0.01, false)]
+    [InlineData(double.NaN, false)]
+    public void ValidateRequiresAPlausibleMinimumVmaf(double vmaf, bool valid)
+    {
+        var settings = CreateValidSettings();
+        settings.Quality.MinimumVmaf = vmaf;
+
+        Codes(settings).Contains("InvalidVmaf").Should().Be(!valid);
+    }
+
+    [Theory]
+    [InlineData(SettingsValidator.LowestPreset - 1, false)]
+    [InlineData(SettingsValidator.LowestPreset, true)]
+    [InlineData(SettingsValidator.HighestPreset, true)]
+    [InlineData(SettingsValidator.HighestPreset + 1, false)]
+    public void ValidateRequiresAnSvtAv1Preset(int preset, bool valid)
+    {
+        var settings = CreateValidSettings();
+        settings.Quality.Preset = preset;
+
+        Codes(settings).Contains("InvalidPreset").Should().Be(!valid);
+    }
+
+    [Theory]
+    [InlineData(SettingsValidator.LowestCrf - 1, 50, "InvalidMinCrf")]
+    [InlineData(SettingsValidator.LowestCrf, 50, null)]
+    [InlineData(8, SettingsValidator.HighestCrf, null)]
+    [InlineData(8, SettingsValidator.HighestCrf + 1, "InvalidMaxCrf")]
+    [InlineData(30, 30, null)]
+    [InlineData(31, 30, "InvalidCrfRange")]
+    [InlineData(SettingsValidator.HighestCrf + 1, 30, "InvalidMinCrf")]
+    public void ValidateRequiresAnOrderedCrfRangeOnTheSvtAv1Scale(int minCrf, int maxCrf, string? expectedCode)
+    {
+        var settings = CreateValidSettings();
+        settings.Quality.CrfSearch.MinCrf = minCrf;
+        settings.Quality.CrfSearch.MaxCrf = maxCrf;
+
+        if (expectedCode is null) Codes(settings).Should().BeEmpty();
+        else Codes(settings).Should().Equal(expectedCode);
+    }
+
+    [Theory]
+    [InlineData("hevc", false)]
+    [InlineData("AV1", true)]
+    public void ValidateRefusesARuleThatAdmitsAv1(string codec, bool rejected)
+    {
+        var settings = CreateValidSettings();
+        settings.Eligibility.Rules[0].Codecs = ["h264", codec];
+
+        Codes(settings).Contains("InvalidEligibilityRuleCodec").Should().Be(rejected);
+    }
+
     [Fact]
     public void ValidateAcceptsAnImmichOnlySetupWithoutWatchRoots()
     {

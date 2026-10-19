@@ -1,5 +1,6 @@
 using VideoOptimiser.Application.Eligibility;
 using VideoOptimiser.Domain;
+using static System.FormattableString;
 
 namespace VideoOptimiser.Application.Configuration;
 
@@ -7,6 +8,23 @@ public sealed class SettingsValidator : ISettingsValidator
 {
     /// <summary>Also the remote session's refusal, for a mode given for one run that skipped this check.</summary>
     public const string StageSilenceTimeoutMessage = "processing.remoteSsh.stageSilenceTimeout must be a positive duration such as 30m.";
+
+    // Plausibility bounds for the quality settings (VOPT-166), provisional until the user confirms them; every message and
+    // test reads them from here. Nothing after the encode checks quality, so a typo such as minimumVmaf 9.5 for 95 would
+    // otherwise replace originals with visibly worse AV1s that only the user's review stands in front of.
+    public const double LowestMinimumVmaf = 50;
+    public const double HighestMinimumVmaf = 100;
+
+    /// <summary>SVT-AV1's preset range, in the 3.x the worker builds and the 4.x in the pinned local FFmpeg alike.</summary>
+    public const int LowestPreset = -1;
+    public const int HighestPreset = 13;
+
+    /// <summary>SVT-AV1's CRF scale (0 to 63) without 0, the largest output a search could pick.</summary>
+    public const int LowestCrf = 1;
+    public const int HighestCrf = 63;
+
+    /// <summary>The codec every conversion produces, so no rule may admit it; compared as the rules compare codecs.</summary>
+    private const string Av1Codec = "av1";
 
     public IReadOnlyList<Diagnostic> Validate(AppSettings settings)
     {
@@ -73,15 +91,22 @@ public sealed class SettingsValidator : ISettingsValidator
         foreach (var rule in settings.Eligibility.Rules)
         {
             AddWhen(rule.Codecs.Count == 0, "EligibilityRuleCodecsRequired", "Every eligibility.rules entry requires codecs.");
+            AddWhen(rule.Codecs.Contains(Av1Codec, StringComparer.OrdinalIgnoreCase), "InvalidEligibilityRuleCodec", "eligibility.rules can't list av1 in codecs, since VideoOptimiser converts videos to AV1.");
             AddWhen(!HumanReadableValues.TryParseSize(rule.MinimumFileSize, out _), "InvalidEligibilityRuleSize", "eligibility.rules.minimumFileSize must be a size.");
             AddWhen(!HumanReadableValues.TryParseBitrate(rule.MinimumVideoBitrate, out _), "InvalidEligibilityRuleBitrate", "eligibility.rules.minimumVideoBitrate must be a positive bitrate.");
             AddWhen(!EligibilityEvaluator.IsValidResolutionBand(rule.Resolution), "InvalidEligibilityRuleResolution", "eligibility.rules.resolution must be 1080p-1440p, 1440p-4k, or 4k+.");
         }
         ValidateSize(settings.Savings.MinimumBytesSaved, "savings.minimumBytesSaved", diagnostics);
-        AddWhen(settings.Quality.MinimumVmaf is < 0 or > 100, "InvalidVmaf", "quality.minimumVmaf must be between 0 and 100.");
+        // Written as "not inside" so NaN, which YAML's .nan gives, fails too.
+        AddWhen(!(settings.Quality.MinimumVmaf is >= LowestMinimumVmaf and <= HighestMinimumVmaf), "InvalidVmaf", Invariant($"quality.minimumVmaf must be between {LowestMinimumVmaf} and {HighestMinimumVmaf}, such as 95."));
         AddWhen(settings.Quality.MaxEncodedPercent is < 1 or > 100, "InvalidMaxEncodedPercent", "quality.maxEncodedPercent must be a whole number between 1 and 100.");
-        AddWhen(settings.Quality.Preset < 0, "InvalidPreset", "quality.preset cannot be negative.");
-        AddWhen(settings.Quality.CrfSearch.MinCrf > settings.Quality.CrfSearch.MaxCrf, "InvalidCrfRange", "quality.crfSearch.minCrf cannot exceed maxCrf.");
+        AddWhen(settings.Quality.Preset is < LowestPreset or > HighestPreset, "InvalidPreset", Invariant($"quality.preset must be a whole number between {LowestPreset} and {HighestPreset}."));
+        var minCrfValid = IsCrf(settings.Quality.CrfSearch.MinCrf);
+        var maxCrfValid = IsCrf(settings.Quality.CrfSearch.MaxCrf);
+        AddWhen(!minCrfValid, "InvalidMinCrf", $"quality.crfSearch.minCrf must be a whole number between {LowestCrf} and {HighestCrf}.");
+        AddWhen(!maxCrfValid, "InvalidMaxCrf", $"quality.crfSearch.maxCrf must be a whole number between {LowestCrf} and {HighestCrf}.");
+        // Only between two valid ends, so one typo gives one error.
+        AddWhen(minCrfValid && maxCrfValid && settings.Quality.CrfSearch.MinCrf > settings.Quality.CrfSearch.MaxCrf, "InvalidCrfRange", "quality.crfSearch.minCrf cannot exceed maxCrf.");
         AddWhen(settings.Quality.CrfSearch.ConfiguredSampleCount is < 1, "InvalidSampleCount", "quality.crfSearch.sampleCount must be at least 1.");
         ValidateDuration(settings.Quality.CrfSearch.SampleDuration, "quality.crfSearch.sampleDuration", diagnostics);
         AddWhen(string.IsNullOrWhiteSpace(settings.Quality.Encoder), "EncoderRequired", "quality.encoder is required.");
@@ -125,6 +150,8 @@ public sealed class SettingsValidator : ISettingsValidator
     private static bool IsFolderNameOrAbsolutePath(string value) =>
         Path.IsPathFullyQualified(value) ||
         (value is not "." and not ".." && value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && value.Trim() == value);
+
+    private static bool IsCrf(int value) => value is >= LowestCrf and <= HighestCrf;
 
     private static bool IsHttpUrl(string value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) && string.IsNullOrEmpty(uri.Query);
