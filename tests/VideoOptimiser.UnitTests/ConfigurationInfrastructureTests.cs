@@ -47,6 +47,7 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         remote.MinimumCpuCount.Should().Be(8);
         remote.MinimumAvailableMemory.Should().Be("14GiB");
         remote.MinimumFreeDiskMultiplier.Should().Be(2.5);
+        remote.StageSilenceTimeout.Should().Be("30m");
         remote.Lifecycle.Should().Be(RemoteLifecycleModes.Manual);
         remote.Hetzner.ServerTypes.Should().Equal("cx43", "cx53", "cpx42", "ccx33");
         remote.Hetzner.MaxHourlyPrice.Should().Be(0.30m);

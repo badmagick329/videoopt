@@ -97,6 +97,7 @@ internal sealed class ResumedWorkerSession : IProcessingSession
     public List<string> Calls { get; } = [];
     public bool EncodeFinished { get; init; }
     public Exception? RetrieveFailure { get; init; }
+    public Exception? EncodeFailure { get; init; }
     public TimeSpan? SearchDuration { get; init; } = TimeSpan.FromSeconds(5);
 
     public bool IsRemote => true;
@@ -119,6 +120,7 @@ internal sealed class ResumedWorkerSession : IProcessingSession
     public Task<ProcessingStageResult> EncodeAsync(string sourcePath, string outputPath, int crf, QualitySettings settings, int attempt, AudioPlan audio, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         Calls.Add($"Encode {attempt}");
+        if (EncodeFailure is not null) throw EncodeFailure;
         return Task.FromResult(new ProcessingStageResult(outputPath, TimeSpan.Zero));
     }
 

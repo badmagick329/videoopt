@@ -223,6 +223,10 @@ If the application crashes or the network becomes unreachable, the worker is kep
 
 When the worker can't be reached, the video's line is `Worker unreachable: <reason>.` and the run stops at that video, because every later one would fail the same way. The video is stopped, not failed, and resumes from its stage. The videos after it stay queued. The run then prints `Stopped: the worker <name> can't be reached, so 3 videos were not converted.` For a Hetzner worker it adds `The worker stays up, billed hourly, until it is deleted.`, `To resume: video-optimiser run` and `To delete it instead: video-optimiser worker delete`. A manual host gets only `To resume:`. Run the same command again to reconnect and resume.
 
+### When a stage hangs
+
+A CRF search or encode on the worker writes to its log as it works. When the log stays silent for longer than `processing.remoteSsh.stageSilenceTimeout` (default `30m`), the run stops that stage on the worker, keeps its log beside the original, and fails the video with `The encode on the worker wrote nothing to its log for 47m 00s, so it was stopped.` (or `The CRF search ...`). Then it goes on to the next video. ab-av1 writes less often the longer a step runs, so a long stage gets more time: up to 1.5 times as long as it had been running at its last line. A healthy two-hour encode can go about 34 minutes without a line. The times come from the worker's clock, so a later run that picks up the stage judges it the same way. `queue retry <job-id>` tries the video again.
+
 ### Stopping a run with Ctrl+C
 
 The first `Ctrl+C` while a video converts stops the run after that video, so its CRF search, encode and download are kept. It prints `Stopping after this video (the encode has about 7m 36s left). Press Ctrl+C again to stop now.` The time appears only while encoding. When the video is done, the run prints `Stopped after clip.mp4; 3 videos are still waiting.`, its usual summary, and `To convert the rest: video-optimiser run`, and exits `9`.

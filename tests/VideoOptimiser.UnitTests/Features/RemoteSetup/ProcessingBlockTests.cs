@@ -24,6 +24,7 @@ public sealed class ProcessingBlockTests
                 MinimumCpuCount = 4,
                 MinimumAvailableMemory = "7GiB",
                 MinimumFreeDiskMultiplier = 3.25,
+                StageSilenceTimeout = "45m",
                 Hetzner = new HetznerSettings
                 {
                     ApiTokenEnvironmentVariable = "MY_TOKEN",

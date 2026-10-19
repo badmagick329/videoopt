@@ -73,6 +73,13 @@ public static class FailureCategories
     /// </summary>
     public const string ValidationFailed = "ValidationFailed";
 
+    /// <summary>
+    /// A <see cref="JobStatus.Failed"/> job whose CRF search or encode on the worker wrote nothing to its log for longer than
+    /// both <c>processing.remoteSsh.stageSilenceTimeout</c> and 1.5 times the stage's age at its last write, and was stopped so
+    /// a hung tool does not bill for ever (VOPT-153). Retried like any failure.
+    /// </summary>
+    public const string StageStalled = "StageStalled";
+
     /// <summary>A <see cref="JobStatus.Rejected"/> job. The status says it all, so no list adds a phrase for it.</summary>
     public const string Rejected = "Rejected";
 

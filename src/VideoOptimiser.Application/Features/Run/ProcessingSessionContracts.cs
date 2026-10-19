@@ -47,3 +47,12 @@ public interface IProcessingSessionFactory
 }
 
 public sealed class RemoteConnectionException(string message, Exception? innerException = null) : IOException(message, innerException);
+
+/// <summary>
+/// A remote CRF search or encode whose process was alive but whose log stayed silent past its limit, so it was stopped
+/// (<see cref="Domain.Jobs.FailureCategories.StageStalled"/>). <see cref="LogPath"/> is the kept copy of its log.
+/// </summary>
+public sealed class RemoteStageStalledException(string message, string? logPath) : Exception(message)
+{
+    public string? LogPath { get; } = logPath;
+}

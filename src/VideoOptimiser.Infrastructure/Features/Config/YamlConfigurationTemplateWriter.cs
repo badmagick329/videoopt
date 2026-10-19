@@ -59,6 +59,8 @@ processing:
     minimumAvailableMemory: "14GiB"
     # Remote free space must be at least this multiple of each source file.
     minimumFreeDiskMultiplier: 2.5
+    # A CRF search or encode whose log stays silent this long is stopped, and the video fails. A long encode gets more time.
+    stageSilenceTimeout: "30m"
     hetzner:
       # Used only when lifecycle is hetzner. An existing environment variable takes precedence.
       apiTokenEnvironmentVariable: "VIDEO_OPTIMISER_HETZNER_TOKEN"

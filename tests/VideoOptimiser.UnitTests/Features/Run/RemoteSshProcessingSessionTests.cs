@@ -891,6 +891,126 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         progress.Lines.Where(line => line.Kind == JobProgressKind.ToolOutput).Select(line => line.Text).Should().Equal(start + rest.TrimEnd('\n'));
     }
 
+    /// <summary>
+    /// A stage whose process is alive but whose log has gone quiet for longer than <c>stageSilenceTimeout</c> (30 minutes by
+    /// default) and 1.5 times its age at the last write is hung (VOPT-153): it is stopped on the worker, its log kept, its
+    /// workspace removed, and the job fails. Rows: early on, past the setting; no log yet, timed from the stage's start; late
+    /// on, past the scaled limit.
+    /// </summary>
+    [Theory]
+    [InlineData(60, 1801, "30m 01s")]
+    [InlineData(null, 1801, "30m 01s")]
+    [InlineData(7200, 10801, "3h 00m")]
+    public async Task AStageSilentPastItsLimitIsStoppedKeptAndFailedAsStalled(int? lastWriteSeconds, int silentSeconds, string silence)
+    {
+        var source = await SourceAsync();
+        var worker = new StageWorker(["missing", RunningFor(Seconds(lastWriteSeconds), TimeSpan.FromSeconds(silentSeconds))], log: "stuck on test clip 2\n");
+        var session = CreateSession(Guid.NewGuid(), worker, source);
+
+        var action = async () => await session.SearchCrfAsync(source, new QualitySettings());
+
+        var thrown = (await action.Should().ThrowAsync<RemoteStageStalledException>()).Which;
+        thrown.Message.Should().Be($"The CRF search on the worker wrote nothing to its log for {silence}, so it was stopped.");
+        worker.Stops.Should().ContainSingle().Which.Should().Contain($"{session.CrfDirectory}").And.Contain("kill -s TERM");
+        (await File.ReadAllTextAsync(thrown.LogPath!)).Should().Be("stuck on test clip 2\n");
+        worker.Removals.Should().ContainSingle().Which.Should().Contain(session.RemoteWorkspace);
+    }
+
+    /// <summary>
+    /// A healthy step's log goes quiet for at most as long as the stage has run, so a long encode is allowed a long silence.
+    /// Rows: at the setting; 40 minutes silent two hours in (past the setting, inside 1.5 times the age); at the scaled limit.
+    /// </summary>
+    [Theory]
+    [InlineData(60, 1800)]
+    [InlineData(7200, 2400)]
+    [InlineData(7200, 10800)]
+    public async Task AStageWithinItsLimitIsLeftRunning(int? lastWriteSeconds, int silentSeconds)
+    {
+        var source = await SourceAsync();
+        var worker = new StageWorker(["missing", RunningFor(Seconds(lastWriteSeconds), TimeSpan.FromSeconds(silentSeconds)), "completed 0"]);
+
+        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
+
+        result.Crf.Should().Be(42);
+        worker.Stops.Should().BeEmpty();
+    }
+
+    /// <summary>Hours of work whose log keeps growing is never taken for a hung stage, however long the stage has run.</summary>
+    [Fact]
+    public async Task AStageWhoseLogKeepsGrowingIsNeverStopped()
+    {
+        var source = await SourceAsync();
+        var polls = Enumerable.Range(1, 6).Select(hour => new WorkerStep("running", $"{hour}h in\n", $"times {StageStart + (hour * 3600) + 60} {StageStart + (hour * 3600)} {StageStart}"));
+        var worker = new StageWorker([new WorkerStep("missing"), .. polls, new WorkerStep("completed 0")], log: string.Empty);
+
+        _ = await CreateSession(Guid.NewGuid(), worker, source).EncodeAsync(source, Output, 42, new QualitySettings(), 1, new AudioPlan([], [], 1));
+
+        worker.Stops.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// A later command that picks up a running stage knows nothing of when it started; the worker's own times say, so a stage
+    /// that hung while no command watched it is stopped at the first look, with no script launched.
+    /// </summary>
+    [Fact]
+    public async Task AReattachedStageIsJudgedByTheWorkersTimes()
+    {
+        var source = await SourceAsync();
+        var worker = new StageWorker([RunningFor(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(47))]);
+        var session = CreateSession(Guid.NewGuid(), worker, source);
+
+        var action = async () => await session.EncodeAsync(source, Output, 42, new QualitySettings(), 1, new AudioPlan([], [], 1));
+
+        await action.Should().ThrowAsync<RemoteStageStalledException>().WithMessage("The encode on the worker wrote nothing to its log for 47m 00s, so it was stopped.");
+        worker.ScriptsStarted.Should().Be(0);
+        worker.Stops.Should().ContainSingle().Which.Should().Contain(session.EncodeDirectory(1));
+    }
+
+    /// <summary>A stage that wrote its exit code between the poll and the stop has finished, and goes on as finished.</summary>
+    [Fact]
+    public async Task AStageThatEndedJustBeforeItsStopIsNotFailed()
+    {
+        var source = await SourceAsync();
+        var worker = new StageWorker(["missing", RunningFor(TimeSpan.FromMinutes(1), TimeSpan.FromHours(1)), "completed 0"]) { EndsBeforeStop = true };
+
+        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
+
+        result.Crf.Should().Be(42);
+        worker.Stops.Should().ContainSingle();
+        worker.Removals.Should().BeEmpty();
+    }
+
+    /// <summary>A times line this cannot read gives no verdict: a stage is never stopped on a reading it cannot trust.</summary>
+    [Theory]
+    [InlineData("times 9000000 1000000")]
+    [InlineData("times 9000000 soon 1000000")]
+    public async Task AStageWhoseTimesCannotBeReadIsNeverStopped(string times)
+    {
+        var source = await SourceAsync();
+        var worker = new StageWorker(["missing", new WorkerStep("running", Times: times), "completed 0"]);
+
+        var result = await CreateSession(Guid.NewGuid(), worker, source).SearchCrfAsync(source, new QualitySettings());
+
+        result.Crf.Should().Be(42);
+        worker.Stops.Should().BeEmpty();
+    }
+
+    /// <summary>A mode given for one run (<c>--remote</c>) can bring settings the validator skipped; the session refuses a bad limit.</summary>
+    [Theory]
+    [InlineData("0s")]
+    [InlineData("never")]
+    public void ASessionRefusesAStageSilenceTimeoutThatIsNotAPositiveDuration(string timeout)
+    {
+        var settings = CreateSettings();
+        settings.Processing.RemoteSsh.StageSilenceTimeout = timeout;
+
+        var create = () => new RemoteSshProcessingSession(new JobRecord { Id = Guid.NewGuid(), SourcePath = "C:\\Videos\\movie.mkv" }, settings, new QueueRunner([]));
+
+        create.Should().Throw<InvalidOperationException>().WithMessage(SettingsValidator.StageSilenceTimeoutMessage);
+    }
+
+    private static TimeSpan? Seconds(int? seconds) => seconds is { } value ? TimeSpan.FromSeconds(value) : null;
+
     /// <summary>Exit 1 is the worker's answer no; any other failure is not an answer.</summary>
     [Theory]
     [InlineData(0, true)]
@@ -1080,10 +1200,27 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         }
     }
 
-    /// <summary>What the stage's state check finds at one poll: its state, and what ab-av1 had written to the log by then.</summary>
-    private sealed record WorkerStep(string Header, string Appended = "")
+    /// <summary>
+    /// What the stage's state check finds at one poll: its state, what ab-av1 had written to the log by then, and the
+    /// <c>times</c> line the worker printed, if any.
+    /// </summary>
+    private sealed record WorkerStep(string Header, string Appended = "", string? Times = null)
     {
         public static implicit operator WorkerStep(string header) => new(header);
+    }
+
+    /// <summary>The stage's start, in seconds on the worker's clock; any value does, since only differences count.</summary>
+    private const long StageStart = 1_000_000;
+
+    /// <summary>
+    /// A running stage's poll whose log was last written <paramref name="lastWrite"/> after <see cref="StageStart"/> (null: no
+    /// log yet) and has been silent for <paramref name="silent"/> since.
+    /// </summary>
+    private static WorkerStep RunningFor(TimeSpan? lastWrite, TimeSpan silent)
+    {
+        var written = lastWrite is { } after ? StageStart + (long)after.TotalSeconds : (long?)null;
+        var now = (written ?? StageStart) + (long)silent.TotalSeconds;
+        return new WorkerStep("running", Times: $"times {now} {written} {StageStart}");
     }
 
     /// <summary>
@@ -1102,7 +1239,13 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         private string _log = log;
 
         public bool DropFirstLaunchReply { get; set; }
+
+        /// <summary>The stage wrote its exit code just before a stop arrived, so the stop finds it ended.</summary>
+        public bool EndsBeforeStop { get; init; }
+
         public List<string> Launches { get; } = [];
+        public List<string> Stops { get; } = [];
+        public List<string> Removals { get; } = [];
         public int ScriptsStarted { get; private set; }
 
         /// <summary>For each state check, the offset it asked for and how many bytes of log it was sent.</summary>
@@ -1123,6 +1266,12 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
                 return Task.FromResult(new ExternalProcessResult(255, string.Empty, "Connection reset by peer"));
             }
             if (command.Contains("kill -0", StringComparison.Ordinal)) return OkAsync(Poll(command));
+            if (command.Contains("stop_stage \"$s/pid\"", StringComparison.Ordinal))
+            {
+                Stops.Add(command);
+                return OkAsync(EndsBeforeStop ? "ended" : "stopped");
+            }
+            if (command.Contains("rm -rf --", StringComparison.Ordinal)) Removals.Add(command);
             if (command.Contains("cat '", StringComparison.Ordinal) && command.Contains("/log", StringComparison.Ordinal))
             {
                 WholeLogReads++;
@@ -1139,7 +1288,8 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
             var asked = long.Parse(OffsetPattern.Match(command).Groups[1].Value, CultureInfo.InvariantCulture);
             var start = asked < 0 ? bytes.Length : asked > bytes.Length ? 0 : (int)asked;
             Polls.Add((asked, bytes.Length - start));
-            return $"{step.Header}\n\u001e{start}\u001e{bytes.Length}\u001e{Encoding.UTF8.GetString(bytes[start..])}";
+            var times = step.Times is null ? string.Empty : $"\n{step.Times}\n";
+            return $"{step.Header}\n{times}\u001e{start}\u001e{bytes.Length}\u001e{Encoding.UTF8.GetString(bytes[start..])}";
         }
     }
 

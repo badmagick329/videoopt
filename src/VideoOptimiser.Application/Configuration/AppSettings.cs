@@ -60,6 +60,8 @@ public sealed class RemoteSshSettings
     [YamlMember(Alias = "minimumCpuCount")] public int MinimumCpuCount { get; set; } = 8;
     [YamlMember(Alias = "minimumAvailableMemory")] public string MinimumAvailableMemory { get; set; } = "14GiB";
     [YamlMember(Alias = "minimumFreeDiskMultiplier")] public double MinimumFreeDiskMultiplier { get; set; } = 2.5;
+    // The shortest silence after which a CRF search or encode on the worker counts as hung; a long stage is allowed more (VOPT-153).
+    [YamlMember(Alias = "stageSilenceTimeout")] public string StageSilenceTimeout { get; set; } = "30m";
     [YamlMember(Alias = "hetzner")] public HetznerSettings Hetzner { get; set; } = new();
 }
 

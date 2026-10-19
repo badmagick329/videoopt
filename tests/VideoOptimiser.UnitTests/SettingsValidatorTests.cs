@@ -111,6 +111,21 @@ public sealed class SettingsValidatorTests
             "InvalidRemoteDiskMultiplier"]);
     }
 
+    [Theory]
+    [InlineData("45m", null)]
+    [InlineData("0s", "InvalidRemoteStageSilenceTimeout")]
+    [InlineData("never", "InvalidRemoteStageSilenceTimeout")]
+    public void ValidateRemoteModeAcceptsOnlyAPositiveStageSilenceTimeout(string timeout, string? expectedCode)
+    {
+        var settings = CreateValidSettings();
+        settings.Processing.Mode = ProcessingModes.RemoteSsh;
+        settings.Processing.RemoteSsh.Host = "video-worker";
+        settings.Processing.RemoteSsh.StageSilenceTimeout = timeout;
+
+        if (expectedCode is null) Codes(settings).Should().BeEmpty();
+        else Codes(settings).Should().Equal(expectedCode);
+    }
+
     [Fact]
     public void ValidateManagedHetznerAllowsRuntimeHostAndRequiresProvisioningInputs()
     {

@@ -230,6 +230,11 @@ public sealed class JobProcessor(
             progress?.Report(JobProgress.Outcome(JobTone.Failure, $"Worker unreachable: {exception.Message.TrimEnd('.')}."));
             return new JobProcessingResult(job, ExitCode.ProcessingFailure, exception.Message);
         }
+        // Its own category rather than the stage's: the tool hung rather than failed, and the message says which stage.
+        catch (RemoteStageStalledException exception)
+        {
+            return await FailAsync(job, databasePath, FailureCategories.StageStalled, exception.Message, ExitCode.ProcessingFailure, progress, cancellationToken, exception.LogPath);
+        }
         // A job held or dropped since the run read it fails this write too, so its JobChangedException reaches the run,
         // which passes over the job.
         catch (Exception exception)
@@ -464,6 +469,7 @@ public sealed class JobProcessor(
             "CrfSearchFailed" => $"Failed during the CRF search: {message}",
             "EncodeFailed" => $"Failed during encoding: {message}",
             "DownloadFailed" => $"Failed during the download: {message}",
+            FailureCategories.StageStalled => message,
             _ => $"Failed: {message}"
         }));
         if (logPath is not null) progress?.Report(JobProgress.Step($"Full log: {logPath}"));

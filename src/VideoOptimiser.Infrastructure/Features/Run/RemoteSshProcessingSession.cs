@@ -38,6 +38,7 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     private readonly Func<CancellationToken, Task> _transferPollDelay;
     private readonly IReadOnlyList<TimeSpan> _commandTimeouts;
     private readonly Func<CancellationToken, Task> _retryDelay;
+    private readonly TimeSpan _stageSilenceTimeout;
     private readonly string _root;
 
     public RemoteSshProcessingSession(JobRecord job, AppSettings settings, IExternalProcessRunner processes)
@@ -60,6 +61,9 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         _transferPollDelay = transferPollDelay ?? (cancellationToken => Task.Delay(TimeSpan.FromSeconds(5), cancellationToken));
         _commandTimeouts = commandTimeouts ?? DefaultCommandTimeouts;
         _retryDelay = retryDelay ?? (cancellationToken => Task.Delay(TimeSpan.FromSeconds(1), cancellationToken));
+        // The validator rejects a bad value in remote mode; a mode given for one run (--remote) can reach here unchecked.
+        if (!HumanReadableValues.TryParseDuration(settings.Processing.RemoteSsh.StageSilenceTimeout, out _stageSilenceTimeout) || _stageSilenceTimeout <= TimeSpan.Zero)
+            throw new InvalidOperationException(SettingsValidator.StageSilenceTimeoutMessage);
         _root = settings.Processing.RemoteSsh.WorkingDirectory.TrimEnd('/');
         RemoteWorkspace = $"{_root}/{job.Id:N}";
         if (!GuidWorkspacePattern().IsMatch(RemoteWorkspace)) throw new InvalidOperationException("The generated remote workspace is not a safe GUID workspace.");
@@ -300,35 +304,36 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
             .Where(name => Guid.TryParseExact(name, "N", out var id) && id.ToString("N") == name && jobIds.Contains(id))
             .ToArray();
         if (workspaces.Length == 0) return;
-        // The stage script is a process-group leader whose pid its stage directory keeps (see RunStageAsync), so the group takes
-        // ab-av1 and ffmpeg with it. The command line is checked first: a pid file that outlived its stage may name a pid that
-        // something else now holds.
         // Joined with explicit line feeds, as the stage script is: a literal spanning lines would carry the source file's line
         // endings, and a carriage return breaks bash.
         var stopAndRemove = string.Join("\n",
         [
+            StopStageFunction,
             $"root={Quote(_root)}",
             "while read -r id; do",
             "case \"$id\" in ''|*[!0-9a-f]*) continue;; esac",
             "test \"${#id}\" -eq 32 || continue",
             "workspace=\"$root/$id\"",
             "test -d \"$workspace\" || continue",
-            "for file in \"$workspace\"/*/pid; do",
-            "test -s \"$file\" || continue",
-            "pid=$(cat \"$file\")",
-            "case \"$pid\" in ''|*[!0-9]*) continue;; esac",
-            "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -qF -- \"$workspace/\"; then",
-            "kill -s TERM -- \"-$pid\" 2>/dev/null",
-            "sleep 1",
-            "kill -s KILL -- \"-$pid\" 2>/dev/null",
-            "fi",
-            "done",
+            "for file in \"$workspace\"/*/pid; do stop_stage \"$file\" \"$workspace\"; done",
             "rm -rf -- \"$workspace\"",
             "done"
         ]);
         var removal = await SshAsync(stopAndRemove, string.Join("\n", workspaces) + "\n", cancellationToken: cancellationToken);
         EnsureSuccess(removal, "Remote workspace removal");
     }
+
+    /// <summary>
+    /// A shell function, <c>stop_stage PIDFILE WORKSPACE</c>, that ends the stage whose pid file it is given; one line, so it
+    /// opens a one-line command as well as a script. The stage script is a process-group leader whose pid its stage directory
+    /// keeps (see <see cref="RunStageAsync"/>), so the group takes ab-av1 and ffmpeg with it. The command line is checked first:
+    /// a pid file that outlived its stage may name a pid that something else now holds. A missing or empty pid file stops
+    /// nothing, and the function always succeeds, so a resend after a lost reply is harmless.
+    /// </summary>
+    private const string StopStageFunction =
+        "stop_stage() { pid=$(cat -- \"$1\" 2>/dev/null); case \"$pid\" in ''|*[!0-9]*) return 0;; esac; "
+        + "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -qF -- \"$2/\"; then "
+        + "kill -s TERM -- \"-$pid\" 2>/dev/null; sleep 1; kill -s KILL -- \"-$pid\" 2>/dev/null; fi; return 0; }";
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
@@ -342,6 +347,9 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     /// <para>The log is followed by byte offset, each poll fetching only what was added since the last. A reattach starts at
     /// the log's current end, so what an earlier command already showed is not shown again, and the progress and times the
     /// translator derives start at the reattach. The whole log is read once, when the stage has ended.</para>
+    /// <para>A stage whose process is alive but whose log has gone quiet for too long is stopped and fails the job (VOPT-153):
+    /// an ab-av1 or FFmpeg that hangs without exiting would otherwise be polled for ever while the worker bills, and each poll
+    /// still says the worker answered. See <see cref="WorkerTimes.StalledFor"/> for the limit.</para>
     /// </summary>
     /// <param name="name">The stage as the reattach lines name it: <c>encode</c> or <c>CRF search</c>.</param>
     /// <param name="interpretFailure">Turns the log of a stage that exited non-zero into a more specific exception than the generic one,
@@ -409,6 +417,14 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 }
                 return new StageRun(log, reattached);
             }
+            if (state.Running && state.Times is { } times && times.StalledFor(_stageSilenceTimeout) is { } silence
+                && await StopStalledStageAsync(stageDirectory, progress, cancellationToken))
+            {
+                // Kept and cleaned up as a stage that failed is: a retry is a new job with a workspace of its own.
+                var (logPath, _) = await RetainLogAsync(stageDirectory, sourcePath, progress, cancellationToken);
+                await CleanupAsync(CancellationToken.None);
+                throw new RemoteStageStalledException($"The {name} on the worker wrote nothing to its log for {HumanReadableValues.FormatDuration(silence)}, so it was stopped.", logPath);
+            }
             if (state.Running) startingPolls = 0;
             // The launch returns before the script writes its pid, so a stage this call launched can read as missing at first.
             else if (startingPolls-- <= 0) throw new InvalidOperationException("Remote stage has neither a running process nor a completion marker.");
@@ -457,19 +473,45 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
 
     /// <param name="Offset">Where <paramref name="Chunk"/> starts in the log, in bytes.</param>
     /// <param name="Chunk">The log from <paramref name="Offset"/> to its end as it was read.</param>
-    private sealed record StageState(bool Running, int? ExitCode, long Offset, string Chunk);
+    /// <param name="Times">The worker's clock and the stage's file times, or null when the worker did not print them all.</param>
+    private sealed record StageState(bool Running, int? ExitCode, long Offset, string Chunk, WorkerTimes? Times = null);
+
+    /// <summary>
+    /// Three times off the worker's clock, in seconds since the epoch: now, the log's last write (null before the script made
+    /// the log) and the stage's start (its pid file's, written as the script starts). Taken on the worker, not here, so a
+    /// later command that reattaches to the stage has them too, and this PC's clock being off changes nothing.
+    /// </summary>
+    private sealed record WorkerTimes(long Now, long? LastLogWrite, long Started)
+    {
+        /// <summary>
+        /// How long the log has been silent when that is longer than allowed, else null. ab-av1 writes each step's progress at
+        /// 16, 32, 64, 128 s… after the step began, doubling without a cap, so a healthy step is never silent for longer than
+        /// it has been running, at most the stage's age at its last write. Allowing half as much again leaves room; a stage
+        /// younger than that is held to <paramref name="floor"/> instead (<c>stageSilenceTimeout</c>), which a CRF search, whose
+        /// logger restarts with every test clip, never comes near.
+        /// </summary>
+        public TimeSpan? StalledFor(TimeSpan floor)
+        {
+            // A relaunch writes its pid before it empties the old log, so an older log time is the stage's start.
+            var lastWrite = Math.Max(LastLogWrite ?? Started, Started);
+            var silence = TimeSpan.FromSeconds(Now - lastWrite);
+            var allowed = TimeSpan.FromSeconds(1.5 * (lastWrite - Started));
+            return silence > (allowed > floor ? allowed : floor) ? silence : null;
+        }
+    }
 
     /// <summary>
     /// The stage's state and the part of its log from <paramref name="offset"/>, in one SSH call. The state is read before the
     /// log, so a stage that reads as ended has its final lines in the chunk. An offset past the log's end means ab-av1 started the
-    /// log again, and it is read from the start.
+    /// log again, and it is read from the start. The state's line is followed by a <c>times</c> line for <see cref="WorkerTimes"/>.
     /// </summary>
     private async Task<StageState> GetStageStateAsync(string stageDirectory, long offset, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         var exitCode = Quote(stageDirectory + "/exit-code");
         var pid = Quote(stageDirectory + "/pid");
         var log = Quote(stageDirectory + "/log");
-        var command = $"if test -s {exitCode}; then printf 'completed '; cat {exitCode}; elif test -s {pid} && kill -0 \"$(cat {pid})\" 2>/dev/null; then printf 'running\\n'; else printf 'missing\\n'; fi; printf '\\036'; "
+        var command = $"if test -s {exitCode}; then printf 'completed '; cat {exitCode}; elif test -s {pid} && kill -0 \"$(cat {pid})\" 2>/dev/null; then printf 'running\\n'; else printf 'missing\\n'; fi; "
+            + $"printf '\\ntimes %s %s %s\\n' \"$(date +%s)\" \"$(stat -c %Y -- {log} 2>/dev/null)\" \"$(stat -c %Y -- {pid} 2>/dev/null)\"; printf '\\036'; "
             + $"n=0; test ! -f {log} || n=$(stat -c '%s' {log}); off={offset.ToString(CultureInfo.InvariantCulture)}; if test \"$off\" -lt 0; then off=$n; elif test \"$off\" -gt \"$n\"; then off=0; fi; "
             + $"printf '%s\\036%s\\036' \"$off\" \"$n\"; if test \"$n\" -gt \"$off\"; then tail -c +$((off+1)) {log} | head -c $((n-off)); fi";
         var result = await SshAsync(command, progress: progress, cancellationToken: cancellationToken);
@@ -479,10 +521,38 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
         var third = second < 0 ? -1 : output.IndexOf('\x1e', second + 1);
         if (third < 0 || !long.TryParse(output[(first + 1)..second], NumberStyles.None, CultureInfo.InvariantCulture, out var start))
             throw new InvalidDataException("Remote stage state was invalid.");
-        var header = output[..first].Trim();
+        var lines = output[..first].Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var header = lines.Length > 0 ? lines[0] : string.Empty;
+        var times = lines.Skip(1).Select(ParseTimes).FirstOrDefault(parsed => parsed is not null);
         var chunk = output[(third + 1)..];
-        if (header.StartsWith("completed ", StringComparison.Ordinal) && int.TryParse(header[10..].Trim(), CultureInfo.InvariantCulture, out var code)) return new StageState(false, code, start, chunk);
-        return new StageState(string.Equals(header, "running", StringComparison.Ordinal), null, start, chunk);
+        if (header.StartsWith("completed ", StringComparison.Ordinal) && int.TryParse(header[10..].Trim(), CultureInfo.InvariantCulture, out var code)) return new StageState(false, code, start, chunk, times);
+        return new StageState(string.Equals(header, "running", StringComparison.Ordinal), null, start, chunk, times);
+    }
+
+    /// <summary>
+    /// Reads <c>times NOW LOG START</c>, where only LOG may be empty. Anything else is no times at all, and so no stall verdict:
+    /// a stage is never stopped on a reading this cannot trust.
+    /// </summary>
+    private static WorkerTimes? ParseTimes(string line)
+    {
+        // Split on single spaces, so an empty field keeps its place.
+        var parts = line.Split(' ');
+        if (parts.Length != 4 || parts[0] != "times") return null;
+        if (!long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var now) || !long.TryParse(parts[3], NumberStyles.None, CultureInfo.InvariantCulture, out var started)) return null;
+        if (parts[2].Length == 0) return new WorkerTimes(now, null, started);
+        return long.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out var logWrite) ? new WorkerTimes(now, logWrite, started) : null;
+    }
+
+    /// <summary>
+    /// Ends a stalled stage's process group and returns true, or returns false without stopping anything when the stage wrote its
+    /// exit code since the poll that found it stalled, so a stage that has just finished is never failed. Safe to resend.
+    /// </summary>
+    private async Task<bool> StopStalledStageAsync(string stageDirectory, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    {
+        var command = $"{StopStageFunction}; s={Quote(stageDirectory)}; if test -s \"$s/exit-code\"; then printf 'ended'; else stop_stage \"$s/pid\" {Quote(RemoteWorkspace!)}; printf 'stopped'; fi";
+        var result = await SshAsync(command, progress: progress, cancellationToken: cancellationToken);
+        EnsureSuccess(result, "Stopping the stalled stage");
+        return result.StandardOutput.Trim() != "ended";
     }
 
     private string RetainedLogPath(string stageDirectory, string sourcePath) =>

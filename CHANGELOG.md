@@ -5,6 +5,7 @@
 
 - A new Hetzner worker now gets an SSH host key that VideoOptimiser makes before the server exists, so even the first connection checks that key. Before, the first connection trusted whatever answered at the new address.
 - The worker's bootstrap now checks FFmpeg and ab-av1 against pinned SHA-256 checksums and builds libvmaf and SVT-AV1 from pinned commits. A download that doesn't match stops the bootstrap, and the run says why. Before, it built whatever the download returned.
+- New setting `processing.remoteSsh.stageSilenceTimeout` (default `30m`): how long a CRF search or encode on the worker may go without writing to its log before it counts as hung. A long encode gets more time, up to 1.5 times as long as it had been running.
 
 ### Fixes
 
@@ -17,6 +18,7 @@
 - VideoOptimiser no longer follows a redirect from Immich, so your API key is only sent to `immich.baseUrl`. A server or proxy that redirected to another host used to receive the key with the request. A redirect now stops the command with an error that says where it pointed and what to set `immich.baseUrl` to.
 - In the full-screen view, `s` no longer offers the worker while the worker pane is deleting or creating it. It tells you to start the run once that's finished. If the worker you picked for a background run is deleted before the run gets to it, the run now ends and says so. It used to create a new server on its own, the first in stock within your price limit, and that server billed.
 - Uploading a large video to a worker no longer fails when the worker takes more than 30 seconds to check the upload's checksum. The video used to fail as a staging failure even though the upload had finished, and it was converted only on a later run.
+- A CRF search or encode that hangs on a worker without exiting is now stopped, and the video fails with a message saying how long its log was silent. The run then goes on to the next video. Before, the run waited on it forever while the worker billed, and the full-screen view kept saying the worker had answered.
 
 ## [0.14.1] - 2026-10-18
 ### Remote workers

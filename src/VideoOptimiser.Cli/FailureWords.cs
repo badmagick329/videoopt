@@ -21,6 +21,7 @@ internal static class FailureWords
         [FailureCategories.ManualInterventionRequired] = "needs your review",
         ["Ineligible"] = "doesn't fit your rules",
         [FailureCategories.RemoteUnavailable] = "the worker couldn't be reached",
+        [FailureCategories.StageStalled] = null,
         [FailureCategories.SourceMissing] = null,
         [FailureCategories.SourceNotReady] = null,
         ["SourceOutsideWatchRoot"] = null,

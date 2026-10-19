@@ -5,6 +5,9 @@ namespace VideoOptimiser.Application.Configuration;
 
 public sealed class SettingsValidator : ISettingsValidator
 {
+    /// <summary>Also the remote session's refusal, for a mode given for one run that skipped this check.</summary>
+    public const string StageSilenceTimeoutMessage = "processing.remoteSsh.stageSilenceTimeout must be a positive duration such as 30m.";
+
     public IReadOnlyList<Diagnostic> Validate(AppSettings settings)
     {
         var diagnostics = new List<Diagnostic>();
@@ -27,6 +30,7 @@ public sealed class SettingsValidator : ISettingsValidator
             AddWhen(settings.Processing.RemoteSsh.MinimumCpuCount < 1, "InvalidRemoteMinimumCpuCount", "processing.remoteSsh.minimumCpuCount must be at least 1.");
             AddWhen(!HumanReadableValues.TryParseSize(settings.Processing.RemoteSsh.MinimumAvailableMemory, out var minimumMemory) || minimumMemory < 1, "InvalidRemoteMinimumMemory", "processing.remoteSsh.minimumAvailableMemory must be a positive size such as 14GiB.");
             AddWhen(!double.IsFinite(settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier) || settings.Processing.RemoteSsh.MinimumFreeDiskMultiplier <= 0, "InvalidRemoteDiskMultiplier", "processing.remoteSsh.minimumFreeDiskMultiplier must be greater than zero.");
+            AddWhen(!HumanReadableValues.TryParseDuration(settings.Processing.RemoteSsh.StageSilenceTimeout, out var stageSilence) || stageSilence <= TimeSpan.Zero, "InvalidRemoteStageSilenceTimeout", StageSilenceTimeoutMessage);
             if (managedHetzner)
             {
                 var hetzner = settings.Processing.RemoteSsh.Hetzner;

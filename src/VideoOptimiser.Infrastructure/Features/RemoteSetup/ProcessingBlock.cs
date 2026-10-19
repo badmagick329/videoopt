@@ -33,6 +33,8 @@ internal static class ProcessingBlock
             $"    minimumAvailableMemory: {Quote(remote.MinimumAvailableMemory)}",
             "    # Remote free space must be at least this multiple of each source file.",
             $"    minimumFreeDiskMultiplier: {remote.MinimumFreeDiskMultiplier.ToString(CultureInfo.InvariantCulture)}",
+            "    # A CRF search or encode whose log stays silent this long is stopped, and the video fails. A long encode gets more time.",
+            $"    stageSilenceTimeout: {Quote(remote.StageSilenceTimeout)}",
             "    hetzner:",
             "      # Used only when lifecycle is hetzner. An existing environment variable takes precedence.",
             $"      apiTokenEnvironmentVariable: {Quote(hetzner.ApiTokenEnvironmentVariable)}",

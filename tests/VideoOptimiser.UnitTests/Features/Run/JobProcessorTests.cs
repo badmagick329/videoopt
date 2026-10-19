@@ -537,6 +537,27 @@ public sealed class JobProcessorTests : IDisposable
         result.Job.FailureMessage.Should().EndWith($"Full log: {log}");
     }
 
+    /// <summary>
+    /// A stage stopped for its silence on the worker fails as <c>StageStalled</c>, not as the stage's own failure: its message
+    /// already names the stage, so the outcome line is the message, then the kept log (VOPT-153).
+    /// </summary>
+    [Fact]
+    public async Task AStalledRemoteStageFailsTheJobAsStalledAndNamesItsLog()
+    {
+        var source = await SourceAsync();
+        const string message = "The encode on the worker wrote nothing to its log for 47m 00s, so it was stopped.";
+        var log = Path.Combine(_directory, ".video-optimiser", "stalled.remote.log");
+        var session = new ResumedWorkerSession { EncodeFailure = new RemoteStageStalledException(message, log) };
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(session: session).ProcessAsync(DatabasePath, source, Settings(remote: true), force: false, new ListProgress(reported));
+
+        result.ExitCode.Should().Be(ExitCode.ProcessingFailure);
+        (result.Job.Status, result.Job.FailureCategory, result.Job.FailureMessage).Should().Be((JobStatus.Failed, FailureCategories.StageStalled, $"{message} Full log: {log}"));
+        Steps(reported).TakeLast(2).Should().Equal(message, $"Full log: {log}");
+        reported[^2].Tone.Should().Be(JobTone.Failure);
+    }
+
     [Fact]
     public async Task AValidationFailureIsTheOutcomeWithItsFailuresJoined()
     {
