@@ -40,7 +40,8 @@ public enum VerbRefusal
 }
 
 /// <summary>The verb did not act. <c>hold</c>, <c>next</c>, <c>drop</c> and <c>reject</c> refuse a finalisation; <c>hold</c>, <c>next</c> and <c>drop</c> also a job converting now; <c>hold</c> and <c>next</c> one that is not waiting or stopped; <c>reject</c> one that is not ready.</summary>
-public sealed record VerbRefused(JobRecord Job, VerbRefusal Reason) : QueueVerbOutcome(Job);
+/// <param name="Run">For <see cref="VerbRefusal.ConvertingNow"/>: the run converting it, read from the run lock so the refusal can say how to stop that run; null when the lock names no run (one starting, or a queue verb holding it for a moment).</param>
+public sealed record VerbRefused(JobRecord Job, VerbRefusal Reason, Jobs.LiveRunHolder? Run = null) : QueueVerbOutcome(Job);
 
 /// <summary><c>queue drop</c> or <c>reject</c> of a job that had ended already. Whether cleanup would delete some of its files is asked after, by <see cref="QueueVerbs.CleanupDeletesFilesAsync"/>.</summary>
 public sealed record JobAlreadyEnded(JobRecord Job) : QueueVerbOutcome(Job);

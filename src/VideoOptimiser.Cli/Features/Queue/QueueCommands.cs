@@ -28,7 +28,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         switch (outcome)
         {
             case VerbRefused refused:
-                return Refuse(RefusalText(refused, command, verb: "hold", notWaitingAction: "be held"));
+                return Refuse(RefusalText(refused, command, verb: "hold", notWaitingAction: "be held", stopAfterVideoWorks: false));
             case JobAlreadyHeld:
                 CliConsole.WriteLine($"{name} is already held.");
                 return (int)ExitCode.Success;
@@ -58,7 +58,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
                 CliConsole.WriteLine($"{name} is converting now.");
                 return (int)ExitCode.Success;
             case VerbRefused refused:
-                return Refuse(RefusalText(refused, command, verb: "run next", notWaitingAction: "run next"));
+                return Refuse(RefusalText(refused, command, verb: "run next", notWaitingAction: "run next", stopAfterVideoWorks: false));
             case JobMovedNext moved:
                 CliConsole.WriteLine($"{name} {(moved.RunTakesIt ? "runs next" : "is now first in the queue")}{(moved.WasHeld ? "; it's no longer held" : string.Empty)}.");
                 return (int)ExitCode.Success;
@@ -76,7 +76,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         switch (outcome)
         {
             case VerbRefused refused:
-                return Refuse(RefusalText(refused, command, verb: "drop", notWaitingAction: null));
+                return Refuse(RefusalText(refused, command, verb: "drop", notWaitingAction: null, stopAfterVideoWorks: true));
             case JobAlreadyEnded ended:
                 WriteError($"{name} {StatusPhrase(ended.Job)}, so there is nothing to drop.");
                 if (await verbs.CleanupDeletesFilesAsync(configuration.Settings, ended.Job, cancellationToken)) WriteError($"'{command.Hint("cleanup")}' deletes its temporary files.");
@@ -108,7 +108,7 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
         switch (outcome)
         {
             case VerbRefused refused:
-                return Refuse(RefusalText(refused, command, verb: "reject", notWaitingAction: null));
+                return Refuse(RefusalText(refused, command, verb: "reject", notWaitingAction: null, stopAfterVideoWorks: false));
             case JobAlreadyEnded ended:
                 WriteError($"{name} {StatusPhrase(ended.Job)}, so there is nothing to reject.");
                 if (await verbs.CleanupDeletesFilesAsync(configuration.Settings, ended.Job, cancellationToken)) WriteError($"'{command.Hint("cleanup")}' deletes its temporary files.");
@@ -224,19 +224,32 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
 
     /// <param name="verb">How the verb names itself in "To hold it, press Ctrl+C twice".</param>
     /// <param name="notWaitingAction">How the verb ends the sentence "Only waiting and stopped videos can …", such as <c>be held</c>; null for a verb that never says it.</param>
-    private static string RefusalText(VerbRefused refused, CliCommand command, string verb, string? notWaitingAction)
+    /// <param name="stopAfterVideoWorks">Whether a stop after this video also lets the verb act: a drop takes the ready video it leaves, a hold does not.</param>
+    private static string RefusalText(VerbRefused refused, CliCommand command, string verb, string? notWaitingAction, bool stopAfterVideoWorks)
     {
         var job = refused.Job;
         var name = Path.GetFileName(job.SourcePath);
         return refused.Reason switch
         {
-            VerbRefusal.ConvertingNow => $"{name} is converting now ({StatusWord(job.Status)}). To {verb} it, press Ctrl+C twice in the run's window first.",
+            VerbRefusal.ConvertingNow => $"{name} is converting now ({StatusWord(job.Status)}). {HowToStop(refused.Run, command, verb, stopAfterVideoWorks)}",
             VerbRefusal.StoppedWhileFinalising => $"{name} was stopped while being finalised; '{command.Hint($"finalize {job.Id:N}")}' checks and resumes it.",
             VerbRefusal.BeingFinalised => $"{name} is being finalised now.",
             VerbRefusal.NotReady => $"Only a video that is ready to finalise can be rejected; {name} {StatusPhrase(job)}.",
             _ => $"Only waiting and stopped videos can {notWaitingAction ?? throw new InvalidOperationException($"{verb} never refuses a job for not waiting.")}; {name} {StatusPhrase(job)}."
         };
     }
+
+    /// <summary>
+    /// The CLI's side of <see cref="Tui.StopWords"/>: a background run has no window, so it is stopped with <c>run stop</c>
+    /// (VOPT-170); a foreground run only with Ctrl+C in its window, twice so the video stops now.
+    /// </summary>
+    private static string HowToStop(LiveRunHolder? run, CliCommand command, string verb, bool stopAfterVideoWorks) => run switch
+    {
+        null => $"Wait for the run to stop, then {verb} it.",
+        { IsBackground: true } when stopAfterVideoWorks => $"To {verb} it, stop the run first with '{command.Hint("run stop --now")}', or with '{command.Hint("run stop")}' to let this video finish.",
+        { IsBackground: true } => $"To {verb} it, stop the run first with '{command.Hint("run stop --now")}'.",
+        _ => $"To {verb} it, press Ctrl+C twice in the run's window first."
+    };
 
     private static string OnlyCopyText(OnlyCopyAtRisk onlyCopy, string verb)
     {

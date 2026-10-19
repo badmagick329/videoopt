@@ -37,7 +37,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
     {
         if (job.IsConverting)
         {
-            if (await RunHoldsJobsAsync(databasePath, LockHolders.QueueHold, cancellationToken)) return new VerbRefused(job, VerbRefusal.ConvertingNow);
+            if (await RunHoldsJobsAsync(databasePath, LockHolders.QueueHold, cancellationToken)) return ConvertingNow(job, databasePath);
             job = await ReadAgainAsync(databasePath, job, cancellationToken);
         }
         if (job.Held) return new JobAlreadyHeld(job);
@@ -60,7 +60,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
     {
         if (job.IsConverting)
         {
-            if (await RunHoldsJobsAsync(databasePath, LockHolders.QueueNext, cancellationToken)) return new VerbRefused(job, VerbRefusal.ConvertingNow);
+            if (await RunHoldsJobsAsync(databasePath, LockHolders.QueueNext, cancellationToken)) return ConvertingNow(job, databasePath);
             job = await ReadAgainAsync(databasePath, job, cancellationToken);
         }
         if (!job.IsQueued) return new VerbRefused(job, NotQueuedRefusal(job, databasePath));
@@ -78,7 +78,7 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
         var databasePath = settings.Database.Path;
         if (job.IsConverting)
         {
-            if (await RunHoldsJobsAsync(databasePath, LockHolders.QueueDrop, cancellationToken)) return new VerbRefused(job, VerbRefusal.ConvertingNow);
+            if (await RunHoldsJobsAsync(databasePath, LockHolders.QueueDrop, cancellationToken)) return ConvertingNow(job, databasePath);
             job = await ReadAgainAsync(databasePath, job, cancellationToken);
         }
         // Finalize resumes these, and dropping one would leave cleanup a half-installed AV1 to delete.
@@ -221,6 +221,9 @@ public sealed class QueueVerbs(IJobRepository repository, IDatabaseLocks locks, 
         await repository.MarkActiveJobsInterruptedAsync(databasePath, includeFinalizing: finalizeLock is not null, cancellationToken);
         return false;
     }
+
+    /// <summary>The run converting the job comes with the refusal, since a background run and a foreground one are stopped differently.</summary>
+    private VerbRefused ConvertingNow(JobRecord job, string databasePath) => new(job, VerbRefusal.ConvertingNow, locks.LiveRun(databasePath));
 
     /// <summary>A finalisation, stopped or going, belongs to finalize; null for any other job.</summary>
     private VerbRefusal? FinalisationRefusal(JobRecord job, string databasePath) => job switch

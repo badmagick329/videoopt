@@ -87,16 +87,24 @@ public sealed class QueueVerbTests : QueueTestBase
         (await StoredAsync(job)).Priority.Should().Be(0);
     }
 
+    /// <summary>
+    /// VOPT-170: the refusal names the stop that reaches the run converting the video. A background run has no window, so
+    /// <c>run stop</c>, carrying <c>--config</c>; a drop also takes the ready video a stop after this one leaves, a hold does
+    /// not. A lock that names no run (a queue verb holding it for a moment) gives no way to stop it.
+    /// </summary>
     [Theory]
-    [InlineData("hold", "To hold it")]
-    [InlineData("drop", "To drop it")]
-    public async Task AVideoConvertingNowIsNotHeldOrDropped(string verb, string advice)
+    [InlineData("hold", LockHolders.Run, "To hold it, press Ctrl+C twice in the run's window first.")]
+    [InlineData("drop", LockHolders.ImmichRun, "To drop it, press Ctrl+C twice in the run's window first.")]
+    [InlineData("hold", LockHolders.BackgroundRun, "To hold it, stop the run first with 'video-optimiser run stop --now{0}'.")]
+    [InlineData("drop", LockHolders.BackgroundRun, "To drop it, stop the run first with 'video-optimiser run stop --now{0}', or with 'video-optimiser run stop{0}' to let this video finish.")]
+    [InlineData("hold", LockHolders.QueueDrop, "Wait for the run to stop, then hold it.")]
+    public async Task AVideoConvertingNowIsNotHeldOrDroppedAndTheRefusalSaysHowToStopItsRun(string verb, string holder, string advice)
     {
         var job = await QueuedAsync("clip.mp4");
         await MoveAsync(job, JobStatus.Encoding);
-        using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), "video-optimiser run", out _);
+        using var run = DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), holder, out _);
 
-        (await RunAsync("queue", verb, job.Id.ToString("N"))).Should().Be((1, "", Transcript($"clip.mp4 is converting now (encoding). {advice}, press Ctrl+C twice in the run's window first.")));
+        (await RunAsync("queue", verb, job.Id.ToString("N"))).Should().Be((1, "", Transcript($"clip.mp4 is converting now (encoding). {string.Format(System.Globalization.CultureInfo.InvariantCulture, advice, ConfigArgument)}")));
         (await StoredAsync(job)).Status.Should().Be(JobStatus.Encoding);
     }
 

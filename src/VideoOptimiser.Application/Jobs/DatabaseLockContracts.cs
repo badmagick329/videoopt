@@ -35,7 +35,15 @@ public static class LockHolders
 /// <param name="Command">How the run names itself, such as <see cref="LockHolders.Run"/>; an older version's run names itself differently.</param>
 /// <param name="StartedUtc">When it took the lock.</param>
 /// <param name="ProcessId">The process holding the lock, so a user can find or stop it.</param>
-public sealed record LiveRunHolder(string Command, DateTimeOffset StartedUtc, int ProcessId);
+public sealed record LiveRunHolder(string Command, DateTimeOffset StartedUtc, int ProcessId)
+{
+    /// <summary>
+    /// The one test for how this run is stopped, shared by <c>run stop</c> and every refusal that says how to stop it. A
+    /// background run has no window and reads the requests row (<c>run stop</c>, the TUI's <c>x</c> and <c>X</c>); any other
+    /// run never reads that row, so only Ctrl+C in its own window stops it.
+    /// </summary>
+    public bool IsBackground => Command == LockHolders.BackgroundRun;
+}
 
 /// <summary>
 /// The database's lock files as use cases take them. They are OS file locks, so they live behind this port. A run holds the

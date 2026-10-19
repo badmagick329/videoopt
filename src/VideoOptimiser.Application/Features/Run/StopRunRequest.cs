@@ -21,7 +21,7 @@ public sealed class StopRunRequest(IDatabaseLocks locks, IRunRequestStore reques
     {
         if (locks.LiveRun(databasePath) is not { } holder) return new StopRunResult(StopRunOutcome.NoRun, null);
         // A foreground run never reads the requests row, so a request written for it would be silently ignored.
-        if (holder.Command != LockHolders.BackgroundRun) return new StopRunResult(StopRunOutcome.Foreground, holder);
+        if (!holder.IsBackground) return new StopRunResult(StopRunOutcome.Foreground, holder);
         await requests.RequestStopAsync(databasePath, now, cancellationToken);
         return new StopRunResult(StopRunOutcome.Requested, holder);
     }
