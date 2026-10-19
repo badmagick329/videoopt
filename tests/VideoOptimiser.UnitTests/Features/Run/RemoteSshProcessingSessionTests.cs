@@ -101,7 +101,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
             JobProgress.Step("Resuming the upload at 40 B of 100 B."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
         runner.Requests.Should().ContainSingle(request => request.FileName == "sftp" && request.StandardInput!.StartsWith("reput ", StringComparison.Ordinal));
-        runner.Requests.SelectMany(request => request.Arguments).Should().NotContain(argument => argument.Contains("rm -f --", StringComparison.Ordinal));
+        runner.Requests.Where(request => request.FileName == "ssh").Select(request => request.Arguments[^1]).Should().NotContain(command => RemovesThePartial(command));
     }
 
     /// <summary>An upload whose connection drops resumes from what reached the worker, not from 0.</summary>
@@ -157,6 +157,41 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         progress.Lines.Should().Equal(
             JobProgress.Step("Uploading 100 B to the worker."),
             JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
+    }
+
+    /// <summary>
+    /// A large original's checksum can outlast the first try of the verify-and-rename. The cut-off try keeps running on the
+    /// worker and renames the partial, so the resend finds no partial; it failed the job as StagingFailed (VOPT-150).
+    /// </summary>
+    [Fact]
+    public async Task AVerifyAndRenameCutOffAfterItFinishedOnTheWorkerSucceedsOnItsResend()
+    {
+        var source = await SourceAsync();
+        var worker = new VerifyWorker(uploaded: Original, cutOffFirstVerify: true);
+        var progress = new ListProgress();
+
+        await CreateSession(Guid.NewGuid(), worker, source, new FakeClock(), ShortTimeouts).StageAsync(source, "fingerprint", progress);
+
+        worker.Verifies.Should().Be(2);
+        worker.Source.Should().Equal(Original);
+        worker.Partial.Should().BeNull();
+        progress.Lines.Should().Equal(
+            JobProgress.Step("Uploading 100 B to the worker."),
+            JobProgress.Detail("The worker didn't answer within 0s; asking again (try 2 of 3).", JobTone.Warning),
+            JobProgress.Detail("The worker answered again."),
+            JobProgress.Step("Uploaded 100 B in 0s, checksum verified."));
+    }
+
+    [Fact]
+    public async Task AnUploadWhoseChecksumIsWrongNeverBecomesTheSource()
+    {
+        var source = await SourceAsync();
+        var worker = new VerifyWorker(uploaded: [.. Original.Select(value => (byte)~value)], cutOffFirstVerify: false);
+
+        var action = async () => await CreateSession(Guid.NewGuid(), worker, source, new FakeClock(), ShortTimeouts).StageAsync(source, "fingerprint");
+
+        await action.Should().ThrowAsync<InvalidOperationException>().WithMessage("Remote original verification failed*");
+        worker.Source.Should().BeNull();
     }
 
     /// <summary>The dropped session can still finish the partial after the re-check; the reput it then refuses is not a failure,
@@ -284,7 +319,7 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         await session.StageAsync(source, "fingerprint", progress);
 
         var partial = session.RemoteSourcePath + ".partial";
-        var removal = runner.Requests.FindIndex(request => request.FileName == "ssh" && request.Arguments[^1].Contains("rm -f --", StringComparison.Ordinal) && request.Arguments[^1].Contains(partial, StringComparison.Ordinal));
+        var removal = runner.Requests.FindIndex(request => request.FileName == "ssh" && RemovesThePartial(request.Arguments[^1]) && request.Arguments[^1].Contains(partial, StringComparison.Ordinal));
         var transfer = runner.Requests.FindIndex(request => request.FileName == "sftp");
         removal.Should().BeGreaterThan(-1, "bytes that do not belong to this original must not be built upon");
         transfer.Should().BeGreaterThan(removal);
@@ -921,6 +956,10 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
 
     private static Task<ExternalProcessResult> OkAsync(string output = "") => Task.FromResult(Ok(output));
 
+    /// <summary>Whether <paramref name="command"/> removes the partial upload: the verify-and-rename runs <c>rm -f --</c> too, on the checksum file.</summary>
+    private static bool RemovesThePartial(string command) =>
+        command.Contains("rm -f --", StringComparison.Ordinal) && !command.Contains("mv -f --", StringComparison.Ordinal);
+
     private static string[] Steps(ListProgress progress) => [.. progress.Lines.Where(line => line.Kind == JobProgressKind.Step).Select(line => line.Text)];
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
@@ -1129,13 +1168,70 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
             if (Transfers.Count == 0) return Result(0);
             if (afterDrop is null) return Result(255, "Connection timed out");
             if (command.Contains("head -c", StringComparison.Ordinal)) return Result(0, Transfers.Count == 1 ? afterDrop : afterRefusedRetry ?? afterDrop);
-            if (command.Contains("rm -f --", StringComparison.Ordinal)) PartialRemovedAfterDrop = true;
+            if (RemovesThePartial(command)) PartialRemovedAfterDrop = true;
             if (command.Contains("mv -f --", StringComparison.Ordinal)) Verified = true;
             return Result(0);
         }
 
         private static Task<ExternalProcessResult> Result(int exitCode, string output = "") =>
             Task.FromResult(exitCode == 0 ? Ok(output) : new ExternalProcessResult(exitCode, string.Empty, output));
+    }
+
+    /// <summary>
+    /// The worker's side of one upload with nothing on it yet: sftp writes <paramref name="uploaded"/> as the partial, and the
+    /// verify-and-rename runs as the remote command does. It passes when the source's checksum file already holds the hash it
+    /// was sent; otherwise it checks the partial against that hash, renames it to the source and writes the checksum file.
+    /// A command that names no checksum file behaves as the plain check-then-rename did, and fails once the partial is gone.
+    /// </summary>
+    /// <param name="cutOffFirstVerify">The first verify does its work, as a try the session cut off keeps running on the worker,
+    /// and never answers.</param>
+    private sealed class VerifyWorker(byte[] uploaded, bool cutOffFirstVerify) : IExternalProcessRunner
+    {
+        private static readonly Regex HashInCommand = new("[0-9a-f]{64}", RegexOptions.CultureInvariant);
+        private string? _checksum;
+
+        public byte[]? Partial { get; private set; }
+        public byte[]? Source { get; private set; }
+        public int Verifies { get; private set; }
+
+        public async Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request.FileName == "sftp")
+            {
+                Partial = uploaded;
+                return Ok();
+            }
+            var command = request.Arguments[^1];
+            if (command.Contains("nproc", StringComparison.Ordinal)) return Ok("8 20000000000 100000");
+            if (command.Contains("mv -f --", StringComparison.Ordinal))
+            {
+                var result = Verify(command);
+                if (++Verifies > 1 || !cutOffFirstVerify) return result;
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+                throw new System.Diagnostics.UnreachableException();
+            }
+            if (command.Contains("head -c", StringComparison.Ordinal)) return Ok(Partial is null ? string.Empty : $"{Partial.Length} {Sha256(Partial)}");
+            if (RemovesThePartial(command)) Partial = null;
+            // The check for a source an earlier run left.
+            if (command.Contains("if test -f", StringComparison.Ordinal)) return Ok(Source is null ? string.Empty : $"{Source.Length} {Sha256(Source)}");
+            return Ok();
+        }
+
+        private ExternalProcessResult Verify(string command)
+        {
+            var hash = HashInCommand.Match(command).Value;
+            var readsChecksum = command.Contains(".sha256", StringComparison.Ordinal);
+            bool Verified() => readsChecksum && Source is not null && _checksum == hash;
+            if (Verified()) return Ok();
+            if (Partial is not null && Sha256(Partial) == hash)
+            {
+                Source = Partial;
+                Partial = null;
+                if (readsChecksum) _checksum = hash;
+                return Ok();
+            }
+            return Verified() ? Ok() : new ExternalProcessResult(1, string.Empty, Partial is null ? "stat: cannot statx 'source.mkv.partial': No such file or directory" : string.Empty);
+        }
     }
 
     /// <summary>

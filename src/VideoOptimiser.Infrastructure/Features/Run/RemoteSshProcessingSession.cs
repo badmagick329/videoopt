@@ -77,6 +77,8 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
     public string? RemoteWorkspace { get; }
 
     internal string RemoteSourcePath => $"{RemoteWorkspace}/source{Path.GetExtension(_job.SourcePath).ToLowerInvariant()}";
+    /// <summary>The source's checksum, written once the verified upload became the source (see <see cref="BuildVerifyAndRenameCommand"/>).</summary>
+    internal string RemoteSourceChecksumPath => RemoteSourcePath + ".sha256";
     internal string CrfDirectory => $"{RemoteWorkspace}/crf";
     internal string EncodeDirectory(int attempt) => $"{RemoteWorkspace}/encode-{attempt.ToString(CultureInfo.InvariantCulture)}";
 
@@ -143,13 +145,35 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
                 ? $"Lost the connection to the worker; resuming the upload at {HumanReadableValues.FormatSize(verifiedPartialLength)} of {size}."
                 : $"Lost the connection to the worker; uploading {size} again from the start."));
         }
-        var verify = await SshAsync($"test \"$(stat -c '%s' {Quote(partial)})\" = {source.Length.ToString(CultureInfo.InvariantCulture)} && test \"$(sha256sum {Quote(partial)} | cut -d' ' -f1)\" = {Quote(localHash.ToLowerInvariant())} && mv -f -- {Quote(partial)} {Quote(RemoteSourcePath)}", progress: progress, cancellationToken: cancellationToken);
+        var verify = await SshAsync(BuildVerifyAndRenameCommand(partial, source.Length, localHash), progress: progress, cancellationToken: cancellationToken);
         EnsureSuccess(verify, "Remote original verification");
         // A complete partial left by an earlier run needed no transfer now, so there is no duration to report.
         progress?.Report(JobProgress.Step(transferred
             ? $"Uploaded {size} in {HumanReadableValues.FormatDuration(_clock() - started)}, checksum verified."
             : "Already on the worker, checksum verified."));
     }
+
+    /// <summary>
+    /// Checks the complete partial upload's size and checksum, then renames it to the source, so a wrong file never becomes it.
+    /// <para>It must be safe to resend (<see cref="SshAsync"/>): a checksum of a large original can outlast a try, and the
+    /// cut-off try keeps running on the worker and does the rename, so its resend finds no partial. The checksum file beside the
+    /// source says the rename already happened, at the cost of a read of 64 bytes rather than of the whole source again. The
+    /// last line also covers a resend that arrived while the cut-off try was still hashing: both hash the partial, and the later
+    /// one's rename fails once the earlier one has done it.</para>
+    /// <para>The invariant: a checksum file holding a hash means the source has that hash. It is written only after a rename,
+    /// and one holding another hash is removed before the rename, so a rename whose checksum write then fails (a full disk) leaves
+    /// none that a later run could trust for a source it no longer describes. One that already holds this hash is kept, because a
+    /// concurrent try may just have written it. The workspace is per job, so no other job's checksum file is ever there.</para>
+    /// </summary>
+    /// <remarks>One line, like every other command here: it travels as a single ssh argument through the Windows command line.</remarks>
+    private string BuildVerifyAndRenameCommand(string partial, long length, string hash) =>
+        $"s={Quote(RemoteSourcePath)}; p={Quote(partial)}; m={Quote(RemoteSourceChecksumPath)}; h={Quote(hash.ToLowerInvariant())}; "
+        + "verified() { test -f \"$s\" && test \"$(cat -- \"$m\" 2>/dev/null)\" = \"$h\"; }; "
+        + "if verified; then exit 0; fi; "
+        + $"if test \"$(stat -c '%s' -- \"$p\")\" = {length.ToString(CultureInfo.InvariantCulture)} && test \"$(sha256sum -- \"$p\" | cut -d' ' -f1)\" = \"$h\"; then "
+        + "test \"$(cat -- \"$m\" 2>/dev/null)\" = \"$h\" || rm -f -- \"$m\" || exit 1; "
+        + "mv -f -- \"$p\" \"$s\" && printf '%s\\n' \"$h\" > \"$m\" && exit 0; "
+        + "fi; verified";
 
     /// <summary>
     /// Returns how many bytes of the worker's partial upload are a verified prefix of the original, deleting a partial that is not.
@@ -476,7 +500,9 @@ public sealed partial class RemoteSshProcessingSession : IProcessingSession
 
     /// <summary>
     /// Runs one command on the worker, resending it after a lost connection: exit 255, or no reply within the command timeout,
-    /// which ends that ssh. The resend is safe because every command is idempotent or guarded (<see cref="BuildLaunchCommand"/>).
+    /// which ends that ssh. The resend is safe because every command is idempotent or guarded (<see cref="BuildLaunchCommand"/>,
+    /// <see cref="BuildVerifyAndRenameCommand"/>): a try that is cut off locally keeps running on the worker, so its resend can
+    /// find the work already done, or still under way.
     /// <para>Each resend, and the answer that ends them, is a line on <paramref name="progress"/>: a resend takes 30 seconds or
     /// more, and without the lines a run that is recovering looks the same as one that is stuck.</para>
     /// </summary>
