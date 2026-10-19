@@ -137,7 +137,7 @@ public sealed class FileScanner(
         }
         var item = (await EvaluateAsync(canonicalPath, settings, cacheByPath, progress: null, force, cancellationToken)).Item;
         // Said even when the rules also leave it out: --force would not lift it, so the --force command would be no help.
-        return item is { Status: ScanItemStatus.Ineligible, MediaInfo: { } media, SizeBytes: { } size } && SizeCap.For(media, size, settings.Quality, settings.Savings) is { RulesOutEverything: true } cap
+        return item is { Status: ScanItemStatus.Ineligible, MediaInfo: { } media, SizeBytes: { } size } && !OutputCodec.IsOutputCodec(media.PrimaryVideoCodec) && SizeCap.For(media, size, settings.Quality, settings.Savings) is { RulesOutEverything: true } cap
             ? new FileVerdict(item with { Reason = TooSmallReason(cap) }, TooSmall: true)
             : new FileVerdict(item);
     }
@@ -215,10 +215,12 @@ public sealed class FileScanner(
 
     /// <summary>
     /// The eligibility rules, then the size cap: a video too small to save <c>savings.minimumBytesSaved</c> is never queued,
-    /// since its job would only skip it. <paramref name="force"/> skips the rules, never the cap.
+    /// since its job would only skip it. <paramref name="force"/> skips the rules, never the cap, and never the refusal of a
+    /// video already in the output codec.
     /// </summary>
     private static ScanItem Judge(string path, FileInfo info, MediaInfo media, long sizeBytes, AppSettings settings, bool force)
     {
+        if (OutputCodec.IsOutputCodec(media.PrimaryVideoCodec)) return new ScanItem(path, ScanItemStatus.Ineligible, OutputCodec.RefusalReason, sizeBytes, media);
         var reason = "Queued with --force.";
         if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out reason))
             return new ScanItem(path, ScanItemStatus.Ineligible, reason, sizeBytes, media);

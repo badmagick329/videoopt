@@ -319,6 +319,9 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             case QueueAddOutcome.Archived:
                 WriteError($"{path} is an original video-optimiser archived, so it can't be queued.");
                 return (int)ExitCode.NoEligibleFiles;
+            case QueueAddOutcome.AlreadyAv1:
+                WriteError($"{name} is already AV1, so it can't be queued.");
+                return (int)ExitCode.NoEligibleFiles;
             case QueueAddOutcome.OpenJob:
                 CliConsole.WriteLine(result.OpenState == OpenJobState.LastFinaliseFailed
                     ? $"{name}'s last finalise failed (job {job!.Id:N}): {job.FailureMessage}"

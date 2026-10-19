@@ -181,7 +181,7 @@ public sealed record CalibrationReport(
         foreach (var video in videos)
         {
             // No rule can admit AV1 (the validator refuses it), so every AV1 video is already converted.
-            if (video.AlreadyConverted || video.Codec is { } known && IsAv1(known))
+            if (video.AlreadyConverted || video.Codec is { } known && OutputCodec.IsOutputCodec(known))
             {
                 alreadyAv1Videos++;
                 alreadyAv1Bytes += video.SizeBytes;
@@ -231,13 +231,13 @@ public sealed record CalibrationReport(
         foreach (var group in keptOut)
         {
             // AV1 results come from a rule that admitted AV1 before the validator refused it; suggesting that rule again would break the config.
-            if (group.History is { } history && history.Results >= MinimumResults && history.Converted * 2 > history.Results && !IsAv1(group.Codec!) &&
+            if (group.History is { } history && history.Results >= MinimumResults && history.Converted * 2 > history.Results && !OutputCodec.IsOutputCodec(group.Codec!) &&
                 group.Resolution.IsRuleBand && group.Bitrate.MinimumMbps is > 0 and { } minimum)
                 suggestions.Add(new AddRuleSuggestion(group, minimum));
         }
 
         // Only groups a rule could admit: a rule cannot name <1080p or an unknown bitrate, so testing one would change nothing.
-        var neverTried = keptOut.Where(group => group.History is null && group.Videos > 0 && !IsAv1(group.Codec!))
+        var neverTried = keptOut.Where(group => group.History is null && group.Videos > 0 && !OutputCodec.IsOutputCodec(group.Codec!))
             .Select(group => (Group: group, Videos: keptOutVideos[new GroupKey(group.Codec, group.Resolution, group.Bitrate)]))
             .Concat(codecUnknown.Select(group => (Group: group, Videos: unknownVideos[new GroupKey(null, group.Resolution, group.Bitrate)])))
             .Where(candidate => candidate.Group.Resolution.IsRuleBand && candidate.Group.Bitrate.IsKnown)
@@ -322,8 +322,6 @@ public sealed record CalibrationReport(
 
     private static MediaInfo Media(string codec, int? width, int? height, long? bitrate, long sizeBytes) =>
         new(codec, VideoStreamCount: 1, AudioStreamCount: 0, SubtitleStreamCount: 0, AttachmentCount: 0, DurationSeconds: null, sizeBytes, width, height, bitrate);
-
-    private static bool IsAv1(string codec) => string.Equals(codec, "av1", StringComparison.OrdinalIgnoreCase);
 
     private static void Add<T>(Dictionary<GroupKey, List<T>> groups, GroupKey key, T item)
     {

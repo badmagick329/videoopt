@@ -120,6 +120,24 @@ public sealed class JobProcessorTests : IDisposable
         Steps(reported).Should().Equal($"Skipped: {reason}");
     }
 
+    /// <summary>
+    /// The remote session fails the job as soon as it is staged, so this outcome proves nothing was uploaded or encoded. --force
+    /// overrides the rules, not this: after a delete or archive finalise, the AV1 at the original's path is the only copy.
+    /// </summary>
+    [Fact]
+    public async Task AForcedJobWhoseOriginalIsAlreadyAv1FailsBeforeItIsStaged()
+    {
+        var source = await SourceAsync("converted.mp4");
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(session: new UnavailableRemoteSession(), probe: new H264Probe(sourceCodec: "av1")).ProcessAsync(DatabasePath, source, Settings(remote: true), force: true, new ListProgress(reported));
+
+        result.ExitCode.Should().Be(ExitCode.NoEligibleFiles);
+        var stored = (await _repository.GetAsync(DatabasePath, result.Job.Id))!;
+        (stored.Status, stored.FailureCategory, stored.FailureMessage).Should().Be((JobStatus.Failed, FailureCategories.Ineligible, "The video is already AV1, so converting it again would only lose quality."));
+        Steps(reported).Should().Equal("Failed: The video is already AV1, so converting it again would only lose quality.");
+    }
+
     [Theory]
     [InlineData(JobSourceKind.Immich, "staging", JobStatus.ReadyToFinalize)]
     [InlineData(JobSourceKind.Immich, "elsewhere", JobStatus.Failed)]

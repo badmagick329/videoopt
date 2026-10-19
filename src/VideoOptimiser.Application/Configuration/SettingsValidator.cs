@@ -23,9 +23,6 @@ public sealed class SettingsValidator : ISettingsValidator
     public const int LowestCrf = 1;
     public const int HighestCrf = 63;
 
-    /// <summary>The codec every conversion produces, so no rule may admit it; compared as the rules compare codecs.</summary>
-    private const string Av1Codec = "av1";
-
     public IReadOnlyList<Diagnostic> Validate(AppSettings settings)
     {
         var diagnostics = new List<Diagnostic>();
@@ -91,7 +88,7 @@ public sealed class SettingsValidator : ISettingsValidator
         foreach (var rule in settings.Eligibility.Rules)
         {
             AddWhen(rule.Codecs.Count == 0, "EligibilityRuleCodecsRequired", "Every eligibility.rules entry requires codecs.");
-            AddWhen(rule.Codecs.Contains(Av1Codec, StringComparer.OrdinalIgnoreCase), "InvalidEligibilityRuleCodec", "eligibility.rules can't list av1 in codecs, since VideoOptimiser converts videos to AV1.");
+            AddWhen(rule.Codecs.Any(OutputCodec.IsOutputCodec), "InvalidEligibilityRuleCodec", "eligibility.rules can't list av1 in codecs, since VideoOptimiser converts videos to AV1.");
             AddWhen(!HumanReadableValues.TryParseSize(rule.MinimumFileSize, out _), "InvalidEligibilityRuleSize", "eligibility.rules.minimumFileSize must be a size.");
             AddWhen(!HumanReadableValues.TryParseBitrate(rule.MinimumVideoBitrate, out _), "InvalidEligibilityRuleBitrate", "eligibility.rules.minimumVideoBitrate must be a positive bitrate.");
             AddWhen(!EligibilityEvaluator.IsValidResolutionBand(rule.Resolution), "InvalidEligibilityRuleResolution", "eligibility.rules.resolution must be 1080p-1440p, 1440p-4k, or 4k+.");

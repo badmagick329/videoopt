@@ -8,6 +8,12 @@ public static class EligibilityEvaluator
 {
     public static bool IsEligible(FileInfo file, MediaInfo media, EligibilitySettings settings, out string reason)
     {
+        if (OutputCodec.IsOutputCodec(media.PrimaryVideoCodec))
+        {
+            reason = OutputCodec.RefusalReason;
+            return false;
+        }
+
         if (MatchingRule(file.Length, media, settings) is { } rule)
         {
             reason = $"Matches eligibility rule {rule}.";
@@ -21,9 +27,11 @@ public static class EligibilityEvaluator
     /// <summary>
     /// The number (1-based, in config order) of the first rule the file matches, or null when none does. The number is what
     /// the user is told, because a file that fits rule 3 while another of the same size fails rule 1 is otherwise a puzzle.
+    /// An AV1 matches no rule, even one that lists <c>av1</c> (<see cref="OutputCodec"/>).
     /// </summary>
     public static int? MatchingRule(long fileSizeBytes, MediaInfo media, EligibilitySettings settings)
     {
+        if (OutputCodec.IsOutputCodec(media.PrimaryVideoCodec)) return null;
         for (var index = 0; index < settings.Rules.Count; index++)
         {
             if (Matches(settings.Rules[index], fileSizeBytes, media)) return index + 1;
@@ -44,6 +52,8 @@ public static class EligibilityEvaluator
     {
         var rules = settings.Rules;
         if (rules.Count == 0) return "no eligibility rules are configured";
+        // True of any config that loads, since the validator refuses av1 in a rule's codecs.
+        if (OutputCodec.IsOutputCodec(media.PrimaryVideoCodec)) return $"no rule for {media.PrimaryVideoCodec}";
 
         var withCodec = rules
             .Select((rule, index) => (Rule: rule, Number: index + 1))

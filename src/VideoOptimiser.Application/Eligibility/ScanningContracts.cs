@@ -58,7 +58,8 @@ public interface IFileScanner
     /// <summary>
     /// The verdict a scan would give one file, for <c>queue add &lt;file&gt;</c>. With <paramref name="force"/> the extension,
     /// name, excluded-directory and rule checks are skipped, but the size cap still applies: no AV1 of a video that small
-    /// could save <c>savings.minimumBytesSaved</c>. The caller checks the watch roots and the archive directory.
+    /// could save <c>savings.minimumBytesSaved</c>. Nor does it lift the refusal of a video that is already AV1
+    /// (<see cref="OutputCodec"/>). The caller checks the watch roots and the archive directory.
     /// </summary>
     Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default);
 }

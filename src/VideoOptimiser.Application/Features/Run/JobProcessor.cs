@@ -443,6 +443,10 @@ public sealed class JobProcessor(
         if (!readinessResult.IsReady) return SourceVerdict.Fail(info, FailureCategories.SourceNotReady, $"Original is not ready: {readinessResult.Reason}", ExitCode.ProcessingFailure);
 
         var media = await mediaProbeFactory(settings.Tools.FfprobePath).ProbeAsync(path, cancellationToken);
+        // Whatever --force says, which overrides the rules, not this (OutputCodec). It catches a forced job queued before
+        // queue add refused AV1s, and a job whose original was replaced by an AV1 after it was queued. Failed as Ineligible,
+        // which settles nothing; that is safe because no discovery queues an AV1.
+        if (OutputCodec.IsOutputCodec(media.PrimaryVideoCodec)) return SourceVerdict.Fail(info, FailureCategories.Ineligible, OutputCodec.RefusalReason, ExitCode.NoEligibleFiles) with { Media = media };
         if (!force && !EligibilityEvaluator.IsEligible(info, media, settings.Eligibility, out var eligibilityReason)) return SourceVerdict.Fail(info, FailureCategories.Ineligible, eligibilityReason, ExitCode.NoEligibleFiles) with { Media = media };
 
         // Before staging, and whatever --force says: an AV1 with no audio would pass validation, which expects none, and replace

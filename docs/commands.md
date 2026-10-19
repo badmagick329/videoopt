@@ -43,7 +43,7 @@ The card shows the queue's counts, the run going now, the Hetzner worker if you 
 | Command | What it does |
 | --- | --- |
 | `queue add [--first]` | Queue the videos in your watch folders that match your rules. `--first` queues one. |
-| `queue add <file> [--force]` | Queue one file. `--force` skips the watch folder and rule checks, but never the check that the file can save enough. |
+| `queue add <file> [--force]` | Queue one file. `--force` skips the watch folder and rule checks, but never the checks that the file can save enough and isn't already AV1. |
 | `queue add immich [--first \| --limit <n>]` | Download up to `n` new old videos from Immich, check them against your rules and queue the ones that fit. See [immich.md](immich.md). |
 
 ## Converting

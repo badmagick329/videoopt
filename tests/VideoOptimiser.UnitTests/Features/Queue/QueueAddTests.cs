@@ -13,7 +13,7 @@ namespace VideoOptimiser.UnitTests.Features.Queue;
 /// <summary>
 /// <c>queue add</c>, <c>queue add &lt;file&gt;</c> and <c>queue retry</c> through the real CLI (VOPT-54 step 5): every approved
 /// line, whole, with its exit code. ffprobe and the readiness check are faked by file name: <c>hevc</c> probes as HEVC,
-/// <c>broken</c> fails to probe, <c>locked</c> cannot be opened.
+/// <c>av1</c> as AV1, <c>broken</c> fails to probe, <c>locked</c> cannot be opened.
 /// </summary>
 public sealed class QueueAddTests : QueueTestBase
 {
@@ -117,6 +117,23 @@ public sealed class QueueAddTests : QueueTestBase
         var result = force ? await RunAsync("queue", "add", path, "--force") : await RunAsync("queue", "add", path);
 
         result.Should().Be((5, "", Transcript($"{name} doesn't fit your rules: too small to save 1KiB (savings.minimumBytesSaved).")));
+        (await Repository.FindOpenBySourceAsync(DatabasePath, path)).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The AV1 a delete or archive finalise left at the original's path is the only copy, so --force, which overrides the
+    /// rules, does not queue it. Without --force the line gives no --force command, since it would not help.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFileAlreadyAv1IsRefusedEvenWithForce(bool force)
+    {
+        var path = await FileAsync(Root, "av1.mp4");
+
+        var result = force ? await RunAsync("queue", "add", path, "--force") : await RunAsync("queue", "add", path);
+
+        result.Should().Be((5, "", Transcript("av1.mp4 is already AV1, so it can't be queued.")));
         (await Repository.FindOpenBySourceAsync(DatabasePath, path)).Should().BeNull();
     }
 
@@ -407,7 +424,7 @@ public sealed class QueueAddTests : QueueTestBase
     {
         public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
             Path.GetFileName(path).StartsWith("broken", StringComparison.Ordinal) ? Task.FromException<MediaInfo>(new MediaProbeException("ffprobe exited with 1: Invalid data found when processing input."))
-            : Task.FromResult(new MediaInfo(Path.GetFileName(path).StartsWith("hevc", StringComparison.Ordinal) ? "hevc" : "h264", 1, 0, 0, 0, null, null, 1920, 1080, 10_000_000));
+            : Task.FromResult(new MediaInfo(Path.GetFileName(path) switch { var name when name.StartsWith("hevc", StringComparison.Ordinal) => "hevc", var name when name.StartsWith("av1", StringComparison.Ordinal) => "av1", _ => "h264" }, 1, 0, 0, 0, null, null, 1920, 1080, 10_000_000));
     }
 
     /// <summary>Queues the file from "another terminal" just before the command's own insert.</summary>

@@ -121,6 +121,9 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
             verdict = await scanner.JudgeAsync(path, settings, force: true, cancellationToken);
         }
         var item = verdict.Item;
+        // Not even with --force, which overrides the rules, not this (OutputCodec). It waits for the probe, unlike the
+        // made-by-tool refusal above, and comes before the size cap so the user hears the reason --force can't change.
+        if (item.MediaInfo is { } probed && OutputCodec.IsOutputCodec(probed.PrimaryVideoCodec)) return new QueueAddResult(QueueAddOutcome.AlreadyAv1, path);
         switch (item.Status)
         {
             case ScanItemStatus.Ineligible: return new QueueAddResult(verdict.TooSmall ? QueueAddOutcome.TooSmall : QueueAddOutcome.Ineligible, path, Reason: item.Reason);

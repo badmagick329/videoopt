@@ -70,6 +70,27 @@ public sealed class EligibilityEvaluatorTests : IDisposable
         changed.Should().OnlyHaveUniqueItems().And.NotContain(baseline);
     }
 
+    /// <summary>
+    /// The validator refuses av1 in a rule's codecs, but a rule built in code bypasses it: an AV1 still matches nothing, and
+    /// says so the same way. The h264 row shows the rule otherwise fits.
+    /// </summary>
+    [Theory]
+    [InlineData("h264", 1)]
+    [InlineData("av1", null)]
+    public void AnAv1MatchesNoRuleEvenOneThatListsAv1(string codec, int? expected)
+    {
+        var settings = new EligibilitySettings { Rules = [Rule(["h264", "av1"], "1080p-1440p", "1Mbps", "1B")] };
+        var media = Described(codec, 1920, 1080, 20_000_000);
+
+        EligibilityEvaluator.MatchingRule(1_000, media, settings).Should().Be(expected);
+        EligibilityEvaluator.IsEligible(new FileInfo(CreateFile(1_000)), media, settings, out var reason).Should().Be(expected is not null);
+        if (expected is null)
+        {
+            reason.Should().Be("The video is already AV1, so converting it again would only lose quality.");
+            EligibilityEvaluator.DescribeMismatch(1_000, media, settings).Should().Be("no rule for av1");
+        }
+    }
+
     [Fact]
     public void DescribeMismatchNamesTheCodecWhenNoRuleWantsIt()
     {

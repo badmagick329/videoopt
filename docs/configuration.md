@@ -25,6 +25,7 @@ eligibility:
 - Only files with an extension in `eligibility.extensions` are scanned. The default is `.mkv`, `.mp4`, `.mov` and `.m4v`.
 - `queue add` and `calibrate` never look inside VideoOptimiser's own folders: the `.video-optimiser` folders that hold its temporary AV1s, and `immich.stagingDirectory`. `eligibility.excludedDirectories` and `excludedNamePatterns` can't change that.
 - `queue add` never queues a video too small to save `savings.minimumBytesSaved` (1 MiB by default), even with `--force`.
+- `queue add` never queues a video that is already AV1, even with `--force`, and a run fails one queued by an earlier version. Converting it again would only lose quality, and after a `delete` or `archive` finalise it is the only copy.
 
 `queue add` scans the watch folders. `queue add <file>` queues one file after the same checks. A file outside your watch roots or rules is refused with exit `5`, and the message gives the command to queue it anyway with `--force`. `--force` skips only those two checks, and `queue retry` keeps it.
 

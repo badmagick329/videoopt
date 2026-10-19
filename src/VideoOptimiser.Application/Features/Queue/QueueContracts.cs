@@ -17,6 +17,8 @@ public enum QueueAddOutcome
     /// <summary>A temporary output or a staged Immich copy: queueing it would convert the tool's own file.</summary>
     MadeByTool,
     Archived,
+    /// <summary>Already AV1, the codec every conversion produces (<see cref="Eligibility.OutputCodec"/>).</summary>
+    AlreadyAv1,
     OpenJob,
     /// <summary>Its latest job settled it (completed, failed, dropped, rejected, not worth converting) and the file is unchanged.</summary>
     Settled,
