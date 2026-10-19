@@ -20,6 +20,7 @@
 - Uploading a large video to a worker no longer fails when the worker takes more than 30 seconds to check the upload's checksum. The video used to fail as a staging failure even though the upload had finished, and it was converted only on a later run.
 - A CRF search or encode that hangs on a worker without exiting is now stopped, and the video fails with a message saying how long its log was silent. The run then goes on to the next video. Before, the run waited on it forever while the worker billed, and the full-screen view kept saying the worker had answered.
 - When a worker can't remove a video's files after the video is done, the run now says so in one line and carries on, and a later run removes them. It used to mark a video that had passed validation as failed, or stop the whole run if the worker had just stopped answering. It also hid the real reason a video failed on the worker, or that its original changed during the upload.
+- A run that fails while it starts, for example because the database is busy, now only reports the error. It used to go on to decide the worker's fate after it had already let go of the run lock, so a background run set to delete the worker could delete one that another run had just started using.
 
 ## [0.14.1] - 2026-10-18
 ### Remote workers

@@ -231,30 +231,44 @@ public sealed class BackgroundRunTests : IDisposable
         (await _requests.ReadAsync(DatabasePath, CancellationToken.None)).StopNow.Should().BeTrue();
     }
 
-    /// <summary>A step after the lock fails: the lock is not left held by a run that never began, and the error is in the event file.</summary>
-    [Fact]
-    public async Task AFailureRightAfterTakingTheLockReleasesItAndIsRecorded()
+    /// <summary>
+    /// A start write after the lock fails: the lock is not left held by a run that never began, and the error is in the event
+    /// file. VOPT-156: the run never started, so it decides no worker's fate, even a Delete one: by then the lock is released
+    /// and the recorded worker may be another run's.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFailureRightAfterTakingTheLockReleasesItAndIsRecorded(bool addRunFails)
     {
         await RunCli.QueueJobsAsync(_repository, DatabasePath, 1);
-        _requests.ResetFailure = new InvalidOperationException("database is locked");
-        var processor = new ScriptedRunProcessor();
+        // An earlier run's fate, which a failed reset leaves in the requests row.
+        await _requests.SetWorkerFateAsync(DatabasePath, WorkerFateChoice.Delete, CancellationToken.None);
+        var failure = new InvalidOperationException("database is locked");
+        RecordingRunRecords? records = null;
+        if (addRunFails) records = new RecordingRunRecords { AddRunFailure = failure };
+        else _requests.ResetFailure = failure;
+        var processor = new ScriptedRunProcessor(remote: true);
 
-        var code = await RunAsync(processor);
+        var code = await RunAsync(processor, WorkerFateChoice.Delete, remote: true, records: records);
 
         code.Should().Be((int)ExitCode.GeneralFailure);
         processor.Calls.Should().Be(0);
         new DatabaseLocks().LiveRun(DatabasePath).Should().BeNull();
         _keepAwake.Log.Should().BeEmpty();
+        (_lifecycle.DeleteCalls, _lifecycle.Exists).Should().Be((0, true));
         _events.Read(DatabasePath).Should().Contain(entry => entry.Kind == RunEventKind.RunFailed && entry.Text == "database is locked");
+        Kinds().Should().NotContain(RunEventKind.WorkerDeleting);
     }
 
-    private Task<int> RunAsync(ScriptedRunProcessor processor, WorkerFateChoice fate = WorkerFateChoice.Delete, bool remote = false, bool mayCreateWorker = true)
+    private Task<int> RunAsync(ScriptedRunProcessor processor, WorkerFateChoice fate = WorkerFateChoice.Delete, bool remote = false, bool mayCreateWorker = true, IRunRecordStore? records = null)
     {
+        records ??= _records;
         var settings = new AppSettings { Database = new DatabaseSettings { Path = DatabasePath } };
         if (remote) settings.Processing = new ProcessingSettings { Mode = ProcessingModes.RemoteSsh, RemoteSsh = new RemoteSshSettings { Lifecycle = RemoteLifecycleModes.Hetzner } };
         var locks = new DatabaseLocks();
-        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging(), new FailedValidationRecheck(_repository, new OutputManifestStore(), new FileFingerprintService(), new PassingValidator()), _records, TimeProvider.System);
-        var start = new RunStart(locks, _requests, _events, _keepAwake, _records, flow, TimeProvider.System);
+        var flow = new RunFlow(new QueueService(_repository, processor, locks, new CommandHints(null)), new QueueDiscovery(null!, _repository, new FileFingerprintService(), locks), processor, _lifecycle, new NoImmichRestaging(), new FailedValidationRecheck(_repository, new OutputManifestStore(), new FileFingerprintService(), new PassingValidator()), records, TimeProvider.System);
+        var start = new RunStart(locks, _requests, _events, _keepAwake, records, flow, TimeProvider.System);
         var background = new BackgroundRun(flow, start, new RunRequestPoll(_requests, TimeSpan.FromMilliseconds(10)), _stop, _requests, new EventLogRunObserver(_events, TimeProvider.System));
         return background.RunAsync(settings, modeOverridden: false, fate, mayCreateWorker);
     }

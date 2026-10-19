@@ -16,7 +16,7 @@ internal sealed class RunWorkerEnd(RunFlow flow, RunStart start, RunWorkerState 
 {
     /// <summary>
     /// The run: its lock and its keep-awake hold, to dispose when the command ends. Null after saying who holds the lock. Taking
-    /// it starts the run (<see cref="RunStart"/>): from then on every end decides the worker's fate (<see cref="GuardAsync"/>).
+    /// it starts the run (<see cref="RunStart"/>): once that succeeds, every end decides the worker's fate (<see cref="GuardAsync"/>).
     /// </summary>
     /// <param name="holderName">How the refusal names this run to a later one, such as <c>video-optimiser run</c>.</param>
     public async Task<IAsyncDisposable?> TakeRunLockAsync(LoadedConfiguration configuration, CliCommand command, string holderName, CancellationToken cancellationToken)

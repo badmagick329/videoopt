@@ -23,6 +23,11 @@ namespace VideoOptimiser.Application.Features.Run;
 /// </remarks>
 public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJobProcessor processor, IRemoteWorkerLifecycle lifecycle, IImmichRestaging restaging, FailedValidationRecheck recheck, IRunRecordStore records, TimeProvider time)
 {
+    // The run took the lock and owns the event file, so an error from then on is the run's to report, even one from a start
+    // write that then released the lock.
+    private bool _lockTaken;
+    // True only while this run holds the lock and its start writes succeeded (VOPT-156). Every conclude needs it: a run whose
+    // start failed has released the lock, and deciding a worker's fate then could delete one another run now uses.
     private bool _started;
     private Guid? _runId;
     private long? _workerServerId;
@@ -34,7 +39,13 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
     private bool _settingUpWorker;
     private bool _concluded;
 
-    /// <summary>Called once the run holds its lock: from then on every end decides the worker's fate (<see cref="GuardAsync"/>).</summary>
+    /// <summary>Called as soon as the run holds its lock: from then on <see cref="GuardAsync"/> reports an error, but decides no worker's fate yet.</summary>
+    public void MarkLockTaken() => _lockTaken = true;
+
+    /// <summary>
+    /// Called once every start write succeeded, with the lock still held: from then on every end decides the worker's fate
+    /// (<see cref="GuardAsync"/>).
+    /// </summary>
     /// <param name="runId">The run's row (<see cref="IRunRecordStore"/>), which its managed worker and conversion spans are written against.</param>
     public void MarkStarted(Guid runId)
     {
@@ -43,10 +54,11 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
     }
 
     /// <summary>
-    /// Runs a run command so that every way it ends, once it holds the run lock, decides the managed worker's fate: a stop
-    /// now (Ctrl+C twice, or once with no video converting, whatever it interrupted: Immich discovery, the worker's creation,
-    /// a prompt or a video), an error, or a return before anything was converted. A finished conversion decides inside
-    /// <see cref="ConvertQueueAsync"/>, after its summary.
+    /// Runs a run command so that every way it ends, once it has started (<see cref="MarkStarted"/>), decides the managed
+    /// worker's fate: a stop now (Ctrl+C twice, or once with no video converting, whatever it interrupted: Immich discovery,
+    /// the worker's creation, a prompt or a video), an error, or a return before anything was converted. A finished
+    /// conversion decides inside <see cref="ConvertQueueAsync"/>, after its summary. An error between taking the lock and
+    /// starting is reported and decides nothing; a stop then reaches the host as a plain cancel.
     /// </summary>
     /// <returns>The exit code <paramref name="run"/> returned, 9 for a stop now, or the code <see cref="IRunObserver.RunFailed"/> gave an error.</returns>
     public async Task<int> GuardAsync(AppSettings settings, IRunObserver observer, IRunQuestions questions, Func<Task<int>> run)
@@ -62,11 +74,11 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
             await ConcludeOrReportAsync(observer, () => ConcludeAsync(settings, observer, questions, RunEnd.StoppedNow, interrupted: exception as JobInterruptedException));
             return (int)ExitCode.Cancelled;
         }
-        catch (Exception exception) when (_started && !_concluded && exception is not OperationCanceledException)
+        catch (Exception exception) when (_lockTaken && !_concluded && exception is not OperationCanceledException)
         {
-            // The error first, then what happens to the worker.
+            // The error first, then what happens to the worker: nothing, when the start itself failed.
             exitCode = observer.RunFailed(exception);
-            await ConcludeOrReportAsync(observer, () => ConcludeAsync(settings, observer, questions, RunEnd.Failed));
+            if (_started) await ConcludeOrReportAsync(observer, () => ConcludeAsync(settings, observer, questions, RunEnd.Failed));
             return exitCode;
         }
         if (_started && !_concluded) await ConcludeOrReportAsync(observer, () => ConcludeAsync(settings, observer, questions, RunEnd.Finished));
@@ -285,6 +297,8 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
     /// <returns>False when deleting the worker failed.</returns>
     private async Task<bool> ConcludeAsync(AppSettings settings, IRunObserver observer, IRunQuestions questions, RunEnd end, JobInterruptedException? interrupted = null, JobRecord? unreachableJob = null)
     {
+        // GuardAsync checks this itself; ConvertQueueAsync relies on its caller having started the run.
+        if (!_started) throw new InvalidOperationException("A run decides its worker's fate only once it has started.");
         _concluded = true;
         var answer = await questions.AnswerGivenDuringRunAsync();
         var recorded = lifecycle.IsManaged(settings) ? await lifecycle.ReadRecordedAsync(settings.Database.Path, CancellationToken.None) : null;

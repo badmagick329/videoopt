@@ -198,7 +198,11 @@ internal sealed class RecordingRunRecords : IRunRecordStore
 
     public List<Span> Spans { get; } = [];
 
-    public Task AddRunAsync(string databasePath, Guid runId, string holderName, DateTimeOffset startedUtc, CancellationToken cancellationToken) => Write(cancellationToken);
+    /// <summary>Thrown by <see cref="AddRunAsync"/>, as a busy database would: the start's last write fails.</summary>
+    public Exception? AddRunFailure { get; set; }
+
+    public Task AddRunAsync(string databasePath, Guid runId, string holderName, DateTimeOffset startedUtc, CancellationToken cancellationToken) =>
+        AddRunFailure is null ? Write(cancellationToken) : Task.FromException(AddRunFailure);
 
     public Task EndRunAsync(string databasePath, Guid runId, DateTimeOffset endedUtc, CancellationToken cancellationToken) => Write(cancellationToken);
 

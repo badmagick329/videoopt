@@ -30,7 +30,7 @@ public sealed class RunStart(IDatabaseLocks locks, IRunRequestStore requests, IR
         try
         {
             var runId = Guid.NewGuid();
-            flow.MarkStarted(runId);
+            flow.MarkLockTaken();
             // Replaces the earlier run's file and clears its requests only now, with the lock held: before this, an earlier run
             // may still be writing both.
             events.Begin(databasePath);
@@ -39,6 +39,8 @@ public sealed class RunStart(IDatabaseLocks locks, IRunRequestStore requests, IR
             // Last before keep-awake, so a run whose start failed leaves no row.
             await records.AddRunAsync(databasePath, runId, holderName, time.GetUtcNow(), cancellationToken);
             awake = keepAwake.Hold();
+            // Last, so a start that failed above (and released the lock) never decides a worker's fate (VOPT-156).
+            flow.MarkStarted(runId);
             return new RunStartResult(new Session(records, time, databasePath, runId, awake, runLock), null);
         }
         catch
