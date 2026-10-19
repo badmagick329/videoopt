@@ -105,9 +105,16 @@ internal sealed class ResumedWorkerSession : IProcessingSession
     public string? RemoteHost => "video-worker";
     public string? RemoteWorkspace => null;
 
+    /// <summary>Runs while the original uploads, such as an edit that changes it midway.</summary>
+    public Action? DuringStage { get; init; }
+
+    /// <summary>Thrown by the cleanup, as a worker that cannot be reached or that refuses the <c>rm</c> would.</summary>
+    public Exception? CleanupFailure { get; init; }
+
     public Task StageAsync(string sourcePath, string sourceFingerprint, CancellationToken cancellationToken = default)
     {
         Calls.Add("Stage");
+        DuringStage?.Invoke();
         return Task.CompletedTask;
     }
 
@@ -142,7 +149,7 @@ internal sealed class ResumedWorkerSession : IProcessingSession
     public Task CleanupAsync(CancellationToken cancellationToken = default)
     {
         Calls.Add("Cleanup");
-        return Task.CompletedTask;
+        return CleanupFailure is null ? Task.CompletedTask : Task.FromException(CleanupFailure);
     }
 
     /// <summary>The jobs whose workspaces each call was told to stop and remove, in order; each is also a call.</summary>

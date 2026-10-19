@@ -19,6 +19,7 @@
 - In the full-screen view, `s` no longer offers the worker while the worker pane is deleting or creating it. It tells you to start the run once that's finished. If the worker you picked for a background run is deleted before the run gets to it, the run now ends and says so. It used to create a new server on its own, the first in stock within your price limit, and that server billed.
 - Uploading a large video to a worker no longer fails when the worker takes more than 30 seconds to check the upload's checksum. The video used to fail as a staging failure even though the upload had finished, and it was converted only on a later run.
 - A CRF search or encode that hangs on a worker without exiting is now stopped, and the video fails with a message saying how long its log was silent. The run then goes on to the next video. Before, the run waited on it forever while the worker billed, and the full-screen view kept saying the worker had answered.
+- When a worker can't remove a video's files after the video is done, the run now says so in one line and carries on, and a later run removes them. It used to mark a video that had passed validation as failed, or stop the whole run if the worker had just stopped answering. It also hid the real reason a video failed on the worker, or that its original changed during the upload.
 
 ## [0.14.1] - 2026-10-18
 ### Remote workers

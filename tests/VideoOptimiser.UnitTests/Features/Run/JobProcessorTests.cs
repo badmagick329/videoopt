@@ -838,6 +838,39 @@ public sealed class JobProcessorTests : IDisposable
         result.Job.Status.Should().Be(JobStatus.ReadyToFinalize, result.Message);
     }
 
+    /// <summary>
+    /// The workspace cleanup after validation is housekeeping too (VOPT-157): one that fails leaves the AV1 ready, with one dim
+    /// line, rather than failing it validation or, for a worker that stopped answering, stopping the run.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFailedCleanupAfterValidationLeavesTheVideoReady(bool unreachable)
+    {
+        var source = await SourceAsync();
+        Exception failure = unreachable ? new RemoteConnectionException("SSH connection failed: timed out.") : new IOException("Remote cleanup failed: Permission denied.");
+        var session = new ResumedWorkerSession { CleanupFailure = failure };
+        var reported = new List<JobProgress>();
+
+        var result = await Processor(session: session).ProcessAsync(DatabasePath, source, Settings(remote: true), force: false, new ListProgress(reported));
+
+        (result.ExitCode, result.Job.Status, result.Job.FailureCategory).Should().Be((ExitCode.Success, JobStatus.ReadyToFinalize, null), result.Message);
+        reported.Where(line => line.Kind == JobProgressKind.Detail).Select(line => line.Text).Should().Equal($"Couldn't clear this video's workspace on the worker ({failure.Message.TrimEnd('.')}); a later run will.");
+    }
+
+    /// <summary>An original that changed during its upload fails as SourceChanged even when the cleanup after it fails too.</summary>
+    [Fact]
+    public async Task AnOriginalChangedDuringTheUploadFailsAsChangedWhenItsCleanupFails()
+    {
+        var source = await SourceAsync();
+        var session = new ResumedWorkerSession { DuringStage = () => File.WriteAllText(source, "original video data, re-tagged"), CleanupFailure = new IOException("Remote cleanup failed: Permission denied.") };
+
+        var result = await Processor(session: session).ProcessAsync(DatabasePath, source, Settings(remote: true), force: false);
+
+        (result.Job.Status, result.Job.FailureCategory).Should().Be((JobStatus.Failed, "SourceChanged"), result.Message);
+        session.Calls.Should().EndWith(["Stage", "Cleanup"]);
+    }
+
     /// <summary>A search this command joined midway has no start to time it from, so its line gives no duration.</summary>
     [Fact]
     public async Task ASearchTheCommandJoinedMidwayNamesNoDuration()

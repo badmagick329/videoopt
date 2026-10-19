@@ -288,11 +288,33 @@ public sealed class RemoteStageRunnerTests : IDisposable
         shell.Stops.Should().BeEmpty();
     }
 
-    private RemoteStageRunner CreateRunner(StageShell shell, Func<CancellationToken, Task>? pollDelay = null, Func<TimeSpan>? clock = null) =>
+    /// <summary>
+    /// Removing the workspace after a stage failed or stalled is housekeeping (VOPT-157): a removal that fails, here on a worker
+    /// that stopped answering, gets one dim line, and the stage's own error is the one the job fails with.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFailedOrStalledStageThrowsItsOwnErrorWhenItsWorkspaceCannotBeRemoved(bool stalled)
+    {
+        var shell = stalled
+            ? new StageShell(["missing", RunningFor(TimeSpan.FromMinutes(1), TimeSpan.FromHours(1))])
+            : new StageShell(["completed 1"], "Error: ffmpeg exited with status 1\n");
+        var progress = new ListProgress();
+
+        var action = async () => await CreateRunner(shell, removalFailure: new RemoteConnectionException("SSH connection failed: timed out.")).RunAsync(CrfDirectory, "CRF search", Arguments, Source, progress, default);
+
+        (await action.Should().ThrowAsync<Exception>()).Which.Should().BeOfType(stalled ? typeof(RemoteStageStalledException) : typeof(AbAv1StageException));
+        Removals.Should().Be(1);
+        progress.Lines.Where(line => line.Kind == JobProgressKind.Detail).Select(line => line.Text).Should().Equal("Couldn't clear this video's workspace on the worker (SSH connection failed: timed out); a later run will.");
+    }
+
+    /// <param name="removalFailure">Thrown by each workspace removal, after it is counted.</param>
+    private RemoteStageRunner CreateRunner(StageShell shell, Func<CancellationToken, Task>? pollDelay = null, Func<TimeSpan>? clock = null, Exception? removalFailure = null) =>
         new(shell, _id, Workspace, StageSilenceTimeout, pollDelay ?? (_ => Task.CompletedTask), clock ?? new ManualClock().Read, _ =>
         {
             Removals++;
-            return Task.CompletedTask;
+            return removalFailure is null ? Task.CompletedTask : Task.FromException(removalFailure);
         });
 
     private static TimeSpan? Seconds(int? seconds) => seconds is { } value ? TimeSpan.FromSeconds(value) : null;

@@ -111,7 +111,7 @@ public sealed class JobProcessor(
                 await session.StageAsync(path, fingerprint, progress, cancellationToken);
                 if (!string.Equals(await fingerprints.CreateAsync(path, cancellationToken), fingerprint, StringComparison.Ordinal))
                 {
-                    await session.CleanupAsync(cancellationToken);
+                    await WorkspaceCleanup.TryAsync(session.CleanupAsync, progress, cancellationToken);
                     return await FailAsync(job, databasePath, "SourceChanged", "Original changed while it was being uploaded.", ExitCode.ProcessingFailure, progress, cancellationToken);
                 }
             }
@@ -189,12 +189,12 @@ public sealed class JobProcessor(
             await jobs.UpdateAsync(databasePath, job, cancellationToken);
             progress?.Report(JobValidation.CheckingStep(settings));
             manifest.Validation = await validator.ValidateAsync(manifest, settings, cancellationToken);
-            // A validation resumed on this PC needs no worker, and this run may have none to reach. The workspace it leaves is
-            // removed by the sweep of the workspaces of finished jobs, which a run makes on the worker once this job has ended
-            // (VOPT-90).
-            if (session.IsRemote && !canReuseOutput) await session.CleanupAsync(cancellationToken);
             var outcome = await JobValidation.RecordAsync(job, manifest, settings, manifests);
             await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
+            // After the verdict is written, so a cleanup that fails cannot change it (VOPT-157). A validation resumed on this PC
+            // needs no worker, and this run may have none to reach. The workspace it leaves is removed by the sweep of the
+            // workspaces of finished jobs, which a run makes on the worker once this job has ended (VOPT-90).
+            if (session.IsRemote && !canReuseOutput) await WorkspaceCleanup.TryAsync(session.CleanupAsync, progress, cancellationToken);
             foreach (var line in JobValidation.Describe(job, outcome)) progress?.Report(line);
             return outcome switch
             {

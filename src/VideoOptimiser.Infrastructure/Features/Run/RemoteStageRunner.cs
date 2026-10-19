@@ -22,7 +22,8 @@ namespace VideoOptimiser.Infrastructure.Features.Run;
 /// <param name="stageSilenceTimeout">The shortest silence that can make a running stage stalled (see <see cref="WorkerTimes.StalledFor"/>).</param>
 /// <param name="pollDelay">The wait between polls of a running stage.</param>
 /// <param name="clock">Elapsed time, for deciding when the polls next say the worker answered; tests advance it by hand.</param>
-/// <param name="removeWorkspace">Removes the job's workspace once a stage failed or stalled and its log is kept.</param>
+/// <param name="removeWorkspace">Removes the job's workspace once a stage failed or stalled and its log is kept. What it throws is
+/// reported and passed over (see <see cref="RemoveWorkspaceAsync"/>).</param>
 internal sealed class RemoteStageRunner(IRemoteShell shell, Guid jobId, string workspace, TimeSpan stageSilenceTimeout, Func<CancellationToken, Task> pollDelay, Func<TimeSpan> clock, Func<CancellationToken, Task> removeWorkspace)
 {
     /// <summary>
@@ -126,7 +127,7 @@ internal sealed class RemoteStageRunner(IRemoteShell shell, Guid jobId, string w
                 var (logPath, log) = await RetainLogAsync(stageDirectory, sourcePath, progress, cancellationToken);
                 if (exitCode != 0)
                 {
-                    await removeWorkspace(CancellationToken.None);
+                    await RemoveWorkspaceAsync(progress);
                     if (interpretFailure?.Invoke(log) is { } specific) throw specific;
                     var reason = AbAv1Output.LastErrorLine(log);
                     throw new AbAv1StageException($"Remote processing stage failed with exit code {exitCode}{(reason is null ? "." : $": {reason}")}", logPath);
@@ -138,7 +139,7 @@ internal sealed class RemoteStageRunner(IRemoteShell shell, Guid jobId, string w
             {
                 // Kept and cleaned up as a stage that failed is: a retry is a new job with a workspace of its own.
                 var (logPath, _) = await RetainLogAsync(stageDirectory, sourcePath, progress, cancellationToken);
-                await removeWorkspace(CancellationToken.None);
+                await RemoveWorkspaceAsync(progress);
                 throw new RemoteStageStalledException($"The {name} on the worker wrote nothing to its log for {HumanReadableValues.FormatDuration(silence)}, so it was stopped.", logPath);
             }
             if (state.Running) startingPolls = 0;
@@ -147,6 +148,13 @@ internal sealed class RemoteStageRunner(IRemoteShell shell, Guid jobId, string w
             await pollDelay(cancellationToken);
         }
     }
+
+    /// <summary>
+    /// Removes the workspace of a stage that failed or stalled, whose log is already kept. Best effort, so the stage's own error
+    /// is the one the job fails with, not the removal's (VOPT-157). Not cancellable: a Ctrl+C after the stage ended should not
+    /// leave the workspace behind.
+    /// </summary>
+    private Task RemoveWorkspaceAsync(IProgress<JobProgress>? progress) => WorkspaceCleanup.TryAsync(removeWorkspace, progress, CancellationToken.None);
 
     /// <summary>Whether the encode in <paramref name="stageDirectory"/> ended with exit 0 and left <paramref name="remoteOutput"/>.</summary>
     public async Task<bool> HasFinishedEncodeAsync(string stageDirectory, string remoteOutput, CancellationToken cancellationToken)
