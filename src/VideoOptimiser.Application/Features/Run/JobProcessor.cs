@@ -26,47 +26,14 @@ public sealed class JobProcessor(
         var path = Path.GetFullPath(job.SourcePath);
         // Left queued, the job would fail the same way on every run, and keep discovery from queueing the file or asset
         // again once it is back. A job with an encode on the worker stays stopped instead, before anything below changes it.
-        if (!File.Exists(path))
-        {
-            return MayHaveEncodeOnWorker(job, job.ResumeStatus)
-                ? await KeepStoppedAsync(job, databasePath, job.ResumeStatus!.Value, path, progress, cancellationToken)
-                : await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
-        }
+        if (!File.Exists(path)) return await OriginalMissingAsync(job, databasePath, job.ResumeStatus, path, progress, cancellationToken);
 
         var resumeStatus = job.ResumeStatus;
-        var force = job.Forced;
-        var compatibility = JobCompatibility.Evaluate(job, settings);
-        if (compatibility.Status == JobCompatibilityStatus.Incompatible)
-        {
-            return await FailAsync(job, databasePath, FailureCategories.RemoteConfigurationChanged, compatibility.Message!, ExitCode.InvalidConfiguration, progress, cancellationToken);
-        }
-        if (compatibility.Status == JobCompatibilityStatus.Adopted)
-        {
-            JobCompatibility.Apply(job, compatibility.ExpectedBinding);
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
-        }
+        if (await CheckCompatibilityAsync(job, databasePath, settings, progress, cancellationToken) is { } incompatible) return incompatible;
+        if (job.Status == JobStatus.Interrupted) await RequeueStoppedAsync(job, databasePath, resumeStatus, progress, cancellationToken);
 
-        if (job.Status == JobStatus.Interrupted)
-        {
-            if (TemporaryOutputClassifier.RestartsEncode(job))
-            {
-                DeletePartialOutput(job, progress);
-                job.OutputPath = null;
-                job.ManifestPath = null;
-            }
-            else if (resumeStatus == JobStatus.CrfSearching && !string.Equals(job.ExecutionMode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
-            {
-                job.Crf = null;
-            }
-            job.Status = JobStatus.Queued;
-            job.ResumeStatus = null;
-            job.FailureCategory = null;
-            job.FailureMessage = null;
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
-        }
-
-        var stage = FailureCategories.ProcessingFailed;
         await using var session = sessions.Create(job, settings);
+        var stages = new StageContext(databasePath, job, session, path, progress);
         try
         {
             // Read inside the try, with the other reads of the original: a file that vanishes after the exists check above, or
@@ -79,137 +46,49 @@ public sealed class JobProcessor(
             catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
             {
                 // The same choice as the exists check above, made on the resume point read before the job was requeued.
-                return MayHaveEncodeOnWorker(job, resumeStatus)
-                    ? await KeepStoppedAsync(job, databasePath, resumeStatus!.Value, path, progress, cancellationToken)
-                    : await FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
+                return await OriginalMissingAsync(job, databasePath, resumeStatus, path, progress, cancellationToken);
             }
-            // Settled before anything below decides what to reuse; an empty stored fingerprint has nothing to compare.
-            if (ChangedSinceLastRun(job, fingerprint))
-            {
-                resumeStatus = await DiscardEarlierWorkAsync(job, resumeStatus, session, progress, cancellationToken);
-            }
+            // Settled before the plan decides what to reuse; an empty stored fingerprint has nothing to compare.
+            var changed = ChangedSinceLastRun(job, fingerprint);
+            if (changed) resumeStatus = await DiscardEarlierWorkAsync(job, resumeStatus, session, progress, cancellationToken);
             job.SourceFingerprint = fingerprint;
-            var verdict = await CheckSourceAsync(path, job.SourceKind, settings, force, cancellationToken);
+            var verdict = await CheckSourceAsync(path, job.SourceKind, settings, job.Forced, cancellationToken);
             // Saved with the job's next update. This covers a job queued before migration 8; for the rest it describes the
             // file as this run found it.
             if (verdict.Media is not null) job.VideoFacts = verdict.Media.ToVideoFacts(verdict.Info.Length);
             if (verdict.Skip) return await SkipAsync(job, databasePath, settings, verdict.Message!, progress, cancellationToken, verdict.SkipCategory);
             if (!verdict.Proceeds) return await FailAsync(job, databasePath, verdict.FailureCategory!, verdict.Message!, verdict.ExitCode, progress, cancellationToken);
-            var (info, media, cap) = (verdict.Info, verdict.Media!, verdict.Cap!);
+            var (media, cap) = (verdict.Media!, verdict.Cap!);
             // Saved with the job's next update, so the note is there from the first stage on and a new attempt replaces it.
             job.Notes = AudioPlan.For(media) is { Dropped.Count: > 0 } audio ? [DroppedAudioNote(audio)] : [];
-
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.ConfiguredSampleCount);
             var quality = settings.Quality.WithSampleCount(sampleCount).WithSizeCap(cap);
-            // Both questions are settled before anything is staged: staging hashes the original and needs a worker, and a
-            // resume that only has to download or check what is already finished needs neither (VOPT-72, VOPT-89).
-            var canReuseOutput = CanReuseOutput(job, resumeStatus);
-            if (session.IsRemote && !canReuseOutput) await SweepFinishedWorkspacesOnceAsync(session, databasePath, cancellationToken);
-            var reattachAttempt = MayHaveEncodeOnWorker(job, resumeStatus);
-            // The finished encode is looked for on the worker, not assumed from the status, so the job is recorded as
-            // Downloading only once that is known: a stop in between would otherwise say an encode is still running that is not
-            // (VOPT-86). A worker that lost it, such as a deleted managed server, answers no and the stages run again.
-            var finishedOnWorker = !canReuseOutput && reattachAttempt && job.Crf is not null
-                && await session.HasFinishedEncodeAsync(EncodingOutputPath(path, job), job.Attempt, cancellationToken);
-            if (session.IsRemote && !canReuseOutput && !finishedOnWorker)
-            {
-                stage = FailureCategories.StagingFailed;
-                job.Status = JobStatus.Staging;
-                await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                await session.StageAsync(path, fingerprint, progress, cancellationToken);
-                if (!string.Equals(await fingerprints.CreateAsync(path, cancellationToken), fingerprint, StringComparison.Ordinal))
-                {
-                    await WorkspaceCleanup.TryAsync(session.CleanupAsync, progress, cancellationToken);
-                    return await FailAsync(job, databasePath, FailureCategories.SourceChanged, "Original changed while it was being uploaded.", ExitCode.ProcessingFailure, progress, cancellationToken);
-                }
-            }
-            CrfPrediction? prediction = null;
-            if (job.Crf is null)
-            {
-                stage = FailureCategories.CrfSearchFailed;
-                job.Status = JobStatus.CrfSearching;
-                await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                var samples = HumanReadableValues.TryParseDuration(quality.CrfSearch.SampleDuration, out var sampleDuration) && CrfSampleCountCalculator.TestsWholeVideo(media.DurationSeconds, quality.CrfSearch.SampleCount, sampleDuration)
-                    ? "testing the whole video"
-                    : $"{quality.CrfSearch.SampleCount.ToString(CultureInfo.InvariantCulture)} test {(quality.CrfSearch.SampleCount == 1 ? "clip" : "clips")} of {quality.CrfSearch.SampleDuration} each";
-                var saving = cap.SetByMinimumBytes ? $" that saves {cap.MinimumText}" : string.Empty;
-                progress?.Report(JobProgress.Step($"Finding the best CRF for VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)}{saving} ({samples})."));
-                var crfResult = await session.SearchCrfAsync(path, quality, Translating(progress, AbAv1Stage.CrfSearch, quality), cancellationToken);
-                job.Crf = crfResult.Crf;
-                // The settings that chose this CRF, so calibrate counts the eventual conversion only under them.
-                job.QualityFingerprint = QualityFingerprint.Compute(settings);
-                prediction = crfResult.Prediction;
-                await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                // A search this command joined midway has no start time to measure from.
-                var took = crfResult.Duration is { } duration ? $" in {HumanReadableValues.FormatDuration(duration)}" : string.Empty;
-                progress?.Report(JobProgress.Step(prediction is null
-                    ? $"Chose CRF {crfResult.Crf.ToString(CultureInfo.InvariantCulture)}{took}."
-                    : $"Chose CRF {crfResult.Crf.ToString(CultureInfo.InvariantCulture)}{took}. Expected output: {HumanReadableValues.FormatSizeText(prediction.Size)} ({prediction.Percent.ToString(CultureInfo.InvariantCulture)}% of the original)."));
-            }
 
+            // Planned before anything is staged. The worker is asked about a finished encode only after the sweep, and the
+            // finished encode is looked for there, not assumed from the status, so the job is recorded as Downloading only once
+            // that is known: a stop in between would otherwise say an encode is still running that is not (VOPT-86). A worker
+            // that lost it, such as a deleted managed server, answers no and the stages run again.
+            var outputOnDisk = OutputOnDisk(job);
+            ResumePlan PlanFor(bool finishedOnWorker) => ResumePlan.Plan(job, resumeStatus, changed, session.IsRemote, outputOnDisk, finishedOnWorker);
+            var plan = PlanFor(finishedOnWorker: false);
+            if (plan.UsesWorker) await SweepFinishedWorkspacesOnceAsync(session, databasePath, cancellationToken);
+            if (plan.AsksWorkerForFinishedEncode && await session.HasFinishedEncodeAsync(EncodingOutputPath(path, job), job.Attempt, cancellationToken)) plan = PlanFor(finishedOnWorker: true);
+
+            if (plan.Stages && await StageAsync(stages, fingerprint, cancellationToken) is { } changedDuringUpload) return changedDuringUpload;
+            var prediction = plan.SearchesCrf ? await SearchCrfAsync(stages, settings, media, cap, quality, cancellationToken) : null;
             OutputManifest manifest;
-            if (canReuseOutput)
+            if (plan.ReusesOutput)
             {
                 manifest = await manifests.LoadAsync(job.OutputPath!, cancellationToken);
             }
             else
             {
-                stage = FailureCategories.EncodeFailed;
-                if (!reattachAttempt) job.Attempt++;
-                var outputPath = EncodingOutputPath(path, job);
-                job.OutputPath = outputPath;
-                job.ManifestPath = manifests.GetPath(outputPath);
-                var encodedPath = outputPath;
-                if (finishedOnWorker)
-                {
-                    stage = FailureCategories.DownloadFailed;
-                    job.Status = JobStatus.Downloading;
-                    await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                    // A rerun after a stopped download watched the encode end; one after a stopped encode did not.
-                    if (resumeStatus == JobStatus.Encoding) progress?.Report(JobProgress.Step("The encode on the worker had already finished."));
-                }
-                else
-                {
-                    job.Status = JobStatus.Encoding;
-                    await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-                    var crf = job.Crf!.Value.ToString(CultureInfo.InvariantCulture);
-                    progress?.Report(JobProgress.Step(prediction is null ? $"Encoding at CRF {crf}." : $"Encoding at CRF {crf}, expected to take about {prediction.Taking}."));
-                    var encodeResult = await session.EncodeAsync(path, outputPath, job.Crf.Value, quality, job.Attempt, AudioPlan.For(media), Translating(progress, AbAv1Stage.Encode, quality), cancellationToken);
-                    encodedPath = encodeResult.OutputPath;
-                    if (session.IsRemote)
-                    {
-                        stage = FailureCategories.DownloadFailed;
-                        job.Status = JobStatus.Downloading;
-                        await jobs.UpdateAsync(databasePath, job, cancellationToken);
-                    }
-                }
-                if (session.IsRemote) await session.RetrieveOutputAsync(outputPath, job.Attempt, progress, cancellationToken);
-                manifest = new OutputManifest { SourcePath = path, SourceFingerprint = fingerprint, OutputPath = encodedPath, Crf = job.Crf!.Value, CreatedUtc = DateTimeOffset.UtcNow };
-                await manifests.SaveAsync(manifest, cancellationToken);
-                job.OutputPath = encodedPath;
-                job.ManifestPath = manifests.GetPath(encodedPath);
+                var outputPath = BeginAttempt(job, path, plan);
+                var encodedPath = plan.Encodes ? await EncodeAsync(stages, outputPath, media, quality, prediction, cancellationToken) : outputPath;
+                if (plan.Downloads) await DownloadAsync(stages, outputPath, plan, cancellationToken);
+                manifest = await RecordOutputAsync(job, path, fingerprint, encodedPath, cancellationToken);
             }
-
-            stage = FailureCategories.ValidationFailed;
-            job.Status = JobStatus.Validating;
-            job.ResumeStatus = null;
-            await jobs.UpdateAsync(databasePath, job, cancellationToken);
-            progress?.Report(JobValidation.CheckingStep(settings));
-            manifest.Validation = await validator.ValidateAsync(manifest, settings, cancellationToken);
-            var outcome = await JobValidation.RecordAsync(job, manifest, settings, manifests);
-            await jobs.UpdateAsync(databasePath, job, CancellationToken.None);
-            // After the verdict is written, so a cleanup that fails cannot change it (VOPT-157). A validation resumed on this PC
-            // needs no worker, and this run may have none to reach. The workspace it leaves is removed by the sweep of the
-            // workspaces of finished jobs, which a run makes on the worker once this job has ended (VOPT-90).
-            if (session.IsRemote && !canReuseOutput) await WorkspaceCleanup.TryAsync(session.CleanupAsync, progress, cancellationToken);
-            foreach (var line in JobValidation.Describe(job, outcome)) progress?.Report(line);
-            return outcome switch
-            {
-                ValidationVerdict.Failed => new JobProcessingResult(job, ExitCode.ValidationFailure, job.FailureMessage!),
-                ValidationVerdict.NotWorthConverting => new JobProcessingResult(job, ExitCode.Success, job.FailureMessage!),
-                _ => new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is ready to finalise.")
-            };
+            return await ValidateAsync(stages, settings, manifest, plan, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -247,7 +126,7 @@ public sealed class JobProcessor(
         // which passes over the job.
         catch (Exception exception)
         {
-            return await FailAsync(job, databasePath, stage, exception.Message, ExitCode.ProcessingFailure, progress, cancellationToken, (exception as AbAv1StageException)?.LogPath);
+            return await FailAsync(job, databasePath, stages.FailureCategory, exception.Message, ExitCode.ProcessingFailure, progress, cancellationToken, (exception as AbAv1StageException)?.LogPath);
         }
     }
 
@@ -263,8 +142,12 @@ public sealed class JobProcessor(
         if (!File.Exists(path)) return false;
         if (!job.IsQueued) return false;
         // The AV1 is on this PC, so its validation runs here whatever the job did on the worker; unless the original changed
-        // since, when the job starts again on the worker.
-        if (CanReuseOutput(job, job.ResumeStatus) && !await ChangedSinceLastRunAsync(job, path, cancellationToken)) return false;
+        // since, when the job starts again on the worker. The plan is ProcessAsync's, so the two cannot disagree; the original
+        // is hashed only when the answer can change it.
+        var outputOnDisk = OutputOnDisk(job);
+        var plan = ResumePlan.Plan(job, job.ResumeStatus, originalChanged: false, sessionIsRemote: true, outputOnDisk);
+        if (!plan.UsesWorker && await ChangedSinceLastRunAsync(job, path, cancellationToken)) plan = ResumePlan.Plan(job, job.ResumeStatus, originalChanged: true, sessionIsRemote: true, outputOnDisk);
+        if (!plan.UsesWorker) return false;
         if (JobCompatibility.Evaluate(job, settings).Status == JobCompatibilityStatus.Incompatible) return false;
         // A file still being written or briefly unreadable by ffprobe may be fine by the time the job runs, and a job that
         // reaches a remote stage with no worker ensured stops with nothing to resume on. So a passing condition that can
@@ -305,18 +188,178 @@ public sealed class JobProcessor(
         }
     }
 
-    /// <summary>A job stopped while its AV1 was being checked, with that AV1 and its manifest still on this PC: nothing is left to encode or fetch.</summary>
-    private bool CanReuseOutput(JobRecord job, JobStatus? resumeStatus) =>
-        resumeStatus == JobStatus.Validating && job.OutputPath is not null && File.Exists(job.OutputPath) && File.Exists(manifests.GetPath(job.OutputPath));
+    /// <summary>What <see cref="ProcessAsync"/>'s stages share. <see cref="FailureCategory"/> is what an unexpected error fails the
+    /// job with, so each stage sets its own as it starts; before the first stage it is the plain processing failure.</summary>
+    private sealed class StageContext(string databasePath, JobRecord job, IProcessingSession session, string path, IProgress<JobProgress>? progress)
+    {
+        public string DatabasePath => databasePath;
+        public JobRecord Job => job;
+        public IProcessingSession Session => session;
+        public string Path => path;
+        public IProgress<JobProgress>? Progress => progress;
+        public string FailureCategory { get; set; } = FailureCategories.ProcessingFailed;
+    }
+
+    /// <summary>The original isn't there: the job fails as <c>SourceMissing</c>, unless the worker may hold its encode, when it stays stopped (<see cref="KeepStoppedAsync"/>).</summary>
+    private Task<JobProcessingResult> OriginalMissingAsync(JobRecord job, string databasePath, JobStatus? resumeStatus, string path, IProgress<JobProgress>? progress, CancellationToken cancellationToken) =>
+        ResumePlan.MayHaveEncodeOnWorker(job, resumeStatus)
+            ? KeepStoppedAsync(job, databasePath, resumeStatus!.Value, path, progress, cancellationToken)
+            : FailAsync(job, databasePath, FailureCategories.SourceMissing, $"Original does not exist: {path}", ExitCode.ProcessingFailure, progress, cancellationToken);
+
+    /// <summary>Fails a started job the settings can no longer resume, and binds a job never started to the current ones.</summary>
+    /// <returns>The failure, or null when the job goes on.</returns>
+    private async Task<JobProcessingResult?> CheckCompatibilityAsync(JobRecord job, string databasePath, AppSettings settings, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    {
+        var compatibility = JobCompatibility.Evaluate(job, settings);
+        if (compatibility.Status == JobCompatibilityStatus.Incompatible)
+        {
+            return await FailAsync(job, databasePath, FailureCategories.RemoteConfigurationChanged, compatibility.Message!, ExitCode.InvalidConfiguration, progress, cancellationToken);
+        }
+        if (compatibility.Status == JobCompatibilityStatus.Adopted)
+        {
+            JobCompatibility.Apply(job, compatibility.ExpectedBinding);
+            await jobs.UpdateAsync(databasePath, job, cancellationToken);
+        }
+        return null;
+    }
 
     /// <summary>
-    /// A remote job stopped in or after an encode it started: the worker may hold that encode, finished or still running, which
-    /// a rerun reattaches to rather than paying for again. Read from the job's own mode, because the exists check asks before
-    /// a session is open; past the compatibility check a started job's mode is the session's.
+    /// Queues a stopped job again, dropping what its stop leaves unusable: a local encode cannot continue its partial file, and a
+    /// local search stopped midway is run again. <paramref name="resumeStatus"/> is where it stopped, kept by the caller for the plan.
     /// </summary>
-    private static bool MayHaveEncodeOnWorker(JobRecord job, JobStatus? resumeStatus) =>
-        string.Equals(job.ExecutionMode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase)
-        && resumeStatus is JobStatus.Encoding or JobStatus.Downloading && job.Attempt > 0;
+    private async Task RequeueStoppedAsync(JobRecord job, string databasePath, JobStatus? resumeStatus, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    {
+        if (TemporaryOutputClassifier.RestartsEncode(job))
+        {
+            DeletePartialOutput(job, progress);
+            job.OutputPath = null;
+            job.ManifestPath = null;
+        }
+        else if (resumeStatus == JobStatus.CrfSearching && !string.Equals(job.ExecutionMode, ProcessingModes.RemoteSsh, StringComparison.OrdinalIgnoreCase))
+        {
+            job.Crf = null;
+        }
+        job.Status = JobStatus.Queued;
+        job.ResumeStatus = null;
+        job.FailureCategory = null;
+        job.FailureMessage = null;
+        await jobs.UpdateAsync(databasePath, job, cancellationToken);
+    }
+
+    /// <summary>Whether the job's AV1 and its manifest are both on this PC, for <see cref="ResumePlan.Plan"/>.</summary>
+    private bool OutputOnDisk(JobRecord job) =>
+        job.OutputPath is not null && File.Exists(job.OutputPath) && File.Exists(manifests.GetPath(job.OutputPath));
+
+    /// <summary>Uploads the original, then checks it did not change while it went.</summary>
+    /// <returns>The job failed as <c>SourceChanged</c> when it did, otherwise null.</returns>
+    private async Task<JobProcessingResult?> StageAsync(StageContext stages, string fingerprint, CancellationToken cancellationToken)
+    {
+        stages.FailureCategory = FailureCategories.StagingFailed;
+        var job = stages.Job;
+        job.Status = JobStatus.Staging;
+        await jobs.UpdateAsync(stages.DatabasePath, job, cancellationToken);
+        await stages.Session.StageAsync(stages.Path, fingerprint, stages.Progress, cancellationToken);
+        if (string.Equals(await fingerprints.CreateAsync(stages.Path, cancellationToken), fingerprint, StringComparison.Ordinal)) return null;
+        await WorkspaceCleanup.TryAsync(stages.Session.CleanupAsync, stages.Progress, cancellationToken);
+        return await FailAsync(job, stages.DatabasePath, FailureCategories.SourceChanged, "Original changed while it was being uploaded.", ExitCode.ProcessingFailure, stages.Progress, cancellationToken);
+    }
+
+    /// <returns>ab-av1's estimate of the encode, when it printed one.</returns>
+    private async Task<CrfPrediction?> SearchCrfAsync(StageContext stages, AppSettings settings, MediaInfo media, SizeCap cap, QualitySettings quality, CancellationToken cancellationToken)
+    {
+        stages.FailureCategory = FailureCategories.CrfSearchFailed;
+        var (job, progress) = (stages.Job, stages.Progress);
+        job.Status = JobStatus.CrfSearching;
+        await jobs.UpdateAsync(stages.DatabasePath, job, cancellationToken);
+        var samples = HumanReadableValues.TryParseDuration(quality.CrfSearch.SampleDuration, out var sampleDuration) && CrfSampleCountCalculator.TestsWholeVideo(media.DurationSeconds, quality.CrfSearch.SampleCount, sampleDuration)
+            ? "testing the whole video"
+            : $"{quality.CrfSearch.SampleCount.ToString(CultureInfo.InvariantCulture)} test {(quality.CrfSearch.SampleCount == 1 ? "clip" : "clips")} of {quality.CrfSearch.SampleDuration} each";
+        var saving = cap.SetByMinimumBytes ? $" that saves {cap.MinimumText}" : string.Empty;
+        progress?.Report(JobProgress.Step($"Finding the best CRF for VMAF {quality.MinimumVmaf.ToString("0.##", CultureInfo.InvariantCulture)}{saving} ({samples})."));
+        var crfResult = await stages.Session.SearchCrfAsync(stages.Path, quality, Translating(progress, AbAv1Stage.CrfSearch, quality), cancellationToken);
+        job.Crf = crfResult.Crf;
+        // The settings that chose this CRF, so calibrate counts the eventual conversion only under them.
+        job.QualityFingerprint = QualityFingerprint.Compute(settings);
+        var prediction = crfResult.Prediction;
+        await jobs.UpdateAsync(stages.DatabasePath, job, cancellationToken);
+        // A search this command joined midway has no start time to measure from.
+        var took = crfResult.Duration is { } duration ? $" in {HumanReadableValues.FormatDuration(duration)}" : string.Empty;
+        progress?.Report(JobProgress.Step(prediction is null
+            ? $"Chose CRF {crfResult.Crf.ToString(CultureInfo.InvariantCulture)}{took}."
+            : $"Chose CRF {crfResult.Crf.ToString(CultureInfo.InvariantCulture)}{took}. Expected output: {HumanReadableValues.FormatSizeText(prediction.Size)} ({prediction.Percent.ToString(CultureInfo.InvariantCulture)}% of the original)."));
+        return prediction;
+    }
+
+    /// <summary>Counts a new attempt when the plan makes one and points the job at that attempt's AV1 and manifest.</summary>
+    /// <returns>Where the attempt's AV1 is written, or fetched to.</returns>
+    private string BeginAttempt(JobRecord job, string path, ResumePlan plan)
+    {
+        if (plan.NewAttempt) job.Attempt++;
+        var outputPath = EncodingOutputPath(path, job);
+        job.OutputPath = outputPath;
+        job.ManifestPath = manifests.GetPath(outputPath);
+        return outputPath;
+    }
+
+    /// <returns>The AV1 the encoder wrote, which may differ from <paramref name="outputPath"/>.</returns>
+    private async Task<string> EncodeAsync(StageContext stages, string outputPath, MediaInfo media, QualitySettings quality, CrfPrediction? prediction, CancellationToken cancellationToken)
+    {
+        stages.FailureCategory = FailureCategories.EncodeFailed;
+        var job = stages.Job;
+        job.Status = JobStatus.Encoding;
+        await jobs.UpdateAsync(stages.DatabasePath, job, cancellationToken);
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        var crf = job.Crf!.Value.ToString(CultureInfo.InvariantCulture);
+        stages.Progress?.Report(JobProgress.Step(prediction is null ? $"Encoding at CRF {crf}." : $"Encoding at CRF {crf}, expected to take about {prediction.Taking}."));
+        var encodeResult = await stages.Session.EncodeAsync(stages.Path, outputPath, job.Crf.Value, quality, job.Attempt, AudioPlan.For(media), Translating(stages.Progress, AbAv1Stage.Encode, quality), cancellationToken);
+        return encodeResult.OutputPath;
+    }
+
+    /// <summary>Fetches the attempt's AV1 from the worker, recorded as Downloading before anything can stop it.</summary>
+    private async Task DownloadAsync(StageContext stages, string outputPath, ResumePlan plan, CancellationToken cancellationToken)
+    {
+        stages.FailureCategory = FailureCategories.DownloadFailed;
+        var job = stages.Job;
+        job.Status = JobStatus.Downloading;
+        await jobs.UpdateAsync(stages.DatabasePath, job, cancellationToken);
+        if (plan.SaysEncodeFinished) stages.Progress?.Report(JobProgress.Step("The encode on the worker had already finished."));
+        await stages.Session.RetrieveOutputAsync(outputPath, job.Attempt, stages.Progress, cancellationToken);
+    }
+
+    /// <summary>Writes the manifest of the AV1 this run made or fetched, and points the job at both.</summary>
+    private async Task<OutputManifest> RecordOutputAsync(JobRecord job, string path, string fingerprint, string encodedPath, CancellationToken cancellationToken)
+    {
+        var manifest = new OutputManifest { SourcePath = path, SourceFingerprint = fingerprint, OutputPath = encodedPath, Crf = job.Crf!.Value, CreatedUtc = DateTimeOffset.UtcNow };
+        await manifests.SaveAsync(manifest, cancellationToken);
+        job.OutputPath = encodedPath;
+        job.ManifestPath = manifests.GetPath(encodedPath);
+        return manifest;
+    }
+
+    /// <summary>Checks the AV1, writes the verdict, then clears the job's workspace on the worker.</summary>
+    private async Task<JobProcessingResult> ValidateAsync(StageContext stages, AppSettings settings, OutputManifest manifest, ResumePlan plan, CancellationToken cancellationToken)
+    {
+        stages.FailureCategory = FailureCategories.ValidationFailed;
+        var (job, progress) = (stages.Job, stages.Progress);
+        job.Status = JobStatus.Validating;
+        job.ResumeStatus = null;
+        await jobs.UpdateAsync(stages.DatabasePath, job, cancellationToken);
+        progress?.Report(JobValidation.CheckingStep(settings));
+        manifest.Validation = await validator.ValidateAsync(manifest, settings, cancellationToken);
+        var outcome = await JobValidation.RecordAsync(job, manifest, settings, manifests);
+        await jobs.UpdateAsync(stages.DatabasePath, job, CancellationToken.None);
+        // After the verdict is written, so a cleanup that fails cannot change it (VOPT-157). A validation resumed on this PC
+        // needs no worker, and this run may have none to reach. The workspace it leaves is removed by the sweep of the
+        // workspaces of finished jobs, which a run makes on the worker once this job has ended (VOPT-90).
+        if (plan.UsesWorker) await WorkspaceCleanup.TryAsync(stages.Session.CleanupAsync, progress, cancellationToken);
+        foreach (var line in JobValidation.Describe(job, outcome)) progress?.Report(line);
+        return outcome switch
+        {
+            ValidationVerdict.Failed => new JobProcessingResult(job, ExitCode.ValidationFailure, job.FailureMessage!),
+            ValidationVerdict.NotWorthConverting => new JobProcessingResult(job, ExitCode.Success, job.FailureMessage!),
+            _ => new JobProcessingResult(job, ExitCode.Success, $"Job {job.Id:N} is ready to finalise.")
+        };
+    }
 
     /// <summary>
     /// Leaves a job whose original can't be reached stopped where it was, rather than failing it (VOPT-160). A failed job is
@@ -371,7 +414,7 @@ public sealed class JobProcessor(
         if (job.Crf is null && resumeStatus is null) return null;
         progress?.Report(JobProgress.Step("The original changed after this video was stopped, so the conversion starts over."));
         if (session.IsRemote) await session.StopAndRemoveWorkspacesAsync(new HashSet<Guid> { job.Id }, cancellationToken);
-        if (CanReuseOutput(job, resumeStatus))
+        if (ResumePlan.CanReuseOutput(resumeStatus, OutputOnDisk(job)))
         {
             // The restart line covers a delete that works.
             DeleteAttemptFiles(job, progress, "the AV1 made before the original changed", reportDeleted: false);
