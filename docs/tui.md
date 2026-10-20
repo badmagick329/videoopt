@@ -67,7 +67,7 @@ Without a Hetzner worker (`remoteSsh.lifecycle: "hetzner"`), it starts at once a
 
 While the worker pane is deleting or creating the worker, `s` asks nothing and tells you to start the run once that's finished. If the worker you picked is deleted before the run gets to it, from here or from another terminal, the run ends without creating a server in its place, and the Activity pane says so.
 
-To stop a background run from a terminal, use `run stop` (after this video) or `run stop --now`. A run started with `run` in a terminal is stopped only with `Ctrl+C` in its own window; `x` and `X` say so.
+To stop a background run from a terminal, use `run stop` (after this video) or `run stop --now`. `run stop --undo` withdraws a stop after this video. A run started with `run` in a terminal is stopped only with `Ctrl+C` in its own window; `x` and `X` say so.
 
 ## What the freed space cost
 

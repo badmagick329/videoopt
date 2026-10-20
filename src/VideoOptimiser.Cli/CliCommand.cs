@@ -49,11 +49,12 @@ internal enum CliCommandKind
 
 /// <param name="Bare">Typed with no verb: the same card as <c>status</c>, but a missing configuration also says how to create one.</param>
 /// <param name="StopNow"><c>run stop --now</c>.</param>
+/// <param name="UndoStop"><c>run stop --undo</c>: withdraws a stop after this video instead of asking one.</param>
 /// <param name="KeepWorker">Hidden <c>background start --keep-worker</c>: the worker's fate is keep instead of the default, delete.</param>
 /// <param name="WorkerFate">Hidden <c>background runner --worker-fate</c>.</param>
 /// <param name="ExistingWorker">Hidden <c>background runner --existing-worker</c>: the launcher chose the worker, so the runner never creates one.</param>
 /// <param name="Size">Hidden <c>tui --snapshot --size</c>.</param>
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false, bool StopNow = false, bool KeepWorker = false, WorkerFateChoice? WorkerFate = null, FrameSize? Size = null, bool ExistingWorker = false)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false, bool StopNow = false, bool KeepWorker = false, WorkerFateChoice? WorkerFate = null, FrameSize? Size = null, bool ExistingWorker = false, bool UndoStop = false)
 {
     public const string Usage = """
 Usage:
@@ -71,7 +72,7 @@ Usage:
   video-optimiser queue add immich [--first | --limit <n>] [--config <path>]
   video-optimiser queue add <file> [--force] [--config <path>]
   video-optimiser run [--config <path>] [--local | --remote]
-  video-optimiser run stop [--now] [--config <path>]
+  video-optimiser run stop [--now | --undo] [--config <path>]
   video-optimiser queue list [--config <path>] [--json]
   video-optimiser queue hold <job-id> [--config <path>]
   video-optimiser queue release <job-id> [--config <path>]
@@ -171,6 +172,7 @@ Usage:
 
         if (values.First && values.Limit is not null) return Invalid("--first and --limit cannot be used together.");
         if (values.Modes.Distinct().Count() > 1) return Invalid("--local and --remote cannot be used together.");
+        if (values.StopNow && values.UndoStop) return Invalid("--now and --undo cannot be used together.");
         if (kind == CliCommandKind.Finalize && values.Ready && jobId is not null) return Invalid("finalize --ready does not take a job ID.");
         if (kind == CliCommandKind.Finalize && !values.Ready && jobId is null) return Invalid("finalize requires a job ID or --ready.");
         if (kind == CliCommandKind.QueueDrop && values.All == (jobId is not null)) return Invalid("queue drop requires a job ID or --all.");
@@ -180,7 +182,7 @@ Usage:
 
         // --first is --limit 1 for the Immich commands; queue add keeps its own --first.
         var limit = values.First && kind is CliCommandKind.QueueAddImmich or CliCommandKind.ImmichRun ? 1 : values.Limit;
-        return new CliCommand(kind, values.ConfigurationPath, null, false, values.First, values.All, values.Json, null, filePath, values.Force, values.DryRun, jobId, values.Ready, values.Modes.FirstOrDefault(), limit, values.Quality, Bare: words.Count == 0, StopNow: values.StopNow, KeepWorker: values.KeepWorker, WorkerFate: values.WorkerFate, Size: values.Size, ExistingWorker: values.ExistingWorker);
+        return new CliCommand(kind, values.ConfigurationPath, null, false, values.First, values.All, values.Json, null, filePath, values.Force, values.DryRun, jobId, values.Ready, values.Modes.FirstOrDefault(), limit, values.Quality, Bare: words.Count == 0, StopNow: values.StopNow, KeepWorker: values.KeepWorker, WorkerFate: values.WorkerFate, Size: values.Size, ExistingWorker: values.ExistingWorker, UndoStop: values.UndoStop);
     }
 
     /// <summary>

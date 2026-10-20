@@ -73,7 +73,7 @@ If you prefer plain commands, every action has one, and `status` prints a short 
 
 ## Stopping a run
 
-In a terminal, press `Ctrl+C` once to stop after the video converting now, and again to stop at once. The next `run` picks up where it stopped. A background run stops with `x` or `X` in the full-screen view, or `run stop [--now]`.
+In a terminal, press `Ctrl+C` once to stop after the video converting now, and again to stop at once. The next `run` picks up where it stopped. A background run stops with `x` or `X` in the full-screen view, or `run stop [--now]`. `run stop --undo` withdraws a stop after this video.
 
 ## Where encoding runs
 

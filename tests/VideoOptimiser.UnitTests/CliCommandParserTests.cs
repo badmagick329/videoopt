@@ -168,6 +168,8 @@ public sealed class CliCommandParserTests
     [InlineData("--local is only supported by run and immich run.", "queue", "add", "immich", "--local")]
     [InlineData("--crf is no longer supported: run picks the CRF itself.", "run", "--crf", "30")]
     [InlineData("--now is only supported by run stop.", "run", "--now")]
+    [InlineData("--undo is only supported by run stop.", "run", "--undo")]
+    [InlineData("--now and --undo cannot be used together.", "run", "stop", "--now", "--undo")]
     [InlineData("--keep-worker is only supported by background start.", "run", "--keep-worker")]
     [InlineData("--keep-worker is only supported by background start.", "background", "runner", "--worker-fate", "keep", "--keep-worker")]
     [InlineData("--worker-fate is only supported by background runner.", "background", "start", "--worker-fate", "keep")]
@@ -290,6 +292,6 @@ public sealed class CliCommandParserTests
     [Fact]
     public void HelpListsRunStopAndNotTheBackgroundVerbs()
     {
-        CliCommand.Usage.Should().Contain("video-optimiser run stop [--now] [--config <path>]").And.NotContain("background");
+        CliCommand.Usage.Should().Contain("video-optimiser run stop [--now | --undo] [--config <path>]").And.NotContain("background");
     }
 }

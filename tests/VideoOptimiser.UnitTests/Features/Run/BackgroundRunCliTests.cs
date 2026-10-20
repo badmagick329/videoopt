@@ -64,6 +64,30 @@ public sealed class BackgroundRunCliTests : QueueTestBase
         (await _requests.ReadAsync(DatabasePath, CancellationToken.None)).Should().Be(new RunRequests(afterThisVideo, stopNow, null));
     }
 
+    /// <summary>
+    /// <c>run stop --undo</c>, one row per answer of the withdraw: only a stop after this video standing alone is cleared; a stop
+    /// now stays final, and a run in a terminal is refused as <c>run stop</c> refuses it, with the row it never reads untouched.
+    /// <c>{pid}</c> and <c>{config}</c> stand for this process and the config argument.
+    /// </summary>
+    [Theory]
+    [InlineData(null, false, false, 0, "No run is going.\n", "", false)]
+    [InlineData(LockHolders.Run, true, false, 1, "", "The run going now is in a terminal (process {pid}): stop it with Ctrl+C in its window.\n", true)]
+    [InlineData(LockHolders.BackgroundRun, true, false, 0, "Asked the run to carry on after this video.\n'video-optimiser status{config}' shows what it is doing.\n", "", false)]
+    [InlineData(LockHolders.BackgroundRun, false, false, 0, "No stop is asked of the run.\n", "", false)]
+    [InlineData(LockHolders.BackgroundRun, true, true, 1, "", "The run is already stopping now, and that can't be undone.\n", true)]
+    public async Task RunStopUndoWithdrawsOnlyAStopAfterThisVideoOfABackgroundRun(string? holder, bool afterAsked, bool nowAsked, int exitCode, string stdout, string stderr, bool afterLeft)
+    {
+        using var run = holder is null ? null : DatabaseLock.TryAcquire(DatabaseLock.RunPath(DatabasePath), holder, out _);
+        if (afterAsked) await _requests.RequestStopAsync(DatabasePath, now: false, CancellationToken.None);
+        if (nowAsked) await _requests.RequestStopAsync(DatabasePath, now: true, CancellationToken.None);
+
+        var result = await RunAsync("run", "stop", "--undo");
+
+        string Expand(string text) => text.Replace("{pid}", $"{Environment.ProcessId}").Replace("{config}", ConfigArgument).Replace("\n", Environment.NewLine);
+        result.Should().Be((exitCode, Expand(stdout), Expand(stderr)));
+        (await _requests.ReadAsync(DatabasePath, CancellationToken.None)).Should().Be(new RunRequests(afterLeft, nowAsked, null));
+    }
+
     /// <summary>The launcher answers only once the run lock shows the runner, so "started" means a run exists. The runner gets the fate and the full config path.</summary>
     [Theory]
     [InlineData(false, null, "delete")]

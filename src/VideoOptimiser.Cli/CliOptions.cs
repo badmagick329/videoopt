@@ -9,7 +9,7 @@ using VideoOptimiser.Cli.Features.Tui;
 internal sealed class CliOptionValues
 {
     public string? ConfigurationPath;
-    public bool Json, All, First, DryRun, Force, Ready, StopNow, KeepWorker, ExistingWorker, Snapshot;
+    public bool Json, All, First, DryRun, Force, Ready, StopNow, UndoStop, KeepWorker, ExistingWorker, Snapshot;
     public int? Limit;
     public QualityLevel? Quality;
     public WorkerFateChoice? WorkerFate;
@@ -57,6 +57,7 @@ internal static class CliOptions
         Switch("--force", [CliCommandKind.QueueAddFile], values => values.Force = true),
         Switch("--ready", [CliCommandKind.Finalize], values => values.Ready = true),
         Switch("--now", [CliCommandKind.StopRun], values => values.StopNow = true),
+        Switch("--undo", [CliCommandKind.StopRun], values => values.UndoStop = true),
         Switch("--keep-worker", [CliCommandKind.BackgroundStart], values => values.KeepWorker = true),
         Value("--worker-fate", [CliCommandKind.BackgroundRunner], "--worker-fate requires delete or keep.", (values, text) =>
         {

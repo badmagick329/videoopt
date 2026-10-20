@@ -6,6 +6,10 @@
 
 - A Hetzner worker can start from a snapshot of an earlier worker, with FFmpeg and the encoders already built, so it's ready sooner and bills less before the first video. Set `processing.remoteSsh.hetzner.image` to the snapshot's ID; `docs/remote-ssh.md` explains how to make the snapshot. Before, a worker made from such a snapshot was reported ready before it had set up SSH.
 
+### Background runs
+
+- New `run stop --undo` withdraws a stop after this video, as long as that video is still converting, and the run carries on through the queue. A stop now can't be undone.
+
 ## [0.15.0] - 2026-10-19
 ### Check your config
 
