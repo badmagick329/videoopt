@@ -8,6 +8,11 @@
     <EnableAotAnalyzer>true</EnableAotAnalyzer>
     <!-- The LibraryImport source generator emits unsafe stubs; TerminalStyle uses it to switch on colour in the Windows console. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Set here as well as in the win-x64-aot profile so a plain restore resolves what the AOT publish needs (the ILCompiler
+         package and the win-x64 runtime section): packages.lock.json then serves both, and CI's locked-mode restore of the
+         publish matches the one `dotnet test` wrote. -->
+    <PublishAot>true</PublishAot>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\VideoOptimiser.Domain\VideoOptimiser.Domain.csproj" />

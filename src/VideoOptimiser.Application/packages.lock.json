@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Vecc.YamlDotNet.Analyzers.StaticGenerator": {
+        "type": "Direct",
+        "requested": "[18.1.0, )",
+        "resolved": "18.1.0",
+        "contentHash": "LCS3M8xDJUoeSkKCi8i7mN/L0ODIrxLfF1Qy+PgkpxScBx1GLntgb+grV8f2byKnjoRwybJDc00nqEfvw4fX4g=="
+      },
+      "YamlDotNet": {
+        "type": "Direct",
+        "requested": "[18.1.0, )",
+        "resolved": "18.1.0",
+        "contentHash": "5K+9KFg2TdTl7VXv88Qzi/0lqK6JFoNP3lRuImPYGRV7K/QYklDyTrj4+A+KAki1JsQi6qKY+hDyY7d6WRqjrw=="
+      },
+      "videooptimiser.domain": {
+        "type": "Project"
+      }
+    }
+  }
+}

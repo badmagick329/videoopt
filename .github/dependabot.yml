@@ -26,7 +26,8 @@ updates:
         update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
-    directory: /
+    # "/" covers .github/workflows only; the composite actions need their own entry.
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: monthly
     commit-message:

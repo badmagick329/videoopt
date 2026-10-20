@@ -12,5 +12,10 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <!-- Infrastructure references this package and the CLI embeds its native DLL by path; one version keeps the two in step. -->
     <SQLitePCLRawLibVersion>2.1.13</SQLitePCLRawLibVersion>
+    <!-- packages.lock.json pins transitive packages too. CI (GitHub Actions sets CI=true) restores in locked mode, so a
+         lock file that disagrees with the references fails the build there; a local restore rewrites the lock files, so a
+         package bump needs no extra flag, only committing the updated files. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
   </PropertyGroup>
 </Project>
