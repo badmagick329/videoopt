@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Finalize;
 using VideoOptimiser.Application.Features.Run;
@@ -579,17 +580,27 @@ public sealed class TuiActionTests : IDisposable
         prepared.Confirm!.Detail.Split('\n').Should().Contain(line);
     }
 
+    /// <summary>
+    /// The confirmation only lists open jobs and words them, so canned records stand in for the database: eight ready videos
+    /// through SQLite and files on disk cost seconds to test a six-line limit.
+    /// </summary>
     [Fact]
     public async Task TheConfirmationListsSixVideosAndCountsTheRest()
     {
-        for (var number = 1; number <= 8; number++) await _rig.ReadyAsync($"clip-{number}.mp4");
+        JobRecord[] jobs = [.. Enumerable.Range(1, 8).Select(number => new JobRecord
+        {
+            Id = Id(number), SourcePath = $"clip-{number}.mp4", OutputPath = $"clip-{number}.mp4.encoded.mp4", Status = JobStatus.ReadyToFinalize,
+            SourceSizeBytes = 1000, OutputSizeBytes = 400, PercentageSaved = 60m, CreatedUtc = Now.AddSeconds(number)
+        })];
+        using var rig = new TuiRig(services => services.AddSingleton<IJobRepository>(new OpenJobsOnly(jobs)));
 
-        var prepared = await _rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(null), _rig.Settings, default);
+        var prepared = await rig.Actions.PrepareFinaliseAsync(new PrepareFinalise(null), rig.Settings, default);
 
         prepared.Confirm!.Question.Should().Be("Finalise 8 videos?");
         var lines = prepared.Confirm.Detail.Split('\n');
         lines.Should().HaveCount(8).And.Contain("And 2 more.");
-        prepared.Confirm.OnYes.Should().BeOfType<FinaliseVideos>().Which.Ids.Should().HaveCount(8);
+        lines.Take(6).Select(line => line.Split("  ")[0]).Should().Equal("clip-1.mp4", "clip-2.mp4", "clip-3.mp4", "clip-4.mp4", "clip-5.mp4", "clip-6.mp4");
+        prepared.Confirm.OnYes.Should().BeOfType<FinaliseVideos>().Which.Ids.Should().Equal(Enumerable.Range(1, 8).Select(Id));
     }
 
     [Fact]
@@ -771,5 +782,31 @@ public sealed class TuiActionTests : IDisposable
         _rig.Finalizer.Finalised.Should().BeEmpty();
         _posted.Should().BeEmpty();
         Texts(result).Should().Equal("Another finalise is running on this database, so nothing was finalised. Wait for it to finish.");
+    }
+
+    /// <summary>Answers the open-jobs list with canned records and fails on anything else, so a test that relies on it notices a new read or write.</summary>
+    private sealed class OpenJobsOnly(IReadOnlyList<JobRecord> open) : IJobRepository
+    {
+        public Task<IReadOnlyList<JobRecord>> ListAsync(string databasePath, bool terminal, CancellationToken cancellationToken = default) =>
+            terminal ? throw Unexpected() : Task.FromResult(open);
+
+        public Task<JobRecord?> FindOpenBySourceAsync(string databasePath, string sourcePath, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<JobRecord?> GetAsync(string databasePath, Guid id, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<JobRecord> CreateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task UpdateAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<bool> SetHeldAsync(string databasePath, JobRecord job, bool held, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<bool> RunNextAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<bool> DropAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<bool> RejectAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<bool> DismissAsync(string databasePath, JobRecord job, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<int> DismissAllFailedAsync(string databasePath, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task MarkActiveJobsInterruptedAsync(string databasePath, bool includeFinalizing, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<JobRecord?> FindOpenByImmichAssetAsync(string databasePath, string assetId, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<IReadOnlyList<JobRecord>> ListCompletedImmichAsync(string databasePath, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task<IReadOnlyDictionary<string, ImmichSkipRecord>> ListImmichSkipsAsync(string databasePath, CancellationToken cancellationToken = default) => throw Unexpected();
+        public Task PutImmichSkipAsync(string databasePath, ImmichSkipRecord skip, CancellationToken cancellationToken = default) => throw Unexpected();
+
+        private static InvalidOperationException Unexpected([System.Runtime.CompilerServices.CallerMemberName] string call = "") =>
+            new($"Only the open-jobs list is canned; {call} was called.");
     }
 }
