@@ -446,6 +446,15 @@ internal sealed class ManualTime(DateTimeOffset start) : TimeProvider
     public void Advance(TimeSpan by) => _now += by;
 }
 
+/// <summary>
+/// Environment variables for one test: these values and nothing else, so neither the user's environment nor a test running
+/// beside this one changes what it reads.
+/// </summary>
+internal sealed class FixedEnvironment(params (string Name, string Value)[] variables) : IEnvironmentVariables
+{
+    public string? Read(string name) => variables.FirstOrDefault(variable => variable.Name == name).Value;
+}
+
 /// <summary>Answers every read with <see cref="Report"/>, or throws <see cref="Failure"/>.</summary>
 internal sealed class ScriptedCostReport : ICostReport
 {

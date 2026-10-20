@@ -62,18 +62,10 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     {
         var configPath = Path.Combine(_directory, "environment.yaml");
         await File.WriteAllTextAsync(configPath, "version: 1");
-        var original = Environment.GetEnvironmentVariable("VIDEO_OPTIMISER_CONFIG");
-        Environment.SetEnvironmentVariable("VIDEO_OPTIMISER_CONFIG", configPath);
 
-        try
-        {
-            var loaded = await new YamlConfigurationLoader().LoadAsync(null);
-            loaded.Path.Should().Be(configPath);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("VIDEO_OPTIMISER_CONFIG", original);
-        }
+        var loaded = await new YamlConfigurationLoader(new FixedEnvironment(("VIDEO_OPTIMISER_CONFIG", configPath))).LoadAsync(null);
+
+        loaded.Path.Should().Be(configPath);
     }
 
     /// <summary>

@@ -11,6 +11,15 @@ public interface IConfigurationLoader
     string GetDefaultConfigurationPath();
 }
 
+/// <summary>
+/// Reads the process's environment variables. A port so a test supplies its own values: the real environment is shared
+/// by every test running in parallel, so one test setting a fixed-name variable would change what another loads.
+/// </summary>
+public interface IEnvironmentVariables
+{
+    string? Read(string name);
+}
+
 public interface ISettingsValidator
 {
     IReadOnlyList<Diagnostic> Validate(AppSettings settings);

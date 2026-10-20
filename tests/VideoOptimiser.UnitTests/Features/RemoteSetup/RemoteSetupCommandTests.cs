@@ -94,16 +94,12 @@ public sealed class RemoteSetupCommandTests : IDisposable
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunWithConfigFromEnvironmentAsync(FakeSetup setup, string? input)
     {
         _config = await RunCli.WriteConfigAsync(Path.Combine(_directory, "jobs.db"));
-        var original = Environment.GetEnvironmentVariable("VIDEO_OPTIMISER_CONFIG");
-        Environment.SetEnvironmentVariable("VIDEO_OPTIMISER_CONFIG", _config);
-        try
+        var environment = new FixedEnvironment(("VIDEO_OPTIMISER_CONFIG", _config));
+        return await ConsoleCapture.RunCliWithInputAsync(input, services =>
         {
-            return await ConsoleCapture.RunCliWithInputAsync(input, services => Configure(services, setup), "remote", "setup");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("VIDEO_OPTIMISER_CONFIG", original);
-        }
+            Configure(services, setup);
+            services.AddSingleton<IEnvironmentVariables>(environment);
+        }, "remote", "setup");
     }
 
     private static void Configure(IServiceCollection services, FakeSetup setup)

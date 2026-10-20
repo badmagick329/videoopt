@@ -53,6 +53,8 @@ internal static class ServiceRegistration
 
     public static IServiceCollection AddSharedKernel(this IServiceCollection services)
     {
+        // Injected so a test sets VIDEO_OPTIMISER_CONFIG for its own run, not for every test running beside it.
+        services.AddSingleton<IEnvironmentVariables>(ProcessEnvironmentVariables.Instance);
         services.AddSingleton<IConfigurationLoader, YamlConfigurationLoader>();
         services.AddSingleton<ISettingsValidator, SettingsValidator>();
         services.AddSingleton<IDatabaseInitializer, SqliteDatabaseInitializer>();

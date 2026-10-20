@@ -4,8 +4,11 @@ using YamlDotNet.Serialization;
 
 namespace VideoOptimiser.Infrastructure.Configuration;
 
-public sealed class YamlConfigurationLoader : IConfigurationLoader
+/// <param name="environment">Where <c>VIDEO_OPTIMISER_CONFIG</c> is read; the process's own unless a test supplies one.</param>
+public sealed class YamlConfigurationLoader(IEnvironmentVariables? environment = null) : IConfigurationLoader
 {
+    private readonly IEnvironmentVariables _environment = environment ?? ProcessEnvironmentVariables.Instance;
+
     // Unknown keys are errors: a misspelled or removed setting would otherwise fall back to its default unnoticed.
     private static readonly IDeserializer Deserializer = new StaticDeserializerBuilder(new VideoOptimiserYamlContext())
         .WithCaseInsensitivePropertyMatching()
@@ -58,7 +61,7 @@ public sealed class YamlConfigurationLoader : IConfigurationLoader
             return RequireExisting(explicitPath, "--config");
         }
 
-        var environmentPath = Environment.GetEnvironmentVariable("VIDEO_OPTIMISER_CONFIG");
+        var environmentPath = _environment.Read("VIDEO_OPTIMISER_CONFIG");
         if (!string.IsNullOrWhiteSpace(environmentPath))
         {
             return RequireExisting(environmentPath, "VIDEO_OPTIMISER_CONFIG");
