@@ -91,9 +91,7 @@ internal static class TuiKeys
     {
         public TuiKey Create { get; } = new(['c'], "create", "create a worker (managed worker only)");
         public TuiKey Delete { get; } = new(['d'], "delete", "delete the worker, after asking (managed worker only)");
-        public TuiKey Check { get; } = new(['r'], "check now", "check the worker with Hetzner now (managed worker only)");
-
-        public override IReadOnlyList<TuiKey> All => [Create, Delete, Check];
+        public override IReadOnlyList<TuiKey> All => [Create, Delete];
     }
 
     internal sealed class ActivityKeys() : PaneKeys("Activity")

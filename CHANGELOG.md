@@ -11,6 +11,10 @@
 - New `run stop --undo` withdraws a stop after this video, as long as that video is still converting, and the run carries on through the queue. A stop now can't be undone.
 - In the full-screen view, pressing `x` again withdraws a stop after this video, the same as `run stop --undo`. The footer then offers `x carry on`.
 
+### The full-screen view
+
+- The Worker pane no longer has `r` to check the worker with Hetzner. The view already checks every 30 seconds and after you create or delete a worker, so `r` added very little.
+
 ## [0.15.0] - 2026-10-19
 ### Check your config
 

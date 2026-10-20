@@ -96,7 +96,6 @@ Each key is the command of the same name, with the same rules and refusals; clas
 | `s` | any | starts a background run (below) | **Warn** when it would create a Hetzner server |
 | `x`, `X` | any | `run stop`, `run stop --now`; `x` again while a stop after this video is asked is `run stop --undo` (footer: `x carry on`); `X` asks first, and a stop now is final | Job database |
 | `c`, `d` | Worker | `worker create` (lists servers with prices), `worker delete` (asks first) | **Warn** |
-| `r` | Worker | `worker status` | Read-only |
 | `w` | Activity | sets the background run's worker fate: delete or keep when it ends | **Warn** for keep: the worker bills |
 | `o`, `a` | Review | opens the original (an Immich video's download) or the AV1 in the default app | Read-only |
 | `f`, `F` | Review | `finalize <job-id>`, `finalize --ready`; same question first, `f` listing a warned video's warnings; `F` leaves warned videos out | **Warn** |
@@ -106,7 +105,7 @@ Each key is the command of the same name, with the same rules and refusals; clas
 
 **While `f` or `F` finalises.** Review's title reads `finalising 3 of 8` and its last line `Finalising 3 of 8, 1.2 GiB saved so far.` (batches of two or more). Both Review and Queue tag the video in progress `finalising` and the waiting ones `queued`. Each video's result reaches the log as it ends. Until the batch ends, `f`, `F` and `r` give a footer notice and open no question. `r` waits on every row, since `queue reject` needs the finalise lock the batch holds. `o`, `a` and the arrows keep working. After `esc`, the tally reads `Finalised 3; stopped with 5 still ready.`; finalise those later with `f`/`F` or `finalize --ready`.
 
-The same letter means different things per pane (`r` is release, check-worker or reject), so name the pane with the key.
+The same letter means different things per pane (`r` is release in Queue and reject in Review), so name the pane with the key.
 
 **Starting a run with `s`.** It launches a background run, which survives closing the terminal and is shown by `status` as `Run: background run, ...`. Without `remoteSsh.lifecycle: "hetzner"` it starts at once, encoding where the config says. With it, a list comes first: which worker converts (`Use <worker>` when one is up; otherwise the servers with hourly prices incl. VAT; always `No worker: convert on this PC`, which starts the run at once on this PC). A worker or server picked there opens a second list, `When the run ends`: `Delete the worker` or `Keep the worker`. A server picked from the list is created before the run starts and bills from then; if the create fails, no run starts. While the worker pane is deleting or creating the worker, `s` opens no list and shows `The worker is being deleted. Start the run once it's gone.` or `The worker is being created. Start the run once it's up.`. The background run asks nothing afterwards. If the worker picked for it is gone by the time the run needs it, the run creates none and ends; the Activity pane shows `The run failed: The worker chosen for this run is gone, so no new one was created. Start the run again to choose a worker.` `x` / `X` and `run stop [--now | --undo]` act only on a background run; a run started with `run` in a terminal stops only with `Ctrl+C` in its window.
 

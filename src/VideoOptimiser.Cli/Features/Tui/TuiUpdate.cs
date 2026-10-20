@@ -16,9 +16,6 @@ internal static partial class TuiUpdate
     /// <summary>Hetzner is asked at the start and then this often; each question can take its 15 seconds, so it never waits on the loop.</summary>
     private static readonly TimeSpan CheckEvery = TimeSpan.FromSeconds(30);
 
-    /// <summary>The longest one question to Hetzner takes; "Asking Hetzner." stays up that long unless the answer replaces it sooner.</summary>
-    private static readonly TimeSpan AnswerWithin = TimeSpan.FromSeconds(15);
-
     public static TuiStep Update(TuiModel m, TuiMsg msg)
     {
         var step = msg switch
@@ -106,37 +103,13 @@ internal static partial class TuiUpdate
         var otherWorker = before.Managed && section.Managed && before.Recorded?.ServerId != section.Recorded?.ServerId;
         if (otherWorker || !section.Managed)
         {
-            // A press of r still gets its answer: the question the next tick asks stands in for the dropped one.
-            next = next with { Generation = before.Generation + 1, Check = null, CheckInFlight = false, CheckAskedAt = null, AskedByHand = before.AskedByHand && section.Managed };
+            next = next with { Generation = before.Generation + 1, Check = null, CheckInFlight = false, CheckAskedAt = null };
         }
         return m with { Worker = next };
     }
 
-    /// <summary>The footer while a check asked for with <c>r</c> waits; its answer replaces it.</summary>
-    private const string AskingHetzner = "Asking Hetzner.";
-
-    /// <summary>
-    /// A check asked for with <c>r</c>: the footer says so until the answer comes, up to <see cref="AnswerWithin"/>. A question
-    /// the clock already has out is joined instead of asked twice; its answer is as fresh.
-    /// </summary>
-    private static TuiStep AskHetznerByHand(TuiModel m)
-    {
-        m = m with { Worker = m.Worker with { AskedByHand = true }, Notice = new Notice(AskingHetzner, m.Now + AnswerWithin) };
-        return m.Worker.CheckInFlight ? TuiStep.Of(m) : AskHetzner(m);
-    }
-
-    /// <summary>
-    /// A check asked for by hand says when Hetzner answered, since with no worker the pane looks the same either way; one the
-    /// clock asked for says nothing. The flag, not the footer, remembers the press: another notice may have replaced the footer.
-    /// </summary>
-    private static TuiModel OnWorkerChecked(TuiModel m, WorkerCheckedMsg answer)
-    {
-        if (answer.Generation != m.Worker.Generation) return m;
-        var byHand = m.Worker.AskedByHand;
-        m = m with { Worker = m.Worker with { Check = answer.Check, CheckInFlight = false, AskedByHand = false } };
-        if (!byHand) return m;
-        return Tell(m, answer.Check.NotCheckedReason is { } reason ? $"Couldn't ask Hetzner: {reason}" : "Checked with Hetzner just now.");
-    }
+    private static TuiModel OnWorkerChecked(TuiModel m, WorkerCheckedMsg answer) =>
+        answer.Generation != m.Worker.Generation ? m : m with { Worker = m.Worker with { Check = answer.Check, CheckInFlight = false } };
 
     // ---- the event file ---------------------------------------------------------------------
 

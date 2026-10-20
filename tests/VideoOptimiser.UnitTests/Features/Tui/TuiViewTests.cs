@@ -313,7 +313,7 @@ public sealed class TuiViewTests
     public void TheFooterListsTheFocusedPanesKeys()
     {
         Row(Rows(Busy(focus: Pane.Queue)), " Queue  ").Should().Contain("↑↓ select").And.Contain("tab").And.Contain("? help").And.Contain("q quit");
-        Row(Rows(Busy(focus: Pane.Worker)), " Worker  ").Should().Contain("r check now");
+        Row(Rows(Busy(focus: Pane.Worker)), " Worker  ").Should().Contain("c create");
         Row(Rows(Busy(focus: Pane.Activity)), " Activity  ").Should().Contain("end follow");
     }
 
@@ -496,9 +496,9 @@ public sealed class TuiViewTests
         var model = After(Busy(), Snap(Snapshot(problems: "Couldn't read the queue: database is locked.")));
         Row(Rows(model), "Couldn't read the queue").Should().Contain("database is locked.");
 
-        model = After(model with { Focus = Pane.Worker }, Letter('r'));
+        model = After(model with { Focus = Pane.Worker }, Letter('c'));
         var footer = Rows(model)[^1];
-        footer.Should().Contain("Hetzner").And.NotContain("database is locked");
+        footer.Should().Contain("is already up").And.NotContain("database is locked");
     }
 
     [Fact]
@@ -539,7 +539,7 @@ public sealed class TuiViewTests
     /// <summary>Each pane's footer lists the keys it answers, and s starts a run from all of them.</summary>
     [Theory]
     [InlineData("Queue", new[] { "h hold", "r release", "n run next", "d drop", "t retry", "x stop after", "X stop now", "s start run" })]
-    [InlineData("Worker", new[] { "c create", "d delete", "r check now", "x stop after", "X stop now", "s start run" })]
+    [InlineData("Worker", new[] { "c create", "d delete", "x stop after", "X stop now", "s start run" })]
     [InlineData("Activity", new[] { "w worker fate", "x stop after", "X stop now", "s start run" })]
     [InlineData("Review", new[] { "o original", "a AV1", "f finalise", "F all", "r reject", "x stop after", "X stop now", "s start run" })]
     public void EachPanesFooterListsItsActionKeys(string paneName, string[] keys)

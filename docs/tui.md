@@ -46,7 +46,6 @@ Each pane adds its own:
 | Queue | `t` | Queue a failed video again as a fresh job, after asking. |
 | Worker | `c` | Create a worker. It lists the servers you can have, with their hourly prices. |
 | Worker | `d` | Delete the worker, after asking. It stops billing at once. |
-| Worker | `r` | Check the worker with Hetzner now. |
 | Activity | `↑` `↓` `pgup` `pgdn`, `home`, `end` | Scroll the log, jump to its start, or follow it again. |
 | Activity | `w` | Change what happens to the worker when the background run ends. |
 | Review | `o` / `a` | Open the original or the AV1 in Windows' default player. For an Immich video, the original is its download. |

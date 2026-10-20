@@ -93,11 +93,6 @@ internal static partial class TuiUpdate
     private static TuiStep WorkerKey(TuiModel m, char c)
     {
         var keys = TuiKeys.Worker;
-        if (keys.Check.Is(c))
-        {
-            if (!m.Worker.Managed) return Told(m, "There is no managed worker to check.");
-            return AskHetznerByHand(m);
-        }
         if (keys.Create.Is(c))
         {
             if (!m.Worker.Managed) return Told(m, NoManagedWorker);

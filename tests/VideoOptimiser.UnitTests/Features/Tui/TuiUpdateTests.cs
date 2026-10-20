@@ -414,35 +414,10 @@ public sealed class TuiUpdateTests
     }
 
     [Fact]
-    public void RInTheWorkerPaneAsksHetznerNowUnlessAnAnswerIsAlreadyOnItsWay()
-    {
-        var model = ManagedWithWorker(AWorker()) with { Focus = Pane.Worker };
-
-        var asked = Update(model, Letter('r'));
-        asked.Effects.Should().Equal(new RefreshWorkerCheck(0));
-        asked.Model.Worker.CheckInFlight.Should().BeTrue();
-
-        var again = Update(asked.Model, Letter('r'));
-        again.Effects.Should().BeEmpty();
-        again.Model.Notice.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void RInTheWorkerPaneSaysThereIsNothingToCheckWhenThereIsNoManagedWorker()
-    {
-        var model = After(Model(), Snap(Quiet([]))) with { Focus = Pane.Worker };
-
-        var result = Update(model, Letter('r'));
-
-        result.Effects.Should().BeEmpty();
-        result.Model.Notice!.Text.Should().Contain("managed worker");
-    }
-
-    [Fact]
     public void ANoticeGoesAwayWhenItsTimeIsUp()
     {
         var model = After(Model(), Snap(Quiet([]))) with { Focus = Pane.Worker };
-        model = After(model, Letter('r'));
+        model = After(model, Letter('c'));
         model.Notice.Should().NotBeNull();
 
         After(model, Tick(TimeSpan.FromSeconds(1))).Notice.Should().NotBeNull();

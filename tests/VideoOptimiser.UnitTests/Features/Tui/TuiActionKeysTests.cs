@@ -825,40 +825,18 @@ public sealed class TuiActionKeysTests
     }
 
     /// <summary>
-    /// <c>r</c> in the worker pane says it is asking, and the answer replaces that line: with no worker the pane looks the same
-    /// before and after, so without it the press seems to do nothing. Hetzner can take longer than a notice lasts, so the answer
-    /// still shows after one. A check the clock asked for says nothing.
+    /// The worker pane has no check-now key: the clock asks Hetzner every 30 seconds and after each worker action, and a press
+    /// that only made the answer up to 30 seconds fresher looked like it did nothing. An answer the clock asked for says nothing.
     /// </summary>
-    [Theory]
-    [InlineData(null, "Checked with Hetzner just now.")]
-    [InlineData("Hetzner timed out after 15 seconds.", "Couldn't ask Hetzner: Hetzner timed out after 15 seconds.")]
-    public void CheckingTheWorkerByHandSaysWhenHetznerAnswered(string? notChecked, string said)
+    [Fact]
+    public void TheWorkerPaneLeavesRToOtherPanesAndHetznersAnswerSaysNothing()
     {
-        var asked = Update(Focused(WithWorker(Model()), Pane.Worker), Letter('r'));
-        Notice(asked).Should().Be("Asking Hetzner.");
-        var generation = asked.Effects.OfType<RefreshWorkerCheck>().Single().Generation;
-        var waiting = Update(asked.Model, Tick(TimeSpan.FromSeconds(10)));
-        Notice(waiting).Should().Be("Asking Hetzner.");
+        var pressed = Update(Focused(WithWorker(Model()), Pane.Worker), Letter('r'));
+        pressed.Effects.Should().BeEmpty();
+        Notice(pressed).Should().BeNull();
 
-        var answered = Update(waiting.Model, new WorkerCheckedMsg(generation, new WorkerCheck(null, null, notChecked)));
-
-        Notice(answered).Should().Be(said);
         var byTheClock = Update(WithWorker(Model()), Tick(TimeSpan.FromSeconds(1))).Model;
         After(byTheClock, new WorkerCheckedMsg(byTheClock.Worker.Generation, new WorkerCheck(null, null, null))).Notice.Should().BeNull();
-    }
-
-    /// <summary>A press while the clock's question is out waits for that answer instead of asking twice, and still reports it.</summary>
-    [Fact]
-    public void CheckingTheWorkerWhileTheClockIsAskingReportsThatAnswer()
-    {
-        var byTheClock = Update(Focused(WithWorker(Model()), Pane.Worker), Tick(TimeSpan.FromSeconds(1)));
-        var generation = byTheClock.Effects.OfType<RefreshWorkerCheck>().Single().Generation;
-
-        var pressed = Update(byTheClock.Model, Letter('r'));
-        pressed.Effects.Should().BeEmpty();
-        Notice(pressed).Should().Be("Asking Hetzner.");
-
-        Notice(Update(pressed.Model, new WorkerCheckedMsg(generation, new WorkerCheck(null, null, null)))).Should().Be("Checked with Hetzner just now.");
     }
 
     [Fact]
