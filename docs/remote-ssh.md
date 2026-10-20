@@ -128,6 +128,8 @@ To make the snapshot:
 
 Hetzner can't create a server from a snapshot on a type whose disk is smaller than the snapshot's. That's why step 1 uses the smallest disk in your list: a snapshot made on a larger disk makes every create on a smaller type fail. A type with a larger disk works. Hetzner's price list shows each type's disk.
 
+If that type is unavailable in every location, `worker create` says so. Make the snapshot on any available x86 type whose disk is no larger, such as `cpx32` in place of `cx43`, both 160 GB. A smaller type usually has fewer cores or less memory than `minimumCpuCount` and `minimumAvailableMemory` allow, so lower them to that type's figures for step 1 and put them back afterwards. The build takes longer on fewer cores, but a worker made from the snapshot runs on whichever type `serverTypes` picks.
+
 A snapshot works in any location in its network zone. hel1, fsn1 and nbg1 are all in the `eu-central` zone, so with the default `locations` one snapshot serves every worker.
 
 Hetzner charges for snapshots by the GB of `image_size` each month, and a worker's snapshot is a few GB. See [hetzner.com/cloud](https://www.hetzner.com/cloud/) for the price.
