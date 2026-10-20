@@ -307,7 +307,7 @@ public sealed class ImmichRunCommandTests : IDisposable
 
         public Task<QueuePreparationResult> PrepareAsync(string databasePath, AppSettings settings, JobSourceKind? sourceKind, bool modeOverridden = false, CancellationToken cancellationToken = default) => Task.FromResult(Queue);
 
-        public Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, ConversionSpans? spans = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default)
+        public Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, ConversionSpans? spans = null, Func<bool>? stopAfterThisVideo = null, CancellationToken cancellationToken = default)
         {
             return Failure is null ? Task.FromResult(Result) : Task.FromException<QueueRunResult>(Failure);
         }

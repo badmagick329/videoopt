@@ -92,8 +92,8 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
     /// rules are checked again (<see cref="FailedValidationRecheck"/>, VOPT-119).
     /// </summary>
     /// <param name="modeOverridden">Whether <c>--local</c> or <c>--remote</c> set the mode in <paramref name="settings"/>.</param>
-    /// <param name="stopAfterThisVideo">Cancelled by a first stop request: checked between videos, never during one.</param>
-    public async Task<ExitCode> ConvertQueueAsync(AppSettings settings, bool modeOverridden, IRunObserver observer, IRunQuestions questions, CancellationToken stopAfterThisVideo, CancellationToken cancellationToken)
+    /// <param name="stopAfterThisVideo">True while a stop after this video stands (a first stop request, which a background run can withdraw): checked between videos, never during one.</param>
+    public async Task<ExitCode> ConvertQueueAsync(AppSettings settings, bool modeOverridden, IRunObserver observer, IRunQuestions questions, Func<bool>? stopAfterThisVideo, CancellationToken cancellationToken)
     {
         var preparation = await queue.PrepareAsync(settings.Database.Path, settings, sourceKind: null, modeOverridden, cancellationToken);
         await recheck.RecheckAsync(settings, observer, cancellationToken);
@@ -101,7 +101,7 @@ public sealed class RunFlow(IQueueService queue, IQueueDiscovery discovery, IJob
         return stopped ? ExitCode.Cancelled : !workerHandled ? ExitCode.GeneralFailure : QueueExitCode.Calculate(ready, failures.Length, workerUnreachable);
     }
 
-    private async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(AppSettings settings, bool modeOverridden, IRunObserver observer, IRunQuestions questions, QueuePreparationResult preparation, CancellationToken stopAfterThisVideo, CancellationToken cancellationToken)
+    private async Task<(int Ready, int Skipped, FailedQueueJob[] Failures, bool WorkerUnreachable, bool Stopped, bool WorkerHandled)> ProcessPreparedJobsAsync(AppSettings settings, bool modeOverridden, IRunObserver observer, IRunQuestions questions, QueuePreparationResult preparation, Func<bool>? stopAfterThisVideo, CancellationToken cancellationToken)
     {
         foreach (var job in preparation.SkippedJobs) observer.VideoSkipped(job);
         // F8 (VOPT-70): finalize checks whether anything moved and resumes, so the run leaves these jobs alone.

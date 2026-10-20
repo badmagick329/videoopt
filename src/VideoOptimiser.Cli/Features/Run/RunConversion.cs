@@ -31,5 +31,5 @@ internal sealed class RunConversion(IRemoteWorkerLifecycle lifecycle, RunFlow fl
     /// </summary>
     /// <param name="beforeNext">Printed between the failed jobs and the line that says what to finalise.</param>
     public Task<ExitCode> ConvertQueueAsync(LoadedConfiguration configuration, CliCommand command, Action? beforeNext, CancellationToken cancellationToken) =>
-        flow.ConvertQueueAsync(configuration.Settings, command.ModeOverride is not null, new TeeRunObserver(new ConsoleRunObserver(configuration, command, stop, state, beforeNext), eventLog), new ConsoleRunQuestions(state), stop.AfterThisVideo, cancellationToken);
+        flow.ConvertQueueAsync(configuration.Settings, command.ModeOverride is not null, new TeeRunObserver(new ConsoleRunObserver(configuration, command, stop, state, beforeNext), eventLog), new ConsoleRunQuestions(state), () => stop.StopsAfterThisVideo, cancellationToken);
 }

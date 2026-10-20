@@ -16,7 +16,7 @@ public sealed class StopScopeRunObserver(RunStop stop) : IRunObserver
     private IDisposable? _convertingScope;
     private IDisposable? _deletingScope;
 
-    /// <remarks>There is no console to tell, so the scope's callback does nothing; the press itself cancels the after-video token.</remarks>
+    /// <remarks>There is no console to tell, so the scope's callback does nothing; the press itself sets <see cref="RunStop.StopsAfterThisVideo"/>.</remarks>
     public IProgress<JobProgress> ConversionStarted(int count, bool workerUp)
     {
         _convertingScope = stop.WhileConverting(() => { });

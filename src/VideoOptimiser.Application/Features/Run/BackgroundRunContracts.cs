@@ -34,6 +34,13 @@ public interface IRunRequestStore
     /// <param name="now">True for a stop now (<c>run stop --now</c>), false for a stop after this video.</param>
     Task RequestStopAsync(string databasePath, bool now, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Clears a stop after this video (VOPT-187), unless a stop now is asked too: that one is final. The run's poll sees the
+    /// row cleared and withdraws the stop it passed on.
+    /// </summary>
+    /// <returns>True when it cleared one; false when none was asked, or a stop now stands.</returns>
+    Task<bool> WithdrawStopAsync(string databasePath, CancellationToken cancellationToken);
+
     Task SetWorkerFateAsync(string databasePath, WorkerFateChoice fate, CancellationToken cancellationToken);
 }
 

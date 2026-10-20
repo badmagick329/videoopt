@@ -3,16 +3,23 @@ namespace VideoOptimiser.Application.Features.Run;
 /// <summary>
 /// How a stop request reaches a run with no console: reads the requests row about once a second and turns what it finds into
 /// what Ctrl+C would have done to <see cref="RunStop"/> (the first request stops after this video, the "now" request stops
-/// now), so the two ways of stopping cannot drift apart.
+/// now), so the two ways of stopping cannot drift apart. It follows the row's stop after this video both ways: cleared, it
+/// withdraws the stop it passed on (VOPT-187), and set again, it presses again. A stop now is passed on once and is final.
 /// </summary>
 /// <param name="interval">How often to read; a second by default, shorter in tests.</param>
 public sealed class RunRequestPoll(IRunRequestStore requests, TimeSpan? interval = null)
 {
     private static readonly TimeSpan DefaultInterval = TimeSpan.FromSeconds(1);
 
-    /// <summary>Runs until <paramref name="cancellationToken"/> is cancelled, which ends it quietly, or both stops have been passed on.</summary>
+    /// <summary>
+    /// Runs until <paramref name="cancellationToken"/> is cancelled, which ends it quietly, or both stops stand passed on. A
+    /// withdraw sets the first back to not passed on, so the poll keeps reading; once a stop now is in the row the row refuses a
+    /// withdraw, so both passed on is final.
+    /// </summary>
     public async Task PollAsync(string databasePath, RunStop stop, CancellationToken cancellationToken)
     {
+        // Whether the row's stop after this video is passed on to the run's stop, so each change of the row reaches it once:
+        // a second Press would be a second Ctrl+C and stop now.
         var passedOnAfterVideo = false;
         var passedOnNow = false;
         var wait = interval ?? DefaultInterval;
@@ -28,6 +35,13 @@ public sealed class RunRequestPoll(IRunRequestStore requests, TimeSpan? interval
                         passedOnAfterVideo = true;
                         stop.Press();
                     }
+                    else if (!current.StopAfterThisVideo && passedOnAfterVideo)
+                    {
+                        passedOnAfterVideo = false;
+                        stop.Withdraw();
+                    }
+                    // Once only: a stop now during the worker delete does nothing, and passing it on again after the delete
+                    // would cancel what the run does next.
                     if (current.StopNow && !passedOnNow)
                     {
                         passedOnNow = true;

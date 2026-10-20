@@ -42,7 +42,7 @@ public sealed class BackgroundRunTests : IDisposable
         processor.During[0] = async _ =>
         {
             await _requests.RequestStopAsync(DatabasePath, now: false, CancellationToken.None);
-            await WaitUntilAsync(() => _stop.AfterThisVideo.IsCancellationRequested);
+            await WaitUntilAsync(() => _stop.StopsAfterThisVideo);
         };
 
         var code = await RunAsync(processor);
@@ -52,6 +52,35 @@ public sealed class BackgroundRunTests : IDisposable
         (await RunCli.StatusesAsync(_repository, DatabasePath, jobs)).Should().Equal(JobStatus.ReadyToFinalize, JobStatus.Queued, JobStatus.Queued);
         _stop.Now.IsCancellationRequested.Should().BeFalse();
         Kinds().Should().ContainInOrder(RunEventKind.RunStarted, RunEventKind.ConversionStarted, RunEventKind.ConversionEnded, RunEventKind.StoppedAfter, RunEventKind.Summary);
+    }
+
+    /// <summary>
+    /// VOPT-187: a stop after this video withdrawn through the use case while the video converts never stops the run, which
+    /// converts the whole queue. A second withdraw finds nothing to take back.
+    /// </summary>
+    [Fact]
+    public async Task AStopAfterThisVideoWithdrawnWhileTheVideoConvertsLetsTheRunCarryOn()
+    {
+        var jobs = await RunCli.QueueJobsAsync(_repository, DatabasePath, 3);
+        var request = new StopRunRequest(new DatabaseLocks(), _requests);
+        var withdrawals = new List<WithdrawStopOutcome>();
+        var processor = new ScriptedRunProcessor();
+        processor.During[0] = async _ =>
+        {
+            await request.StopAsync(DatabasePath, now: false, CancellationToken.None);
+            await WaitUntilAsync(() => _stop.StopsAfterThisVideo);
+            withdrawals.Add((await request.WithdrawAsync(DatabasePath, CancellationToken.None)).Outcome);
+            await WaitUntilAsync(() => !_stop.StopsAfterThisVideo);
+            withdrawals.Add((await request.WithdrawAsync(DatabasePath, CancellationToken.None)).Outcome);
+        };
+
+        var code = await RunAsync(processor);
+
+        code.Should().Be((int)ExitCode.Success);
+        withdrawals.Should().Equal(WithdrawStopOutcome.Withdrawn, WithdrawStopOutcome.NoStopAsked);
+        processor.Processed.Should().Equal("1.mp4", "2.mp4", "3.mp4");
+        (await RunCli.StatusesAsync(_repository, DatabasePath, jobs)).Should().OnlyContain(status => status == JobStatus.ReadyToFinalize);
+        Kinds().Should().NotContain(RunEventKind.StoppedAfter);
     }
 
     /// <summary>The first Ctrl+C with nothing converting stops now, so the first stop request does too; here the run is still creating its worker.</summary>
@@ -114,19 +143,26 @@ public sealed class BackgroundRunTests : IDisposable
         Kinds().Should().NotContain(RunEventKind.WorkerDeleting);
     }
 
-    /// <summary>A stop now is the second Ctrl+C: the video is interrupted where it is and resumes from that stage on the next run.</summary>
+    /// <summary>
+    /// A stop now is the second Ctrl+C: the video is interrupted where it is and resumes from that stage on the next run. It
+    /// can't be withdrawn (VOPT-187).
+    /// </summary>
     [Fact]
     public async Task AStopNowRequestInterruptsTheVideoAtOnce()
     {
         var jobs = await RunCli.QueueJobsAsync(_repository, DatabasePath, 3);
+        WithdrawStopOutcome? withdrawn = null;
         var processor = new ScriptedRunProcessor();
         processor.During[0] = async _ =>
         {
             await _requests.RequestStopAsync(DatabasePath, now: true, CancellationToken.None);
             await WaitUntilAsync(() => _stop.Now.IsCancellationRequested);
+            withdrawn = (await new StopRunRequest(new DatabaseLocks(), _requests).WithdrawAsync(DatabasePath, CancellationToken.None)).Outcome;
         };
 
         var code = await RunAsync(processor);
+
+        withdrawn.Should().Be(WithdrawStopOutcome.StoppingNow, "a stop now is final");
 
         code.Should().Be((int)ExitCode.Cancelled);
         var stored = await _repository.GetAsync(DatabasePath, jobs[0].Id);
@@ -315,6 +351,8 @@ public sealed class BackgroundRunTests : IDisposable
         }
 
         public Task RequestStopAsync(string databasePath, bool now, CancellationToken cancellationToken) => inner.RequestStopAsync(databasePath, now, cancellationToken);
+
+        public Task<bool> WithdrawStopAsync(string databasePath, CancellationToken cancellationToken) => inner.WithdrawStopAsync(databasePath, cancellationToken);
 
         public Task SetWorkerFateAsync(string databasePath, WorkerFateChoice fate, CancellationToken cancellationToken) => inner.SetWorkerFateAsync(databasePath, fate, cancellationToken);
     }

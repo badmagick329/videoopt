@@ -37,7 +37,7 @@ public sealed class BackgroundRun(RunFlow flow, RunStart start, RunRequestPoll p
                 var polling = poll.PollAsync(databasePath, stop, pollEnd.Token);
                 try
                 {
-                    return (int)await flow.ConvertQueueAsync(settings, modeOverridden, observer, questions, stop.AfterThisVideo, stop.Now);
+                    return (int)await flow.ConvertQueueAsync(settings, modeOverridden, observer, questions, () => stop.StopsAfterThisVideo, stop.Now);
                 }
                 catch (RemoteWorkerCreationDeclinedException) when (!mayCreateWorker)
                 {

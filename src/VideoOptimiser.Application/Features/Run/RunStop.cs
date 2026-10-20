@@ -9,22 +9,31 @@ namespace VideoOptimiser.Application.Features.Run;
 /// </summary>
 /// <remarks>
 /// One per command, registered as a service so a test can press it. <see cref="Press"/> runs on the console's signal thread;
-/// a background run has no console, so its request poll calls <see cref="Press"/> for <c>run stop</c> and <see cref="StopNow"/>
-/// for <c>run stop --now</c>, which is the state machine Ctrl+C already is.
+/// a background run has no console, so its request poll calls <see cref="Press"/> for <c>run stop</c>, <see cref="StopNow"/>
+/// for <c>run stop --now</c> and <see cref="Withdraw"/> when the requests row's stop after this video is cleared (VOPT-187),
+/// which is the state machine Ctrl+C already is plus the way back. A stop after this video is a flag, not a token, so it can be
+/// withdrawn: the run reads it only between videos and nothing registers on it. A stop now is a token every stage observes,
+/// so it can't be taken back.
 /// </remarks>
 public sealed class RunStop : IDisposable
 {
     private readonly object _gate = new();
     private readonly CancellationTokenSource _now = new();
-    private readonly CancellationTokenSource _afterThisVideo = new();
+    private bool _afterThisVideo;
     private Action? _onStopAfterThisVideo;
     private Action? _onPressWhileDeleting;
 
     /// <summary>Cancelled by a stop now: every stage observes it.</summary>
     public CancellationToken Now => _now.Token;
 
-    /// <summary>Cancelled by a stop after this video: the run checks it only between videos.</summary>
-    public CancellationToken AfterThisVideo => _afterThisVideo.Token;
+    /// <summary>True while a stop after this video stands: the run checks it only between videos.</summary>
+    public bool StopsAfterThisVideo
+    {
+        get
+        {
+            lock (_gate) return _afterThisVideo;
+        }
+    }
 
     public void Press()
     {
@@ -37,9 +46,9 @@ public sealed class RunStop : IDisposable
                 _onPressWhileDeleting();
                 return;
             }
-            if (_onStopAfterThisVideo is not null && !_afterThisVideo.IsCancellationRequested)
+            if (_onStopAfterThisVideo is not null && !_afterThisVideo)
             {
-                _afterThisVideo.Cancel();
+                _afterThisVideo = true;
                 _onStopAfterThisVideo();
                 return;
             }
@@ -62,6 +71,21 @@ public sealed class RunStop : IDisposable
         _now.Cancel();
     }
 
+    /// <summary>
+    /// Takes back a stop after this video, so the run carries on through the queue and a later press stops after a video again.
+    /// Refused once a stop now is asked: that one is final. Prints nothing; whoever asked for it reports it.
+    /// </summary>
+    /// <returns>True when a stop after this video stood and is now cleared.</returns>
+    public bool Withdraw()
+    {
+        lock (_gate)
+        {
+            if (!_afterThisVideo || _now.IsCancellationRequested) return false;
+            _afterThisVideo = false;
+            return true;
+        }
+    }
+
     /// <summary>While the returned scope lasts, a first press stops after this video and calls <paramref name="onStop"/>.</summary>
     public IDisposable WhileConverting(Action onStop) => Scope(() => _onStopAfterThisVideo = onStop, () => _onStopAfterThisVideo = null);
 
@@ -74,11 +98,7 @@ public sealed class RunStop : IDisposable
         return new ScopeExit(() => { lock (_gate) exit(); });
     }
 
-    public void Dispose()
-    {
-        _now.Dispose();
-        _afterThisVideo.Dispose();
-    }
+    public void Dispose() => _now.Dispose();
 
     private sealed class ScopeExit(Action exit) : IDisposable
     {

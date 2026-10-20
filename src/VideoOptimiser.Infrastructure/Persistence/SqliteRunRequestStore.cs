@@ -7,7 +7,8 @@ namespace VideoOptimiser.Infrastructure.Persistence;
 
 /// <summary>
 /// The <c>run_requests</c> row (migration 10). Every call is one statement, so a stop requested from another process lands
-/// whole even while the run resets or sets the fate. Upserts, because the row exists only after the first run or request.
+/// whole even while the run resets or sets the fate. Upserts, because the row exists only after the first run or request; a
+/// withdraw is the one plain update.
 /// </summary>
 public sealed class SqliteRunRequestStore(IDatabaseInitializer databaseInitializer) : IRunRequestStore
 {
@@ -31,6 +32,19 @@ public sealed class SqliteRunRequestStore(IDatabaseInitializer databaseInitializ
         now
             ? UpsertAsync(databasePath, "stop_now = 1", 0, 1, null, cancellationToken)
             : UpsertAsync(databasePath, "stop_after_video = 1", 1, 0, null, cancellationToken);
+
+    /// <remarks>
+    /// One conditional update, not an upsert: with no row there is nothing to withdraw, and the conditions in the same statement
+    /// keep a stop now that lands meanwhile from being withdrawn along with it.
+    /// </remarks>
+    public async Task<bool> WithdrawStopAsync(string databasePath, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenAsync(databasePath, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE run_requests SET stop_after_video = 0, updated_utc = $updatedUtc WHERE id = 1 AND stop_after_video = 1 AND stop_now = 0;";
+        command.Parameters.AddWithValue("$updatedUtc", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
 
     public Task SetWorkerFateAsync(string databasePath, WorkerFateChoice fate, CancellationToken cancellationToken) =>
         UpsertAsync(databasePath, "worker_fate = $fate", 0, 0, FateText(fate), cancellationToken);

@@ -137,12 +137,12 @@ public sealed class RunFlowTests : IDisposable
     {
         await RunCli.QueueJobsAsync(_repository, DatabasePath, 2);
         using var stopNow = new CancellationTokenSource();
-        using var stopAfter = new CancellationTokenSource();
+        var stopAfter = false;
         var processor = new ScriptedRunProcessor(remote: end != BackgroundEnd.StoppedNowWithoutWork);
         switch (end)
         {
             case BackgroundEnd.StoppedAfterVideo:
-                processor.During[0] = _ => { stopAfter.Cancel(); return Task.CompletedTask; };
+                processor.During[0] = _ => { stopAfter = true; return Task.CompletedTask; };
                 break;
             case BackgroundEnd.StoppedNowWithWorkOnTheWorker or BackgroundEnd.StoppedNowWithoutWork:
                 processor.During[0] = _ => { stopNow.Cancel(); return Task.CompletedTask; };
@@ -157,7 +157,7 @@ public sealed class RunFlowTests : IDisposable
         var requests = new SqliteRunRequestStore(new SqliteDatabaseInitializer());
         await requests.ResetAsync(DatabasePath, fate, CancellationToken.None);
 
-        _ = await RunAsync(processor, new BackgroundRunQuestions(requests, DatabasePath, fate, mayCreateWorker: true), stopNow.Token, stopAfter.Token);
+        _ = await RunAsync(processor, new BackgroundRunQuestions(requests, DatabasePath, fate, mayCreateWorker: true), stopNow.Token, () => stopAfter);
 
         _lifecycle.DeleteCalls.Should().Be(fate == WorkerFateChoice.Delete ? 1 : 0);
         // The end it was meant to reach, and what the worker's fate looked like there.
@@ -244,6 +244,7 @@ public sealed class RunFlowTests : IDisposable
         public Task ResetAsync(string databasePath, WorkerFateChoice? fate, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<RunRequests> ReadAsync(string databasePath, CancellationToken cancellationToken) => throw new IOException("database is locked");
         public Task RequestStopAsync(string databasePath, bool now, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<bool> WithdrawStopAsync(string databasePath, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task SetWorkerFateAsync(string databasePath, WorkerFateChoice fate, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
@@ -403,7 +404,7 @@ public sealed class RunFlowTests : IDisposable
         }
     }
 
-    private async Task<int> RunAsync(ScriptedRunProcessor processor, IRunQuestions questions, CancellationToken stopNow, CancellationToken stopAfterThisVideo = default)
+    private async Task<int> RunAsync(ScriptedRunProcessor processor, IRunQuestions questions, CancellationToken stopNow, Func<bool>? stopAfterThisVideo = null)
     {
         var settings = Settings();
         var locks = new DatabaseLocks();

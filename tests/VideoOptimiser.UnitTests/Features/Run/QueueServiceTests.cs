@@ -98,16 +98,16 @@ public sealed class QueueServiceTests : IDisposable
     public async Task RunAsyncPassesOverAVideoThatChangedAndStopsAfterItWhenAskedTo()
     {
         var (databasePath, jobs) = await QueuedAsync("changed.mp4", "next.mp4");
-        using var stop = new CancellationTokenSource();
+        var stop = false;
         var processor = new ScriptedProcessor();
         processor.During["changed.mp4"] = () =>
         {
-            stop.Cancel();
+            stop = true;
             throw new JobChangedException(jobs[0].Id);
         };
         var queue = new QueueService(_repository, processor, new DatabaseLocks(), new CommandHints(null));
 
-        var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs), stopAfterThisVideo: stop.Token);
+        var result = await queue.RunAsync(databasePath, new AppSettings(), Prepared(jobs), stopAfterThisVideo: () => stop);
 
         processor.Processed.Should().Equal("changed.mp4");
         result.FailedJobs.Should().BeEmpty();

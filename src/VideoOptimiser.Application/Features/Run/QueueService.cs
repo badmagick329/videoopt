@@ -79,7 +79,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
     /// terminal takes effect at the next video, and "runs next" stays true. The total in <c>[n/total]</c> is the queue as
     /// it is then, so it can change.
     /// </remarks>
-    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, ConversionSpans? spans = null, CancellationToken stopAfterThisVideo = default, CancellationToken cancellationToken = default)
+    public async Task<QueueRunResult> RunAsync(string databasePath, AppSettings settings, QueuePreparationResult preparation, Func<JobRecord, CancellationToken, Task<bool>>? passOver = null, IProgress<JobProgress>? progress = null, ConversionSpans? spans = null, Func<bool>? stopAfterThisVideo = null, CancellationToken cancellationToken = default)
     {
         var ready = 0;
         var toCheck = 0;
@@ -99,7 +99,7 @@ public sealed class QueueService(IJobRepository jobs, IJobProcessor processor, I
                 .ToArray();
             if (waiting.Length == 0) break;
             // A result, not an exception: the videos finished so far get their summary, and the rest stay queued.
-            if (stopAfterThisVideo.IsCancellationRequested && (previous ?? passedOver) is { } last)
+            if (stopAfterThisVideo?.Invoke() == true && (previous ?? passedOver) is { } last)
             {
                 return new QueueRunResult(ready, failed, skipped, UnreachableWorkerJob: null, NotStarted: waiting.Length, ExitCode.Cancelled, StoppedAfter: last, ToCheck: toCheck);
             }
