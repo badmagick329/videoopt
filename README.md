@@ -116,7 +116,7 @@ Read [docs/immich.md](docs/immich.md) before the first run. It covers the API ke
 
 ## Build from source
 
-You need the .NET 10 SDK, version 10.0.400 or a later 10.0.4xx patch (`global.json` pins it). From the repository root:
+You need the .NET 10 SDK, exactly version 10.0.400 (`global.json` pins it). A later patch bundles a newer AOT compiler package than the one the lock files record, so restore refuses it. From the repository root:
 
 ```powershell
 .\scripts\build.ps1
