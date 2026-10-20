@@ -111,10 +111,10 @@ To make the snapshot:
    .\video-optimiser.exe worker delete --config .\video-optimiser.yaml
    ```
 
-4. Look up the snapshot's ID with your Hetzner API token. The command also prints the snapshot's disk size in GB:
+4. Look up the snapshot's ID with your Hetzner API token. The command also prints two sizes in GB: `disk_size` is the smallest server disk the snapshot fits on, and `image_size` is the size Hetzner bills for:
 
    ```powershell
-   (Invoke-RestMethod 'https://api.hetzner.cloud/v1/images?type=snapshot' -Headers @{ Authorization = 'Bearer <paste-token>' }).images | Select-Object id, description, disk_size
+   (Invoke-RestMethod 'https://api.hetzner.cloud/v1/images?type=snapshot' -Headers @{ Authorization = 'Bearer <paste-token>' }).images | Select-Object id, description, disk_size, image_size
    ```
 
 5. Set `image` to that ID, in quotes:
@@ -130,7 +130,7 @@ Hetzner can't create a server from a snapshot on a type whose disk is smaller th
 
 A snapshot works in any location in its network zone. hel1, fsn1 and nbg1 are all in the `eu-central` zone, so with the default `locations` one snapshot serves every worker.
 
-Hetzner charges for snapshots by the GB each month, and a worker's snapshot is a few GB. See [hetzner.com/cloud](https://www.hetzner.com/cloud/) for the price.
+Hetzner charges for snapshots by the GB of `image_size` each month, and a worker's snapshot is a few GB. See [hetzner.com/cloud](https://www.hetzner.com/cloud/) for the price.
 
 When an update changes the version of one of the tools, a worker from the old snapshot still works, but it builds that tool again while it bootstraps, and the bootstrap shows that tool's stage again, such as `Bootstrapping: 60%, building FFmpeg.` Make a new snapshot then, and delete the old one in the Hetzner Console.
 
