@@ -477,6 +477,29 @@ public sealed class TuiActionTests : IDisposable
         Texts(await _rig.Actions.StopAsync(now: false, _rig.Settings, default)).Should().Equal("No run is going.");
     }
 
+    /// <summary>
+    /// x on a stop after this video withdraws it (VOPT-189). The key acted on the last snapshot, so each way the row may have
+    /// moved on since gets its own warning, and only the withdraw itself is an action.
+    /// </summary>
+    [Theory]
+    [InlineData(null, false, false, "Warning", "No run is going.")]
+    [InlineData(LockHolders.Run, true, false, "Warning", "That run is in another window (video-optimiser run); only Ctrl+C there stops it.")]
+    [InlineData(LockHolders.BackgroundRun, true, false, "Action", "Asked the run to carry on after this video.")]
+    [InlineData(LockHolders.BackgroundRun, false, false, "Warning", "No stop is asked of the run.")]
+    [InlineData(LockHolders.BackgroundRun, true, true, "Warning", "The run is already stopping now, and that can't be undone.")]
+    public async Task WithdrawingAStopSaysWhatTheRequestsRowAllowed(string? holder, bool afterAsked, bool nowAsked, string kind, string text)
+    {
+        var store = new SqliteRunRequestStore(new SqliteDatabaseInitializer());
+        await store.ResetAsync(_rig.DatabasePath, WorkerFateChoice.Delete, default);
+        if (afterAsked) await store.RequestStopAsync(_rig.DatabasePath, now: false, default);
+        if (nowAsked) await store.RequestStopAsync(_rig.DatabasePath, now: true, default);
+        if (holder is not null) _locks.Add(DatabaseLock.TryAcquire(DatabaseLock.RunPath(_rig.DatabasePath), holder, out _)!);
+
+        var result = await _rig.Actions.WithdrawStopAsync(_rig.Settings, default);
+
+        result.Lines.Should().Equal(new LogLine(Enum.Parse<LogKind>(kind), text));
+    }
+
     [Fact]
     public async Task ChangingTheFateWritesItInTheRequestsRowForTheRunToReadWhenItEnds()
     {

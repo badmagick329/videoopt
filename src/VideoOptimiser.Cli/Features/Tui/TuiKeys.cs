@@ -63,7 +63,7 @@ internal static class TuiKeys
     {
         public TuiKey NextPane { get; } = new([], "", "next or previous pane", Label: "tab", GuideLabel: "tab / shift+tab");
         public TuiKey Start { get; } = new(['s'], "start run", "start a run (when none is going and videos are waiting)");
-        public TuiKey StopAfter { get; } = new(['x'], "stop after", "stop the run after this video, or now after asking (while a run is going)");
+        public TuiKey StopAfter { get; } = new(['x'], "stop after", "stop after this video (press again to carry on), or now after asking (while a run is going)");
         public TuiKey StopNow { get; } = new(['X'], "stop now", null);
         public TuiKey Cost { get; } = new(CostPage, null, "what the freed space cost on Hetzner workers");
         public TuiKey Guide { get; } = new(['?'], "help", "this help");

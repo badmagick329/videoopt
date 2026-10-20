@@ -293,6 +293,26 @@ internal sealed class TuiActions(
         };
     }
 
+    /// <remarks>
+    /// The key acts on the last snapshot, so the row may have moved on since: no stop asked or a stop now are warnings, not
+    /// errors. Withdrawn promises only that the run carries on after this video: a late withdraw is accepted, not reported.
+    /// </remarks>
+    public async Task<ActionResult> WithdrawStopAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        var result = await stop.WithdrawAsync(settings.Database.Path, cancellationToken);
+        return result.Outcome switch
+        {
+            WithdrawStopOutcome.NoRun => Done(LogKind.Warning, "No run is going."),
+            WithdrawStopOutcome.Foreground => Done(LogKind.Warning, $"That run is in another window ({result.Holder?.Command}); only Ctrl+C there stops it."),
+            WithdrawStopOutcome.NoStopAsked => Done(LogKind.Warning, "No stop is asked of the run."),
+            WithdrawStopOutcome.StoppingNow => Done(LogKind.Warning, StoppingNowFinal),
+            _ => Done(LogKind.Action, "Asked the run to carry on after this video.")
+        };
+    }
+
+    /// <summary>Shared with the <c>x</c> key, which says it before asking when the snapshot already shows a stop now.</summary>
+    internal const string StoppingNowFinal = "The run is already stopping now, and that can't be undone.";
+
     public async Task<ActionResult> SetWorkerFateAsync(WorkerFateChoice fate, AppSettings settings, CancellationToken cancellationToken)
     {
         await requests.SetWorkerFateAsync(settings.Database.Path, fate, cancellationToken);

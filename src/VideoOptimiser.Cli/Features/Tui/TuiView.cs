@@ -120,7 +120,9 @@ internal static partial class TuiView
     {
         var anywhere = TuiKeys.Anywhere;
         // The stop keys work from every pane, so every footer offers them while a run is going.
-        (string Key, string What)[] stop = m.Run is null ? [] : [anywhere.StopAfter.Hint, anywhere.StopNow.Hint];
+        // x toggles: with a stop after this video asked, its word is the way back.
+        (string Key, string What)[] stop = m.Run is null ? []
+            : [m.Requests is { StopAfterThisVideo: true, StopNow: false } ? anywhere.StopAfter.HintAs("carry on") : anywhere.StopAfter.Hint, anywhere.StopNow.Hint];
         // Esc works from every pane, but Review is where the batch shows, so its footer offers it.
         (string Key, string What)[] stopFinalise = m.Finalising is { CanStop: true } ? [TuiKeys.Review.StopFinalise.Hint] : [];
         (string Key, string What)[] hints = m.Help

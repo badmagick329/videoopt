@@ -49,13 +49,18 @@ internal static partial class TuiView
     };
 
     /// <summary>
+    /// Wide enough for the longest key row to read whole in a wide window: the key column (15), the border and padding (6). Taken
+    /// from the table, so a reworded key (x's toggle, VOPT-189) never gets cut while the window has room.
+    /// </summary>
+    private static readonly int HelpWidth = TuiHelp.Groups.SelectMany(group => group.Keys).Max(key => key.What.Length) + 15 + 6;
+
+    /// <summary>
     /// Every key, grouped as the footers group them, in the dialogs' style. A window too short for every row shows what fits:
     /// the per-pane groups drop from the end, and the Anywhere group alone is cut at the window's last row.
     /// </summary>
     private static Panel HelpDialog(TuiModel m)
     {
-        // Wide enough for the longest key row, the stop keys' shared one, to read whole in a wide window.
-        var width = Math.Clamp(m.Width - 6, 30, 94);
+        var width = Math.Clamp(m.Width - 6, 30, HelpWidth);
         var inner = width - 6;
         var room = Math.Max(1, m.Height - 4);
         const string closing = "Any key closes this.";

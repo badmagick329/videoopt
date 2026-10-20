@@ -113,6 +113,9 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
             case StopRun stop:
                 Finish(effect, await actions.StopAsync(stop.Now, Settings, cancellationToken));
                 break;
+            case WithdrawStop:
+                Finish(effect, await actions.WithdrawStopAsync(Settings, cancellationToken));
+                break;
             case SetWorkerFate fate:
                 Finish(effect, await actions.SetWorkerFateAsync(fate.Fate, Settings, cancellationToken));
                 break;

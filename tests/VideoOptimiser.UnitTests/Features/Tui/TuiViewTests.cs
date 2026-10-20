@@ -566,6 +566,21 @@ public sealed class TuiViewTests
         }
     }
 
+    /// <summary>x toggles (VOPT-189): while a stop after this video is asked its footer word is the way back, until a stop now makes it final.</summary>
+    [Theory]
+    [InlineData(false, false, "x stop after")]
+    [InlineData(true, false, "x carry on")]
+    [InlineData(true, true, "x stop after")]
+    public void TheFooterOffersCarryingOnWhileAStopAfterThisVideoIsAsked(bool afterAsked, bool nowAsked, string offered)
+    {
+        var model = After(Busy(), Snap(Snapshot(run: new RunSection(BackgroundRun, new RunRequests(afterAsked, nowAsked, WorkerFateChoice.Delete)))));
+
+        var footer = Rows(model)[^1];
+
+        footer.Should().Contain(offered).And.Contain("X stop now");
+        footer.Should().NotContain(offered == "x carry on" ? "stop after" : "carry on");
+    }
+
     /// <summary>With no managed worker the fate means nothing, so the title leaves it out.</summary>
     [Fact]
     public void TheActivityTitleLeavesOutTheWorkerFateWhenThereIsNoManagedWorker()
@@ -600,7 +615,7 @@ public sealed class TuiViewTests
         foreach (var group in new[] { "Anywhere", "Queue", "Worker", "Activity", "Review" })
             rows.Should().Contain(row => row.Contains($"│ {group}", StringComparison.Ordinal) || row.Contains($"  {group} ", StringComparison.Ordinal), group);
         Row(rows, "tab / shift+tab").Should().Contain("next or previous pane");
-        Row(rows, "stop the run after this video").Should().Contain("(while a run is going)");
+        Row(rows, "stop after this video (press again to carry on)").Should().Contain("(while a run is going)");
         Row(rows, "release a held video").Should().NotBeNull();
         Row(rows, "create a worker").Should().Contain("(managed worker only)");
         Row(rows, "delete or keep the worker when the run ends").Should().Contain("(background run");
@@ -609,7 +624,7 @@ public sealed class TuiViewTests
         Row(rows, "Any key closes this.").Should().NotBeNull();
         rows[^1].Should().Contain("any key close the help");
         // The screen behind it is still there, dimmed.
-        Row(rows, "clip-002.mp4").Should().NotBeNull();
+        Row(rows, "Queue 1/7").Should().NotBeNull();
     }
 
     /// <summary>In a window too short for every row the per-pane groups drop from the end, and the Anywhere group stays.</summary>

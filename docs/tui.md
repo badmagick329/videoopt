@@ -30,7 +30,7 @@ These work from any pane:
 | Key | What it does |
 | --- | --- |
 | `s` | Start a run in the background. See [Starting a run](#starting-a-run). |
-| `x` | Stop the run after the video converting now. |
+| `x` | Stop the run after the video converting now. Press `x` again before that video finishes to carry on. |
 | `X` | Stop the run now, after asking. The video converting now starts again from its last finished step on the next run. |
 | `$` | Show what the freed space cost. See [What the freed space cost](#what-the-freed-space-cost). |
 | `?` | Show the key guide. Any key closes it. |

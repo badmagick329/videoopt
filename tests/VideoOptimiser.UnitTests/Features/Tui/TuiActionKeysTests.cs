@@ -399,13 +399,30 @@ public sealed class TuiActionKeysTests
     private static TuiModel Running(RunRequests? requests = null, bool background = true, bool managed = true) =>
         WithRun(Focused(WithWorker(After(Model(), Snap(Quiet([Converting(1)]))), managed: managed), Pane.Activity), background ? Background : new LiveRunHolder(LockHolders.Run, Now, 99), requests);
 
-    [Fact]
-    public void XAsksTheRunToStopAfterThisVideoAtOnce()
+    /// <summary>
+    /// x toggles a stop after this video (VOPT-189), with no dialog either way: asked, it withdraws it; a stop now, alone or on
+    /// top of one after this video, is final and only gets a notice.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false, "StopRun", "Asking the run to stop after this video.")]
+    [InlineData(true, false, "WithdrawStop", "Asking the run to carry on.")]
+    [InlineData(false, true, null, "The run is already stopping now, and that can't be undone.")]
+    [InlineData(true, true, null, "The run is already stopping now, and that can't be undone.")]
+    public void XTogglesAStopAfterThisVideoUntilAStopNowIsAsked(bool afterAsked, bool nowAsked, string? effect, string said)
     {
-        var step = Update(Running(), Letter('x'));
+        var step = Update(Running(new RunRequests(afterAsked, nowAsked, WorkerFateChoice.Delete)), Letter('x'));
 
-        step.Effects.Should().Equal(new StopRun(Now: false));
-        step.Model.Busy["stop"].Should().Be("Asking the run to stop after this video.");
+        step.Model.Confirm.Should().BeNull();
+        if (effect is null)
+        {
+            step.Effects.Should().BeEmpty();
+            Notice(step).Should().Be(said);
+        }
+        else
+        {
+            step.Effects.Should().Equal(effect == "StopRun" ? new StopRun(Now: false) : (TuiEffect)new WithdrawStop());
+            step.Model.Busy["stop"].Should().Be(said);
+        }
     }
 
     [Fact]
@@ -442,9 +459,8 @@ public sealed class TuiActionKeysTests
     }
 
     [Fact]
-    public void AStopAlreadyAskedIsNotAskedTwice()
+    public void AStopNowAlreadyAskedIsNotAskedTwice()
     {
-        Notice(Update(Running(new RunRequests(true, false, WorkerFateChoice.Delete)), Letter('x'))).Should().Be("A stop is already asked of the run.");
         Notice(Update(Running(new RunRequests(false, true, WorkerFateChoice.Delete)), Letter('X'))).Should().Be("The run is already stopping now.");
         // A stop after this video can still be made a stop now.
         Update(Running(new RunRequests(true, false, WorkerFateChoice.Delete)), Letter('X')).Model.Confirm.Should().NotBeNull();

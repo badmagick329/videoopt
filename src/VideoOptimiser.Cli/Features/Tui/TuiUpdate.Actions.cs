@@ -202,14 +202,18 @@ internal static partial class TuiUpdate
             current == WorkerFateChoice.Keep ? 1 : 0));
     }
 
-    /// <summary>Stopping is the run's, not a pane's: x and X work wherever the cursor is, like s.</summary>
+    /// <summary>
+    /// Stopping is the run's, not a pane's: x and X work wherever the cursor is, like s. x toggles a stop after this video
+    /// (VOPT-189): asked, it withdraws without a dialog, since carrying on loses nothing; a stop now is final.
+    /// </summary>
     private static TuiStep StopKey(TuiModel m, char c)
     {
         if (m.Run is not { } run) return Told(m, "No run is going.");
         if (!run.IsBackground) return Told(m, "That run is in another window; only Ctrl+C there stops it.");
         if (TuiKeys.Anywhere.StopAfter.Is(c))
         {
-            if (m.Requests is { StopNow: true } or { StopAfterThisVideo: true }) return Told(m, "A stop is already asked of the run.");
+            if (m.Requests is { StopNow: true }) return Told(m, TuiActions.StoppingNowFinal);
+            if (m.Requests is { StopAfterThisVideo: true }) return Emit(m, new WithdrawStop());
             return Emit(m, new StopRun(Now: false));
         }
         if (m.Requests is { StopNow: true }) return Told(m, "The run is already stopping now.");

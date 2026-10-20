@@ -94,7 +94,7 @@ Each key is the command of the same name, with the same rules and refusals; clas
 | `d`, `t` | Queue | `queue drop`, `queue retry` (failed videos only); asks first | Job database |
 | `d` on a failed video | Queue | `queue dismiss <job-id>`, or `queue dismiss --all` when the person picks all; asks first | Job database |
 | `s` | any | starts a background run (below) | **Warn** when it would create a Hetzner server |
-| `x`, `X` | any | `run stop`, `run stop --now`; `X` asks first | Job database |
+| `x`, `X` | any | `run stop`, `run stop --now`; `x` again while a stop after this video is asked is `run stop --undo` (footer: `x carry on`); `X` asks first, and a stop now is final | Job database |
 | `c`, `d` | Worker | `worker create` (lists servers with prices), `worker delete` (asks first) | **Warn** |
 | `r` | Worker | `worker status` | Read-only |
 | `w` | Activity | sets the background run's worker fate: delete or keep when it ends | **Warn** for keep: the worker bills |

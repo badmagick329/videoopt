@@ -168,6 +168,13 @@ internal sealed record StopRun(bool Now) : TuiEffect
     public override string BusyText => Now ? "Asking the run to stop now." : "Asking the run to stop after this video.";
 }
 
+/// <summary>Withdraws a stop after this video (VOPT-189); it holds the stop's busy key, so a stop and its withdraw never race.</summary>
+internal sealed record WithdrawStop : TuiEffect
+{
+    public override string BusyKey => BusyKeys.Stop;
+    public override string BusyText => "Asking the run to carry on.";
+}
+
 internal sealed record SetWorkerFate(WorkerFateChoice Fate) : TuiEffect
 {
     public override string BusyKey => BusyKeys.Fate;
