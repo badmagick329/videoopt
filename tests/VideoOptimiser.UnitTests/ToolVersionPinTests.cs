@@ -80,6 +80,24 @@ public sealed partial class ToolVersionPinTests
             "a version and its pin change together; see this test's summary for how to take a new pin");
     }
 
+    /// <summary>
+    /// <c>WorkerReadiness</c> takes the complete marker as ready before anything else. A worker created from a snapshot
+    /// of a finished worker starts with that marker on disk (VOPT-181), so the script must drop it before it reports any
+    /// progress, or the run connects before the account and SSH are set up.
+    /// </summary>
+    [Fact]
+    public void TheBootstrapRemovesTheCompleteMarkerBeforeItReportsProgress()
+    {
+        var bootstrap = ReadScript("bootstrap-remote-worker.sh");
+
+        var removal = bootstrap.IndexOf("rm -f -- \"${PREFIX}/.bootstrap-complete\"", StringComparison.Ordinal);
+        var firstProgress = bootstrap.IndexOf("\nwrite_progress 0 ", StringComparison.Ordinal);
+
+        removal.Should().BeGreaterThan(-1, "the script removes a complete marker a snapshot carries");
+        firstProgress.Should().BeGreaterThan(-1, "the script reports its start");
+        removal.Should().BeLessThan(firstProgress, "the marker is gone before the readiness wait can see progress");
+    }
+
     // The test project's working copy may have CRLF; the patterns expect LF, as the worker gets.
     private static string ReadScript(string name) => File.ReadAllText(Path.Combine(RepositoryRoot(), "scripts", name)).ReplaceLineEndings("\n");
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Remote workers
+
+- A Hetzner worker can start from a snapshot of an earlier worker, with FFmpeg and the encoders already built, so it's ready sooner and bills less before the first video. Set `processing.remoteSsh.hetzner.image` to the snapshot's ID; `docs/remote-ssh.md` explains how to make the snapshot. Before, a worker made from such a snapshot was reported ready before it had set up SSH.
+
 ## [0.15.0] - 2026-10-19
 ### Check your config
 

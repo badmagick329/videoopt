@@ -98,6 +98,8 @@ fi
 install -d -m 0755 "${PREFIX}"
 # A marker left by an earlier failed attempt would end this one's wait at once.
 rm -f -- "${FAILED_FILE}"
+# A worker made from a snapshot of a finished one would otherwise be reported ready before this run sets up SSH.
+rm -f -- "${PREFIX}/.bootstrap-complete"
 write_progress 0 "Starting"
 
 if [[ "$(uname -m)" != "x86_64" ]]; then

@@ -47,7 +47,7 @@ Running it again is safe: it finds the same key file and the same Hetzner entry.
 
 VideoOptimiser sends the key's Hetzner name in each create request. Hetzner installs the public key for `root`; the cloud-init bootstrap copies it to the restricted `videoopt` account, and Windows connects as `videoopt` with the private key. Deleting a worker does not delete the project's SSH key, so later workers reuse it.
 
-The image must be Ubuntu 24.04 x86-64; the bootstrap refuses Ubuntu 26.04. VideoOptimiser gives the worker a public IPv4 address and no IPv6, marks the IPv4 address for automatic deletion, and labels the worker as its own; it reuses or deletes only a worker with those labels.
+The image must be Ubuntu 24.04 x86-64, or the ID of a snapshot of a worker (see [Starting workers from a snapshot](#starting-workers-from-a-snapshot)); the bootstrap refuses Ubuntu 26.04. VideoOptimiser gives the worker a public IPv4 address and no IPv6, marks the IPv4 address for automatic deletion, and labels the worker as its own; it reuses or deletes only a worker with those labels.
 
 ### How the worker is chosen
 
@@ -90,6 +90,49 @@ Gross hourly prices in the EU on 2026-10-12, for choosing your list:
 CX types sell out often, and Hetzner sells them only in fsn1, nbg1 and hel1. Prices change, so check the Hetzner Console. Locations outside Europe (ash, hil, sin) mostly cost more, and every original and output crosses that distance, so keep EU locations first. Hetzner's `recommended` flag never reorders your list.
 
 The worker's type and location show in `worker status`.
+
+### Starting workers from a snapshot
+
+A new worker builds libvmaf, SVT-AV1 and FFmpeg from source before it's ready, and Hetzner bills for that time. A worker created from a Hetzner snapshot of an earlier worker already has these tools: the bootstrap finds each one at its pinned version and skips the build. It still installs packages, sets up the `videoopt` account and SSH, and checks the codecs.
+
+To make the snapshot:
+
+1. Set `serverTypes` to the type in your list with the smallest disk, then create a worker and wait for `Worker ready`:
+
+   ```powershell
+   .\video-optimiser.exe worker create --config .\video-optimiser.yaml
+   ```
+
+   Put your full `serverTypes` list back afterwards.
+2. In the Hetzner Console, open the worker, shut it down under **Power**, then take a snapshot under **Snapshots**.
+3. Delete the worker:
+
+   ```powershell
+   .\video-optimiser.exe worker delete --config .\video-optimiser.yaml
+   ```
+
+4. Look up the snapshot's ID with your Hetzner API token. The command also prints the snapshot's disk size in GB:
+
+   ```powershell
+   (Invoke-RestMethod 'https://api.hetzner.cloud/v1/images?type=snapshot' -Headers @{ Authorization = 'Bearer <paste-token>' }).images | Select-Object id, description, disk_size
+   ```
+
+5. Set `image` to that ID, in quotes:
+
+   ```yaml
+   processing:
+     remoteSsh:
+       hetzner:
+         image: "123456789"
+   ```
+
+Hetzner can't create a server from a snapshot on a type whose disk is smaller than the snapshot's. That's why step 1 uses the smallest disk in your list: a snapshot made on a larger disk makes every create on a smaller type fail. A type with a larger disk works. Hetzner's price list shows each type's disk.
+
+A snapshot works in any location in its network zone. hel1, fsn1 and nbg1 are all in the `eu-central` zone, so with the default `locations` one snapshot serves every worker.
+
+Hetzner charges for snapshots by the GB each month, and a worker's snapshot is a few GB. See [hetzner.com/cloud](https://www.hetzner.com/cloud/) for the price.
+
+When an update changes the version of one of the tools, a worker from the old snapshot still works, but it builds that tool again while it bootstraps, and the bootstrap shows that tool's stage again, such as `Bootstrapping: 60%, building FFmpeg.` Make a new snapshot then, and delete the old one in the Hetzner Console.
 
 <details>
 <summary>Doing it by hand</summary>
