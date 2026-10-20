@@ -29,6 +29,10 @@ public sealed class WorkerEndRunTests : IDisposable
     private readonly ScriptedRunProcessor _processor = new(remote: true);
     private string _config = "";
 
+    // One deadline for the whole test, counted from its start, so a run stuck on a read fails it instead of hanging the host.
+    private readonly CancellationTokenSource _patience = new(TimeSpan.FromSeconds(10));
+    private Task _answer = Task.CompletedTask;
+
     public WorkerEndRunTests()
     {
         Directory.CreateDirectory(_directory);
@@ -155,11 +159,12 @@ public sealed class WorkerEndRunTests : IDisposable
         {
             _stop.Press();
             _stop.Press();
-            _ = AnswerOnceTakenOverAsync(null);
+            _answer = AnswerOnceTakenOverAsync(null);
             return Task.CompletedTask;
         };
 
         var (_, output, _) = await RunAsync();
+        await _answer;
 
         output.Should().EndWith(Transcript(
             "Delete the worker when the run stops? [y/N] ",
@@ -179,9 +184,10 @@ public sealed class WorkerEndRunTests : IDisposable
         await QueueJobsAsync(2);
         _input.Later();
         _processor.During[0] = _ => { _stop.Press(); return Task.CompletedTask; };
-        _processor.AfterVideo[0] = () => { _ = AnswerOnceTakenOverAsync("y"); return Task.CompletedTask; };
+        _processor.AfterVideo[0] = () => { _answer = AnswerOnceTakenOverAsync("y"); return Task.CompletedTask; };
 
         var (code, output, _) = await RunAsync();
+        await _answer;
 
         output.Should().Be(Transcript(
             Banner,
@@ -616,9 +622,22 @@ public sealed class WorkerEndRunTests : IDisposable
         _processor.During.Clear();
     }
 
+    /// <summary>
+    /// Types the answer once the run has taken the question over, so it answers the end question rather than the first. Nothing
+    /// signals the takeover, so this polls. A takeover that never comes would leave the run waiting on the read for ever, so at
+    /// <see cref="_patience"/> the read ends with no answer, the run returns, and the test fails when it awaits this.
+    /// </summary>
     private async Task AnswerOnceTakenOverAsync(string? line)
     {
-        while (!_state.Question.IsTakenOver) await Task.Delay(10);
+        try
+        {
+            while (!_state.Question.IsTakenOver) await Task.Delay(10, _patience.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            _input.Type(null);
+            throw new TimeoutException("The run never took the worker question over, so its answer was never typed.");
+        }
         _input.Type(line);
     }
 
@@ -630,6 +649,7 @@ public sealed class WorkerEndRunTests : IDisposable
     public void Dispose()
     {
         _stop.Dispose();
+        _patience.Dispose();
         Directory.Delete(_directory, recursive: true);
     }
 }
