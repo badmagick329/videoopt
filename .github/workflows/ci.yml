@@ -19,11 +19,6 @@ jobs:
           -o artifacts/ci
       - shell: pwsh
         run: ./scripts/smoke-test.ps1 -Executable artifacts/ci/video-optimiser.exe -ExpectedVersion 0.0.0-ci.${{ github.sha }}
-      - uses: actions/cache@v6
+      - uses: ./.github/actions/e2e
         with:
-          path: ${{ runner.temp }}/media-tools
-          key: media-tools-${{ hashFiles('scripts/install-media-tools.ps1') }}
-      - shell: pwsh
-        run: ./scripts/install-media-tools.ps1 -Destination "$env:RUNNER_TEMP/media-tools" | Add-Content -LiteralPath $env:GITHUB_PATH
-      - shell: pwsh
-        run: ./scripts/e2e-test.ps1 -Executable artifacts/ci/video-optimiser.exe
+          executable: artifacts/ci/video-optimiser.exe

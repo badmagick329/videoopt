@@ -1,0 +1,19 @@
+name: End-to-end test
+description: Installs the pinned ab-av1 and FFmpeg and runs scripts/e2e-test.ps1 against an exe. CI and the release share it, so the release can't check less than CI does.
+
+inputs:
+  executable:
+    description: Path to the video-optimiser.exe to test.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/media-tools
+        key: media-tools-${{ hashFiles('scripts/install-media-tools.ps1') }}
+    - shell: pwsh
+      run: ./scripts/install-media-tools.ps1 -Destination "$env:RUNNER_TEMP/media-tools" | Add-Content -LiteralPath $env:GITHUB_PATH
+    - shell: pwsh
+      run: ./scripts/e2e-test.ps1 -Executable '${{ inputs.executable }}'

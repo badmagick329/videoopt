@@ -62,4 +62,6 @@ if ($PSCmdlet.ShouldProcess($tag, 'Commit, tag, and push release')) {
     Invoke-Checked git @('tag', '-a', $tag, '-m', "Release $tag")
     Invoke-Checked git @('push', 'origin', 'HEAD')
     Invoke-Checked git @('push', 'origin', $tag)
+    # e2e needs the pinned media tools on PATH and adds about two minutes, so it runs only in release.yml, which gates publishing on it.
+    Write-Host "Pushed $tag. The Release workflow runs the end-to-end test and publishes $tag only if it passes; check it on GitHub Actions."
 }

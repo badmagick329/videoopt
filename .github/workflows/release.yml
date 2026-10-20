@@ -12,6 +12,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # A tag on a branch or a stray commit never ran CI on main, so only a commit main holds is released.
+      - name: Check the tag is on main
+        shell: pwsh
+        run: |
+          git merge-base --is-ancestor '${{ github.sha }}' origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Tag ${{ github.ref_name }} points at ${{ github.sha }}, which isn't on main." }
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
@@ -42,6 +50,11 @@ jobs:
           $match = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($version))\][^\r\n]*\r?\n(?<notes>.*?)(?=^## |\z)")
           if (-not $match.Success) { throw "No changelog entry found for $version." }
           Set-Content -LiteralPath artifacts/release-notes.md -Value $match.Groups['notes'].Value.Trim() -NoNewline
+      # CI's e2e runs in parallel on the same push and can't stop this workflow, so the release runs its own on the exe it ships.
+      - name: End-to-end test
+        uses: ./.github/actions/e2e
+        with:
+          executable: artifacts/publish/video-optimiser.exe
       - name: Create GitHub release
         shell: pwsh
         env:

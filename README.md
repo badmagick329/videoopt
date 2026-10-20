@@ -125,7 +125,7 @@ dotnet test tests/VideoOptimiser.UnitTests
 
 `build.ps1` builds and smoke-tests `artifacts\local\video-optimiser.exe`. For quick development runs, use `dotnet run --project src/VideoOptimiser.Cli -- <arguments>`.
 
-CI also runs an end-to-end test that encodes, validates and finalises generated clips with pinned ab-av1 and FFmpeg builds. To run it locally:
+CI and every release also run an end-to-end test that encodes, validates and finalises generated clips with pinned ab-av1 and FFmpeg builds. To run it locally:
 
 ```powershell
 $env:PATH = ((.\scripts\install-media-tools.ps1 -Destination .\artifacts\media-tools) -join ';') + ";$env:PATH"
