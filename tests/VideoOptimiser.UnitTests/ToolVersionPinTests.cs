@@ -98,6 +98,24 @@ public sealed partial class ToolVersionPinTests
         removal.Should().BeLessThan(firstProgress, "the marker is gone before the readiness wait can see progress");
     }
 
+    /// <summary>
+    /// A worker from a snapshot reaches the SSH step seconds after boot, before ssh.service has ever started, so
+    /// <c>/run/sshd</c> is missing and a plain <c>reload</c> has nothing to reload. Both stopped the bootstrap (VOPT-181).
+    /// </summary>
+    [Fact]
+    public void TheBootstrapChecksSshdWithoutWaitingForSshToHaveStarted()
+    {
+        var bootstrap = ReadScript("bootstrap-remote-worker.sh");
+
+        var privilegeDirectory = bootstrap.IndexOf("install -d -m 0755 -o root -g root /run/sshd\n", StringComparison.Ordinal);
+        var configCheck = bootstrap.IndexOf("\nsshd -t\n", StringComparison.Ordinal);
+
+        privilegeDirectory.Should().BeGreaterThan(-1, "sshd -t needs /run/sshd, which only a started ssh.service makes");
+        privilegeDirectory.Should().BeLessThan(configCheck, "the directory exists before sshd -t runs");
+        bootstrap.Should().Contain("\nsystemctl reload-or-restart ssh\n").And.NotContain("\nsystemctl reload ssh\n",
+            "reload fails while ssh.service is inactive");
+    }
+
     // The test project's working copy may have CRLF; the patterns expect LF, as the worker gets.
     private static string ReadScript(string name) => File.ReadAllText(Path.Combine(RepositoryRoot(), "scripts", name)).ReplaceLineEndings("\n");
 

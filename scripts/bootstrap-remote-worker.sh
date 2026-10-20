@@ -277,6 +277,9 @@ Match User videoopt
     X11Forwarding no
 EOF
 
+# /run is emptied at boot and ssh.service makes /run/sshd only when it starts, which on Ubuntu 24.04 waits for the first
+# connection. A worker from a snapshot gets here seconds after boot, before any, and sshd -t refuses without it.
+install -d -m 0755 -o root -g root /run/sshd
 sshd -t
 effective_sshd_config="$(sshd -T -C user="${WORKER_USER}",host=localhost,addr=127.0.0.1)"
 grep -Fx 'authenticationmethods publickey' <<<"${effective_sshd_config}" >/dev/null \
@@ -285,7 +288,8 @@ grep -Fx 'pubkeyauthentication yes' <<<"${effective_sshd_config}" >/dev/null \
     || die "public-key SSH authentication is not enabled for ${WORKER_USER}"
 grep -Fx 'passwordauthentication no' <<<"${effective_sshd_config}" >/dev/null \
     || die "password SSH authentication is still enabled for ${WORKER_USER}"
-systemctl reload ssh
+# reload alone fails while ssh.service has not started yet, as on a worker from a snapshot.
+systemctl reload-or-restart ssh
 
 write_progress 98 "Verifying installed codecs"
 "${PREFIX}/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep 'libsvtav1' >/dev/null \
