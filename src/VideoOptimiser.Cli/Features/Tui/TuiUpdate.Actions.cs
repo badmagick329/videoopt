@@ -31,6 +31,7 @@ internal static partial class TuiUpdate
     private static TuiStep QueueKey(TuiModel m, char c)
     {
         var keys = TuiKeys.Queue;
+        if (keys.Add.Is(c)) return AddKey(m);
         if (!(keys.Hold.Is(c) || keys.Release.Is(c) || keys.Drop.Is(c) || keys.RunNext.Is(c) || keys.Retry.Is(c))) return TuiStep.Of(m);
         if (m.Ordered().FirstOrDefault(video => video.Id == m.QueueSelection) is not { } v) return Told(m, "Nothing is selected.");
         var q = v.Name;

@@ -12,7 +12,7 @@ internal static partial class TuiView
     {
         var keys = TuiKeys.Queue;
         var drop = FailedSelected(m) ? keys.Drop.HintAs(TuiKeys.QueueKeys.DismissFooter) : keys.Drop.Hint;
-        return [keys.Select.Hint, keys.Hold.Hint, keys.Release.Hint, keys.RunNext.Hint, drop, keys.Retry.Hint, .. stop, .. Closing()];
+        return [keys.Add.Hint, keys.Select.Hint, keys.Hold.Hint, keys.Release.Hint, keys.RunNext.Hint, drop, keys.Retry.Hint, .. stop, .. Closing()];
     }
 
     private static readonly (string Header, Color Color)[] GroupHeads =

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### The full-screen view
+
+- In Queue, `a` adds videos from the watch folders, Immich or a file path, including while a run converts. Immich asks how many new videos to queue, starting at one; a file outside the watch folders or eligibility rules can be forced after asking. Progress appears in Activity, and `esc` cancels an addition while keeping videos already queued.
+
 ## [0.16.0] - 2026-10-20
 ### Remote workers
 

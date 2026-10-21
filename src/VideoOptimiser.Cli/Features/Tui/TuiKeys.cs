@@ -74,6 +74,7 @@ internal static class TuiKeys
 
     internal sealed class QueueKeys() : PaneKeys("Queue")
     {
+        public TuiKey Add { get; } = new(['a'], "add", "add videos from watch folders, Immich or a file path; Esc cancels an active addition");
         public TuiKey Select { get; } = new([], "select", "select a video", Label: "↑↓");
         public TuiKey Hold { get; } = new(['h'], "hold", "hold a waiting or stopped video");
         public TuiKey Release { get; } = new(['r'], "release", "release a held video");
@@ -84,7 +85,7 @@ internal static class TuiKeys
         /// <summary>The footer's word for <see cref="Drop"/> on a failed video, which it dismisses instead (VOPT-115).</summary>
         public const string DismissFooter = "dismiss";
 
-        public override IReadOnlyList<TuiKey> All => [Select, Hold, Release, RunNext, Drop, Retry];
+        public override IReadOnlyList<TuiKey> All => [Add, Select, Hold, Release, RunNext, Drop, Retry];
     }
 
     internal sealed class WorkerKeys() : PaneKeys("Worker")

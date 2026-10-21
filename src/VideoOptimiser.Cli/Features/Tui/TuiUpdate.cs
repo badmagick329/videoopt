@@ -25,6 +25,7 @@ internal static partial class TuiUpdate
             SnapshotMsg snapshot => TuiStep.Of(OnSnapshot(m, snapshot.Snapshot)),
             WorkerCheckedMsg checkedMsg => TuiStep.Of(OnWorkerChecked(m, checkedMsg)),
             ActionDoneMsg done => OnActionDone(m, done),
+            QueueAdditionDoneMsg added => OnQueueAdditionDone(m, added),
             TuiLogMsg log => TuiStep.Of(AppendLines(m, [new LogLine(log.Kind, log.Text)])),
             WorkerOptionsMsg options => OnWorkerOptions(m, options),
             PreparedMsg prepared => TuiStep.Of(OnPrepared(m, prepared)),
@@ -160,7 +161,7 @@ internal static partial class TuiUpdate
 
     private static TuiStep OnKey(TuiModel m, ConsoleKeyInfo key)
     {
-        if (key.Key == ConsoleKey.C && key.Modifiers.HasFlag(ConsoleModifiers.Control))
+        if (key.Key == ConsoleKey.C && key.Modifiers.HasFlag(ConsoleModifiers.Control) && !key.Modifiers.HasFlag(ConsoleModifiers.Alt))
         {
             // Ctrl+C twice always gets out: the second press lands in the quit dialog.
             return m.Busy.IsEmpty || m.Dialog is TuiConfirm { OnYes: QuitNow } ? TuiStep.Of(m with { Quit = true }) : TuiStep.Of(ConfirmQuit(m));
@@ -181,7 +182,14 @@ internal static partial class TuiUpdate
                 return confirm.OnYes is QuitNow ? TuiStep.Of(m with { Quit = true }) : Emit(m, confirm.OnYes);
             case TuiChoice choice:
                 return OnChoiceKey(m, choice, key.Key);
+            case TuiTextInput input:
+                return OnQueueInputKey(m, input, key);
         }
+
+        // Addition has its own cancellation source. One Esc must never also stop a finalise underneath it.
+        if (key.Key == ConsoleKey.Escape && m.Busy.ContainsKey(AddVideos.Key)) return CancelAddition(m);
+        // Console pastes may end in CRLF: its trailing LF must not become a screen action after Enter submits a field.
+        if (char.IsControl(key.KeyChar) && key.Key is not (ConsoleKey.Tab or ConsoleKey.UpArrow or ConsoleKey.DownArrow or ConsoleKey.PageUp or ConsoleKey.PageDown or ConsoleKey.Home or ConsoleKey.End or ConsoleKey.Escape)) return TuiStep.Of(m);
 
         // The cost page takes the keys after the dialogs, which an effect may open over it (the quit question among them).
         if (m.Cost is { } page) return CostKey(m, page, key);
@@ -214,7 +222,8 @@ internal static partial class TuiUpdate
             ? ($"{going[0]} is still going.", "Quitting now stops it partway. It's better to wait for it to finish.")
             : ($"{going.Length} actions are still going.", $"{string.Join("; ", going)}. Quitting now stops them partway. It's better to wait for them to finish.");
         // A long batch need not be waited out: Esc ends it cleanly after the video it is on.
-        if (m.Finalising is { CanStop: true }) detail += " " + EscStopsTheFinalise;
+        if (m.Busy.ContainsKey(AddVideos.Key)) detail += " Cancel this and press Esc to cancel queue addition.";
+        else if (m.Finalising is { CanStop: true }) detail += " " + EscStopsTheFinalise;
         return m with { Dialog = new TuiConfirm(question, detail, new QuitNow()) };
     }
 

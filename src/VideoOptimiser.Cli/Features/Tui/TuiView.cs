@@ -131,6 +131,8 @@ internal static partial class TuiView
             ? [("y", "confirm"), ("any other key", "cancel")]
             : m.Dialog is TuiChoice
                 ? [("↑↓", "move"), ("enter", "choose"), ("esc", "cancel")]
+                : m.Dialog is TuiTextInput
+                ? [("enter", "add"), ("esc", "cancel"), ("backspace", "edit")]
                 : m.Cost is { } page
                 ? [.. page.Report is { Runs.Count: > 0 } ? [("↑↓", "select a run"), ("pgup pgdn", "scroll its videos")] : Array.Empty<(string, string)>(),
                     (TuiKeys.Anywhere.Cost.Name + " / esc", "close"), ("ctrl+c", "quit")]
@@ -142,9 +144,13 @@ internal static partial class TuiView
                     _ => ReviewHints(stop, stopFinalise)
                 };
 
+        var adding = m.Dialog is null && !m.Help && m.Busy.ContainsKey(AddVideos.Key);
+        if (adding) hints = [("esc", "cancel add"), .. hints.Where(hint => hint.Key != "esc")
+            .Select(hint => hint.Key == anywhere.Cost.Name + " / esc" ? (anywhere.Cost.Name, hint.What) : hint)];
+
         // A notice says why a key did nothing; a read problem stays until the next read works.
         var notice = m.Notice?.Text ?? m.Busy.Values.FirstOrDefault() ?? m.ReadProblem;
-        var noticeText = notice is null ? string.Empty : TuiText.Fit(notice, Math.Max(10, m.Width * 2 / 3)) + " ";
+        var noticeText = notice is null ? string.Empty : TuiText.Fit(notice, adding ? Math.Max(0, m.Width - 32) : Math.Max(10, m.Width * 2 / 3)) + " ";
         var line = new Line();
         var used = 1;
         if (m.Dialog is null)
@@ -156,12 +162,15 @@ internal static partial class TuiView
         else line.Left(" ", Style.Plain);
 
         var budget = m.Width - TuiText.Cells(noticeText) - (noticeText.Length > 0 ? 2 : 0);
+        // A full Queue footer can fit its keys with two spaces when dotted separators would lose the last ones.
+        var hintCells = hints.Sum(hint => TuiText.Cells(hint.Key) + (hint.What.Length > 0 ? 1 + TuiText.Cells(hint.What) : 0));
+        var separator = used + hintCells + Math.Max(0, hints.Length - 1) * 3 > budget ? "  " : " · ";
         var first = true;
         foreach (var (key, what) in hints)
         {
-            var cost = TuiText.Cells(key) + (what.Length > 0 ? 1 + what.Length : 0) + (first ? 0 : 3);
+            var cost = TuiText.Cells(key) + (what.Length > 0 ? 1 + what.Length : 0) + (first ? 0 : separator.Length);
             if (used + cost > budget) break;
-            if (!first) line.Left(" · ", Theme.Of(Theme.Faint));
+            if (!first) line.Left(separator, Theme.Of(Theme.Faint));
             line.Left(key, Theme.Of(Theme.Text, bold: true));
             if (what.Length > 0) line.Left(" " + what, Theme.Of(Theme.Dim));
             used += cost;

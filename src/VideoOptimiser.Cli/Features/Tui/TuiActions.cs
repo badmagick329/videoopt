@@ -2,6 +2,7 @@ using System.Globalization;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Cost;
 using VideoOptimiser.Application.Features.Finalize;
+using VideoOptimiser.Application.Features.ImmichRun;
 using VideoOptimiser.Application.Features.Queue;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
@@ -21,7 +22,7 @@ namespace VideoOptimiser.Cli.Features.Tui;
 /// them: the screen has no command to type, so a line that names one says what to press or what the next run does.
 /// Changed wording goes through the humanizer gate (docs index). One per command; it holds no state of its own.
 /// </summary>
-internal sealed class TuiActions(
+internal sealed partial class TuiActions(
     IQueueVerbs verbs,
     IJobRepository jobs,
     IJobRetryService retry,
@@ -31,7 +32,10 @@ internal sealed class TuiActions(
     IRunRequestStore requests,
     FinalizationBatch batch,
     IFileOpener opener,
-    ICostReport cost)
+    ICostReport cost,
+    IQueueDiscovery discovery,
+    IImmichRunService immich,
+    ISettingsValidator validator)
 {
     private static ActionResult Done(LogKind kind, string text, bool refreshWorker = false) => ActionResult.Say(kind, text, refreshWorker);
 

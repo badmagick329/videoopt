@@ -1,6 +1,6 @@
 # The full-screen view
 
-Run `video-optimiser` with no command in a terminal and it opens a full-screen view of everything at once: the queue, the worker, what the run is doing, and the videos ready to finalise. You can also start and stop runs and act on videos from it.
+Run `video-optimiser` with no command in a terminal and it opens a full-screen view of everything at once: the queue, the worker, what the run is doing, and the videos ready to finalise. You can also add videos, start and stop runs and act on videos from it.
 
 ```powershell
 .\video-optimiser.exe --config .\video-optimiser.yaml
@@ -40,6 +40,7 @@ Each pane adds its own:
 
 | Pane | Key | What it does |
 | --- | --- | --- |
+| Queue | `a` | Add videos from the watch folders, Immich or a file path. See [Adding videos](#adding-videos). |
 | Queue | `h` / `r` | Hold a waiting or stopped video, so runs pass over it, or release it. |
 | Queue | `n` | Convert the selected video next. |
 | Queue | `d` | Drop the video from the queue, after asking. The original is untouched. On a failed video, dismiss it instead: see [Dismissing failures](#dismissing-failures). |
@@ -51,9 +52,21 @@ Each pane adds its own:
 | Review | `o` / `a` | Open the original or the AV1 in Windows' default player. For an Immich video, the original is its download. |
 | Review | `f` / `F` | Finalise the selected video, or every ready one, after the same question `finalize` asks. `f` on a warned video lists its warnings, and any notes, in the question. `F` leaves warned videos out and names them, so you watch each one and finalise it with `f`. While a finalise is going, they ask nothing: they say whether the selected video is being finalised or queued, or that you can start another finalise once this one ends. |
 | Review | `r` | Reject the video, after asking: its AV1 is deleted and the original is kept. See [Rejecting a video](#rejecting-a-video). While a finalise is going, `r` says you can reject once it ends, on every row, because rejecting needs the lock the finalise holds. |
-| Review | `esc` | Stop a finalise of several videos after the video it's on, without asking. That video finishes, and the rest stay ready. Works from any pane. |
+| any | `esc` | Cancel a queue addition in progress, or stop a finalise of several videos after the video it's on. An open dialog closes first. If both actions are going, the addition is cancelled first. |
 
 The worker keys and `w` do something only with a Hetzner worker (`remoteSsh.lifecycle: "hetzner"`).
+
+## Adding videos
+
+In Queue, press `a`, then choose with the arrows and `enter`:
+
+- **Watch folders** scans the configured watch folders, as `queue add` does.
+- **Immich** asks how many new videos to queue. It starts at `1`; enter a positive whole number, or clear it to add all eligible videos. This is `queue add immich`, including its trash check and re-upload guard: converted originals uploaded again by the phone may go back to Immich's trash.
+- **File path** asks for one file, as `queue add <file>` does. Type or paste the path, use `backspace` to correct it, then `enter`. Quotes from Explorer's **Copy as path** are accepted. `esc` closes the question. While typing, letters such as `q`, `s` and `?` are part of the path.
+
+If the file is outside the watch folders or doesn't fit the eligibility rules, a question offers to force it. That bypasses only those checks; AV1 files, the size cap and protected tool files stay excluded.
+
+Adding works with an empty queue and while a run converts. It queues videos without starting a run; a run already going picks them up between videos. Progress and results appear in Activity. Only one addition runs at a time. With no dialog open, `esc` cancels it: videos already queued stay queued, and a partial Immich download is removed. It leaves a conversion run going.
 
 ## Starting a run
 
@@ -78,7 +91,7 @@ To stop a background run from a terminal, use `run stop` (after this video) or `
 
 The line at the foot of the page is a reminder that the three levels don't add up. [commands.md](commands.md#workers-and-what-they-cost) explains why.
 
-The page refreshes every few seconds while it's open. The run, a finalise and the worker check carry on underneath. `$` or `esc` closes it. Until then the other keys do nothing, except `Ctrl+C`, which quits as usual. Before your first run on a Hetzner worker, the page says it fills in after one.
+The page refreshes every few seconds while it's open. The run, a finalise and the worker check carry on underneath. `$` or `esc` closes it; if a queue addition is still going, `esc` cancels that first and leaves the page open. Until then the other keys do nothing, except `Ctrl+C`, which quits as usual. Before your first run on a Hetzner worker, the page says it fills in after one.
 
 ## Rejecting a video
 
@@ -95,7 +108,3 @@ The Queue pane lists the latest failures. To clear ones you won't retry, select 
 A dismissed video leaves the list, but its job stays failed in `history`. `queue add` and `immich run` still pass over it until its file changes, so dismissing it won't get it converted again. To retry one later, use `queue retry <job-id>`; `history` shows the ID.
 
 From a terminal, the same thing is `queue dismiss <job-id>`, or `queue dismiss --all` for every failure.
-
-## What it can't do yet
-
-It doesn't add videos to the queue. Use `queue add` or `queue add immich` in a terminal; the view shows them within a second.

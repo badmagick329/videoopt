@@ -12,6 +12,7 @@ internal static partial class TuiView
         {
             TuiChoice choice => ChoiceDialog(m, choice),
             TuiConfirm confirm => ConfirmDialog(m, confirm),
+            TuiTextInput input => QueueInputDialog(m, input),
             _ => null
         };
     }
@@ -38,6 +39,40 @@ internal static partial class TuiView
     }
 
     private static int DialogWidth(TuiModel m) => Math.Clamp(m.Width - 6, 30, 58);
+
+    private static Panel QueueInputDialog(TuiModel m, TuiTextInput input)
+    {
+        var width = DialogWidth(m);
+        var inner = width - 6;
+        var file = input.Source == QueueAdditionSource.File;
+        var rows = new List<IRenderable>
+        {
+            new Line().Flex(file ? "Type or paste the file path." : "Count: positive; blank = all", Theme.Of(Theme.Soft)).Build(inner),
+            new Paragraph(" "),
+            new Line().Flex(InputTail(input.Text, inner - 1) + "▏", Theme.Of(Theme.Text, bold: true)).Build(inner),
+            new Paragraph(" "),
+            new Line().Flex(input.Problem ?? (file ? "Backspace edits the path." : "All means all eligible videos."), Theme.Of(input.Problem is null ? Theme.Dim : Theme.Held)).Build(inner),
+            new Line().Flex("enter add · esc cancel", Theme.Of(Theme.Dim)).Build(inner)
+        };
+        return DialogPanel(file ? "File path" : "Add from Immich", width, rows);
+    }
+
+    /// <summary>The end stays visible while typing a long path; width is in terminal cells, including wide Unicode glyphs.</summary>
+    private static string InputTail(string text, int width)
+    {
+        if (TuiText.Cells(text) <= width) return text;
+        var tail = new List<string>();
+        var cells = 1; // The ellipsis says a prefix is hidden.
+        foreach (var rune in text.EnumerateRunes().Reverse())
+        {
+            var part = rune.ToString();
+            cells += TuiText.Cells(part);
+            if (cells > width) break;
+            tail.Add(part);
+        }
+        tail.Reverse();
+        return "…" + string.Concat(tail);
+    }
 
     private static Panel DialogPanel(string title, int width, List<IRenderable> rows) => new(new Rows(rows))
     {
@@ -75,7 +110,6 @@ internal static partial class TuiView
                 foreach (var key in group.Keys)
                     rows.Add(new Line().Left($"{key.Key,-15}", Theme.Of(Theme.Text, bold: true)).Flex(key.What, Theme.Of(Theme.Soft)).Build(inner));
             }
-            rows.Add(new Paragraph(" "));
             rows.Add(new Paragraph(closing, Theme.Of(Theme.Dim)));
             return rows;
         }

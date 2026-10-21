@@ -59,7 +59,7 @@ internal sealed record LogEntry(DateTimeOffset At, LogKind Kind, string Text);
 internal sealed record Notice(string Text, DateTimeOffset Until);
 
 /// <summary>
-/// The dialog open over the panes, one at most: <see cref="TuiConfirm"/> or <see cref="TuiChoice"/>. A single field holds it so
+/// The dialog open over the panes, one at most. A single field holds it so
 /// what is drawn, what takes the keys and the footer's hints can't name different dialogs (VOPT-141). The key guide is not one:
 /// any key closes it, so it may lie over a dialog an effect opened.
 /// </summary>
@@ -76,10 +76,13 @@ internal sealed record TuiConfirm(string Question, string Detail, TuiEffect OnYe
 /// the worker, then what happens to it, before anything launches).
 /// </summary>
 /// <param name="Hint">Dim text at the line's right, such as a server's price.</param>
-internal sealed record ChoiceOption(string Label, TuiEffect? Effect, TuiChoice? Next = null, string Hint = "");
+internal sealed record ChoiceOption(string Label, TuiEffect? Effect, TuiDialog? Next = null, string Hint = "");
 
 /// <summary>A list the user picks from: arrows move, Enter chooses, Esc cancels.</summary>
 internal sealed record TuiChoice(string Title, string Detail, ImmutableList<ChoiceOption> Options, int Selected) : TuiDialog;
+
+/// <summary>A single text field. Its purpose determines validation on Enter; ordinary action keys stay text.</summary>
+internal sealed record TuiTextInput(QueueAdditionSource Source, string Text, string? Problem = null) : TuiDialog;
 
 /// <summary>Where the run is in its flow, from its events: the idle text says why nothing converts.</summary>
 internal enum RunPhase { Preparing, Converting, Ending }

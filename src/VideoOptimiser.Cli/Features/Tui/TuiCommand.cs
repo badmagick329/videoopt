@@ -24,6 +24,8 @@ internal sealed class TuiCommand(TuiSnapshotReader reader, TimeProvider time)
             model = TuiUpdate.Update(model, new WorkerCheckedMsg(model.Worker.Generation, check)).Model;
         }
 
+        foreach (var key in command.SnapshotKeys ?? []) model = TuiUpdate.Update(model, new KeyMsg(key)).Model;
+
         using var renderer = new FrameRenderer();
         var frame = renderer.Frame(model)!;
         // The frame's box glyphs are not in the console's default code page when stdout is a pipe or a file.

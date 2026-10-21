@@ -109,6 +109,50 @@ public sealed class TuiEntryTests : QueueTestBase
         rows.Max(row => row.Length).Should().Be(140);
     }
 
+    [Fact]
+    public async Task SnapshotKeysOpenThePathDialogWithoutAddingAnything()
+    {
+        var result = await RunAsync("tui", "--snapshot", "--keys", "a,down,down,enter");
+
+        result.ExitCode.Should().Be(0);
+        result.Stderr.Should().BeEmpty();
+        result.Stdout.Should().Contain("File path");
+        result.Stdout.Should().Contain("enter");
+        (await Repository.ListAsync(DatabasePath, terminal: false)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void SnapshotLettersCarryTheKeyCodeUsedByConfirmations()
+    {
+        var command = CliCommand.Parse(["tui", "--snapshot", "--keys", "a,enter,y"]);
+
+        command.IsValid.Should().BeTrue();
+        var answer = command.SnapshotKeys![^1];
+        answer.Key.Should().Be(ConsoleKey.Y);
+        answer.KeyChar.Should().Be('y');
+        answer.Modifiers.Should().Be((ConsoleModifiers)0);
+    }
+
+    [Theory]
+    [InlineData("a,unknown")]
+    [InlineData("a,,enter")]
+    public void InvalidSnapshotKeysAreRefusedBeforeBuildingTheHost(string keys)
+    {
+        var command = CliCommand.Parse(["tui", "--snapshot", "--keys", keys]);
+
+        command.IsValid.Should().BeFalse();
+        command.Error.Should().StartWith("--keys requires");
+    }
+
+    [Fact]
+    public void SnapshotKeysCannotBeUsedOnOtherCommands()
+    {
+        var command = CliCommand.Parse(["queue", "add", "--keys", "a"]);
+
+        command.IsValid.Should().BeFalse();
+        command.Error.Should().Be("--keys is only supported by tui.");
+    }
+
     private sealed class FakeScreen : ITuiScreen
     {
         public bool IsAvailable { get; set; }

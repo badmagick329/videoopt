@@ -13,7 +13,7 @@ namespace VideoOptimiser.Cli.Features.Tui;
 /// Hetzner's check writes the server it finds into the settings it is given (<c>processing.remoteSsh</c>'s host and key, in
 /// memory only), as it does for <c>status</c>, which passes the loaded settings too; the TUI does the same.
 /// </remarks>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001", Justification = "Each finalise stop source is disposed when its batch ends; nothing else is owned.")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001", Justification = "Each stop source is disposed when its effect ends; nothing else is owned.")]
 internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, LoadedConfiguration configuration, ChannelWriter<TuiMsg> into)
 {
     private AppSettings Settings => configuration.Settings;
@@ -25,9 +25,24 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
     /// </summary>
     private CancellationTokenSource? _finaliseStop;
 
+    // Allocated on the loop thread too: Esc immediately after Add must reach the task before it starts.
+    private CancellationTokenSource? _additionStop;
+
     /// <summary>Starts <paramref name="effect"/> and returns at once.</summary>
     public void Run(TuiEffect effect, CancellationToken cancellationToken)
     {
+        if (effect is CancelQueueAddition)
+        {
+            try
+            {
+                _additionStop?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The addition ended while this cancellation was being handled.
+            }
+            return;
+        }
         if (effect is StopFinalise)
         {
             try
@@ -41,7 +56,12 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
             return;
         }
         // The finalise busy key lets one batch out at a time, so one source is enough.
-        var stop = effect is FinaliseVideos ? _finaliseStop = new CancellationTokenSource() : null;
+        var stop = effect switch
+        {
+            FinaliseVideos => _finaliseStop = new CancellationTokenSource(),
+            AddVideos => _additionStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken),
+            _ => null
+        };
         _ = Task.Run(() => RunAsync(effect, stop, cancellationToken), CancellationToken.None);
     }
 
@@ -68,14 +88,19 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
         {
             if (stop is not null)
             {
-                Interlocked.CompareExchange(ref _finaliseStop, null, stop);
+                if (effect is AddVideos) Interlocked.CompareExchange(ref _additionStop, null, stop);
+                else Interlocked.CompareExchange(ref _finaliseStop, null, stop);
                 stop.Dispose();
             }
         }
     }
 
     /// <summary>Frees what the effect held and hands its words to Update. An effect that holds nothing frees an empty key.</summary>
-    private void Finish(TuiEffect effect, ActionResult result) => into.TryWrite(new ActionDoneMsg(effect.BusyKey ?? string.Empty, result));
+    private void Finish(TuiEffect effect, ActionResult result)
+    {
+        if (effect is AddVideos addition) into.TryWrite(new QueueAdditionDoneMsg(addition, result));
+        else into.TryWrite(new ActionDoneMsg(effect.BusyKey ?? string.Empty, result));
+    }
 
     private void Log(LogKind kind, string text) => into.TryWrite(new TuiLogMsg(kind, text));
 
@@ -83,6 +108,10 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
     {
         switch (effect)
         {
+            case AddVideos addition:
+                var added = await actions.AddVideosAsync(addition, Settings, Log, stopAfterVideo);
+                if (!cancellationToken.IsCancellationRequested) into.TryWrite(added);
+                break;
             case RefreshWorkerCheck refresh:
                 into.TryWrite(new WorkerCheckedMsg(refresh.Generation, await reader.CheckWorkerAsync(Settings, cancellationToken)));
                 break;

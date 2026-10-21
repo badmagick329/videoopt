@@ -14,6 +14,7 @@ internal sealed class CliOptionValues
     public QualityLevel? Quality;
     public WorkerFateChoice? WorkerFate;
     public FrameSize? Size;
+    public IReadOnlyList<ConsoleKeyInfo>? SnapshotKeys;
     public readonly List<ProcessingModeOverride> Modes = [];
 }
 
@@ -67,6 +68,12 @@ internal static class CliOptions
         }),
         Switch(BackgroundRunnerArguments.ExistingWorkerFlag, [CliCommandKind.BackgroundRunner], values => values.ExistingWorker = true),
         Switch("--snapshot", [CliCommandKind.TuiSnapshot], values => values.Snapshot = true),
+        Value("--keys", [CliCommandKind.TuiSnapshot], "--keys requires comma-separated characters or up, down, enter, esc, backspace, tab.", (values, text) =>
+        {
+            if (!SnapshotKeys.TryParse(text!, out var keys)) return false;
+            values.SnapshotKeys = keys;
+            return true;
+        }),
         Value("--size", [CliCommandKind.TuiSnapshot], "--size requires WIDTHxHEIGHT, such as 140x40.", (values, text) =>
         {
             if (!FrameSize.TryParse(text!, out var size)) return false;
