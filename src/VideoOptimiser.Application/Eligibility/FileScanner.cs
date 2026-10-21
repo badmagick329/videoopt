@@ -13,7 +13,7 @@ public sealed class FileScanner(
     public async Task<ScanReport> ScanAsync(
         IReadOnlyList<WatchRootSettings> roots,
         AppSettings settings,
-        bool stopAfterFirstEligible = false,
+        int? stopAfterEligible = null,
         IReadOnlySet<string>? openSourcePaths = null,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
@@ -23,6 +23,7 @@ public sealed class FileScanner(
         var cacheHits = 0;
         var realProbes = 0;
         var filesChecked = 0;
+        var newEligible = 0;
         // After every file so a caller can throttle by time; the scan cannot know how often the user wants to hear.
         void ReportChecked(string path) => progress?.Report(new ScanProgress(path, "Checked", string.Empty, ++filesChecked, realProbes));
         var cacheByPath = new Dictionary<string, MediaProbeCacheEntry>(StringComparer.OrdinalIgnoreCase);
@@ -93,9 +94,10 @@ public sealed class FileScanner(
                     cacheHits += evaluation.CacheHit ? 1 : 0;
                     realProbes += evaluation.RealProbe ? 1 : 0;
                     ReportChecked(canonicalPath);
-                    if (stopAfterFirstEligible &&
+                    if (stopAfterEligible is { } wanted &&
                         evaluation.Item.Status == ScanItemStatus.Eligible &&
-                        (openSourcePaths is null || !openSourcePaths.Contains(canonicalPath)))
+                        (openSourcePaths is null || !openSourcePaths.Contains(canonicalPath)) &&
+                        ++newEligible >= wanted)
                     {
                         return new ScanReport(items, issues, cacheHits, realProbes);
                     }

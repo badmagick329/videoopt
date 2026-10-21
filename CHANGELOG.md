@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### The queue
+
+- `queue add --limit <n>` queues at most `n` new videos from your watch folders, as `queue add immich --limit` does for Immich. Videos that already have a job don't count, nor do ones converted, failed, skipped or rejected before, so running it again queues `n` more. The scan stops once it has found `n` and leaves the remaining files unchecked. `--first` is the same as `--limit 1`.
+
 ### The full-screen view
 
 - In Queue, `a` adds videos, including while a run converts: **Scan your watch folders**, **Search Immich** or **Add files by path**. Under the list, a few lines explain the highlighted choice using your config, such as which watch folders a scan covers, or say that a source isn't set up. Search Immich asks how many videos to queue, starting at one, and downloads each video only to check it, keeping just the ones it queues. A file outside the watch folders or eligibility rules can be forced after asking. Progress appears in Activity, and `esc` cancels an addition while keeping videos already queued.

@@ -62,6 +62,13 @@ internal sealed class QueueDiscoverConsole(TextWriter output, Func<DateTimeOffse
         output.WriteLine($"  Issue: {Path.GetFileName(update.Path)}: {update.Message}");
     }
 
+    /// <summary>
+    /// The line before a scan, shared by <c>queue add</c> and the TUI. A limit is said up front because the scan stops once it
+    /// has that many new videos, so the counts after it cover only the files checked before the stop.
+    /// </summary>
+    public static string StartLine(int roots, int? limit) =>
+        $"Scanning {OutputWords.Count(roots, "watch root", "watch roots")} for {(limit is { } most ? $"up to {OutputWords.Count(most, "new video", "new videos")}" : "videos")} to convert; files not seen before are probed with ffprobe.";
+
     /// <summary>What the scan found, folder by folder, then the counts that are not zero. The caller adds the next command.</summary>
     public static void WriteSummary(TextWriter output, QueueDiscoveryResult result, CliCommand command)
     {

@@ -314,6 +314,27 @@ public sealed class QueueAddTests : QueueTestBase
             $"2 videos are ready to finalise: review them, then run 'video-optimiser finalize --ready{ConfigArgument}'."), ""));
     }
 
+    /// <summary>
+    /// VOPT-197: the opening line says the scan looks for up to the limit, since it stops there; the waiting video is listed
+    /// first and doesn't count, and <c>d.mp4</c>, after the stop, is neither queued nor counted.
+    /// </summary>
+    [Fact]
+    public async Task QueueAddWithALimitSaysSoAndQueuesThatManyNewVideos()
+    {
+        await QueuedAsync("a-waiting.mp4");
+        foreach (var name in new[] { "b.mp4", "c.mp4", "d.mp4" }) await FileAsync(Root, name);
+
+        var result = await RunAsync("queue", "add", "--limit", "2");
+
+        result.Should().Be((0, Transcript(
+            "Scanning 1 watch root for up to 2 new videos to convert; files not seen before are probed with ffprobe.",
+            $"Queued in {Root}:",
+            "  b.mp4",
+            "  c.mp4",
+            "Queued: 2. Already queued: 1.",
+            $"Next: run 'video-optimiser run{ConfigArgument}'."), ""));
+    }
+
     /// <summary>With no run going the line is the one the transcripts above print.</summary>
     [Theory]
     [InlineData("video-optimiser run", "The run going now picks them up.")]

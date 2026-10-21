@@ -112,16 +112,21 @@ public sealed class FileScannerTests : IDisposable
         report.Items.Select(item => (item.Path, item.Status)).Should().Equal(rootIsToolFolder ? [] : [(ordinary, ScanItemStatus.Eligible)]);
     }
 
+    /// <summary>
+    /// The first file the file system lists is open, so it doesn't count: a stop after two takes the next two and never
+    /// checks the fourth. The order comes from a full scan, since the test can't choose the order files are listed in.
+    /// </summary>
     [Fact]
-    public async Task ScanAsyncStopsAfterTheFirstEligibleFileWhenRequested()
+    public async Task ScanAsyncStopsAfterTheAskedNumberOfEligibleFilesThatAreNotOpen()
     {
-        await File.WriteAllBytesAsync(Path.Combine(_directory, "first.mkv"), [1, 2, 3]);
-        await File.WriteAllBytesAsync(Path.Combine(_directory, "second.mkv"), [4, 5, 6]);
+        foreach (var name in new[] { "a.mkv", "b.mkv", "c.mkv", "d.mkv" }) await File.WriteAllBytesAsync(Path.Combine(_directory, name), [1, 2, 3]);
         var settings = Settings("1B");
+        var order = (await Scanner().ScanAsync(settings.Watch.Roots, settings)).Items.Select(item => item.Path).ToArray();
 
-        var report = await Scanner().ScanAsync(settings.Watch.Roots, settings, stopAfterFirstEligible: true);
+        var report = await Scanner().ScanAsync(settings.Watch.Roots, settings, stopAfterEligible: 2, openSourcePaths: new HashSet<string>([order[0]], StringComparer.OrdinalIgnoreCase));
 
-        report.Items.Should().ContainSingle(item => item.Status == ScanItemStatus.Eligible);
+        order.Should().HaveCount(4);
+        report.Items.Select(item => (item.Path, item.Status)).Should().Equal(order[..3].Select(path => (path, ScanItemStatus.Eligible)));
     }
 
     [Fact]

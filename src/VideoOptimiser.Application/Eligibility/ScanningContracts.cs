@@ -47,10 +47,14 @@ public interface IFileReadinessService
 
 public interface IFileScanner
 {
+    /// <param name="stopAfterEligible">
+    /// Return once this many eligible files outside <paramref name="openSourcePaths"/> have been met, leaving the rest
+    /// unchecked; null scans everything.
+    /// </param>
     Task<ScanReport> ScanAsync(
         IReadOnlyList<WatchRootSettings> roots,
         AppSettings settings,
-        bool stopAfterFirstEligible = false,
+        int? stopAfterEligible = null,
         IReadOnlySet<string>? openSourcePaths = null,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default);

@@ -45,9 +45,9 @@ internal sealed partial class TuiActions
         if (discovery.Refusal(settings) is QueueDiscoveryRefusal.NoWatchRoots)
             return new(effect, Done(LogKind.Warning, $"Adding videos needs at least one watch.roots entry. For Immich videos, choose {TuiUpdate.ImmichLabel}."));
 
-        log(LogKind.Info, $"Scanning {OutputWords.Count(settings.Watch.Roots.Count, "watch root", "watch roots")} for videos to convert; files not seen before are probed with ffprobe.");
+        log(LogKind.Info, QueueDiscoverConsole.StartLine(settings.Watch.Roots.Count, limit: null));
         using var output = new AdditionLogWriter(log);
-        var result = await discovery.DiscoverAsync(settings.Database.Path, settings, first: false, new QueueDiscoverConsole(output), token);
+        var result = await discovery.DiscoverAsync(settings.Database.Path, settings, limit: null, new QueueDiscoverConsole(output), token);
         foreach (var folder in result.QueuedPaths.GroupBy(path => Path.GetDirectoryName(path) ?? string.Empty, StringComparer.OrdinalIgnoreCase))
         {
             log(LogKind.Success, $"Queued in {folder.Key}:");

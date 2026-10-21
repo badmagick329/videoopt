@@ -84,7 +84,11 @@ public interface IQueueDiscovery
     /// <summary>Whether <see cref="DiscoverAsync"/> has anything to scan; null when it has.</summary>
     QueueDiscoveryRefusal? Refusal(AppSettings settings);
 
-    Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
+    /// <param name="limit">
+    /// The most new videos to queue, in scan order, or null for every eligible one. Open jobs and settled originals never
+    /// count towards it, as with Immich discovery's limit, so a rerun queues that many more.
+    /// </param>
+    Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Queues one file after the checks a run makes: inside a watch root, eligible, worth converting. <paramref name="force"/>

@@ -244,8 +244,8 @@ internal sealed class QueueCommands(IQueueVerbs verbs, IJobRepository repository
             return (int)ExitCode.InvalidConfiguration;
         }
 
-        CliConsole.WriteLine($"Scanning {OutputWords.Count(settings.Watch.Roots.Count, "watch root", "watch roots")} for videos to convert; files not seen before are probed with ffprobe.");
-        var result = await discovery.DiscoverAsync(settings.Database.Path, settings, command.First, new QueueDiscoverConsole(CliConsole.Out), cancellationToken);
+        CliConsole.WriteLine(QueueDiscoverConsole.StartLine(settings.Watch.Roots.Count, command.Limit));
+        var result = await discovery.DiscoverAsync(settings.Database.Path, settings, command.Limit, new QueueDiscoverConsole(CliConsole.Out), cancellationToken);
         QueueDiscoverConsole.WriteSummary(CliConsole.Out, result, command);
         if (result.QueuedPaths.Count + result.AlreadyQueued > 0) CliConsole.WriteLine(NextRunLine(discovery.NextRun(settings.Database.Path), command));
         if (result.ReadyToFinalize > 0) CliConsole.WriteLine(NextSteps.ReadyToFinaliseLine(result.ReadyToFinalize, command));

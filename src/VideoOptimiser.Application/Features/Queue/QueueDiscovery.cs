@@ -7,7 +7,7 @@ using VideoOptimiser.Domain.Jobs;
 namespace VideoOptimiser.Application.Features.Queue;
 
 /// <summary>
-/// <c>queue add</c>: finds the videos worth converting and puts them in the queue, all of them or one file. The locks come
+/// <c>queue add</c>: finds the videos worth converting and puts them in the queue, all of them, up to a limit, or one file. The locks come
 /// in only to say what an already open job is doing now (<see cref="OpenJobState"/>).
 /// </summary>
 public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IFileFingerprintService fingerprints, IDatabaseLocks locks) : IQueueDiscovery
@@ -15,17 +15,19 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
     public QueueDiscoveryRefusal? Refusal(AppSettings settings) =>
         settings.Watch.Roots.Count == 0 ? QueueDiscoveryRefusal.NoWatchRoots : null;
 
-    public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, bool first, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<QueueDiscoveryResult> DiscoverAsync(string databasePath, AppSettings settings, int? limit, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var openJobs = new Dictionary<string, JobRecord>(StringComparer.OrdinalIgnoreCase);
         foreach (var job in await jobs.ListAsync(databasePath, terminal: false, cancellationToken)) openJobs.TryAdd(Path.GetFullPath(job.SourcePath), job);
         var open = openJobs.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var settled = await FindSettledOriginalsAsync(databasePath, open, QualityFingerprint.Compute(settings), onlyPath: null, cancellationToken);
+        // The scanner counts eligible files and queuing comes after, so a file that fails to queue in between (an IOException,
+        // or another command queuing it meanwhile) leaves fewer than the limit queued. No rescan makes up the shortfall.
         var report = await scanner.ScanAsync(
             settings.Watch.Roots,
             settings,
-            stopAfterFirstEligible: first,
-            openSourcePaths: first ? open.Union(settled.Keys, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase) : null,
+            stopAfterEligible: limit,
+            openSourcePaths: limit is not null ? open.Union(settled.Keys, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase) : null,
             progress: progress,
             cancellationToken: cancellationToken);
         var queued = new List<string>();
@@ -41,8 +43,8 @@ public sealed class QueueDiscovery(IFileScanner scanner, IJobRepository jobs, IF
 
         foreach (var item in report.Items.Where(item => item.Status == ScanItemStatus.Eligible))
         {
-            // With --first the scan stops at the first file it can queue, so every file before it is still counted.
-            if (first && queued.Count > 0)
+            // With a limit the scan stops at the last file it can queue, so every file before it is still counted.
+            if (limit is { } most && queued.Count >= most)
             {
                 break;
             }

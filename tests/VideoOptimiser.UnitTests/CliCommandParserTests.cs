@@ -5,16 +5,20 @@ namespace VideoOptimiser.UnitTests;
 
 public sealed class CliCommandParserTests
 {
-    /// <summary><c>--first</c> is <c>--limit 1</c> for both Immich commands.</summary>
+    /// <summary><c>--limit</c> is taken as given and <c>--first</c> is <c>--limit 1</c>, on every command that takes them, the watch-folder scan included (VOPT-197).</summary>
     [Theory]
-    [InlineData("ImmichRun", "--first", "immich", "run", "--config", "my.yaml")]
-    [InlineData("QueueAddImmich", "queue", "add", "immich", "--first")]
-    public void FirstOnAnImmichCommandIsALimitOfOne(string kind, params string[] args)
+    [InlineData("ImmichRun", 1, "--first", "immich", "run", "--config", "my.yaml")]
+    [InlineData("QueueAddImmich", 1, "queue", "add", "immich", "--first")]
+    [InlineData("QueueAdd", 1, "queue", "add", "--first")]
+    [InlineData("QueueAddImmich", 5, "queue", "add", "immich", "--limit", "5")]
+    [InlineData("QueueAdd", 3, "queue", "add", "--limit", "3")]
+    [InlineData("QueueAdd", null, "queue", "add")]
+    public void TheLimitIsAsGivenAndFirstIsOne(string kind, int? limit, params string[] args)
     {
         var command = CliCommand.Parse(args);
 
         command.Kind.ToString().Should().Be(kind, command.Error);
-        command.Limit.Should().Be(1);
+        command.Limit.Should().Be(limit);
     }
 
     /// <summary>The word <c>immich</c> selects the Immich form; any other argument is a file, and a file named <c>immich</c> is given as <c>.\immich</c>.</summary>
@@ -124,36 +128,17 @@ public sealed class CliCommandParserTests
         CliCommand.Usage.Should().Contain("video-optimiser queue dismiss <job-id> [--config <path>]").And.Contain("video-optimiser queue dismiss --all [--config <path>]");
     }
 
-    [Fact]
-    public void QueueAddImmichTakesALimit()
-    {
-        var command = CliCommand.Parse(["queue", "add", "immich", "--limit", "5"]);
-
-        command.Kind.ToString().Should().Be("QueueAddImmich", command.Error);
-        command.Limit.Should().Be(5);
-    }
-
-    [Fact]
-    public void QueueAddStillAcceptsFirst()
-    {
-        var command = CliCommand.Parse(["queue", "add", "--first"]);
-
-        command.Kind.Should().Be(CliCommandKind.QueueAdd);
-        command.First.Should().BeTrue();
-        command.Limit.Should().BeNull();
-    }
-
     /// <summary>
     /// Most guards are pinned by no CLI transcript, so each is one row with its exact message. A flag meant for another
     /// command, a bad value and a clash between two flags are all rejected before anything runs.
     /// </summary>
     [Theory]
-    [InlineData("--limit requires a whole number of 1 or more.", "immich", "run", "--limit", "0")]
+    [InlineData("--limit requires a whole number of 1 or more.", "queue", "add", "--limit", "0")]
     [InlineData("--limit requires a whole number of 1 or more.", "immich", "run", "--limit", "five")]
     [InlineData("--limit requires a whole number of 1 or more.", "immich", "run", "--limit")]
-    [InlineData("--first and --limit cannot be used together.", "immich", "run", "--first", "--limit", "3")]
-    [InlineData("--limit is only supported by queue add immich and immich run.", "run", "--limit", "3")]
-    [InlineData("--limit is only supported by queue add immich and immich run.", "queue", "add", "--limit", "3")]
+    [InlineData("--first and --limit cannot be used together.", "queue", "add", "--first", "--limit", "2")]
+    [InlineData("--limit is only supported by queue add, queue add immich and immich run.", "run", "--limit", "3")]
+    [InlineData("--limit is only supported by queue add, queue add immich and immich run.", "queue", "add", "clip.mp4", "--limit", "3")]
     [InlineData("--quality requires archive, standard or compact.", "config", "init", "--quality", "high")]
     [InlineData("--quality requires archive, standard or compact.", "config", "init", "--quality")]
     [InlineData("--quality is only supported by config init.", "config", "validate", "--quality", "archive")]
@@ -279,11 +264,12 @@ public sealed class CliCommandParserTests
     }
 
     [Fact]
-    public void HelpListsTheImmichCommands()
+    public void HelpListsTheLimitedAddsAndTheImmichCommands()
     {
         CliCommand.Parse(["--help"]).ShowHelp.Should().BeTrue();
         CliCommand.Usage.Should()
-            .Contain("video-optimiser queue add immich [--first | --limit <n>] [--config <path>]")
+            .Contain("video-optimiser queue add [--first | --limit <n>] [--config <path>]")
+            .And.Contain("video-optimiser queue add immich [--first | --limit <n>] [--config <path>]")
             .And.Contain("video-optimiser immich run [--first | --limit <n>] [--config <path>] [--local | --remote]")
             .And.Contain("video-optimiser immich finalize [--config <path>]");
     }

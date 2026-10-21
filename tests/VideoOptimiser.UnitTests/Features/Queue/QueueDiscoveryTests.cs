@@ -39,19 +39,31 @@ public sealed class QueueDiscoveryTests : IDisposable
         jobs.Should().HaveCount(2).And.OnlyContain(job => job.Status == JobStatus.Queued && job.VideoFacts == new VideoFacts("h264", 1920, 1080, 22_000_000, 90.5, 6));
     }
 
-    [Fact]
-    public async Task DiscoverAsyncFirstSkipsAnOpenEligibleSourceAndQueuesTheNextOne()
+    /// <summary>
+    /// The limit counts new videos in scan order: the open and the kept file come first and never count, and the scan stops
+    /// once it has met the limit, so later files are never queued. A file that fails to queue after the scan counted it
+    /// (deleted here) leaves fewer than the limit, and no rescan makes up for it.
+    /// </summary>
+    [Theory]
+    [InlineData(null, false, "a,b,c", 0)]
+    [InlineData(1, false, "a", 0)]
+    [InlineData(2, false, "a,b", 0)]
+    [InlineData(5, false, "a,b,c", 0)]
+    [InlineData(2, true, "b", 1)]
+    public async Task DiscoverAsyncQueuesAtMostTheLimitOfNewVideos(int? limit, bool firstNewFails, string queued, int issues)
     {
-        var (alreadyOpen, next, later) = await ThreeFilesAsync("already-open.mp4");
-        await JobAsync(alreadyOpen, JobStatus.Queued);
-        var scanner = new FixedScanner(alreadyOpen, next, later);
+        var paths = await FilesAsync("open.mp4", "kept.mp4", "a.mp4", "b.mp4", "c.mp4");
+        await JobAsync(paths[0], JobStatus.Queued);
+        await JobAsync(paths[1], JobStatus.Completed);
+        if (firstNewFails) File.Delete(paths[2]);
+        var scanner = new FixedScanner(paths);
 
-        var result = await DiscoverAsync(scanner, first: true);
+        var result = await DiscoverAsync(scanner, limit);
 
-        scanner.ReceivedOpenPaths.Should().Contain(alreadyOpen);
-        result.QueuedPaths.Should().ContainSingle().Which.Should().Be(next);
-        result.AlreadyQueued.Should().Be(1);
-        (await _repository.ListAsync(_settings.Database.Path, terminal: false)).Should().HaveCount(2);
+        scanner.ReceivedStopAfter.Should().Be(limit);
+        if (limit is not null) scanner.ReceivedOpenPaths.Should().BeEquivalentTo(paths[..2]);
+        result.QueuedPaths.Select(Path.GetFileNameWithoutExtension).Should().Equal(queued.Split(','));
+        (result.AlreadyQueued, result.AlreadyConverted, result.Issues).Should().Be((1, 1, issues));
     }
 
     /// <summary>
@@ -75,21 +87,6 @@ public sealed class QueueDiscoveryTests : IDisposable
         unchanged.QueuedPaths.Should().Equal(replaced);
         changed.AlreadyConverted.Should().Be(0);
         changed.QueuedPaths.Should().Equal(kept);
-    }
-
-    [Fact]
-    public async Task DiscoverAsyncFirstPassesKeptOriginalsToTheScannerSoItKeepsLooking()
-    {
-        var (kept, next, later) = await ThreeFilesAsync("kept.mp4");
-        await JobAsync(kept, JobStatus.Completed);
-        var scanner = new FixedScanner(kept, next, later);
-
-        var result = await DiscoverAsync(scanner, first: true);
-
-        scanner.ReceivedOpenPaths.Should().Contain(kept);
-        result.QueuedPaths.Should().Equal(next);
-        result.AlreadyConverted.Should().Be(1);
-        result.AlreadyQueued.Should().Be(0);
     }
 
     /// <summary>A cancelled original takes the same branch; and the file changing is <see cref="DiscoverAsyncSkipsAKeptOriginalUntilItChanges"/>.</summary>
@@ -141,15 +138,15 @@ public sealed class QueueDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public async Task DiscoverAsyncFirstCountsARetriedOriginalOnlyAsQueued()
+    public async Task DiscoverAsyncCountsARetriedOriginalOnlyAsQueued()
     {
-        var (retried, next, later) = await ThreeFilesAsync("retried.mp4");
+        var retried = (await FilesAsync("retried.mp4"))[0];
         await JobAsync(retried, JobStatus.Failed, job => job.FailureCategory = "ValidationFailed");
         await JobAsync(retried, JobStatus.Queued);
 
-        var result = await DiscoverAsync(new FixedScanner(retried, next, later), first: true);
+        var result = await DiscoverAsync(new FixedScanner(retried));
 
-        result.QueuedPaths.Should().Equal(next);
+        result.QueuedPaths.Should().BeEmpty();
         result.AlreadyQueued.Should().Be(1);
         result.PreviouslyFailed.Should().Be(0);
     }
@@ -199,8 +196,8 @@ public sealed class QueueDiscoveryTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private Task<QueueDiscoveryResult> DiscoverAsync(IFileScanner scanner, bool first = false, IJobRepository? repository = null) =>
-        new QueueDiscovery(scanner, repository ?? _repository, _fingerprints, new DatabaseLocks()).DiscoverAsync(_settings.Database.Path, _settings, first);
+    private Task<QueueDiscoveryResult> DiscoverAsync(IFileScanner scanner, int? limit = null, IJobRepository? repository = null) =>
+        new QueueDiscovery(scanner, repository ?? _repository, _fingerprints, new DatabaseLocks()).DiscoverAsync(_settings.Database.Path, _settings, limit);
 
     /// <summary>Source files with these names, holding six bytes.</summary>
     private async Task<string[]> FilesAsync(params string[] names)
@@ -214,13 +211,6 @@ public sealed class QueueDiscoveryTests : IDisposable
     {
         var paths = await FilesAsync(first, second);
         return (paths[0], paths[1]);
-    }
-
-    /// <summary>The named file, then <c>next.mp4</c> and <c>later.mp4</c>: what a <c>--first</c> scan can still queue after the first.</summary>
-    private async Task<(string First, string Next, string Later)> ThreeFilesAsync(string first)
-    {
-        var paths = await FilesAsync(first, "next.mp4", "later.mp4");
-        return (paths[0], paths[1], paths[2]);
     }
 
     /// <summary>A job on this file with the fingerprint it has now.</summary>
@@ -240,17 +230,28 @@ public sealed class QueueDiscoveryTests : IDisposable
             terminal ? await Inner.ListAsync(databasePath, terminal, cancellationToken) : [];
     }
 
-    /// <summary>Every path as an eligible item as the real scanner gives it: with the probe it was judged on and the file's size.</summary>
+    /// <summary>
+    /// Every path as an eligible item as the real scanner gives it: with the probe it was judged on and the file's size. It
+    /// stops as the real one does, once it has met the asked number of paths outside the open ones.
+    /// </summary>
     private sealed class FixedScanner(params string[] paths) : IFileScanner
     {
         private static readonly MediaInfo ScannedMedia = new("h264", 1, 1, 0, 0, 90.5, 6, 1920, 1080, 22_000_000);
 
         public IReadOnlySet<string>? ReceivedOpenPaths { get; private set; }
+        public int? ReceivedStopAfter { get; private set; }
 
-        public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, bool stopAfterFirstEligible = false, IReadOnlySet<string>? openSourcePaths = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
+        public Task<ScanReport> ScanAsync(IReadOnlyList<WatchRootSettings> roots, AppSettings settings, int? stopAfterEligible = null, IReadOnlySet<string>? openSourcePaths = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
         {
-            ReceivedOpenPaths = openSourcePaths;
-            return Task.FromResult(new ScanReport(paths.Select(path => new ScanItem(path, ScanItemStatus.Eligible, "Eligible", 6, ScannedMedia)).ToArray(), []));
+            (ReceivedOpenPaths, ReceivedStopAfter) = (openSourcePaths, stopAfterEligible);
+            var items = new List<ScanItem>();
+            var found = 0;
+            foreach (var path in paths)
+            {
+                items.Add(new ScanItem(path, ScanItemStatus.Eligible, "Eligible", 6, ScannedMedia));
+                if (openSourcePaths?.Contains(path) != true && ++found == stopAfterEligible) break;
+            }
+            return Task.FromResult(new ScanReport(items, []));
         }
 
         public Task<FileVerdict> JudgeAsync(string path, AppSettings settings, bool force, CancellationToken cancellationToken = default) => throw new NotSupportedException("Not a queue add <file> test.");

@@ -42,7 +42,7 @@ internal static class CliOptions
         Switch("--json", [CliCommandKind.Doctor, CliCommandKind.QueueList, CliCommandKind.Status, CliCommandKind.History, CliCommandKind.Calibrate, CliCommandKind.Cost], values => values.Json = true),
         Switch("--all", [CliCommandKind.QueueDrop, CliCommandKind.QueueDismiss], values => values.All = true),
         Switch("--first", [CliCommandKind.QueueAdd, CliCommandKind.QueueAddImmich, CliCommandKind.ImmichRun], values => values.First = true),
-        Value("--limit", [CliCommandKind.QueueAddImmich, CliCommandKind.ImmichRun], "--limit requires a whole number of 1 or more.", (values, text) =>
+        Value("--limit", [CliCommandKind.QueueAdd, CliCommandKind.QueueAddImmich, CliCommandKind.ImmichRun], "--limit requires a whole number of 1 or more.", (values, text) =>
         {
             if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var limit) || limit < 1) return false;
             values.Limit = limit;
