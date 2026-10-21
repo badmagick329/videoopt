@@ -53,7 +53,7 @@ internal static partial class TuiView
         var paste = pasteWide.Length <= inner ? pasteWide : "Type or paste, one per line.";
         var rows = new List<IRenderable>
         {
-            new Line().Flex(file ? paste : "Count: positive; blank = all", Theme.Of(Theme.Soft)).Build(inner),
+            new Line().Flex(file ? paste : "How many to queue; blank = all that fit", Theme.Of(Theme.Soft)).Build(inner),
             new Paragraph(" "),
             new Line().Flex(InputTail(input.Text[(input.Text.LastIndexOf('\n') + 1)..], inner - 1) + "▏", Theme.Of(Theme.Text, bold: true)).Build(inner),
             new Paragraph(" "),

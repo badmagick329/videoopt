@@ -19,7 +19,7 @@ internal static partial class TuiUpdate
             _ => $"Scans your {roots.Count} watch folders now and queues the videos that fit your rules:"
         };
         var immich = m.Sources.ImmichConfigured
-            ? "Asks how many next, then downloads videos from your Immich library and queues them."
+            ? "Asks how many to queue. Each video is downloaded to check it and kept only if queued."
             : "Immich isn't set up. Set immich.baseUrl in your config to use it.";
         return Asking(m, new TuiChoice("Add videos", "Adding only queues videos. A run converts them.",
         [
@@ -31,7 +31,7 @@ internal static partial class TuiUpdate
 
     /// <summary>The chooser's labels; the text dialogs and the refusals name the choice by the same words.</summary>
     internal const string ScanLabel = "Scan your watch folders";
-    internal const string ImmichLabel = "Download from Immich";
+    internal const string ImmichLabel = "Search Immich";
     internal const string FilesLabel = "Add files by path";
 
     private static TuiStep OnQueueInputKey(TuiModel m, TuiTextInput input, ConsoleKeyInfo key, bool moreBuffered)

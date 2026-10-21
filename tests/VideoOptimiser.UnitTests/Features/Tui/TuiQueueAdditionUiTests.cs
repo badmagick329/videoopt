@@ -36,7 +36,7 @@ public sealed class TuiQueueAdditionUiTests
 
         var step = Update(model, Letter('a'));
 
-        step.Model.Choice!.Options.Select(option => option.Label).Should().Equal("Scan your watch folders", "Download from Immich", "Add files by path");
+        step.Model.Choice!.Options.Select(option => option.Label).Should().Equal("Scan your watch folders", "Search Immich", "Add files by path");
         step.Model.Choice.Detail.Should().Be("Adding only queues videos. A run converts them.");
         step.Effects.Should().BeEmpty();
         var selected = Update(step.Model, Enter);
@@ -65,7 +65,7 @@ public sealed class TuiQueueAdditionUiTests
     }
 
     [Theory]
-    [InlineData(true, "Asks how many next, then downloads videos from your Immich library and queues them.")]
+    [InlineData(true, "Asks how many to queue. Each video is downloaded to check it and kept only if queued.")]
     [InlineData(false, "Immich isn't set up. Set immich.baseUrl in your config to use it.")]
     public void TheImmichChoiceSaysWhatItDownloadsOrThatImmichIsNotSetUp(bool configured, string explanation)
     {
@@ -98,11 +98,11 @@ public sealed class TuiQueueAdditionUiTests
     {
         var model = WithSources(new QueueSources([VideosRoot, PhoneRoot, @"F:\Archive\Family videos\2019"], ImmichConfigured: true)) with { Width = width, Height = height };
         using var renderer = new FrameRenderer();
-        string[] labels = ["Scan your watch folders", "Download from Immich", "Add files by path"];
+        string[] labels = ["Scan your watch folders", "Search Immich", "Add files by path"];
         string[] explanations =
         [
             "Scans your 3 watch folders now and queues the videos that fit your rules: D:\\Videos, E:\\Phone",
-            "Asks how many next, then downloads videos from your Immich library and queues them.",
+            "Asks how many to queue. Each video is downloaded to check it and kept only if queued.",
             "Asks for one or more file paths, one per line, and queues those files."
         ];
 
@@ -428,7 +428,7 @@ public sealed class TuiQueueAdditionUiTests
     public void TheRendererNamesTheBlankCountAndOffersAdditionCancellationInANarrowFrame()
     {
         using var renderer = new FrameRenderer();
-        FrameRenderer.Plain(renderer.Frame(Input(QueueAdditionSource.Immich, "1"))!).Should().Contain("blank = all").And.Contain("Download from Immich");
+        FrameRenderer.Plain(renderer.Frame(Input(QueueAdditionSource.Immich, "1"))!).Should().Contain("blank = all").And.Contain("Search Immich");
         var model = Model() with { Width = 40, Height = 10, Busy = Model().Busy.Add(AddVideos.Key, "Scanning the watch folders.") };
         FrameRenderer.Plain(renderer.Frame(model)!).Split('\n')[^1].Should().Contain("esc cancel add");
     }
