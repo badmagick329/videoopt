@@ -2,19 +2,19 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-21
 ### The queue
 
-- `queue add --limit <n>` queues at most `n` new videos from your watch folders, as `queue add immich --limit` does for Immich. Videos that already have a job don't count, nor do ones converted, failed, skipped or rejected before, so running it again queues `n` more. The scan stops once it has found `n` and leaves the remaining files unchecked. `--first` is the same as `--limit 1`.
+- `queue add --limit <n>` queues up to `n` new videos from your watch folders, as `queue add immich --limit` does. Videos that already have a job don't count, nor do ones converted, failed, skipped or rejected before, and the scan stops once it has `n`. `--first` is the same as `--limit 1`.
 
 ### The full-screen view
 
-- In Queue, `a` adds videos, even while a run converts: **Scan your watch folders**, **Search Immich** or **Add files by path**. A few lines under the list explain the highlighted choice from your config, such as which watch folders a scan covers, or say that a source isn't set up. The scan and Search Immich first ask how many videos to queue, starting at one; leave it blank for all. Search Immich downloads each video to check it and keeps the download only for the ones it queues. A file outside the watch folders or the eligibility rules can be forced after a question. Progress shows in Activity, and `esc` cancels an addition but keeps the videos it already queued.
-- **Add files by path** in Queue's `a` takes several paths, one per line, so pasting what Explorer's **Copy as path** gives for several files adds them all. Activity shows a line per file, then a count. Files that the watch folders or the rules turned away get one question to force them, however many there are.
-- A key blocked by something in progress is greyed in the footer, such as `a` while an addition runs, or Worker's `c` and `d` while the worker is being created or deleted. It stays in its place, says what's going on if you press it, and works again once that ends. In that case `s`, `X`, Worker's `d` and Activity's `w` now refuse at once, instead of asking first and refusing after you answer.
+- Queue's `a` adds videos, even during a run. **Scan your watch folders** and **Search Immich** first ask how many to queue; leave it blank for all. **Add files by path** takes several paths, one per line, such as a paste from Explorer's **Copy as path**. A few lines under the choices explain each one from your config. Files outside your watch folders or rules can be forced after one question. Progress shows in Activity, and `esc` cancels an addition but keeps the videos it already queued.
+- A key that something in progress blocks is greyed in the footer and says what's going on if you press it. `s`, `X`, Worker's `d` and Activity's `w` now refuse at once in that case, instead of after their question.
 
 ### Fixes
 
-- Quitting the full-screen view during a queue addition now stops the addition as `esc` does and waits up to 10 seconds for it to end. Before, the view exited at once, which could leave a partial Immich download, or a downloaded copy with no job, in the staging folder.
+- Quitting during a queue addition now stops it and waits up to 10 seconds for it to end. Before, the view exited at once, which could leave a partial Immich download, or a downloaded copy with no job, in the staging folder.
 
 ## [0.16.0] - 2026-10-20
 ### Remote workers
