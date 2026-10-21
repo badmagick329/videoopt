@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Features.Cost;
 using VideoOptimiser.Application.Features.Run;
 using VideoOptimiser.Application.Features.Worker;
@@ -76,13 +77,28 @@ internal sealed record TuiConfirm(string Question, string Detail, TuiEffect OnYe
 /// the worker, then what happens to it, before anything launches).
 /// </summary>
 /// <param name="Hint">Dim text at the line's right, such as a server's price.</param>
-internal sealed record ChoiceOption(string Label, TuiEffect? Effect, TuiDialog? Next = null, string Hint = "");
+/// <param name="Explanation">What choosing it does, drawn under the list while it is highlighted, wrapped to the dialog.</param>
+/// <param name="ListLine">One row under the explanation, cut to fit rather than wrapped, such as the watch folders it scans.</param>
+internal sealed record ChoiceOption(string Label, TuiEffect? Effect, TuiDialog? Next = null, string Hint = "", string Explanation = "", string ListLine = "");
 
 /// <summary>A list the user picks from: arrows move, Enter chooses, Esc cancels.</summary>
 internal sealed record TuiChoice(string Title, string Detail, ImmutableList<ChoiceOption> Options, int Selected) : TuiDialog;
 
 /// <summary>A single text field. Its purpose determines validation on Enter; ordinary action keys stay text.</summary>
 internal sealed record TuiTextInput(QueueAdditionSource Source, string Text, string? Problem = null) : TuiDialog;
+
+/// <summary>
+/// The config facts Queue's <c>a</c> explains its choices with. Settings load once per process, so these are taken when the
+/// view opens, like the subtitle, and never change while it is open.
+/// </summary>
+/// <param name="WatchRoots">Each <c>watch.roots</c> path, as the config writes it.</param>
+/// <param name="ImmichConfigured"><c>immich.baseUrl</c> is set.</param>
+internal sealed record QueueSources(ImmutableList<string> WatchRoots, bool ImmichConfigured)
+{
+    public static readonly QueueSources None = new([], false);
+
+    public static QueueSources Of(AppSettings settings) => new([.. settings.Watch.Roots.Select(root => root.Path)], settings.Immich.IsConfigured);
+}
 
 /// <summary>Where the run is in its flow, from its events: the idle text says why nothing converts.</summary>
 internal enum RunPhase { Preparing, Converting, Ending }
@@ -208,6 +224,7 @@ internal sealed record TuiModel(
     string? ReadProblem,
     bool Quit,
     FinaliseBatch? Finalising,
+    QueueSources Sources,
     CostPage? Cost = null)
 {
     /// <summary>The queue pane's rows in display order: the open videos by group (a stable sort keeps run order inside one), then the failed.</summary>
@@ -223,11 +240,13 @@ internal sealed record TuiModel(
 
     public int Count(VideoGroup group) => group == VideoGroup.Failed ? Failed.Count : Open.Count(video => video.Group == group);
 
-    public static TuiModel Initial(DateTimeOffset now, int width, int height, string subtitle) => new(
+    /// <param name="sources">Null means no watch folders and no Immich, as in a test that doesn't care.</param>
+    public static TuiModel Initial(DateTimeOffset now, int width, int height, string subtitle, QueueSources? sources = null) => new(
         width, height, now, subtitle, Pane.Queue, Loaded: false,
         Open: [], Failed: [], QueueSelection: null, ReviewSelection: null,
         Run: null, Requests: null, Worker: WorkerState.Unknown, Activity: ActivityState.None,
-        Log: [], LogScroll: 0, Dialog: null, Help: false, Busy: ImmutableDictionary<string, string>.Empty, Notice: null, ReadProblem: null, Quit: false, Finalising: null);
+        Log: [], LogScroll: 0, Dialog: null, Help: false, Busy: ImmutableDictionary<string, string>.Empty, Notice: null, ReadProblem: null, Quit: false, Finalising: null,
+        Sources: sources ?? QueueSources.None);
 }
 
 /// <summary>The worker as the pane shows it, merged from the state file and Hetzner's answer.</summary>

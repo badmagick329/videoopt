@@ -15,7 +15,7 @@ internal sealed class TuiCommand(TuiSnapshotReader reader, TimeProvider time)
     {
         var settings = configuration.Settings;
         var size = command.Size ?? FrameSize.Default;
-        var model = TuiModel.Initial(time.GetUtcNow(), size.Width, size.Height, Path.GetFileName(settings.Database.Path));
+        var model = TuiModel.Initial(time.GetUtcNow(), size.Width, size.Height, Path.GetFileName(settings.Database.Path), QueueSources.Of(settings));
 
         model = TuiUpdate.Update(model, new SnapshotMsg(await reader.ReadAsync(settings, cancellationToken))).Model;
         if (model.Worker.Managed)

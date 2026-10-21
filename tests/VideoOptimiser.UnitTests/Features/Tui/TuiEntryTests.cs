@@ -116,9 +116,22 @@ public sealed class TuiEntryTests : QueueTestBase
 
         result.ExitCode.Should().Be(0);
         result.Stderr.Should().BeEmpty();
-        result.Stdout.Should().Contain("File path");
+        result.Stdout.Should().Contain("Add files by path");
         result.Stdout.Should().Contain("enter");
         (await Repository.ListAsync(DatabasePath, terminal: false)).Should().BeEmpty();
+    }
+
+    /// <summary>The chooser explains each source from the loaded config, so the snapshot shows the config's own folders.</summary>
+    [Fact]
+    public async Task SnapshotChooserExplainsTheSourcesFromTheConfig()
+    {
+        await WriteConfigAsync(["watch:", "  roots:", @"    - path: 'D:\Videos'"], immichConfigured: true);
+
+        var scan = await RunAsync("tui", "--snapshot", "--keys", "a");
+        var immich = await RunAsync("tui", "--snapshot", "--keys", "a,down");
+
+        scan.Stdout.Should().Contain("Scans your watch folder now").And.Contain(@"D:\Videos");
+        immich.Stdout.Should().Contain("Asks how many next").And.NotContain("isn't set up");
     }
 
     [Fact]

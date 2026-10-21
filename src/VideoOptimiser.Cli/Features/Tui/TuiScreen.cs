@@ -35,7 +35,7 @@ internal sealed class TuiScreen(TuiSnapshotReader reader, TuiActions actions, Ti
             session.Enter();
             var channel = Channel.CreateUnbounded<TuiMsg>(new UnboundedChannelOptions { SingleReader = true });
             var (width, height) = WindowSize();
-            var model = TuiModel.Initial(time.GetUtcNow(), width, height, Path.GetFileName(settings.Database.Path));
+            var model = TuiModel.Initial(time.GetUtcNow(), width, height, Path.GetFileName(settings.Database.Path), QueueSources.Of(settings));
             var effects = new TuiEffects(reader, actions, configuration, channel.Writer);
 
             TuiLoop.StartKeys(channel.Writer);

@@ -36,12 +36,89 @@ public sealed class TuiQueueAdditionUiTests
 
         var step = Update(model, Letter('a'));
 
-        step.Model.Choice!.Options.Select(option => option.Label).Should().Equal("Watch folders", "Immich", "File path");
+        step.Model.Choice!.Options.Select(option => option.Label).Should().Equal("Scan your watch folders", "Download from Immich", "Add files by path");
+        step.Model.Choice.Detail.Should().Be("Adding only queues videos. A run converts them.");
         step.Effects.Should().BeEmpty();
         var selected = Update(step.Model, Enter);
         selected.Effects.Should().Equal(new AddVideos(QueueAdditionSource.WatchFolders));
         selected.Model.Dialog.Should().BeNull();
         selected.Model.Run.Should().Be(model.Run);
+    }
+
+    private const string VideosRoot = @"D:\Videos";
+    private const string PhoneRoot = @"E:\Phone\Camera";
+
+    private static TuiModel WithSources(QueueSources sources) => Model() with { Sources = sources };
+
+    [Theory]
+    [InlineData(0, "No watch folders are set up. Add one to watch.roots in your config.", "")]
+    [InlineData(1, "Scans your watch folder now and queues the videos that fit your rules:", VideosRoot)]
+    [InlineData(2, "Scans your 2 watch folders now and queues the videos that fit your rules:", VideosRoot + ", " + PhoneRoot)]
+    public void TheWatchFolderChoiceNamesHowManyRootsItScansAndWhich(int roots, string explanation, string listed)
+    {
+        var model = WithSources(new QueueSources([.. new[] { VideosRoot, PhoneRoot }.Take(roots)], ImmichConfigured: false));
+
+        var scan = After(model, Letter('a')).Choice!.Options[0];
+
+        scan.Explanation.Should().Be(explanation);
+        scan.ListLine.Should().Be(listed);
+    }
+
+    [Theory]
+    [InlineData(true, "Asks how many next, then downloads videos from your Immich library and queues them.")]
+    [InlineData(false, "Immich isn't set up. Set immich.baseUrl in your config to use it.")]
+    public void TheImmichChoiceSaysWhatItDownloadsOrThatImmichIsNotSetUp(bool configured, string explanation)
+    {
+        var options = After(WithSources(new QueueSources([], configured)), Letter('a')).Choice!.Options;
+
+        options[1].Explanation.Should().Be(explanation);
+        options[2].Explanation.Should().Be("Asks for one or more file paths, one per line, and queues those files.");
+    }
+
+    /// <summary>
+    /// The dialog's border rows and its text, read from a plain frame: the row holding its top-left corner and title, down to the
+    /// row with a bottom-left corner in the same column. Its inner rows are joined with spaces, so a sentence reads whole however
+    /// the dialog's width wrapped it.
+    /// </summary>
+    private static (int Top, int Bottom, string Text) DialogIn(string[] rows, string title)
+    {
+        var top = Array.FindIndex(rows, row => row.Contains($"╭─ {title} ", StringComparison.Ordinal));
+        top.Should().BeGreaterThanOrEqualTo(0, $"a dialog titled {title} is drawn:\n{string.Join('\n', rows)}");
+        var left = rows[top].IndexOf($"╭─ {title} ", StringComparison.Ordinal);
+        var right = rows[top].IndexOf('╮', left);
+        var bottom = Array.FindIndex(rows, top + 1, row => row.Length > left && row[left] == '╰');
+        var inner = rows[(top + 1)..bottom].Select(row => row[(left + 1)..right].Trim()).Where(text => text.Length > 0);
+        return (top, bottom, string.Join(' ', inner));
+    }
+
+    [Theory]
+    [InlineData(140, 40, "Choose")]
+    [InlineData(40, 10, "Add videos")]
+    public void TheHighlightedOptionAloneIsExplainedAndTheDialogKeepsItsHeightAsTheSelectionMoves(int width, int height, string title)
+    {
+        var model = WithSources(new QueueSources([VideosRoot, PhoneRoot, @"F:\Archive\Family videos\2019"], ImmichConfigured: true)) with { Width = width, Height = height };
+        using var renderer = new FrameRenderer();
+        string[] labels = ["Scan your watch folders", "Download from Immich", "Add files by path"];
+        string[] explanations =
+        [
+            "Scans your 3 watch folders now and queues the videos that fit your rules: D:\\Videos, E:\\Phone",
+            "Asks how many next, then downloads videos from your Immich library and queues them.",
+            "Asks for one or more file paths, one per line, and queues those files."
+        ];
+
+        var dialogs = Enumerable.Range(0, 3)
+            .Select(at => DialogIn(FrameRenderer.Plain(renderer.Frame(ChooseSource(model, at))!).Split('\n'), title))
+            .ToList();
+
+        for (var at = 0; at < 3; at++)
+        {
+            dialogs[at].Text.Should().Contain("▌ " + labels[at]);
+            dialogs[at].Text.Should().Contain(explanations[at]);
+            foreach (var other in explanations.Where((_, i) => i != at)) dialogs[at].Text.Should().NotContain(other);
+        }
+        // The roots that don't fit are cut on their one row, never wrapped onto more.
+        dialogs[0].Text.Should().Contain("…").And.NotContain("2019");
+        dialogs.Select(dialog => (dialog.Top, dialog.Bottom)).Distinct().Should().ContainSingle();
     }
 
     [Fact]
@@ -327,7 +404,7 @@ public sealed class TuiQueueAdditionUiTests
 
         var text = FrameRenderer.Plain(renderer.Frame(model)!);
 
-        text.Should().Contain("File path").And.Contain("q s?[clip].mp4").And.Contain("enter add").And.Contain("esc cancel");
+        text.Should().Contain("Add files by path").And.Contain("q s?[clip].mp4").And.Contain("enter add").And.Contain("esc cancel");
         text.Should().NotContain(new string('a', 150));
         text.Split('\n').Should().HaveCount(height);
     }
@@ -351,7 +428,7 @@ public sealed class TuiQueueAdditionUiTests
     public void TheRendererNamesTheBlankCountAndOffersAdditionCancellationInANarrowFrame()
     {
         using var renderer = new FrameRenderer();
-        FrameRenderer.Plain(renderer.Frame(Input(QueueAdditionSource.Immich, "1"))!).Should().Contain("blank = all");
+        FrameRenderer.Plain(renderer.Frame(Input(QueueAdditionSource.Immich, "1"))!).Should().Contain("blank = all").And.Contain("Download from Immich");
         var model = Model() with { Width = 40, Height = 10, Busy = Model().Busy.Add(AddVideos.Key, "Scanning the watch folders.") };
         FrameRenderer.Plain(renderer.Frame(model)!).Split('\n')[^1].Should().Contain("esc cancel add");
     }

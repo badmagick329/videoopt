@@ -43,7 +43,7 @@ internal sealed partial class TuiActions
     private async Task<QueueAdditionDoneMsg> AddWatchFoldersAsync(AddVideos effect, AppSettings settings, Action<LogKind, string> log, CancellationToken token)
     {
         if (discovery.Refusal(settings) is QueueDiscoveryRefusal.NoWatchRoots)
-            return new(effect, Done(LogKind.Warning, "Adding videos needs at least one watch.roots entry. For Immich videos, choose Immich."));
+            return new(effect, Done(LogKind.Warning, $"Adding videos needs at least one watch.roots entry. For Immich videos, choose {TuiUpdate.ImmichLabel}."));
 
         log(LogKind.Info, $"Scanning {OutputWords.Count(settings.Watch.Roots.Count, "watch root", "watch roots")} for videos to convert; files not seen before are probed with ffprobe.");
         using var output = new AdditionLogWriter(log);

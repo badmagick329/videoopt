@@ -60,7 +60,7 @@ internal static partial class TuiView
             new Line().Flex(input.Problem ?? hint, Theme.Of(input.Problem is null ? Theme.Dim : Theme.Held)).Build(inner),
             new Line().Flex("enter add · esc cancel", Theme.Of(Theme.Dim)).Build(inner)
         };
-        return DialogPanel(file ? "File path" : "Add from Immich", width, rows);
+        return DialogPanel(file ? TuiUpdate.FilesLabel : TuiUpdate.ImmichLabel, width, rows);
     }
 
     /// <summary>The end stays visible while typing a long path; width is in terminal cells, including wide Unicode glyphs.</summary>
@@ -124,19 +124,20 @@ internal static partial class TuiView
         return DialogPanel("Keys", width, fitting);
     }
 
-    /// <summary>A list to pick from, in the confirmation's style: the cursor row has the selection colour, and each option may carry a dim hint (a price).</summary>
+    /// <summary>
+    /// A list to pick from, in the confirmation's style: the cursor row has the selection colour, and each option may carry a dim
+    /// hint (a price) and an explanation, drawn once under the list for the highlighted option. The explanation's rows are padded
+    /// to the tallest option's, so the dialog keeps its height while the selection moves. A window too short for the whole
+    /// dialog drops the spacing and the key line first (the footer shows the same keys), then moves the title into the border,
+    /// then drops the detail: the options and what the highlighted one does stay longest.
+    /// </summary>
     private static Panel ChoiceDialog(TuiModel m, TuiChoice choice)
     {
         var width = DialogWidth(m);
         var inner = width - 6;
-        var rows = new List<IRenderable>
-        {
-            new Paragraph(" "),
-            new Paragraph(choice.Title, Theme.Of(Theme.Text, bold: true)),
-            new Paragraph(" "),
-            new Paragraph(choice.Detail, Theme.Of(Theme.Soft)),
-            new Paragraph(" ")
-        };
+        var room = m.Height - 1 - 2; // The footer stays visible, and the border takes two rows.
+
+        var options = new List<IRenderable>();
         for (var i = 0; i < choice.Options.Count; i++)
         {
             var option = choice.Options[i];
@@ -145,11 +146,38 @@ internal static partial class TuiView
                 .Left(selected ? "▌ " : "  ", Theme.Of(Theme.Accent))
                 .Flex(option.Label, Theme.Of(Theme.Text, bold: selected));
             if (option.Hint.Length > 0) line.Right(option.Hint + " ", Theme.Of(Theme.Dim));
-            rows.Add(line.Build(inner, selected ? Theme.Selection : null));
+            options.Add(line.Build(inner, selected ? Theme.Selection : null));
         }
-        rows.Add(new Paragraph(" "));
-        rows.Add(new Paragraph("↑↓ move · enter choose · esc cancel", Theme.Of(Theme.Dim)));
-        rows.Add(new Paragraph(" "));
-        return DialogPanel("Choose", width, rows);
+
+        var explanationRows = choice.Options.Select(option => ExplanationRows(option, inner).Count).DefaultIfEmpty(0).Max();
+        var explanation = new List<IRenderable>();
+        if (choice.Selected < choice.Options.Count)
+            foreach (var (text, listed) in ExplanationRows(choice.Options[choice.Selected], inner))
+                explanation.Add(new Line().Flex(text, Theme.Of(listed ? Theme.Text : Theme.Soft)).Build(inner));
+        while (explanation.Count < explanationRows) explanation.Add(new Paragraph(" "));
+
+        var detail = TuiText.Wrap(choice.Detail, inner).Select(text => new Line().Flex(text, Theme.Of(Theme.Soft)).Build(inner)).ToList();
+        IRenderable title = new Line().Flex(choice.Title, Theme.Of(Theme.Text, bold: true)).Build(inner);
+        IRenderable blank = new Paragraph(" ");
+
+        List<IRenderable> full =
+        [
+            blank, title, blank, .. detail, blank, .. options,
+            .. explanation.Count > 0 ? [blank, .. explanation] : Array.Empty<IRenderable>(),
+            blank, new Paragraph("↑↓ move · enter choose · esc cancel", Theme.Of(Theme.Dim)), blank
+        ];
+        if (full.Count <= room) return DialogPanel("Choose", width, full);
+        List<IRenderable> tight = [title, .. detail, .. options, .. explanation];
+        if (tight.Count <= room) return DialogPanel("Choose", width, tight);
+        List<IRenderable> titled = [.. detail, .. options, .. explanation];
+        return DialogPanel(choice.Title, width, titled.Count <= room ? titled : [.. options, .. explanation]);
+    }
+
+    /// <summary>The explanation wrapped to the dialog, then the list line cut to one row; <c>Listed</c> marks the list line.</summary>
+    private static List<(string Text, bool Listed)> ExplanationRows(ChoiceOption option, int inner)
+    {
+        var rows = option.Explanation.Length > 0 ? TuiText.Wrap(option.Explanation, inner).Select(text => (text, false)).ToList() : [];
+        if (option.ListLine.Length > 0) rows.Add((TuiText.Fit(option.ListLine, inner), true));
+        return rows;
     }
 }

@@ -10,13 +10,29 @@ internal static partial class TuiUpdate
     private static TuiStep AddKey(TuiModel m)
     {
         if (m.Busy.TryGetValue(AddVideos.Key, out var working)) return Told(m, working);
-        return Asking(m, new TuiChoice("Add videos", "Choose where to look. Videos join the queue; a run can keep going.",
+        var roots = m.Sources.WatchRoots;
+        // The labels say what choosing does; the explanation, from the loaded config, says what it will act on.
+        var scan = roots.Count switch
+        {
+            0 => "No watch folders are set up. Add one to watch.roots in your config.",
+            1 => "Scans your watch folder now and queues the videos that fit your rules:",
+            _ => $"Scans your {roots.Count} watch folders now and queues the videos that fit your rules:"
+        };
+        var immich = m.Sources.ImmichConfigured
+            ? "Asks how many next, then downloads videos from your Immich library and queues them."
+            : "Immich isn't set up. Set immich.baseUrl in your config to use it.";
+        return Asking(m, new TuiChoice("Add videos", "Adding only queues videos. A run converts them.",
         [
-            new ChoiceOption("Watch folders", new AddVideos(QueueAdditionSource.WatchFolders)),
-            new ChoiceOption("Immich", null, new TuiTextInput(QueueAdditionSource.Immich, "1")),
-            new ChoiceOption("File path", null, new TuiTextInput(QueueAdditionSource.File, ""))
+            new ChoiceOption(ScanLabel, new AddVideos(QueueAdditionSource.WatchFolders), Explanation: scan, ListLine: string.Join(", ", roots)),
+            new ChoiceOption(ImmichLabel, null, new TuiTextInput(QueueAdditionSource.Immich, "1"), Explanation: immich),
+            new ChoiceOption(FilesLabel, null, new TuiTextInput(QueueAdditionSource.File, ""), Explanation: "Asks for one or more file paths, one per line, and queues those files.")
         ], 0));
     }
+
+    /// <summary>The chooser's labels; the text dialogs and the refusals name the choice by the same words.</summary>
+    internal const string ScanLabel = "Scan your watch folders";
+    internal const string ImmichLabel = "Download from Immich";
+    internal const string FilesLabel = "Add files by path";
 
     private static TuiStep OnQueueInputKey(TuiModel m, TuiTextInput input, ConsoleKeyInfo key, bool moreBuffered)
     {

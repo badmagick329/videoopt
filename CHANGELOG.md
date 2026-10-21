@@ -4,8 +4,8 @@
 
 ### The full-screen view
 
-- In Queue, `a` adds videos from the watch folders, Immich or a file path, including while a run converts. Immich asks how many new videos to queue, starting at one; a file outside the watch folders or eligibility rules can be forced after asking. Progress appears in Activity, and `esc` cancels an addition while keeping videos already queued.
-- The file-path box in Queue's `a` takes several paths, one per line, so a paste from Explorer's **Copy as path** on several files adds them all. Activity shows a line per file and then a count. Files the watch folders or the rules turned away get a single question to force them, however many there are.
+- In Queue, `a` adds videos, including while a run converts: **Scan your watch folders**, **Download from Immich** or **Add files by path**. Under the list, a few lines explain the highlighted choice using your config, such as which watch folders a scan covers, or say that a source isn't set up. Immich asks how many new videos to queue, starting at one; a file outside the watch folders or eligibility rules can be forced after asking. Progress appears in Activity, and `esc` cancels an addition while keeping videos already queued.
+- **Add files by path** in Queue's `a` takes several paths, one per line, so a paste from Explorer's **Copy as path** on several files adds them all. Activity shows a line per file and then a count. Files the watch folders or the rules turned away get a single question to force them, however many there are.
 
 ## [0.16.0] - 2026-10-20
 ### Remote workers
