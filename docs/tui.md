@@ -40,7 +40,7 @@ Each pane adds its own:
 
 | Pane | Key | What it does |
 | --- | --- | --- |
-| Queue | `a` | Add videos: scan your watch folders, download from Immich, or add files by path. See [Adding videos](#adding-videos). |
+| Queue | `a` | Add videos: scan your watch folders, search Immich, or add files by path. See [Adding videos](#adding-videos). |
 | Queue | `h` / `r` | Hold a waiting or stopped video, so runs pass over it, or release it. |
 | Queue | `n` | Convert the selected video next. |
 | Queue | `d` | Drop the video from the queue, after asking. The original is untouched. On a failed video, dismiss it instead: see [Dismissing failures](#dismissing-failures). |
@@ -56,11 +56,11 @@ Each pane adds its own:
 
 The worker keys and `w` do something only with a Hetzner worker (`remoteSsh.lifecycle: "hetzner"`).
 
-A greyed key in the footer is blocked by something already in progress, such as `a` while an addition runs or `c` and `d` while the worker is being created or deleted. Pressing it does nothing except say what's going, and the key works again once that ends.
+A greyed key in the footer is blocked by something already in progress, such as `a` while an addition runs, or `c` and `d` while the worker is being created or deleted. Pressing it only says what's going on, and the key works again once that ends.
 
 ## Adding videos
 
-In Queue, press `a`, then choose with the arrows and `enter`. Under the list, a few lines explain the highlighted choice using your config: which watch folders a scan covers, or that a source isn't set up yet.
+In Queue, press `a`, then pick a choice with the arrows and `enter`. A few lines under the list explain the highlighted choice from your config: which watch folders a scan covers, or that a source isn't set up yet.
 
 - **Scan your watch folders** asks how many videos to queue, then scans all the folders in `watch.roots`, as `queue add --limit` does; you can't pick one. The count starts at `1`; enter a positive whole number, or clear it to add every eligible video. Videos that already have a job don't count towards it, nor do ones converted, failed, skipped or rejected before, and the scan stops once it has queued that many. With no `watch.roots` set, it asks nothing and says what to add to your config.
 - **Search Immich** asks how many videos to queue, then checks your Immich videos one at a time. It downloads each one to check it against your rules and deletes the download unless it queues the video. The count starts at `1`; enter a positive whole number, or clear it to add every eligible video. It works as `queue add immich` does, trash check and re-upload guard included: converted originals uploaded again by the phone may go back to Immich's trash.
@@ -70,7 +70,7 @@ With several files, Activity shows a line for each one as it's added, then a cou
 
 If files are outside the watch folders or don't fit the eligibility rules, one question offers to force them, however many there are. That bypasses only those checks; AV1 files, the size cap and protected tool files stay excluded, and the question never offers files refused for those reasons.
 
-Adding works with an empty queue and while a run converts. It queues videos without starting a run; a run already going picks them up between videos. Progress and results appear in Activity. Only one addition runs at a time. With no dialog open, `esc` cancels it: videos already queued stay queued, a list of files stops before the next file, and a partial Immich download is removed. It leaves a conversion run going. Quitting during an addition, after its question, stops it the same way: the view closes, prints `Stopping the queue addition.` and waits up to 10 seconds for the addition to end before it exits.
+Adding works with an empty queue and while a run converts. It queues videos without starting a run; a run already going picks them up between videos. Progress and results appear in Activity. Only one addition runs at a time. With no dialog open, `esc` cancels it: videos already queued stay queued, a list of files stops before the next file, and a partial Immich download is removed. A conversion run keeps going. Quitting during an addition, after its question, stops it the same way: the view closes, prints `Stopping the queue addition.` and waits up to 10 seconds for the addition to end before it exits.
 
 ## Starting a run
 

@@ -67,7 +67,7 @@ queue add  →  run  →  you review  →  finalize
 
 ## The full-screen view
 
-`video-optimiser` with no command opens a view of the queue, the worker, the run's log and the videos ready to finalise. From it you can start a run in the background, stop it, hold or drop videos, and review, finalise or reject each AV1. Press `?` for the main keys. Quitting never stops a run. See [docs/tui.md](docs/tui.md).
+`video-optimiser` with no command opens a view of the queue, the worker, the run's log and the videos ready to finalise. From it you can add videos, start a run in the background, stop it, hold or drop videos, and review, finalise or reject each AV1. Press `?` for the main keys. Quitting never stops a run. See [docs/tui.md](docs/tui.md).
 
 If you prefer plain commands, every action has one, and `status` prints a short summary of where things stand.
 

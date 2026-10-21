@@ -14,7 +14,7 @@
 
 ### Fixes
 
-- Quitting the full-screen view while a queue addition is going stops the addition the way `esc` does and waits up to 10 seconds for it to end. Before, the view exited at once, which could leave a partial Immich download, or a downloaded copy with no job, in the staging folder.
+- Quitting the full-screen view during a queue addition now stops the addition as `esc` does and waits up to 10 seconds for it to end. Before, the view exited at once, which could leave a partial Immich download, or a downloaded copy with no job, in the staging folder.
 
 ## [0.16.0] - 2026-10-20
 ### Remote workers
