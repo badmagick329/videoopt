@@ -28,6 +28,23 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
     // Allocated on the loop thread too: Esc immediately after Add must reach the task before it starts.
     private CancellationTokenSource? _additionStop;
 
+    /// <summary>
+    /// The last addition's task, the one effect quitting waits for: an addition runs in this process, and its cleanup (a
+    /// <c>.part</c> download, an unqueued staged copy, an ffprobe child) runs only if the process lives until its task ends.
+    /// <see cref="AddVideos.Key"/> lets one out at a time, so one handle is enough. Every other effect is fire-and-forget.
+    /// </summary>
+    private Task? _addition;
+
+    /// <summary>
+    /// How long quitting waits for a stopped addition. Cancellation reaches a download or an ffprobe within moments, so the
+    /// bound only matters when something ignores the token; then the process exits anyway and may leave a staged copy that
+    /// a later search of the same asset overwrites but that <c>cleanup</c> never finds (VOPT-195).
+    /// </summary>
+    public static readonly TimeSpan AdditionQuitWait = TimeSpan.FromSeconds(10);
+
+    /// <summary>An addition's task has started and not ended yet.</summary>
+    public bool AdditionRunning => _addition is { IsCompleted: false };
+
     /// <summary>Starts <paramref name="effect"/> and returns at once.</summary>
     public void Run(TuiEffect effect, CancellationToken cancellationToken)
     {
@@ -62,7 +79,39 @@ internal sealed class TuiEffects(TuiSnapshotReader reader, TuiActions actions, L
             AddVideos => _additionStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken),
             _ => null
         };
-        _ = Task.Run(() => RunAsync(effect, stop, cancellationToken), CancellationToken.None);
+        var task = Task.Run(() => RunAsync(effect, stop, cancellationToken), CancellationToken.None);
+        if (effect is AddVideos) _addition = task;
+    }
+
+    /// <summary>Cancels the addition that is out, if any, and waits for it to end, at most <paramref name="bound"/>.</summary>
+    public Task<bool> StopAdditionAsync(TimeSpan bound, TimeProvider time) =>
+        StopAndWaitAsync(_addition, Volatile.Read(ref _additionStop), bound, time);
+
+    /// <summary>
+    /// Cancels <paramref name="stop"/> and waits for <paramref name="task"/> to end, at most <paramref name="bound"/> on
+    /// <paramref name="time"/>'s clock. Returns false when the bound ran out first; the task is left running.
+    /// </summary>
+    internal static async Task<bool> StopAndWaitAsync(Task? task, CancellationTokenSource? stop, TimeSpan bound, TimeProvider time)
+    {
+        if (task is null || task.IsCompleted) return true;
+        try
+        {
+            stop?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The task's finally disposed it as it ended: nothing is left to cancel, and the wait below returns at once.
+        }
+        try
+        {
+            // RunAsync catches every failure into a message, so the task only ever ends cleanly.
+            await task.WaitAsync(bound, time);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
     }
 
     private async Task RunAsync(TuiEffect effect, CancellationTokenSource? stop, CancellationToken cancellationToken)

@@ -34,7 +34,7 @@ These work from any pane:
 | `X` | Stop the run now, after asking. The video converting now starts again from its last finished step on the next run. |
 | `$` | Show what the freed space cost. See [What the freed space cost](#what-the-freed-space-cost). |
 | `?` | Show the key guide. Any key closes it. |
-| `q`, `Ctrl+C` | Quit. If an action you started is still going, it asks first, because quitting would cut it off. |
+| `q`, `Ctrl+C` | Quit. If an action you started is still going, it asks first, because quitting would cut it off. A queue addition is stopped the way `esc` stops it; see [Adding videos](#adding-videos). |
 
 Each pane adds its own:
 
@@ -70,7 +70,7 @@ With several files, Activity shows a line for each one as it's added, then a cou
 
 If files are outside the watch folders or don't fit the eligibility rules, one question offers to force them, however many there are. That bypasses only those checks; AV1 files, the size cap and protected tool files stay excluded, and the question never offers files refused for those reasons.
 
-Adding works with an empty queue and while a run converts. It queues videos without starting a run; a run already going picks them up between videos. Progress and results appear in Activity. Only one addition runs at a time. With no dialog open, `esc` cancels it: videos already queued stay queued, a list of files stops before the next file, and a partial Immich download is removed. It leaves a conversion run going.
+Adding works with an empty queue and while a run converts. It queues videos without starting a run; a run already going picks them up between videos. Progress and results appear in Activity. Only one addition runs at a time. With no dialog open, `esc` cancels it: videos already queued stay queued, a list of files stops before the next file, and a partial Immich download is removed. It leaves a conversion run going. Quitting during an addition, after its question, stops it the same way: the view closes, prints `Stopping the queue addition.` and waits up to 10 seconds for the addition to end before it exits.
 
 ## Starting a run
 

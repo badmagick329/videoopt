@@ -394,6 +394,20 @@ public sealed class TuiQueueAdditionUiTests
         Update(quit.Model, controlC).Model.Quit.Should().BeTrue();
     }
 
+    /// <summary>Quitting waits for a stopped addition's cleanup, so the question says what quitting does to it instead of sending the user to Esc.</summary>
+    [Fact]
+    public void TheQuitQuestionSaysQuittingStopsAnAdditionAndKeepsTheWarningForOtherActions()
+    {
+        var adding = Model() with { Busy = Model().Busy.Add(AddVideos.Key, "Adding videos from Immich.") };
+
+        var alone = Update(adding, Letter('q')).Model.Confirm!;
+        alone.Should().Be(new TuiConfirm("Adding videos from Immich is still going.", "Quitting stops it. Videos already queued stay queued.", new QuitNow()));
+
+        var beside = Update(adding with { Busy = adding.Busy.Add(BusyKeys.Worker, DeleteWorker.Text) }, Letter('q')).Model.Confirm!;
+        beside.Question.Should().Be("2 actions are still going.");
+        beside.Detail.Should().Be("Deleting the worker. Quitting now stops it partway. It's better to wait for it to finish. Adding videos from Immich stops too, and videos already queued stay queued.");
+    }
+
     [Theory]
     [InlineData(140, 40)]
     [InlineData(40, 10)]

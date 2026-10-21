@@ -269,6 +269,81 @@ public sealed class TuiQueueAdditionEffectTests
         done.Result.Notice.Should().Be("Couldn't add videos: ffprobe timed out.");
     }
 
+    // ---- quitting (VOPT-195) ----------------------------------------------------------------
+
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(10);
+
+    /// <summary>Quitting must leave staging as Esc does: the process exits right after, so the cleanup has to run first.</summary>
+    [Fact]
+    public async Task QuittingStopsAnImmichAdditionAndReturnsOnlyOnceItsPartialDownloadIsGone()
+    {
+        var immich = new PausingImmich();
+        using var rig = Rig(immich);
+        var effects = new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, Channel.CreateUnbounded<TuiMsg>().Writer);
+        effects.Run(new AddVideos(QueueAdditionSource.Immich), CancellationToken.None);
+        await immich.Downloading.Task.WaitAsync(Patience);
+
+        (await effects.StopAdditionAsync(Bound, new ManualTime(DateTimeOffset.UnixEpoch)).WaitAsync(Patience)).Should().BeTrue();
+
+        effects.AdditionRunning.Should().BeFalse();
+        Directory.Exists(Path.Combine(rig.Settings.Immich.StagingDirectory, immich.Second.Id)).Should().BeFalse();
+        (await rig.Repository.ListAsync(rig.DatabasePath, terminal: false)).Should().ContainSingle().Which.ImmichAssetId.Should().Be(immich.First.Id);
+    }
+
+    [Fact]
+    public async Task TheQuitWaitCancelsTheAdditionAndLastsUntilItsCleanupEnds()
+    {
+        using var stop = new CancellationTokenSource();
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleaned = false;
+        var addition = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.Infinite, stop.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                await cleanup.Task;
+                cleaned = true;
+            }
+        });
+
+        var wait = TuiEffects.StopAndWaitAsync(addition, stop, Bound, new ManualTime(DateTimeOffset.UnixEpoch));
+
+        stop.IsCancellationRequested.Should().BeTrue();
+        wait.IsCompleted.Should().BeFalse();
+        cleanup.SetResult();
+        (await wait.WaitAsync(Patience)).Should().BeTrue();
+        cleaned.Should().BeTrue();
+    }
+
+    /// <summary>An addition stuck where cancellation can't reach must not keep the terminal: the wait ends at the bound, not before.</summary>
+    [Fact]
+    public async Task TheQuitWaitGivesUpOnAnAdditionThatIgnoresCancellationAtTheBound()
+    {
+        using var stop = new CancellationTokenSource();
+        var time = new ManualTime(DateTimeOffset.UnixEpoch);
+        var wait = TuiEffects.StopAndWaitAsync(new TaskCompletionSource().Task, stop, Bound, time);
+
+        time.Advance(Bound - TimeSpan.FromTicks(1));
+        wait.IsCompleted.Should().BeFalse();
+        time.Advance(TimeSpan.FromTicks(1));
+        (await wait.WaitAsync(Patience)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void WithNoAdditionOutTheQuitWaitReturnsAtOnce()
+    {
+        using var rig = Rig();
+        var time = new ManualTime(DateTimeOffset.UnixEpoch);
+        var effects = new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, Channel.CreateUnbounded<TuiMsg>().Writer);
+
+        effects.AdditionRunning.Should().BeFalse();
+        effects.StopAdditionAsync(Bound, time).IsCompletedSuccessfully.Should().BeTrue();
+        TuiEffects.StopAndWaitAsync(Task.CompletedTask, null, Bound, time).IsCompletedSuccessfully.Should().BeTrue();
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("bad\0path.mp4")]

@@ -213,17 +213,27 @@ internal static partial class TuiUpdate
 
     /// <summary>
     /// Quitting ends the process, so an action still going (a worker created between Hetzner's request and the state file, a
-    /// finalise mid-install) would stop partway. Reads (the snapshot, Hetzner's check) hold no key and never ask.
+    /// finalise mid-install) would stop partway. Reads (the snapshot, Hetzner's check) hold no key and never ask. A queue
+    /// addition is the exception: quitting cancels it and waits for its cleanup (<see cref="TuiEffects.StopAdditionAsync"/>),
+    /// so it ends as Esc would leave it, and the question says so instead of warning (VOPT-195).
     /// </summary>
     private static TuiModel ConfirmQuit(TuiModel m)
     {
-        var going = m.Busy.Values.Select(text => text.TrimEnd('.')).Order(StringComparer.Ordinal).ToArray();
-        var (question, detail) = going.Length == 1
-            ? ($"{going[0]} is still going.", "Quitting now stops it partway. It's better to wait for it to finish.")
-            : ($"{going.Length} actions are still going.", $"{string.Join("; ", going)}. Quitting now stops them partway. It's better to wait for them to finish.");
-        // A long batch need not be waited out: Esc ends it cleanly after the video it is on.
-        if (m.Busy.ContainsKey(AddVideos.Key)) detail += " Cancel this and press Esc to cancel queue addition.";
-        else if (m.Finalising is { CanStop: true }) detail += " " + EscStopsTheFinalise;
+        var adding = m.Busy.TryGetValue(AddVideos.Key, out var addText) ? addText.TrimEnd('.') : null;
+        var others = m.Busy.Where(pair => pair.Key != AddVideos.Key).Select(pair => pair.Value.TrimEnd('.')).Order(StringComparer.Ordinal).ToArray();
+        var count = others.Length + (adding is null ? 0 : 1);
+        var question = count == 1 ? $"{adding ?? others[0]} is still going." : $"{count} actions are still going.";
+        var detail = others.Length switch
+        {
+            0 => "Quitting stops it. Videos already queued stay queued.",
+            1 when adding is null => "Quitting now stops it partway. It's better to wait for it to finish.",
+            1 => $"{others[0]}. Quitting now stops it partway. It's better to wait for it to finish.",
+            _ => $"{string.Join("; ", others)}. Quitting now stops them partway. It's better to wait for them to finish."
+        };
+        if (adding is not null && others.Length > 0) detail += $" {adding} stops too, and videos already queued stay queued.";
+        // A long batch need not be waited out: Esc ends it cleanly after the video it is on. With an addition out, Esc
+        // cancels that first, so the sentence would be wrong.
+        else if (adding is null && m.Finalising is { CanStop: true }) detail += " " + EscStopsTheFinalise;
         return m with { Dialog = new TuiConfirm(question, detail, new QuitNow()) };
     }
 

@@ -8,6 +8,10 @@
 - **Add files by path** in Queue's `a` takes several paths, one per line, so a paste from Explorer's **Copy as path** on several files adds them all. Activity shows a line per file and then a count. Files the watch folders or the rules turned away get a single question to force them, however many there are.
 - A key that something in progress blocks is greyed in the footer, such as `a` while an addition runs or Worker's `c` and `d` while the worker is being created or deleted. It keeps its place, says what's going if pressed, and works again once that ends. `s`, `X`, Worker's `d` and Activity's `w` now refuse at once in that case, instead of asking first and refusing after the answer.
 
+### Fixes
+
+- Quitting the full-screen view while a queue addition is going stops the addition the way `esc` does and waits up to 10 seconds for it to end. Before, the view exited at once, which could leave a partial Immich download, or a downloaded copy with no job, in the staging folder.
+
 ## [0.16.0] - 2026-10-20
 ### Remote workers
 

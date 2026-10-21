@@ -29,14 +29,14 @@ internal sealed class TuiScreen(TuiSnapshotReader reader, TuiActions actions, Ti
             eventArgs.Cancel = true;
             closing.Cancel();
         };
+        var channel = Channel.CreateUnbounded<TuiMsg>(new UnboundedChannelOptions { SingleReader = true });
+        var effects = new TuiEffects(reader, actions, configuration, channel.Writer);
         Console.CancelKeyPress += onBreak;
         try
         {
             session.Enter();
-            var channel = Channel.CreateUnbounded<TuiMsg>(new UnboundedChannelOptions { SingleReader = true });
             var (width, height) = WindowSize();
             var model = TuiModel.Initial(time.GetUtcNow(), width, height, Path.GetFileName(settings.Database.Path), QueueSources.Of(settings));
-            var effects = new TuiEffects(reader, actions, configuration, channel.Writer);
 
             TuiLoop.StartKeys(channel.Writer);
             TuiLoop.StartTicker(channel.Writer, time, WindowSize, closing.Token);
@@ -50,8 +50,17 @@ internal sealed class TuiScreen(TuiSnapshotReader reader, TuiActions actions, Ti
             await closing.CancelAsync();
             Console.CancelKeyPress -= onBreak;
             session.Restore();
+            // Closing cancelled the addition through its linked token, but the process would exit before its cleanup ran.
+            // The line goes to the restored screen, so the wait never looks like a frozen frame.
+            if (effects.AdditionRunning)
+            {
+                CliConsole.WriteLine(StoppingAddition);
+                await effects.StopAdditionAsync(TuiEffects.AdditionQuitWait, time);
+            }
         }
     }
+
+    private const string StoppingAddition = "Stopping the queue addition.";
 
     private static (int Width, int Height) WindowSize()
     {
