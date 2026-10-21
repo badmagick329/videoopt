@@ -60,7 +60,13 @@ internal static partial class TuiView
             new Line().Flex(input.Problem ?? hint, Theme.Of(input.Problem is null ? Theme.Dim : Theme.Held)).Build(inner),
             new Line().Flex("enter add · esc cancel", Theme.Of(Theme.Dim)).Build(inner)
         };
-        return DialogPanel(file ? TuiUpdate.FilesLabel : TuiUpdate.ImmichLabel, width, rows);
+        var title = input.Source switch
+        {
+            QueueAdditionSource.File => TuiUpdate.FilesLabel,
+            QueueAdditionSource.Immich => TuiUpdate.ImmichLabel,
+            _ => TuiUpdate.ScanLabel
+        };
+        return DialogPanel(title, width, rows);
     }
 
     /// <summary>The end stays visible while typing a long path; width is in terminal cells, including wide Unicode glyphs.</summary>

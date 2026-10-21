@@ -130,7 +130,7 @@ public sealed class TuiEntryTests : QueueTestBase
         var scan = await RunAsync("tui", "--snapshot", "--keys", "a");
         var immich = await RunAsync("tui", "--snapshot", "--keys", "a,down");
 
-        scan.Stdout.Should().Contain("Scans your watch folder now").And.Contain(@"D:\Videos");
+        scan.Stdout.Should().Contain("then scans your watch folder").And.Contain(@"D:\Videos");
         immich.Stdout.Should().Contain("Asks how many to queue").And.NotContain("isn't set up");
     }
 

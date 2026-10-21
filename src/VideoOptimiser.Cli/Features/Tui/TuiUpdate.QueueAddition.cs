@@ -15,15 +15,19 @@ internal static partial class TuiUpdate
         var scan = roots.Count switch
         {
             0 => "No watch folders are set up. Add one to watch.roots in your config.",
-            1 => "Scans your watch folder now and queues the videos that fit your rules:",
-            _ => $"Scans your {roots.Count} watch folders now and queues the videos that fit your rules:"
+            1 => "Asks how many to queue, then scans your watch folder for videos that fit:",
+            _ => $"Asks how many to queue, then scans your {roots.Count} watch folders for videos that fit:"
         };
         var immich = m.Sources.ImmichConfigured
             ? "Asks how many to queue. Each video is downloaded to check it and kept only if queued."
             : "Immich isn't set up. Set immich.baseUrl in your config to use it.";
+        // With no roots there is nothing to count: the scan goes straight to the action, which refuses with the CLI's reason.
+        var scanOption = roots.Count == 0
+            ? new ChoiceOption(ScanLabel, new AddVideos(QueueAdditionSource.WatchFolders), Explanation: scan)
+            : new ChoiceOption(ScanLabel, null, new TuiTextInput(QueueAdditionSource.WatchFolders, "1"), Explanation: scan, ListLine: string.Join(", ", roots));
         return Asking(m, new TuiChoice("Add videos", "Adding only queues videos. A run converts them.",
         [
-            new ChoiceOption(ScanLabel, new AddVideos(QueueAdditionSource.WatchFolders), Explanation: scan, ListLine: string.Join(", ", roots)),
+            scanOption,
             new ChoiceOption(ImmichLabel, null, new TuiTextInput(QueueAdditionSource.Immich, "1"), Explanation: immich),
             new ChoiceOption(FilesLabel, null, new TuiTextInput(QueueAdditionSource.File, ""), Explanation: "Asks for one or more file paths, one per line, and queues those files.")
         ], 0));
@@ -66,25 +70,30 @@ internal static partial class TuiUpdate
     private static TuiStep SubmitQueueInput(TuiModel m, TuiTextInput input)
     {
         AddVideos effect;
-        if (input.Source == QueueAdditionSource.Immich)
-        {
-            var text = input.Text.Trim();
-            int? limit = null;
-            if (text.Length > 0)
-            {
-                if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count <= 0)
-                    return TuiStep.Of(m with { Dialog = input with { Problem = "Enter a positive whole number, or leave blank for all eligible videos." } });
-                limit = count;
-            }
-            effect = new AddVideos(QueueAdditionSource.Immich, Limit: limit);
-        }
-        else
+        if (input.Source == QueueAdditionSource.File)
         {
             var paths = PathsIn(input.Text);
             if (paths.Count == 0) return TuiStep.Of(m with { Dialog = input with { Problem = "Enter a file path." } });
             effect = new AddVideos(QueueAdditionSource.File, paths);
         }
+        else
+        {
+            if (!TryCount(input.Text, out var limit))
+                return TuiStep.Of(m with { Dialog = input with { Problem = "Enter a positive whole number, or leave blank for all eligible videos." } });
+            effect = new AddVideos(input.Source, Limit: limit);
+        }
         return Emit(m with { Dialog = null }, effect);
+    }
+
+    /// <summary>The count box's one rule, for the scan and Immich alike: a positive whole number, or blank (null) for all.</summary>
+    private static bool TryCount(string text, out int? limit)
+    {
+        limit = null;
+        text = text.Trim();
+        if (text.Length == 0) return true;
+        if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count <= 0) return false;
+        limit = count;
+        return true;
     }
 
     /// <summary>

@@ -32,7 +32,7 @@ public sealed class TuiQueueAdditionUiTests
     [InlineData(true)]
     public void AnEmptyQueueAndAnActiveRunBothOfferTheSameSources(bool active)
     {
-        var model = Model() with { Run = active ? new LiveRunHolder(LockHolders.BackgroundRun, Now, 4242) : null };
+        var model = WithSources(new QueueSources([VideosRoot], ImmichConfigured: false)) with { Run = active ? new LiveRunHolder(LockHolders.BackgroundRun, Now, 4242) : null };
 
         var step = Update(model, Letter('a'));
 
@@ -40,9 +40,19 @@ public sealed class TuiQueueAdditionUiTests
         step.Model.Choice.Detail.Should().Be("Adding only queues videos. A run converts them.");
         step.Effects.Should().BeEmpty();
         var selected = Update(step.Model, Enter);
-        selected.Effects.Should().Equal(new AddVideos(QueueAdditionSource.WatchFolders));
-        selected.Model.Dialog.Should().BeNull();
+        selected.Effects.Should().BeEmpty();
+        selected.Model.Dialog.Should().Be(new TuiTextInput(QueueAdditionSource.WatchFolders, "1"));
         selected.Model.Run.Should().Be(model.Run);
+    }
+
+    /// <summary>A count for nothing would be a question with no use; the action's refusal says what to set up instead.</summary>
+    [Fact]
+    public void WithNoWatchRootsTheScanAsksNoCountAndGoesStraightToItsRefusal()
+    {
+        var step = Update(ChooseSource(WithSources(new QueueSources([], ImmichConfigured: true)), 0), Enter);
+
+        step.Model.Dialog.Should().BeNull();
+        step.Effects.Should().Equal(new AddVideos(QueueAdditionSource.WatchFolders));
     }
 
     private const string VideosRoot = @"D:\Videos";
@@ -52,8 +62,8 @@ public sealed class TuiQueueAdditionUiTests
 
     [Theory]
     [InlineData(0, "No watch folders are set up. Add one to watch.roots in your config.", "")]
-    [InlineData(1, "Scans your watch folder now and queues the videos that fit your rules:", VideosRoot)]
-    [InlineData(2, "Scans your 2 watch folders now and queues the videos that fit your rules:", VideosRoot + ", " + PhoneRoot)]
+    [InlineData(1, "Asks how many to queue, then scans your watch folder for videos that fit:", VideosRoot)]
+    [InlineData(2, "Asks how many to queue, then scans your 2 watch folders for videos that fit:", VideosRoot + ", " + PhoneRoot)]
     public void TheWatchFolderChoiceNamesHowManyRootsItScansAndWhich(int roots, string explanation, string listed)
     {
         var model = WithSources(new QueueSources([.. new[] { VideosRoot, PhoneRoot }.Take(roots)], ImmichConfigured: false));
@@ -101,7 +111,7 @@ public sealed class TuiQueueAdditionUiTests
         string[] labels = ["Scan your watch folders", "Search Immich", "Add files by path"];
         string[] explanations =
         [
-            "Scans your 3 watch folders now and queues the videos that fit your rules: D:\\Videos, E:\\Phone",
+            "Asks how many to queue, then scans your 3 watch folders for videos that fit: D:\\Videos, E:\\Phone",
             "Asks how many to queue. Each video is downloaded to check it and kept only if queued.",
             "Asks for one or more file paths, one per line, and queues those files."
         ];
@@ -124,6 +134,11 @@ public sealed class TuiQueueAdditionUiTests
     [Fact]
     public void SourceChoicesOpenTheirInputAndEscapeCancelsWithoutAnEffect()
     {
+        var scan = Update(ChooseSource(WithSources(new QueueSources([VideosRoot], ImmichConfigured: true)), 0), Enter);
+        scan.Model.Dialog.Should().Be(new TuiTextInput(QueueAdditionSource.WatchFolders, "1"));
+        scan.Effects.Should().BeEmpty();
+        Update(scan.Model, Escape).Model.Dialog.Should().BeNull();
+
         var immich = Update(ChooseSource(Model(), 1), Enter);
         immich.Model.Dialog.Should().Be(new TuiTextInput(QueueAdditionSource.Immich, "1"));
         immich.Effects.Should().BeEmpty();
@@ -136,31 +151,40 @@ public sealed class TuiQueueAdditionUiTests
         After(ChooseSource(Model(), 0), Escape).Dialog.Should().BeNull();
     }
 
-    [Theory]
-    [InlineData("1", 1)]
-    [InlineData("", null)]
-    [InlineData("2147483647", int.MaxValue)]
-    public void ImmichAcceptsAPositiveCountOrAnExplicitBlankForAll(string text, int? expected)
-    {
-        var step = Update(Input(QueueAdditionSource.Immich, text), Enter);
+    /// <summary>The source is internal, so a public test takes which count box as a bool.</summary>
+    private static QueueAdditionSource CountSource(bool immich) => immich ? QueueAdditionSource.Immich : QueueAdditionSource.WatchFolders;
 
-        step.Effects.Should().Equal(new AddVideos(QueueAdditionSource.Immich, Limit: expected));
+    [Theory]
+    [InlineData(false, "3", 3)]
+    [InlineData(false, "", null)]
+    [InlineData(true, "1", 1)]
+    [InlineData(true, " ", null)]
+    [InlineData(true, "2147483647", int.MaxValue)]
+    public void BothCountBoxesAcceptAPositiveCountOrAnExplicitBlankForAll(bool immich, string text, int? expected)
+    {
+        var source = CountSource(immich);
+        var step = Update(Input(source, text), Enter);
+
+        step.Effects.Should().Equal(new AddVideos(source, Limit: expected));
+        step.Model.Dialog.Should().BeNull();
         step.Model.Busy.Should().ContainKey(AddVideos.Key);
     }
 
     [Theory]
-    [InlineData("0")]
-    [InlineData("-1")]
-    [InlineData("1.5")]
-    [InlineData("2147483648")]
-    public void AnInvalidCountStaysInTheFieldAndAddsNothing(string text)
+    [InlineData(false, "0")]
+    [InlineData(false, "-1")]
+    [InlineData(false, "x")]
+    [InlineData(true, "0")]
+    [InlineData(true, "1.5")]
+    [InlineData(true, "2147483648")]
+    public void AnInvalidCountStaysInTheFieldAndAddsNothing(bool immich, string text)
     {
-        var step = Update(Input(QueueAdditionSource.Immich, text), Enter);
+        var step = Update(Input(CountSource(immich), text), Enter);
 
         step.Effects.Should().BeEmpty();
         var input = step.Model.Dialog.Should().BeOfType<TuiTextInput>().Subject;
         input.Text.Should().Be(text);
-        input.Problem.Should().Contain("positive whole number");
+        input.Problem.Should().Be("Enter a positive whole number, or leave blank for all eligible videos.");
     }
 
     [Fact]
@@ -442,7 +466,8 @@ public sealed class TuiQueueAdditionUiTests
     public void TheRendererNamesTheBlankCountAndOffersAdditionCancellationInANarrowFrame()
     {
         using var renderer = new FrameRenderer();
-        FrameRenderer.Plain(renderer.Frame(Input(QueueAdditionSource.Immich, "1"))!).Should().Contain("blank = all").And.Contain("Search Immich");
+        FrameRenderer.Plain(renderer.Frame(Input(QueueAdditionSource.Immich, "1"))!).Should().Contain("blank = all").And.Contain("╭─ Search Immich ");
+        FrameRenderer.Plain(renderer.Frame(Input(QueueAdditionSource.WatchFolders, "1"))!).Should().Contain("blank = all").And.Contain("╭─ Scan your watch folders ");
         var model = Model() with { Width = 40, Height = 10, Busy = Model().Busy.Add(AddVideos.Key, "Scanning the watch folders.") };
         FrameRenderer.Plain(renderer.Frame(model)!).Split('\n')[^1].Should().Contain("esc cancel add");
     }

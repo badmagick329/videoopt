@@ -40,6 +40,22 @@ public sealed class TuiQueueAdditionEffectTests
         one.Result.Lines.Should().Contain(line => line.Text == "1 video is ahead of it; select it in Queue and press n to put it first.");
     }
 
+    /// <summary>The count box's number reaches discovery, which counts only new videos, and the start line says how many it looks for.</summary>
+    [Fact]
+    public async Task AScanWithALimitQueuesThatManyNewVideosAndSaysSoWhenItStarts()
+    {
+        using var rig = Rig();
+        await AddFileAsync(rig, rig.File("watch/a-open.mp4", "h264 open"));
+        foreach (var name in new[] { "b.mp4", "c.mp4", "d.mp4" }) rig.File($"watch/{name}", $"h264 {name}");
+        var log = new List<string>();
+
+        var done = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.WatchFolders, Limit: 2), rig.Settings, (_, text) => log.Add(text), default);
+
+        log[0].Should().Be("Scanning 1 watch root for up to 2 new videos to convert; files not seen before are probed with ffprobe.");
+        done.Result.Notice.Should().StartWith("Queued: 2.");
+        (await rig.Repository.ListAsync(rig.DatabasePath, terminal: false)).Should().HaveCount(3);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
