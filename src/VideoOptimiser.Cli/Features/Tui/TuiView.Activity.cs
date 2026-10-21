@@ -9,11 +9,11 @@ namespace VideoOptimiser.Cli.Features.Tui;
 internal static partial class TuiView
 {
     /// <summary>End sits after start here, beside the scroll it undoes.</summary>
-    private static (string Key, string What)[] ActivityHints((string Key, string What)[] stop)
+    private static FooterHint[] ActivityHints(TuiModel m, FooterHint[] stop)
     {
         var keys = TuiKeys.Activity;
         var anywhere = TuiKeys.Anywhere;
-        return [keys.Scroll.Hint, keys.Fate.Hint, .. stop, anywhere.Start.Hint, keys.Follow.Hint, anywhere.NextPane.Hint, anywhere.Guide.Hint, anywhere.Quit.Hint];
+        return [keys.Scroll.Hint, Offer(m, keys.Fate), .. stop, Offer(m, anywhere.Start), keys.Follow.Hint, anywhere.NextPane.Hint, anywhere.Guide.Hint, anywhere.Quit.Hint];
     }
 
     /// <summary>Why nothing converts, from the run and its events.</summary>

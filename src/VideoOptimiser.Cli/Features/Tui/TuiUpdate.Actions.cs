@@ -13,6 +13,34 @@ namespace VideoOptimiser.Cli.Features.Tui;
 
 internal static partial class TuiUpdate
 {
+    /// <summary>
+    /// Why <paramref name="key"/> would be refused now because an action in progress holds a busy key, or null when nothing
+    /// in progress blocks it. Each key in scope refuses through this before anything else, and the footer greys what it blocks,
+    /// so the refusal and the grey can never disagree (VOPT-194). A key blocked only by the selected row (a queue verb on a
+    /// video with its own one going, <c>d</c>'s dismiss-all choice) or by something other than a busy key (no run for
+    /// <c>x</c>) is never blocked here. <see cref="Emit"/> keeps its own busy check, as the guard for effects a dialog starts.
+    /// </summary>
+    internal static string? BlockedBy(TuiModel m, TuiKey key)
+    {
+        var anywhere = TuiKeys.Anywhere;
+        var review = TuiKeys.Review;
+        if (key == TuiKeys.Queue.Add) return Holding(m, AddVideos.Key);
+        // The worker pane's action first: the server it changes is what the start flow would ask about.
+        if (key == anywhere.Start) return Holding(m, BusyKeys.Worker) is { } worker ? WorkerBusyAtStart(worker) : Holding(m, BusyKeys.Run);
+        if (key == TuiKeys.Worker.Create || key == TuiKeys.Worker.Delete) return Holding(m, BusyKeys.Worker);
+        if (key == anywhere.StopAfter || key == anywhere.StopNow) return Holding(m, BusyKeys.Stop);
+        if (key == TuiKeys.Activity.Fate) return Holding(m, BusyKeys.Fate);
+        if (key == review.Finalise || key == review.FinaliseAll || key == review.Reject)
+        {
+            if (m.Finalising is { } batch) return WhileFinalising(m, key, batch);
+            // Reading what is ready holds no finalise lock, so a reject may go meanwhile, as it always could.
+            return key == review.Reject ? null : Holding(m, BusyKeys.Finalise);
+        }
+        return null;
+    }
+
+    private static string? Holding(TuiModel m, string busyKey) => m.Busy.TryGetValue(busyKey, out var working) ? working : null;
+
     private static TuiStep ActionKey(TuiModel m, char c)
     {
         if (TuiKeys.Anywhere.Start.Is(c)) return StartKey(m);
@@ -96,12 +124,15 @@ internal static partial class TuiUpdate
         var keys = TuiKeys.Worker;
         if (keys.Create.Is(c))
         {
+            if (BlockedBy(m, keys.Create) is { } blocked) return Told(m, blocked);
             if (!m.Worker.Managed) return Told(m, NoManagedWorker);
             if (WorkerView.Of(m.Worker).Info is { } up) return Told(m, $"The worker {up.Name} is already up.");
             return Emit(m, new LoadWorkerOptions(WorkerOptionsPurpose.Create));
         }
         if (keys.Delete.Is(c))
         {
+            // Refused before the question, so a y can't be met by a refusal of something already under way.
+            if (BlockedBy(m, keys.Delete) is { } blocked) return Told(m, blocked);
             if (!m.Worker.Managed) return Told(m, NoManagedWorker);
             if (WorkerView.Of(m.Worker).Info is not { } worker) return Told(m, "There is no worker to delete.");
             return Confirming(m, $"Delete the worker {worker.Name}?", m.Run is null
@@ -159,14 +190,15 @@ internal static partial class TuiUpdate
 
     private static TuiStep StartKey(TuiModel m)
     {
+        // VOPT-154: a delete or create from the worker pane would change the worker under the choice, so "Use X" could name a
+        // server that is about to be gone. The runner refuses to replace a missing chosen worker too; this saves the wasted launch.
+        // A start already launching is refused here too, before its worker and fate questions are asked for nothing.
+        if (BlockedBy(m, TuiKeys.Anywhere.Start) is { } blocked) return Told(m, blocked);
         if (m.Run is not null) return Told(m, "A run is going already.");
         if (m.Count(VideoGroup.Queue) == 0) return Told(m, "No video is waiting to convert.");
         if (m.Worker.Lifecycle.Length == 0) return Told(m, "Still reading the worker.");
         // Not hetzner: nothing to ask, and the config's mode stands.
         if (!m.Worker.Managed) return Emit(m, new StartRun(new StartPlan(null, WorkerFateChoice.Delete, null)));
-        // VOPT-154: a delete or create from the worker pane would change the worker under the choice, so "Use X" could name a
-        // server that is about to be gone. The runner refuses to replace a missing chosen worker too; this saves the wasted launch.
-        if (m.Busy.TryGetValue(BusyKeys.Worker, out var working)) return Told(m, WorkerBusyAtStart(working));
 
         if (WorkerView.Of(m.Worker).Info is { } worker)
         {
@@ -188,6 +220,7 @@ internal static partial class TuiUpdate
     private static TuiStep ActivityKey(TuiModel m, char c)
     {
         if (!TuiKeys.Activity.Fate.Is(c)) return TuiStep.Of(m);
+        if (BlockedBy(m, TuiKeys.Activity.Fate) is { } blocked) return Told(m, blocked);
         if (m.Run is not { } run) return Told(m, "No run is going.");
         if (!run.IsBackground) return Told(m, "That run asks about its worker in its own window.");
         // With no managed worker the fate means nothing: the run has no worker to delete or keep.
@@ -204,6 +237,7 @@ internal static partial class TuiUpdate
     /// </summary>
     private static TuiStep StopKey(TuiModel m, char c)
     {
+        if (BlockedBy(m, TuiKeys.Anywhere.StopAfter.Is(c) ? TuiKeys.Anywhere.StopAfter : TuiKeys.Anywhere.StopNow) is { } blocked) return Told(m, blocked);
         if (m.Run is not { } run) return Told(m, "No run is going.");
         if (!run.IsBackground) return Told(m, "That run is in another window; only Ctrl+C there stops it.");
         if (TuiKeys.Anywhere.StopAfter.Is(c))
@@ -229,9 +263,9 @@ internal static partial class TuiUpdate
     {
         var keys = TuiKeys.Review;
         var opens = keys.OpenOriginal.Is(c) || keys.OpenAv1.Is(c);
-        var changes = keys.Finalise.Is(c) || keys.FinaliseAll.Is(c) || keys.Reject.Is(c);
-        if (!(opens || changes)) return TuiStep.Of(m);
-        if (changes && m.Finalising is { } batch) return WhileFinalising(m, c, batch);
+        var change = keys.Finalise.Is(c) ? keys.Finalise : keys.FinaliseAll.Is(c) ? keys.FinaliseAll : keys.Reject.Is(c) ? keys.Reject : null;
+        if (!opens && change is null) return TuiStep.Of(m);
+        if (change is not null && BlockedBy(m, change) is { } blocked) return Told(m, blocked);
         var ready = m.Ready();
         if (ready.Count == 0) return Told(m, "Nothing is ready to finalise.");
         if (keys.FinaliseAll.Is(c)) return Emit(m, new PrepareFinalise(null));
@@ -263,17 +297,18 @@ internal static partial class TuiUpdate
     }
 
     /// <summary>
-    /// <c>f</c>, <c>F</c> and <c>r</c> while a finalise batch is out answer at once, before any question: a second finalise
+    /// What <c>f</c>, <c>F</c> and <c>r</c> say while a finalise batch is out, at once, before any question: a second finalise
     /// could only be refused once its confirmation was answered, and <c>queue reject</c> needs the database-wide finalise lock
-    /// the batch holds, so rejecting waits on every row. A row of the batch says where it is in it.
+    /// the batch holds, so rejecting waits on every row. A row of the batch says where it is in it; the text follows the
+    /// cursor, but that the key is blocked doesn't.
     /// </summary>
-    private static TuiStep WhileFinalising(TuiModel m, char c, FinaliseBatch batch)
+    private static string WhileFinalising(TuiModel m, TuiKey key, FinaliseBatch batch)
     {
         var ready = m.Ready();
         var video = ready.FirstOrDefault(candidate => candidate.Id == m.ReviewSelection) ?? ready.FirstOrDefault();
-        if (video is not null && video.Id == batch.Current) return Told(m, $"{video.Name} is being finalised now.");
-        if (video is not null && batch.IsWaiting(video.Id)) return Told(m, $"{video.Name} is queued to be finalised.");
-        return Told(m, TuiKeys.Review.Reject.Is(c) ? "A finalise is going. You can reject once it ends." : "A finalise is going. You can start another once it ends.");
+        if (video is not null && video.Id == batch.Current) return $"{video.Name} is being finalised now.";
+        if (video is not null && batch.IsWaiting(video.Id)) return $"{video.Name} is queued to be finalised.";
+        return key == TuiKeys.Review.Reject ? "A finalise is going. You can reject once it ends." : "A finalise is going. You can start another once it ends.";
     }
 
     /// <summary>

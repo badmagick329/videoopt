@@ -7,10 +7,10 @@ namespace VideoOptimiser.Cli.Features.Tui;
 
 internal static partial class TuiView
 {
-    private static (string Key, string What)[] WorkerHints((string Key, string What)[] stop)
+    private static FooterHint[] WorkerHints(TuiModel m, FooterHint[] stop)
     {
         var keys = TuiKeys.Worker;
-        return [keys.Create.Hint, keys.Delete.Hint, .. stop, .. Closing()];
+        return [Offer(m, keys.Create), Offer(m, keys.Delete), .. stop, .. Closing(m)];
     }
 
     /// <summary>The pane, with what an action on the worker is doing now ("Creating the worker.") on its last row.</summary>

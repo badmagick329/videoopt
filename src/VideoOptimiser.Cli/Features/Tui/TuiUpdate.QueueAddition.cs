@@ -9,7 +9,7 @@ internal static partial class TuiUpdate
 
     private static TuiStep AddKey(TuiModel m)
     {
-        if (m.Busy.TryGetValue(AddVideos.Key, out var working)) return Told(m, working);
+        if (BlockedBy(m, TuiKeys.Queue.Add) is { } blocked) return Told(m, blocked);
         var roots = m.Sources.WatchRoots;
         // The labels say what choosing does; the explanation, from the loaded config, says what it will act on.
         var scan = roots.Count switch

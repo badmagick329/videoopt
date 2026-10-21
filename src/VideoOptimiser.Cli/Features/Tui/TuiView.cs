@@ -116,37 +116,53 @@ internal static partial class TuiView
         return line.Build(m.Width);
     }
 
-    private static IRenderable Footer(TuiModel m)
+    /// <summary>The footer's hints in order, each marked when a held busy key blocks it; the footer draws as many as fit.</summary>
+    internal static FooterHint[] FooterHints(TuiModel m)
     {
         var anywhere = TuiKeys.Anywhere;
         // The stop keys work from every pane, so every footer offers them while a run is going.
         // x toggles: with a stop after this video asked, its word is the way back.
-        (string Key, string What)[] stop = m.Run is null ? []
-            : [m.Requests is { StopAfterThisVideo: true, StopNow: false } ? anywhere.StopAfter.HintAs("carry on") : anywhere.StopAfter.Hint, anywhere.StopNow.Hint];
+        FooterHint[] stop = m.Run is null ? []
+            : [Offer(m, anywhere.StopAfter, m.Requests is { StopAfterThisVideo: true, StopNow: false } ? "carry on" : null), Offer(m, anywhere.StopNow)];
         // Esc works from every pane, but Review is where the batch shows, so its footer offers it.
-        (string Key, string What)[] stopFinalise = m.Finalising is { CanStop: true } ? [TuiKeys.Review.StopFinalise.Hint] : [];
-        (string Key, string What)[] hints = m.Help
-            ? [("any key", "close the help")]
+        FooterHint[] stopFinalise = m.Finalising is { CanStop: true } ? [TuiKeys.Review.StopFinalise.Hint] : [];
+        FooterHint[] hints = m.Help
+            ? [new("any key", "close the help")]
             : m.Dialog is TuiConfirm
-            ? [("y", "confirm"), ("any other key", "cancel")]
+            ? [new("y", "confirm"), new("any other key", "cancel")]
             : m.Dialog is TuiChoice
-                ? [("↑↓", "move"), ("enter", "choose"), ("esc", "cancel")]
+                ? [new("↑↓", "move"), new("enter", "choose"), new("esc", "cancel")]
                 : m.Dialog is TuiTextInput
-                ? [("enter", "add"), ("esc", "cancel"), ("backspace", "edit")]
+                ? [new("enter", "add"), new("esc", "cancel"), new("backspace", "edit")]
                 : m.Cost is { } page
-                ? [.. page.Report is { Runs.Count: > 0 } ? [("↑↓", "select a run"), ("pgup pgdn", "scroll its videos")] : Array.Empty<(string, string)>(),
-                    (TuiKeys.Anywhere.Cost.Name + " / esc", "close"), ("ctrl+c", "quit")]
+                ? [.. page.Report is { Runs.Count: > 0 } ? [new("↑↓", "select a run"), new("pgup pgdn", "scroll its videos")] : Array.Empty<FooterHint>(),
+                    new(TuiKeys.Anywhere.Cost.Name + " / esc", "close"), new("ctrl+c", "quit")]
                 : m.Focus switch
                 {
                     Pane.Queue => QueueHints(m, stop),
-                    Pane.Worker => WorkerHints(stop),
-                    Pane.Activity => ActivityHints(stop),
-                    _ => ReviewHints(stop, stopFinalise)
+                    Pane.Worker => WorkerHints(m, stop),
+                    Pane.Activity => ActivityHints(m, stop),
+                    _ => ReviewHints(m, stop, stopFinalise)
                 };
 
-        var adding = m.Dialog is null && !m.Help && m.Busy.ContainsKey(AddVideos.Key);
-        if (adding) hints = [("esc", "cancel add"), .. hints.Where(hint => hint.Key != "esc")
-            .Select(hint => hint.Key == anywhere.Cost.Name + " / esc" ? (anywhere.Cost.Name, hint.What) : hint)];
+        if (Adding(m)) hints = [new("esc", "cancel add"), .. hints.Where(hint => hint.Key != "esc")
+            .Select(hint => hint.Key == anywhere.Cost.Name + " / esc" ? hint with { Key = anywhere.Cost.Name } : hint)];
+        return hints;
+    }
+
+    /// <summary>
+    /// A key's hint, greyed while <see cref="TuiUpdate.BlockedBy"/> says pressing it would be refused: the same check the key's
+    /// handler refuses through, so the footer and the key never disagree.
+    /// </summary>
+    private static FooterHint Offer(TuiModel m, TuiKey key, string? what = null) =>
+        (what is null ? key.Hint : key.HintAs(what)) with { Blocked = TuiUpdate.BlockedBy(m, key) is not null };
+
+    private static bool Adding(TuiModel m) => m.Dialog is null && !m.Help && m.Busy.ContainsKey(AddVideos.Key);
+
+    private static IRenderable Footer(TuiModel m)
+    {
+        var hints = FooterHints(m);
+        var adding = Adding(m);
 
         // A notice says why a key did nothing; a read problem stays until the next read works.
         var notice = m.Notice?.Text ?? m.Busy.Values.FirstOrDefault() ?? m.ReadProblem;
@@ -166,13 +182,14 @@ internal static partial class TuiView
         var hintCells = hints.Sum(hint => TuiText.Cells(hint.Key) + (hint.What.Length > 0 ? 1 + TuiText.Cells(hint.What) : 0));
         var separator = used + hintCells + Math.Max(0, hints.Length - 1) * 3 > budget ? "  " : " · ";
         var first = true;
-        foreach (var (key, what) in hints)
+        foreach (var (key, what, blocked) in hints)
         {
             var cost = TuiText.Cells(key) + (what.Length > 0 ? 1 + what.Length : 0) + (first ? 0 : separator.Length);
             if (used + cost > budget) break;
             if (!first) line.Left(separator, Theme.Of(Theme.Faint));
-            line.Left(key, Theme.Of(Theme.Text, bold: true));
-            if (what.Length > 0) line.Left(" " + what, Theme.Of(Theme.Dim));
+            // A blocked key keeps its place, drawn in the dimmest colour, so it reads as there but unavailable for now.
+            line.Left(key, blocked ? Theme.Of(Theme.Faint) : Theme.Of(Theme.Text, bold: true));
+            if (what.Length > 0) line.Left(" " + what, Theme.Of(blocked ? Theme.Faint : Theme.Dim));
             used += cost;
             first = false;
         }
@@ -182,8 +199,8 @@ internal static partial class TuiView
 
     // Each pane's hints: its own keys first, then the ones that work from every pane, in the order the footer has room for.
 
-    private static (string Key, string What)[] Closing() =>
-        [TuiKeys.Anywhere.Start.Hint, TuiKeys.Anywhere.NextPane.Hint, TuiKeys.Anywhere.Guide.Hint, TuiKeys.Anywhere.Quit.Hint];
+    private static FooterHint[] Closing(TuiModel m) =>
+        [Offer(m, TuiKeys.Anywhere.Start), TuiKeys.Anywhere.NextPane.Hint, TuiKeys.Anywhere.Guide.Hint, TuiKeys.Anywhere.Quit.Hint];
 
     // ---- panes ------------------------------------------------------------------------------
 

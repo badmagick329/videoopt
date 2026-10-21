@@ -21,11 +21,18 @@ internal sealed record TuiKey(IReadOnlyList<char> Chars, string? Footer, string?
     public bool Is(char c) => Chars.Contains(c);
 
     /// <summary>The footer's hint; only a key with a footer word has one.</summary>
-    public (string Key, string What) Hint => (Name, Footer ?? throw new InvalidOperationException($"{Name} has no footer hint."));
+    public FooterHint Hint => new(Name, Footer ?? throw new InvalidOperationException($"{Name} has no footer hint."));
 
     /// <summary>The footer's hint with another word, for a key whose action depends on what is selected (<c>d</c> on a failed video).</summary>
-    public (string Key, string What) HintAs(string what) => (Name, what);
+    public FooterHint HintAs(string what) => new(Name, what);
 }
+
+/// <summary>One hint in the footer: a key's name and what it does.</summary>
+/// <param name="Blocked">
+/// An action in progress holds the busy key that would refuse this key now (<see cref="TuiUpdate.BlockedBy"/>), so the footer
+/// draws it greyed in its usual place rather than dropping it, and the footer doesn't shift as the action starts and ends.
+/// </param>
+internal readonly record struct FooterHint(string Key, string What, bool Blocked = false);
 
 /// <summary>A pane's keys in the key guide's order, under the guide's title for them.</summary>
 internal abstract class PaneKeys(string title)

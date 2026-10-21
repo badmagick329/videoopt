@@ -5,10 +5,10 @@ namespace VideoOptimiser.Cli.Features.Tui;
 
 internal static partial class TuiView
 {
-    private static (string Key, string What)[] ReviewHints((string Key, string What)[] stop, (string Key, string What)[] stopFinalise)
+    private static FooterHint[] ReviewHints(TuiModel m, FooterHint[] stop, FooterHint[] stopFinalise)
     {
         var keys = TuiKeys.Review;
-        return [keys.Select.Hint, keys.OpenOriginal.Hint, keys.OpenAv1.Hint, keys.Finalise.Hint, keys.FinaliseAll.Hint, keys.Reject.Hint, .. stopFinalise, .. stop, .. Closing()];
+        return [keys.Select.Hint, keys.OpenOriginal.Hint, keys.OpenAv1.Hint, Offer(m, keys.Finalise), Offer(m, keys.FinaliseAll), Offer(m, keys.Reject), .. stopFinalise, .. stop, .. Closing(m)];
     }
 
     private static List<IRenderable> ReviewRows(TuiModel m, int width, int capacity, bool focused)

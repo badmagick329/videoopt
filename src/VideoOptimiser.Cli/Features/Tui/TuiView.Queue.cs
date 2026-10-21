@@ -8,11 +8,11 @@ internal static partial class TuiView
     /// <summary>On a failed video, d dismisses rather than drops, so the footer names what it does there.</summary>
     private static bool FailedSelected(TuiModel m) => m.Failed.Any(video => video.Id == m.QueueSelection);
 
-    private static (string Key, string What)[] QueueHints(TuiModel m, (string Key, string What)[] stop)
+    private static FooterHint[] QueueHints(TuiModel m, FooterHint[] stop)
     {
         var keys = TuiKeys.Queue;
         var drop = FailedSelected(m) ? keys.Drop.HintAs(TuiKeys.QueueKeys.DismissFooter) : keys.Drop.Hint;
-        return [keys.Add.Hint, keys.Select.Hint, keys.Hold.Hint, keys.Release.Hint, keys.RunNext.Hint, drop, keys.Retry.Hint, .. stop, .. Closing()];
+        return [Offer(m, keys.Add), keys.Select.Hint, keys.Hold.Hint, keys.Release.Hint, keys.RunNext.Hint, drop, keys.Retry.Hint, .. stop, .. Closing(m)];
     }
 
     private static readonly (string Header, Color Color)[] GroupHeads =

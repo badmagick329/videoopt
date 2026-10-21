@@ -56,6 +56,8 @@ Each pane adds its own:
 
 The worker keys and `w` do something only with a Hetzner worker (`remoteSsh.lifecycle: "hetzner"`).
 
+A greyed key in the footer is blocked by something already in progress, such as `a` while an addition runs or `c` and `d` while the worker is being created or deleted. Pressing it does nothing except say what's going, and the key works again once that ends.
+
 ## Adding videos
 
 In Queue, press `a`, then choose with the arrows and `enter`. Under the list, a few lines explain the highlighted choice using your config: which watch folders a scan covers, or that a source isn't set up yet.
