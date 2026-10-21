@@ -54,7 +54,7 @@ internal enum CliCommandKind
 /// <param name="WorkerFate">Hidden <c>background runner --worker-fate</c>.</param>
 /// <param name="ExistingWorker">Hidden <c>background runner --existing-worker</c>: the launcher chose the worker, so the runner never creates one.</param>
 /// <param name="Size">Hidden <c>tui --snapshot --size</c>.</param>
-internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false, bool StopNow = false, bool KeepWorker = false, WorkerFateChoice? WorkerFate = null, FrameSize? Size = null, bool ExistingWorker = false, bool UndoStop = false, IReadOnlyList<ConsoleKeyInfo>? SnapshotKeys = null)
+internal sealed record CliCommand(CliCommandKind Kind, string? ConfigurationPath, string? ScanPath, bool Recursive, bool First, bool All, bool Json, string? Error, string? FilePath = null, bool Force = false, bool DryRun = false, string? JobId = null, bool FinalizeReady = false, ProcessingModeOverride? ModeOverride = null, int? Limit = null, QualityLevel? Quality = null, bool Bare = false, bool StopNow = false, bool KeepWorker = false, WorkerFateChoice? WorkerFate = null, FrameSize? Size = null, bool ExistingWorker = false, bool UndoStop = false, IReadOnlyList<KeyMsg>? SnapshotKeys = null)
 {
     public const string Usage = """
 Usage:

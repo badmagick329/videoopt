@@ -9,6 +9,11 @@ public sealed class TuiQueueAdditionUiTests
 {
     private static TuiMsg Enter => Press(ConsoleKey.Enter, '\r');
     private static TuiMsg Escape => Press(ConsoleKey.Escape, '\u001b');
+    private static TuiMsg Pasted => new KeyMsg(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), MoreBuffered: true);
+
+    private const string ClipA = "C:\\Videos\\clip-a.mp4";
+    private const string ClipB = "C:\\Videos\\clip-b.mp4";
+    private const string ClipC = "C:\\Videos\\clip-c.mp4";
 
     private static TuiModel Input(QueueAdditionSource source, string text = "") => Model() with { Dialog = new TuiTextInput(source, text) };
 
@@ -90,7 +95,7 @@ public sealed class TuiQueueAdditionUiTests
 
         var step = Update(model, Enter);
 
-        step.Effects.Should().Equal(new AddVideos(QueueAdditionSource.File, Path: "C:\\videos\\q s? [holiday].mp4"));
+        step.Effects.Should().Equal(new AddVideos(QueueAdditionSource.File, ["C:\\videos\\q s? [holiday].mp4"]));
         step.Model.Dialog.Should().BeNull();
         var afterLineFeed = Update(step.Model, Press(ConsoleKey.Enter, '\n'));
         afterLineFeed.Effects.Should().BeEmpty();
@@ -98,10 +103,52 @@ public sealed class TuiQueueAdditionUiTests
     }
 
     [Fact]
+    public void APastedEnterStartsTheNextPathAndOnlyATypedEnterSubmits()
+    {
+        var model = Type(Input(QueueAdditionSource.File), ClipA);
+        model = Type(After(model, Pasted), ClipB);
+        var broken = Update(model, Pasted);
+        broken.Effects.Should().BeEmpty();
+        model = Type(broken.Model, ClipC);
+        ((TuiTextInput)model.Dialog!).Text.Should().Be($"{ClipA}\n{ClipB}\n{ClipC}");
+
+        var step = Update(model, Enter);
+
+        step.Effects.Should().Equal(new AddVideos(QueueAdditionSource.File, [ClipA, ClipB, ClipC]));
+        step.Model.Dialog.Should().BeNull();
+        Update(Type(Input(QueueAdditionSource.File), ClipA), Enter).Effects.Should().Equal(new AddVideos(QueueAdditionSource.File, [ClipA]));
+        // The Immich count has no lines: a pasted Enter submits it as before.
+        Update(Input(QueueAdditionSource.Immich, "2"), Pasted).Effects.Should().Equal(new AddVideos(QueueAdditionSource.Immich, Limit: 2));
+    }
+
+    [Theory]
+    [InlineData(ConsoleKey.Enter, ConsoleModifiers.Control)]
+    [InlineData((ConsoleKey)0, (ConsoleModifiers)0)]
+    public void ALineFeedIsALineBreakThatBackspaceRemoves(ConsoleKey key, ConsoleModifiers modifiers)
+    {
+        var step = Update(Input(QueueAdditionSource.File, ClipA), Press(key, '\n', modifiers));
+
+        step.Effects.Should().BeEmpty();
+        ((TuiTextInput)step.Model.Dialog!).Text.Should().Be(ClipA + "\n");
+        ((TuiTextInput)After(step.Model, Press(ConsoleKey.Backspace)).Dialog!).Text.Should().Be(ClipA);
+    }
+
+    [Theory]
+    [InlineData("\"C:\\Videos\\clip-a.mp4\" \"C:\\Videos\\clip-b.mp4\"", new[] { ClipA, ClipB })]
+    [InlineData("C:\\Videos\\clip-a.mp4\r\n\r\n   \n\"c:\\videos\\CLIP-A.mp4\"\n C:\\Videos\\clip-b.mp4 ", new[] { ClipA, ClipB })]
+    [InlineData("\"C:\\My Videos\\clip a.mp4\"\nC:\\My Videos\\clip b.mp4", new[] { "C:\\My Videos\\clip a.mp4", "C:\\My Videos\\clip b.mp4" })]
+    public void SubmittedPathsAreSplitIntoLinesAndQuotedSegmentsInOrderEachOnce(string text, string[] expected)
+    {
+        var step = Update(Input(QueueAdditionSource.File, text), Enter);
+
+        step.Effects.Should().Equal(new AddVideos(QueueAdditionSource.File, expected));
+    }
+
+    [Fact]
     public void BackspaceEditsAndControlCharactersDoNotReachThePath()
     {
         var model = Type(Input(QueueAdditionSource.File), "abc");
-        model = After(model, Press(ConsoleKey.Backspace), Press(0, '\0'), Press(0, '\t'), Press(0, '\n'));
+        model = After(model, Press(ConsoleKey.Backspace), Press(0, '\0'), Press(0, '\t'));
         ((TuiTextInput)model.Dialog!).Text.Should().Be("ab");
         model = After(model, Press(ConsoleKey.Backspace), Press(ConsoleKey.Backspace), Press(ConsoleKey.Backspace));
 
@@ -129,12 +176,16 @@ public sealed class TuiQueueAdditionUiTests
     [Fact]
     public void TextInputIsBoundedWithoutDroppingTheDialog()
     {
-        var step = Update(Input(QueueAdditionSource.File, new string('a', 32_767)), Letter('x'));
+        // The cap is on the whole entry: a line break counts like a character.
+        foreach (var key in new[] { Letter('x'), Pasted })
+        {
+            var step = Update(Input(QueueAdditionSource.File, new string('a', 32_767)), key);
 
-        var input = (TuiTextInput)step.Model.Dialog!;
-        input.Text.Should().HaveLength(32_767);
-        input.Problem.Should().NotBeNull();
-        step.Effects.Should().BeEmpty();
+            var input = (TuiTextInput)step.Model.Dialog!;
+            input.Text.Should().HaveLength(32_767);
+            input.Problem.Should().NotBeNull();
+            step.Effects.Should().BeEmpty();
+        }
     }
 
     [Fact]
@@ -167,18 +218,43 @@ public sealed class TuiQueueAdditionUiTests
     [Fact]
     public void OnlyARulesRefusalOffersForceAndAnExplicitYesRetriesThatPath()
     {
-        var asked = new AddVideos(QueueAdditionSource.File, Path: "C:\\video.mp4");
-        var refused = new QueueAdditionDoneMsg(asked, ActionResult.Say(LogKind.Warning, "The file did not match the rules."), OfferForce: true);
+        var asked = new AddVideos(QueueAdditionSource.File, [ClipA]);
+        var refused = new QueueAdditionDoneMsg(asked, ActionResult.Say(LogKind.Warning, "The file did not match the rules."), [ClipA]);
         var step = Update(Model(), refused);
-        step.Model.Confirm!.Question.Should().Contain("video.mp4");
-        step.Model.Confirm.Detail.Should().Contain(asked.Path);
+        step.Model.Confirm!.Question.Should().Be("Add clip-a.mp4 despite the rules?");
+        step.Model.Confirm.Detail.Should().Contain(ClipA);
         step.Model.Confirm!.OnYes.Should().Be(asked with { Force = true });
         Update(step.Model, Letter('y')).Effects.Should().Equal(asked with { Force = true });
         Update(step.Model, Enter).Effects.Should().BeEmpty();
 
-        Update(Model(), refused with { OfferForce = false }).Model.Dialog.Should().BeNull();
+        Update(Model(), refused with { ForceCandidates = [] }).Model.Dialog.Should().BeNull();
         Update(Model(), refused with { Asked = asked with { Force = true } }).Model.Dialog.Should().BeNull();
         Update(Model(), refused with { Asked = new AddVideos(QueueAdditionSource.WatchFolders) }).Model.Dialog.Should().BeNull();
+    }
+
+    [Fact]
+    public void ABatchAsksOnceNamingFiveFilesAndForcesOnlyTheRefusedOnes()
+    {
+        string[] paths = [.. Enumerable.Range(1, 9).Select(i => $"C:\\Videos\\clip-{i}.mp4")];
+        string[] candidates = [.. paths.Skip(2)];
+        var asked = new AddVideos(QueueAdditionSource.File, paths);
+
+        var step = Update(Model(), new QueueAdditionDoneMsg(asked, ActionResult.Say(LogKind.Warning, "Queued: 2. Doesn't fit your rules: 7."), candidates));
+
+        var confirm = step.Model.Confirm!;
+        confirm.Question.Should().Be("Add 7 files despite the rules?");
+        confirm.Detail.Should().StartWith("Files: clip-3.mp4, clip-4.mp4, clip-5.mp4, clip-6.mp4, clip-7.mp4 and 2 more\n")
+            .And.EndWith("Force bypasses those rules; AV1 and file safety checks still apply.");
+        var forced = new AddVideos(QueueAdditionSource.File, candidates, Force: true);
+        Update(step.Model, Letter('y')).Effects.Should().Equal(forced);
+        // The forced batch's own refusals never ask again.
+        Update(Model(), new QueueAdditionDoneMsg(forced, ActionResult.Say(LogKind.Warning, "Refused."), candidates)).Model.Dialog.Should().BeNull();
+
+        var two = Update(Model(), new QueueAdditionDoneMsg(asked, ActionResult.Say(LogKind.Warning, "Refused."), [ClipA, ClipB])).Model.Confirm!;
+        two.Detail.Should().StartWith("Files: clip-a.mp4 and clip-b.mp4\n");
+        var one = Update(Model(), new QueueAdditionDoneMsg(asked, ActionResult.Say(LogKind.Warning, "Refused."), [ClipB])).Model.Confirm!;
+        one.Question.Should().Be("Add clip-b.mp4 despite the rules?");
+        one.OnYes.Should().Be(new AddVideos(QueueAdditionSource.File, [ClipB], Force: true));
     }
 
     [Fact]
@@ -186,24 +262,24 @@ public sealed class TuiQueueAdditionUiTests
     {
         var question = new TuiConfirm("Drop a video?", "The original stays.", new QuitNow());
         var model = Model() with { Dialog = question, Busy = Model().Busy.Add(AddVideos.Key, "Adding the file.") };
-        var asked = new AddVideos(QueueAdditionSource.File, Path: "C:\\video.mp4");
+        var asked = new AddVideos(QueueAdditionSource.File, [ClipA, ClipB]);
 
-        var step = Update(model, new QueueAdditionDoneMsg(asked, ActionResult.Say(LogKind.Warning, "Rules refused."), OfferForce: true));
+        var step = Update(model, new QueueAdditionDoneMsg(asked, ActionResult.Say(LogKind.Warning, "Rules refused."), [ClipA, ClipB]));
 
         step.Model.Dialog.Should().BeSameAs(question);
         step.Model.Busy.Should().NotContainKey(AddVideos.Key);
         step.Model.Log.Should().Contain(line => line.Text == "Rules refused.");
-        step.Model.Notice!.Text.Should().Contain("another was open");
+        step.Model.Notice!.Text.Should().Be("The force question arrived while another was open. Press a and enter the files again.");
     }
 
     [Fact]
     public void CancellingAnAdditionSuppressesAForceQuestionAlreadyOnItsWayBack()
     {
-        var asked = new AddVideos(QueueAdditionSource.File, Path: "C:\\video.mp4");
+        var asked = new AddVideos(QueueAdditionSource.File, [ClipA, ClipB]);
         var running = Model() with { Busy = Model().Busy.Add(AddVideos.Key, asked.BusyText) };
         var cancelled = Update(running, Escape).Model;
 
-        var step = Update(cancelled, new QueueAdditionDoneMsg(asked, ActionResult.Say(LogKind.Warning, "Rules refused."), OfferForce: true));
+        var step = Update(cancelled, new QueueAdditionDoneMsg(asked, ActionResult.Say(LogKind.Warning, "Rules refused."), [ClipA]));
 
         step.Model.Dialog.Should().BeNull();
         step.Model.Busy.Should().NotContainKey(AddVideos.Key);
@@ -254,6 +330,21 @@ public sealed class TuiQueueAdditionUiTests
         text.Should().Contain("File path").And.Contain("q s?[clip].mp4").And.Contain("enter add").And.Contain("esc cancel");
         text.Should().NotContain(new string('a', 150));
         text.Split('\n').Should().HaveCount(height);
+    }
+
+    [Theory]
+    [InlineData(140, 40)]
+    [InlineData(40, 10)]
+    public void ThePathBoxShowsTheLastLineAndCountsThePaths(int width, int height)
+    {
+        var model = Input(QueueAdditionSource.File, $"{ClipA}\n{ClipB}\n{ClipC}\n") with { Width = width, Height = height };
+        using var renderer = new FrameRenderer();
+
+        var lines = FrameRenderer.Plain(renderer.Frame(model)!).Split('\n');
+
+        lines.Should().HaveCount(height).And.Contain(line => line.Contains("3 paths"));
+        lines.Should().NotContain(line => line.Contains("clip-a.mp4") || line.Contains("Backspace edits"));
+        FrameRenderer.Plain(renderer.Frame(model with { Dialog = new TuiTextInput(QueueAdditionSource.File, $"{ClipA}\n{ClipB}") })!).Should().Contain("clip-b.mp4");
     }
 
     [Fact]

@@ -128,9 +128,23 @@ public sealed class TuiEntryTests : QueueTestBase
 
         command.IsValid.Should().BeTrue();
         var answer = command.SnapshotKeys![^1];
-        answer.Key.Should().Be(ConsoleKey.Y);
-        answer.KeyChar.Should().Be('y');
-        answer.Modifiers.Should().Be((ConsoleModifiers)0);
+        answer.Key.Key.Should().Be(ConsoleKey.Y);
+        answer.Key.KeyChar.Should().Be('y');
+        answer.Key.Modifiers.Should().Be((ConsoleModifiers)0);
+        answer.MoreBuffered.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SnapshotNewlineIsAPastedLineBreakSoTheDialogShowsSeveralPaths()
+    {
+        var command = CliCommand.Parse(["tui", "--snapshot", "--keys", "enter,newline"]);
+        command.SnapshotKeys!.Select(key => key.MoreBuffered).Should().Equal(false, true);
+
+        var result = await RunAsync("tui", "--snapshot", "--keys", "a,down,down,enter,x,newline,y");
+
+        result.ExitCode.Should().Be(0);
+        result.Stdout.Should().Contain("2 paths");
+        (await Repository.ListAsync(DatabasePath, terminal: false)).Should().BeEmpty();
     }
 
     [Theory]

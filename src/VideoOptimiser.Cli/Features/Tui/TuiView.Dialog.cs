@@ -45,13 +45,19 @@ internal static partial class TuiView
         var width = DialogWidth(m);
         var inner = width - 6;
         var file = input.Source == QueueAdditionSource.File;
+        // The box keeps its height for a paste of many paths: it shows the line being typed, and the hint counts the rest.
+        var paths = file ? TuiUpdate.PathsIn(input.Text).Count : 0;
+        var hint = !file ? "All means all eligible videos." : paths > 1 ? $"{paths} paths" : "Backspace edits the path.";
+        // The title already says these are paths, so a narrow dialog drops the word rather than cut the instruction.
+        const string pasteWide = "Type or paste paths, one per line.";
+        var paste = pasteWide.Length <= inner ? pasteWide : "Type or paste, one per line.";
         var rows = new List<IRenderable>
         {
-            new Line().Flex(file ? "Type or paste the file path." : "Count: positive; blank = all", Theme.Of(Theme.Soft)).Build(inner),
+            new Line().Flex(file ? paste : "Count: positive; blank = all", Theme.Of(Theme.Soft)).Build(inner),
             new Paragraph(" "),
-            new Line().Flex(InputTail(input.Text, inner - 1) + "▏", Theme.Of(Theme.Text, bold: true)).Build(inner),
+            new Line().Flex(InputTail(input.Text[(input.Text.LastIndexOf('\n') + 1)..], inner - 1) + "▏", Theme.Of(Theme.Text, bold: true)).Build(inner),
             new Paragraph(" "),
-            new Line().Flex(input.Problem ?? (file ? "Backspace edits the path." : "All means all eligible videos."), Theme.Of(input.Problem is null ? Theme.Dim : Theme.Held)).Build(inner),
+            new Line().Flex(input.Problem ?? hint, Theme.Of(input.Problem is null ? Theme.Dim : Theme.Held)).Build(inner),
             new Line().Flex("enter add · esc cancel", Theme.Of(Theme.Dim)).Build(inner)
         };
         return DialogPanel(file ? "File path" : "Add from Immich", width, rows);

@@ -25,7 +25,7 @@ internal sealed partial class TuiActions
             {
                 QueueAdditionSource.WatchFolders => await AddWatchFoldersAsync(effect, settings, log, token),
                 QueueAdditionSource.Immich => await AddImmichAsync(effect, settings, log, token),
-                QueueAdditionSource.File => await AddOneFileAsync(effect, settings, token),
+                QueueAdditionSource.File => await AddFilesAsync(effect, settings, log, token),
                 _ => throw new InvalidOperationException($"Unknown queue addition source: {effect.Source}.")
             };
         }
@@ -85,21 +85,71 @@ internal sealed partial class TuiActions
         return new(effect, summary);
     }
 
-    private async Task<QueueAdditionDoneMsg> AddOneFileAsync(AddVideos effect, AppSettings settings, CancellationToken token)
+    /// <summary>
+    /// One path keeps the single-file result: its line, where the run takes it and how many videos are ahead of it. Several are
+    /// added in order, each line logged as its file finishes, so a cancellation or a failure later in the batch cannot hide
+    /// what is already queued; a tally ends the batch, and the token is checked between files.
+    /// </summary>
+    private async Task<QueueAdditionDoneMsg> AddFilesAsync(AddVideos effect, AppSettings settings, Action<LogKind, string> log, CancellationToken token)
     {
-        if (string.IsNullOrWhiteSpace(effect.Path)) return new(effect, Done(LogKind.Warning, "Enter a file path."));
+        var paths = effect.Paths ?? [];
+        if (paths.Count == 0 || paths.All(string.IsNullOrWhiteSpace)) return new(effect, Done(LogKind.Warning, "Enter a file path."));
+        if (paths.Count == 1)
+        {
+            var one = await AddFileAsync(paths[0], effect.Force, alone: true, settings, token);
+            if (one.Queued is not { } job) return new(effect, Done(one.Kind, one.Text), one.ForceCandidate is { } path ? [path] : null);
+            var ahead = await discovery.AheadOfAsync(settings.Database.Path, job, token);
+            var lines = new List<LogLine> { new(LogKind.Success, one.Text), new(LogKind.Info, AdditionNextRun(settings)) };
+            if (ahead > 0) lines.Add(new(LogKind.Info, $"{(ahead == 1 ? "1 video is" : $"{ahead} videos are")} ahead of it; select it in Queue and press n to put it first."));
+            return new(effect, new ActionResult(lines, one.Text));
+        }
+
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var candidates = new List<string>();
+        var refused = false;
+        foreach (var path in paths)
+        {
+            token.ThrowIfCancellationRequested();
+            var added = await AddFileAsync(path, effect.Force, alone: false, settings, token);
+            log(added.Kind, added.Text);
+            counts[added.Tally] = counts.GetValueOrDefault(added.Tally) + 1;
+            if (added.ForceCandidate is { } candidate) candidates.Add(candidate);
+            refused |= added.Kind is LogKind.Warning or LogKind.Error;
+        }
+        var summary = string.Join(' ', BatchTallies.Where(label => label == QueuedTally || counts.ContainsKey(label)).Select(label => $"{label}: {counts.GetValueOrDefault(label)}."));
+        var result = new List<LogLine> { new(refused ? LogKind.Warning : LogKind.Success, summary) };
+        if (counts.ContainsKey(QueuedTally)) result.Add(new(LogKind.Info, AdditionNextRun(settings)));
+        return new(effect, new ActionResult(result, summary), candidates);
+    }
+
+    private const string QueuedTally = "Queued";
+
+    /// <summary>A batch's tally, in this order: the watch-folder scan's labels where a file's outcome has one, then the refusals.</summary>
+    private static readonly string[] BatchTallies =
+    [
+        QueuedTally, "Already queued", "Held", "Ready to finalise", "Already converted", "Previously failed or cancelled",
+        "Previously skipped", "Previously rejected", "Doesn't fit your rules", "Can't be queued"
+    ];
+
+    /// <param name="Tally">Its label in <see cref="BatchTallies"/>.</param>
+    /// <param name="ForceCandidate">The full path when only the watch roots or the rules refused it, which force may lift.</param>
+    /// <param name="Queued">The new job, when it was queued.</param>
+    private sealed record FileAddition(string Text, LogKind Kind, string Tally, string? ForceCandidate = null, JobRecord? Queued = null);
+
+    private async Task<FileAddition> AddFileAsync(string entered, bool force, bool alone, AppSettings settings, CancellationToken token)
+    {
         string path;
         try
         {
-            path = Path.GetFullPath(effect.Path);
+            path = Path.GetFullPath(entered);
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            return new(effect, Done(LogKind.Warning, $"The file path is invalid: {OneLine(exception)}"));
+            // In a batch the line must say which path it was; the rest of the batch still goes.
+            return new(alone ? $"The file path is invalid: {OneLine(exception)}" : $"The file path {entered} is invalid: {OneLine(exception)}", LogKind.Warning, "Can't be queued");
         }
-        var result = await discovery.AddFileAsync(settings.Database.Path, settings, path, effect.Force, token);
+        var result = await discovery.AddFileAsync(settings.Database.Path, settings, path, force, token);
         var (name, job) = (Path.GetFileName(result.Path), result.Job);
-        var offerForce = result.Outcome is QueueAddOutcome.OutsideRoots or QueueAddOutcome.Ineligible;
         var text = result.Outcome switch
         {
             QueueAddOutcome.Queued => $"Queued {name} as job {job!.Id:N}{(result.OutsideRules ? ", outside your rules (--force)" : string.Empty)}.",
@@ -114,21 +164,34 @@ internal sealed partial class TuiActions
             QueueAddOutcome.Ineligible or QueueAddOutcome.TooSmall => $"{name} doesn't fit your rules: {QueueWords.Fragment(result.Reason!)}.",
             _ => $"Can't queue {name}: {QueueWords.Fragment(result.Reason!)}."
         };
-        if (result.Outcome != QueueAddOutcome.Queued)
+        if (result.Outcome == QueueAddOutcome.Queued) return new(text, LogKind.Success, QueuedTally, Queued: job);
+        var kind = result.Outcome switch
         {
-            var kind = result.Outcome switch
+            QueueAddOutcome.OpenJob or QueueAddOutcome.Settled => LogKind.Info,
+            QueueAddOutcome.Missing or QueueAddOutcome.Unreadable or QueueAddOutcome.ProbeFailed => LogKind.Error,
+            _ => LogKind.Warning
+        };
+        var tally = result.Outcome switch
+        {
+            QueueAddOutcome.OpenJob => result.OpenState switch
             {
-                QueueAddOutcome.OpenJob or QueueAddOutcome.Settled => LogKind.Info,
-                QueueAddOutcome.Missing or QueueAddOutcome.Unreadable or QueueAddOutcome.ProbeFailed => LogKind.Error,
-                _ => LogKind.Warning
-            };
-            return new(effect, Done(kind, text), offerForce);
-        }
-
-        var ahead = await discovery.AheadOfAsync(settings.Database.Path, job!, token);
-        var lines = new List<LogLine> { new(LogKind.Success, text), new(LogKind.Info, AdditionNextRun(settings)) };
-        if (ahead > 0) lines.Add(new(LogKind.Info, $"{(ahead == 1 ? "1 video is" : $"{ahead} videos are")} ahead of it; select it in Queue and press n to put it first."));
-        return new(effect, new ActionResult(lines, text));
+                OpenJobState.Held => "Held",
+                OpenJobState.ReadyToFinalize or OpenJobState.LastFinaliseFailed => "Ready to finalise",
+                _ => "Already queued"
+            },
+            QueueAddOutcome.Settled => job!.Status switch
+            {
+                JobStatus.Completed => "Already converted",
+                JobStatus.Skipped => "Previously skipped",
+                JobStatus.Rejected => "Previously rejected",
+                _ => "Previously failed or cancelled"
+            },
+            QueueAddOutcome.OutsideRoots or QueueAddOutcome.Ineligible or QueueAddOutcome.TooSmall => "Doesn't fit your rules",
+            _ => "Can't be queued"
+        };
+        // Only the watch roots and the rules are the user's to lift; the size cap and every protection stay.
+        var forceable = result.Outcome is QueueAddOutcome.OutsideRoots or QueueAddOutcome.Ineligible;
+        return new(text, kind, tally, forceable ? result.Path : null);
     }
 
     private static string SettledAddition(string name, JobRecord job)

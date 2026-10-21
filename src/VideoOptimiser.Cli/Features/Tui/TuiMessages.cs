@@ -11,7 +11,11 @@ namespace VideoOptimiser.Cli.Features.Tui;
 
 internal abstract record TuiMsg;
 
-internal sealed record KeyMsg(ConsoleKeyInfo Key) : TuiMsg;
+/// <param name="MoreBuffered">
+/// More input was already waiting when this key was read. Only set for Enter: it tells a line break inside a paste, which the
+/// path box keeps, from a typed Enter, which submits (VOPT-190). The key thread reads it so Update stays free of the console.
+/// </param>
+internal sealed record KeyMsg(ConsoleKeyInfo Key, bool MoreBuffered = false) : TuiMsg;
 
 /// <summary>About four a second. Carries the clock and the window size, so a resize is just another message.</summary>
 internal sealed record TickMsg(DateTimeOffset Now, int Width, int Height) : TuiMsg;

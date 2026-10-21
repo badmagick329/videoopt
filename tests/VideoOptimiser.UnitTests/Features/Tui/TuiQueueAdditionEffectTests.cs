@@ -35,7 +35,7 @@ public sealed class TuiQueueAdditionEffectTests
         (await rig.Repository.FindOpenBySourceAsync(rig.DatabasePath, Path.GetFullPath(fresh))).Should().NotBeNull();
         (await rig.Repository.ListAsync(rig.DatabasePath, terminal: false)).Should().HaveCount(3);
 
-        var one = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, rig.File("watch/later.mp4", "h264 later")), rig.Settings, (_, _) => { }, default);
+        var one = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, [rig.File("watch/later.mp4", "h264 later")]), rig.Settings, (_, _) => { }, default);
         one.Result.Lines.Should().Contain(line => line.Text == "The run going now picks them up.");
         one.Result.Lines.Should().Contain(line => line.Text == "1 video is ahead of it; select it in Queue and press n to put it first.");
     }
@@ -47,20 +47,20 @@ public sealed class TuiQueueAdditionEffectTests
     {
         using var rig = Rig();
         var path = rig.File(outsideRoot ? "outside.mp4" : "watch/hevc.mp4", outsideRoot ? "h264 video" : "hevc video");
-        var asked = new AddVideos(QueueAdditionSource.File, path);
+        var asked = new AddVideos(QueueAdditionSource.File, [path]);
 
         var refusal = await rig.Actions.AddVideosAsync(asked, rig.Settings, (_, _) => { }, default);
-        refusal.OfferForce.Should().BeTrue();
+        refusal.ForceCandidates.Should().Equal(Path.GetFullPath(path));
         (await rig.Repository.ListAsync(rig.DatabasePath, terminal: false)).Should().BeEmpty();
 
         var done = await rig.Actions.AddVideosAsync(asked with { Force = true }, rig.Settings, (_, _) => { }, default);
-        done.OfferForce.Should().BeFalse();
+        done.ForceCandidates.Should().BeNullOrEmpty();
         var job = (await rig.Repository.FindOpenBySourceAsync(rig.DatabasePath, Path.GetFullPath(path)))!;
         job.Forced.Should().BeTrue();
         done.Result.Lines[0].Text.Should().Be($"Queued {Path.GetFileName(path)} as job {job.Id:N}, outside your rules (--force).");
 
         var again = await rig.Actions.AddVideosAsync(asked with { Force = true }, rig.Settings, (_, _) => { }, default);
-        again.OfferForce.Should().BeFalse();
+        again.ForceCandidates.Should().BeNullOrEmpty();
         again.Result.Notice.Should().Contain($"already has job {job.Id:N}");
         (await rig.Repository.ListAsync(rig.DatabasePath, terminal: false)).Should().ContainSingle();
     }
@@ -86,11 +86,62 @@ public sealed class TuiQueueAdditionEffectTests
         // ContentProbe models a 150 MB video stream, so the saving must exceed that measured size.
         if (protection == "small") rig.Settings.Savings.MinimumBytesSaved = "1GiB";
 
-        var result = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, path, Force: true), rig.Settings, (_, _) => { }, default);
+        var result = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, [path], Force: true), rig.Settings, (_, _) => { }, default);
 
-        result.OfferForce.Should().BeFalse();
+        result.ForceCandidates.Should().BeNullOrEmpty();
         result.Result.Notice.Should().Contain(wording);
         (await rig.Repository.ListAsync(rig.DatabasePath, terminal: false)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ABatchLogsEachFileAndAsksOnceToForceOnlyTheRulesRefusals()
+    {
+        using var rig = Rig();
+        var queued = rig.File("watch/clip-a.mp4", "h264 a");
+        var ineligible = rig.File("watch/clip-b.mp4", "hevc video");
+        var outside = rig.File("clip-c.mp4", "h264 video");
+        var av1 = rig.File("watch/clip-d.mp4", "av1 video");
+        var missing = Path.Combine(rig.Folder, "watch", "clip-e.mp4");
+        var logged = new List<LogLine>();
+
+        var done = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, [queued, ineligible, outside, av1, missing]), rig.Settings, (kind, text) => logged.Add(new(kind, text)), default);
+
+        logged.Select(line => line.Kind).Should().Equal(LogKind.Success, LogKind.Warning, LogKind.Warning, LogKind.Warning, LogKind.Error);
+        logged[0].Text.Should().StartWith("Queued clip-a.mp4 as job ");
+        logged[3].Text.Should().Be("clip-d.mp4 is already AV1, so it can't be queued.");
+        logged[4].Text.Should().Be($"Original does not exist: {Path.GetFullPath(missing)}");
+        done.Result.Notice.Should().Be("Queued: 1. Doesn't fit your rules: 2. Can't be queued: 2.");
+        done.Result.Lines.Select(line => line.Text).Should().Equal(done.Result.Notice, "Next: press s to start a run.");
+        done.ForceCandidates.Should().Equal(Path.GetFullPath(ineligible), Path.GetFullPath(outside));
+
+        var question = TuiUpdate.Update(TuiTestData.Model(), done).Model.Confirm!;
+        question.Question.Should().Be("Add 2 files despite the rules?");
+        var forced = await rig.Actions.AddVideosAsync((AddVideos)question.OnYes, rig.Settings, (_, _) => { }, default);
+        forced.Result.Notice.Should().Be("Queued: 2.");
+        forced.ForceCandidates.Should().BeEmpty();
+        var jobs = await rig.Repository.ListAsync(rig.DatabasePath, terminal: false);
+        jobs.Select(job => job.SourcePath).Should().BeEquivalentTo([Path.GetFullPath(queued), Path.GetFullPath(ineligible), Path.GetFullPath(outside)]);
+    }
+
+    [Fact]
+    public async Task CancellingBetweenFilesKeepsTheFilesAlreadyQueuedAndTheirLines()
+    {
+        using var rig = Rig();
+        var first = rig.File("watch/clip-a.mp4", "h264 a");
+        var second = rig.File("watch/clip-b.mp4", "h264 b");
+        using var stop = new CancellationTokenSource();
+        var logged = new List<string>();
+
+        // Esc lands just as the first file's line is logged: the second must not start.
+        var done = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, [first, second]), rig.Settings, (_, text) =>
+        {
+            logged.Add(text);
+            stop.Cancel();
+        }, stop.Token);
+
+        done.Result.Notice.Should().Be("Stopped adding videos. Videos already queued stay queued.");
+        logged.Should().ContainSingle().Which.Should().StartWith("Queued clip-a.mp4 as job ");
+        (await rig.Repository.ListAsync(rig.DatabasePath, terminal: false)).Should().ContainSingle().Which.SourcePath.Should().Be(Path.GetFullPath(first));
     }
 
     [Fact]
@@ -155,7 +206,7 @@ public sealed class TuiQueueAdditionEffectTests
 
         var done = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.Immich, Limit: invalid == "zero limit" ? 0 : null), rig.Settings, (_, _) => { }, default);
 
-        done.OfferForce.Should().BeFalse();
+        done.ForceCandidates.Should().BeNullOrEmpty();
         done.Result.Lines.Should().OnlyContain(line => line.Kind == LogKind.Warning || line.Kind == LogKind.Error);
         done.Result.Notice.Should().NotContain("Specified method is not supported");
         (await rig.Repository.ListAsync(rig.DatabasePath, terminal: false)).Should().BeEmpty();
@@ -196,7 +247,7 @@ public sealed class TuiQueueAdditionEffectTests
         var channel = Channel.CreateUnbounded<TuiMsg>();
         var effects = new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, channel.Writer);
 
-        effects.Run(new AddVideos(QueueAdditionSource.File, rig.File("watch/clip.mp4", "h264 video")), CancellationToken.None);
+        effects.Run(new AddVideos(QueueAdditionSource.File, [rig.File("watch/clip.mp4", "h264 video")]), CancellationToken.None);
         effects.Run(new CancelQueueAddition(), CancellationToken.None);
 
         (await CompletionAsync(channel.Reader)).Result.Notice.Should().StartWith("Stopped adding videos.");
@@ -208,7 +259,7 @@ public sealed class TuiQueueAdditionEffectTests
     {
         using var rig = Rig(probe: new TimeoutProbe());
         var channel = Channel.CreateUnbounded<TuiMsg>();
-        var asked = new AddVideos(QueueAdditionSource.File, rig.File("watch/clip.mp4", "h264 video"));
+        var asked = new AddVideos(QueueAdditionSource.File, [rig.File("watch/clip.mp4", "h264 video")]);
 
         new TuiEffects(rig.Reader, rig.Actions, rig.Configuration, channel.Writer).Run(asked, CancellationToken.None);
 
@@ -224,8 +275,8 @@ public sealed class TuiQueueAdditionEffectTests
     public async Task InvalidFilePathsNeverOfferForce(string path)
     {
         using var rig = Rig();
-        var done = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, path), rig.Settings, (_, _) => { }, default);
-        done.OfferForce.Should().BeFalse();
+        var done = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, [path]), rig.Settings, (_, _) => { }, default);
+        done.ForceCandidates.Should().BeNullOrEmpty();
         done.Result.Lines.Should().ContainSingle().Which.Kind.Should().Be(LogKind.Warning);
     }
 
@@ -248,7 +299,7 @@ public sealed class TuiQueueAdditionEffectTests
 
     private static async Task<JobRecord> AddFileAsync(TuiRig rig, string path)
     {
-        var done = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, path), rig.Settings, (_, _) => { }, default);
+        var done = await rig.Actions.AddVideosAsync(new(QueueAdditionSource.File, [path]), rig.Settings, (_, _) => { }, default);
         var job = await rig.Repository.FindOpenBySourceAsync(rig.DatabasePath, Path.GetFullPath(path));
         job.Should().NotBeNull(done.Result.Notice);
         return job!;

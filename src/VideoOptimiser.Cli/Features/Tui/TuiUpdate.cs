@@ -21,7 +21,7 @@ internal static partial class TuiUpdate
         var step = msg switch
         {
             TickMsg tick => OnTick(m, tick),
-            KeyMsg key => OnKey(m, key.Key),
+            KeyMsg key => OnKey(m, key.Key, key.MoreBuffered),
             SnapshotMsg snapshot => TuiStep.Of(OnSnapshot(m, snapshot.Snapshot)),
             WorkerCheckedMsg checkedMsg => TuiStep.Of(OnWorkerChecked(m, checkedMsg)),
             ActionDoneMsg done => OnActionDone(m, done),
@@ -159,7 +159,7 @@ internal static partial class TuiUpdate
 
     // ---- keys -------------------------------------------------------------------------------
 
-    private static TuiStep OnKey(TuiModel m, ConsoleKeyInfo key)
+    private static TuiStep OnKey(TuiModel m, ConsoleKeyInfo key, bool moreBuffered)
     {
         if (key.Key == ConsoleKey.C && key.Modifiers.HasFlag(ConsoleModifiers.Control) && !key.Modifiers.HasFlag(ConsoleModifiers.Alt))
         {
@@ -183,7 +183,7 @@ internal static partial class TuiUpdate
             case TuiChoice choice:
                 return OnChoiceKey(m, choice, key.Key);
             case TuiTextInput input:
-                return OnQueueInputKey(m, input, key);
+                return OnQueueInputKey(m, input, key, moreBuffered);
         }
 
         // Addition has its own cancellation source. One Esc must never also stop a finalise underneath it.

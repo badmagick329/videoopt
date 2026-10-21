@@ -24,7 +24,7 @@ internal sealed class TuiCommand(TuiSnapshotReader reader, TimeProvider time)
             model = TuiUpdate.Update(model, new WorkerCheckedMsg(model.Worker.Generation, check)).Model;
         }
 
-        foreach (var key in command.SnapshotKeys ?? []) model = TuiUpdate.Update(model, new KeyMsg(key)).Model;
+        foreach (var key in command.SnapshotKeys ?? []) model = TuiUpdate.Update(model, key).Model;
 
         using var renderer = new FrameRenderer();
         var frame = renderer.Frame(model)!;

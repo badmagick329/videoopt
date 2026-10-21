@@ -50,11 +50,16 @@ internal static class TuiLoop
         {
             try
             {
-                while (true) into.TryWrite(new KeyMsg(Console.ReadKey(intercept: true)));
+                while (true)
+                {
+                    var key = Console.ReadKey(intercept: true);
+                    // A paste arrives as one burst, so an Enter inside it has the rest of the paste waiting behind it.
+                    into.TryWrite(new KeyMsg(key, key.Key == ConsoleKey.Enter && Console.KeyAvailable));
+                }
             }
             catch (InvalidOperationException)
             {
-                // Input was redirected away: there are no more keys.
+                // Input was redirected away (ReadKey and KeyAvailable both throw then): there are no more keys.
             }
             catch (IOException)
             {

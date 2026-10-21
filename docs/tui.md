@@ -62,11 +62,13 @@ In Queue, press `a`, then choose with the arrows and `enter`:
 
 - **Watch folders** scans the configured watch folders, as `queue add` does.
 - **Immich** asks how many new videos to queue. It starts at `1`; enter a positive whole number, or clear it to add all eligible videos. This is `queue add immich`, including its trash check and re-upload guard: converted originals uploaded again by the phone may go back to Immich's trash.
-- **File path** asks for one file, as `queue add <file>` does. Type or paste the path, use `backspace` to correct it, then `enter`. Quotes from Explorer's **Copy as path** are accepted. `esc` closes the question. While typing, letters such as `q`, `s` and `?` are part of the path.
+- **File path** asks for one or more files, as `queue add <file>` does for one. Type or paste a path, use `backspace` to correct it, then `enter`. To add several, paste one path per line, which is what Explorer's **Copy as path** gives for several selected files. A line break in a paste starts the next path; only an `enter` you type adds them. The box shows the line you're on and, with more than one, how many paths it holds. Quotes from **Copy as path** are accepted, and a path given twice is added once. `esc` closes the question. While typing, letters such as `q`, `s` and `?` are part of the path.
 
-If the file is outside the watch folders or doesn't fit the eligibility rules, a question offers to force it. That bypasses only those checks; AV1 files, the size cap and protected tool files stay excluded.
+With several files, Activity shows a line for each one as it's added, then a count such as `Queued: 3. Doesn't fit your rules: 2. Can't be queued: 1.`
 
-Adding works with an empty queue and while a run converts. It queues videos without starting a run; a run already going picks them up between videos. Progress and results appear in Activity. Only one addition runs at a time. With no dialog open, `esc` cancels it: videos already queued stay queued, and a partial Immich download is removed. It leaves a conversion run going.
+If files are outside the watch folders or don't fit the eligibility rules, one question offers to force them, however many there are. That bypasses only those checks; AV1 files, the size cap and protected tool files stay excluded, and the question never offers files refused for those reasons.
+
+Adding works with an empty queue and while a run converts. It queues videos without starting a run; a run already going picks them up between videos. Progress and results appear in Activity. Only one addition runs at a time. With no dialog open, `esc` cancels it: videos already queued stay queued, several files stop before the next one, and a partial Immich download is removed. It leaves a conversion run going.
 
 ## Starting a run
 
