@@ -321,6 +321,8 @@ A video that joins a run after it started (released with `queue release`, moved 
 
 When `deleteAfterRun` is enabled, a run that finishes deletes the worker, failed videos included: a `queue retry` is a new job that starts again from the upload, so nothing a failed video left on the worker is reused. A run you stop asks instead, and with redirected input it keeps the worker and prints the `worker delete` command.
 
+A video that needs more memory than the worker has, usually a 4K one, fails with `The worker ran out of memory.` Retrying it on the same worker fails the same way. Retry it and convert it on this PC with `run --local`, or put a server type with more memory first in `serverTypes` before the next run, deleting the worker first if it's still up, since a running worker keeps its type. A manual worker needs a host with more memory.
+
 To try a failed video again, for example after its remote configuration changed, queue it as a new job. The failed job stays in `history`, which lists its ID, and the new job does not reuse its previous remote output or workspace:
 
 ```powershell

@@ -104,6 +104,24 @@ public sealed class RemoteStageRunnerTests : IDisposable
     }
 
     /// <summary>
+    /// The kernel's out-of-memory killer usually takes FFmpeg, and ab-av1 then fails with an FFmpeg error that never names
+    /// memory; the stage script appends its marker when the kernel's kill count rose (VOPT-107). The failure says so, ahead of
+    /// a CRF search's own reading of its log.
+    /// </summary>
+    [Fact]
+    public async Task AStageKilledForLackOfMemorySaysTheWorkerRanOutOfMemory()
+    {
+        var log = $"Error: ffmpeg exited with status 1\nCommand exited with non-zero status 1\n{RemoteStageRunner.OutOfMemoryMarker}\n";
+        var shell = new StageShell(["completed 1"], log);
+
+        var action = async () => await CreateRunner(shell).RunAsync(CrfDirectory, "CRF search", Arguments, Source, null, default, _ => new InvalidOperationException("read by the CRF search"));
+
+        var thrown = (await action.Should().ThrowAsync<AbAv1StageException>()).Which;
+        thrown.Message.Should().Be("The worker ran out of memory. Convert this video on a worker with more memory, or on this PC with --local.");
+        (await File.ReadAllTextAsync(thrown.LogPath!)).Should().Be(log);
+    }
+
+    /// <summary>
     /// ab-av1 can go minutes without a line during a CRF search, so the stage's polls say the worker answered, at most once
     /// per <see cref="RemoteStageRunner.WorkerAnsweredInterval"/>: each is a line in the event file the TUI rereads.
     /// </summary>

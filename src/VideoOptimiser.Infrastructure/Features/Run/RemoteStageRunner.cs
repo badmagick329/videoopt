@@ -41,6 +41,14 @@ internal sealed class RemoteStageRunner(IRemoteShell shell, Guid jobId, string w
     /// <summary>ab-av1's cache (<c>XDG_CACHE_HOME</c>), inside the stage so it goes with the workspace.</summary>
     internal const string CacheDirectory = "cache";
 
+    /// <summary>
+    /// The line the stage script appends to <see cref="LogFile"/> when ab-av1 failed and the kernel's out-of-memory killer
+    /// fired meanwhile (VOPT-107). The kernel usually kills FFmpeg, the biggest process, and ab-av1 then fails with an FFmpeg
+    /// error that never names memory, so the script compares the kernel's <c>oom_kill</c> count (<c>/proc/vmstat</c>) from
+    /// before and after ab-av1. The count is machine-wide, which is fine on a worker that runs nothing else.
+    /// </summary>
+    internal const string OutOfMemoryMarker = "video-optimiser: the kernel killed a process for lack of memory during this stage";
+
     /// <summary>The stage script of one launch; unique per launch, so its upload is safe to resend.</summary>
     internal static string ScriptName(string launchId) => $"run-{launchId}.sh";
 
@@ -93,9 +101,13 @@ internal sealed class RemoteStageRunner(IRemoteShell shell, Guid jobId, string w
             var cacheDirectory = InStage(stageDirectory, CacheDirectory);
             var command = string.Join(" ", new[] { Quote("/usr/bin/time"), Quote("-v"), Quote("ab-av1") }.Concat(arguments.Select(Quote)));
             // The script runs in the stage directory, so it names its files bare. Each file is written whole and then
-            // renamed, so a state check never reads half a pid or exit code.
+            // renamed, so a state check never reads half a pid or exit code. The out-of-memory marker goes into the log before
+            // the exit code is written, since the log is read once the exit code exists.
+            const string oomKills = "$(sed -n 's/^oom_kill //p' /proc/vmstat 2>/dev/null)";
             var script = $"#!/usr/bin/env bash\nset +e\numask 077\nmkdir -p -- {Quote(cacheDirectory)}\nexport XDG_CACHE_HOME={Quote(cacheDirectory)}\n"
-                + $"printf '%s\\n' \"$$\" > {PidFile}.partial\nmv -f {PidFile}.partial {PidFile}\n{command} > {LogFile} 2>&1\ncode=$?\n"
+                + $"printf '%s\\n' \"$$\" > {PidFile}.partial\nmv -f {PidFile}.partial {PidFile}\n"
+                + $"oom_before={oomKills}\n{command} > {LogFile} 2>&1\ncode=$?\noom_after={oomKills}\n"
+                + $"if [ \"$code\" -ne 0 ] && [ \"${{oom_after:-0}}\" -gt \"${{oom_before:-0}}\" ]; then printf '%s\\n' {Quote(OutOfMemoryMarker)} >> {LogFile}; fi\n"
                 + $"printf '%s\\n' \"$code\" > {ExitCodeFile}.partial\nmv -f {ExitCodeFile}.partial {ExitCodeFile}\nexit 0\n";
             var create = await shell.SshAsync($"mkdir -p -- {Quote(stageDirectory)} && umask 077 && cat > {Quote(scriptPath)} && chmod 700 {Quote(scriptPath)}", script, progress: progress, cancellationToken: cancellationToken);
             EnsureSuccess(create, "Remote stage script upload");
@@ -128,6 +140,9 @@ internal sealed class RemoteStageRunner(IRemoteShell shell, Guid jobId, string w
                 if (exitCode != 0)
                 {
                     await RemoveWorkspaceAsync(progress);
+                    // Kept in the stage's category: the fix is a bigger worker or --local, and queue retry is still the way back.
+                    if (log.Contains(OutOfMemoryMarker, StringComparison.Ordinal))
+                        throw new AbAv1StageException("The worker ran out of memory. Convert this video on a worker with more memory, or on this PC with --local.", logPath);
                     if (interpretFailure?.Invoke(log) is { } specific) throw specific;
                     var reason = AbAv1Output.LastErrorLine(log);
                     throw new AbAv1StageException($"Remote processing stage failed with exit code {exitCode}{(reason is null ? "." : $": {reason}")}", logPath);

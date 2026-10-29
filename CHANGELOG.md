@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixes
+
+- When a CRF search or encode runs the worker out of memory, the video now fails with `The worker ran out of memory.` and what to do next. Before, it failed with an FFmpeg error that didn't say why.
 
 ## [0.17.0] - 2026-10-21
 ### The queue
