@@ -28,6 +28,21 @@ public sealed class AbAv1CrfSearchClientTests
             "--enc", "fps_mode=passthrough");
     }
 
+    /// <summary>The samples are filtered as the encode will be, and the VMAF reference through the same filter, restamped to
+    /// pair frame for frame with them at ab-av1's analysis rate: a real 1080i concert scored 75 instead of 90 without it.</summary>
+    [Fact]
+    public void BuildArgumentsFiltersTheSamplesAndTheVmafReferenceAlike()
+    {
+        var plan = new VideoPlan("bwdif=mode=send_field:parity=bff:deint=all", 599, "Deinterlaced.");
+        var settings = new QualitySettings { CrfSearch = new CrfSearchSettings { SampleDuration = "20s" } }.WithSampleCount(5).WithVideo(plan);
+
+        var arguments = new AbAv1CrfSearchClient("ab-av1").BuildArguments("C:\\video.mp4", settings);
+
+        arguments.Should().ContainInOrder(
+            "--sample-duration", "20s", "--vfilter", "bwdif=mode=send_field:parity=bff:deint=all", "--keyint", "599", "--scd", "true",
+            "--reference-vfilter", "bwdif=mode=send_field:parity=bff:deint=all,setpts=N/(25*TB)", "--vmaf-fps", "25", "--enc", "fps_mode=passthrough");
+    }
+
     [Fact]
     public async Task SearchThrowsTheSkipExceptionWithTheSmallestQualityPassingAttemptWhenNoCrfIsSmallEnough()
     {

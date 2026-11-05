@@ -15,6 +15,7 @@ public sealed class AbAv1VideoEncoder(string executablePath) : IVideoEncoder
         "--pix-format", settings.PixelFormat,
         "--preset", settings.Preset.ToString(CultureInfo.InvariantCulture),
         "--crf", crf.ToString(CultureInfo.InvariantCulture),
+        .. AbAv1VideoPlanArguments.ForEncode(settings.Video),
         // Container-specific data streams such as timecode tracks are not generally portable to the output container.
         "--enc", "map=-0:d",
         // FFmpeg cannot identify these streams (iPhone spatial audio), so the muxer has no tag to write for them and refuses

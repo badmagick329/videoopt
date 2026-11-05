@@ -97,6 +97,27 @@ public sealed class JobProcessorTests : IDisposable
     }
 
     /// <summary>
+    /// An original flagged interlaced is deinterlaced only when idet finds its frames combed: the search and the encode get the
+    /// same filter, and the job notes it. One flagged so whose frames look progressive is left as it is.
+    /// </summary>
+    [Theory]
+    [InlineData(495, 0, 5, "bwdif=mode=send_field:parity=tff:deint=all", "Deinterlaced from 1080i29.97 to 1080p59.94.")]
+    [InlineData(72, 52, 377, null, null)]
+    public async Task ProcessAsyncDeinterlacesAFlaggedOriginalOnlyWhenItsFramesAreCombed(int topFirst, int bottomFirst, int progressive, string? filter, string? note)
+    {
+        var source = await SourceAsync();
+        var (search, encoder) = (new FixedCrfSearch(), new FakeEncoder());
+        var detector = new FixedInterlaceDetector(new FieldCounts(topFirst, bottomFirst, progressive, 0));
+
+        var result = await Processor(search: search, encoder: encoder, probe: new H264Probe(fieldOrder: "tt"), interlace: detector).ProcessAsync(DatabasePath, source, Settings(), force: false);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        detector.Calls.Should().Be(1);
+        (search.Settings!.Video.Filter, encoder.Settings!.Video.Filter).Should().Be((filter, filter));
+        (await _repository.GetAsync(DatabasePath, result.Job.Id))!.Notes.Should().Equal(note is null ? [] : [note]);
+    }
+
+    /// <summary>
     /// The remote session fails the job as soon as it is staged, so a skip proves nothing was uploaded. A video left with no
     /// audio is skipped even under drop, and even with --force: its AV1 would pass validation and replace the original.
     /// </summary>
@@ -989,10 +1010,12 @@ public sealed class JobProcessorTests : IDisposable
     /// <summary>The real processor over fakes; <paramref name="session"/>, when given, replaces the local search and encoder.</summary>
     private JobProcessor Processor(
         ICrfSearchClient? search = null, IVideoEncoder? encoder = null, IProcessingSession? session = null, IOutputValidationService? validator = null,
-        IMediaProbe? probe = null, IFileReadinessService? files = null, OutputManifestStore? manifests = null, IFileFingerprintService? fingerprints = null, ICommandHints? hints = null) => new(
+        IMediaProbe? probe = null, IFileReadinessService? files = null, OutputManifestStore? manifests = null, IFileFingerprintService? fingerprints = null, ICommandHints? hints = null,
+        IInterlaceDetector? interlace = null) => new(
         _repository,
         files ?? new ReadableFiles(),
         _ => probe ?? new H264Probe(),
+        _ => interlace ?? new UnexpectedInterlaceDetector(),
         session is null ? new ProcessingSessionFactory(_ => search ?? new FixedCrfSearch(), _ => encoder ?? new FakeEncoder(), new UnexpectedExternalProcessRunner()) : new FixedSessionFactory(session),
         fingerprints ?? new FileFingerprintService(),
         manifests ?? new OutputManifestStore(),

@@ -24,6 +24,7 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
         "--crf-increment", "1",
         "--samples", settings.CrfSearch.SampleCount.ToString(CultureInfo.InvariantCulture),
         "--sample-duration", settings.CrfSearch.SampleDuration,
+        .. AbAv1VideoPlanArguments.ForSearch(settings.Video),
         // The same frames as the final encode (see AbAv1VideoEncoder), so each sample's VMAF and size predict it.
         "--enc", "fps_mode=passthrough"
     ];

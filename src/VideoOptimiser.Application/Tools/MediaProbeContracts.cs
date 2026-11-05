@@ -11,7 +11,9 @@ public sealed record MediaInfo(
     int? PrimaryVideoWidth = null,
     int? PrimaryVideoHeight = null,
     long? PrimaryVideoBitrate = null,
-    IReadOnlyList<AudioTrack>? AudioTracks = null);
+    IReadOnlyList<AudioTrack>? AudioTracks = null,
+    string? PrimaryVideoFieldOrder = null,
+    double? PrimaryVideoFrameRate = null);
 
 /// <summary>One audio stream, in audio-stream order. <see cref="Tag"/> is the container's codec tag, which names a codec
 /// FFmpeg cannot identify (APAC is <c>apac</c>) when <see cref="Codec"/> is <c>unknown</c>.</summary>

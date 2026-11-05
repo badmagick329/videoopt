@@ -123,8 +123,8 @@ public sealed class DoctorService(
     }
 
     /// <summary>
-    /// A local run encodes with ab-av1, which drives FFmpeg's libsvtav1 encoder and libvmaf filter on 10-bit input, so a build
-    /// without them fails mid-job. Both modes decode the AV1 output in validation, and FFmpeg's native AV1 decoder needs hardware
+    /// A local run encodes with ab-av1, which drives FFmpeg's libsvtav1 encoder and libvmaf filter on 10-bit input, and its
+    /// bwdif filter on an interlaced original, so a build without them fails mid-job. Both modes decode the AV1 output in validation, and FFmpeg's native AV1 decoder needs hardware
     /// acceleration, so libdav1d is required unless the decode test is off. Queries run concurrently and only for the listings
     /// that a required feature needs.
     /// </summary>
@@ -183,6 +183,7 @@ public sealed class DoctorService(
     [
         new(Encoders, "libsvtav1", "the libsvtav1 encoder", "ab-av1 needs it to encode AV1.", "FfmpegFeatureAvailable", "FfmpegFeatureUnavailable"),
         new(Filters, "libvmaf", "the libvmaf filter", "ab-av1 needs it to score quality.", "FfmpegFeatureAvailable", "FfmpegFeatureUnavailable"),
+        new(Filters, "bwdif", "the bwdif filter", "ab-av1 needs it to deinterlace interlaced originals.", "FfmpegFeatureAvailable", "FfmpegFeatureUnavailable"),
         new(PixelFormats, "yuv420p10le", "the yuv420p10le pixel format", "ab-av1 needs it for 10-bit AV1 output.", "FfmpegFeatureAvailable", "FfmpegFeatureUnavailable")
     ];
 

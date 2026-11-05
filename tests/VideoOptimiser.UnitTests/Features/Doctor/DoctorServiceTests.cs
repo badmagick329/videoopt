@@ -318,16 +318,19 @@ public sealed class DoctorServiceTests : IDisposable
         if (message is not null) diagnostic.Message.Should().Contain(message);
     }
 
-    [Fact]
-    public async Task RunAsyncInLocalModeFailsWhenFfmpegLacksLibvmaf()
+    // Each filter a local run needs, missing alone from a listing that has the other.
+    [Theory]
+    [InlineData("libvmaf", " ... vmafmotion       V->V       Calculate the VMAF Motion score.\n ... bwdif             V->V       Deinterlace the input image.")]
+    [InlineData("bwdif", " ... libvmaf          VV->V      Calculate the VMAF between two video streams.\n ... yadif             V->V       Deinterlace the input image.")]
+    public async Task RunAsyncInLocalModeFailsWhenFfmpegLacksAFilter(string missing, string filters)
     {
-        var tools = new FakeToolVerifier(true) { Filters = " ... vmafmotion       V->V       Calculate the VMAF Motion score." };
+        var tools = new FakeToolVerifier(true) { Filters = filters };
 
         var report = await CreateDoctor(tools).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
 
         report.ExitCode.Should().Be(ExitCode.MissingDependency);
-        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "FfmpegFeatureUnavailable" && diagnostic.Message.Contains("libvmaf"));
-        report.Diagnostics.Count(diagnostic => diagnostic.Code == "FfmpegFeatureAvailable").Should().Be(2);
+        report.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "FfmpegFeatureUnavailable" && diagnostic.Message.Contains(missing));
+        report.Diagnostics.Count(diagnostic => diagnostic.Code == "FfmpegFeatureAvailable").Should().Be(3);
     }
 
     [Fact]
@@ -346,7 +349,7 @@ public sealed class DoctorServiceTests : IDisposable
         var report = await CreateDoctor(new FakeToolVerifier(true) { ListingsReadable = false }).RunAsync(new LoadedConfiguration(CreateSettings(), Path.Combine(_directory, "config.yaml")));
 
         report.ExitCode.Should().Be(ExitCode.MissingDependency);
-        report.Diagnostics.Count(diagnostic => diagnostic.Code == "FfmpegFeatureUnavailable" && diagnostic.Message.Contains("could not be read")).Should().Be(3);
+        report.Diagnostics.Count(diagnostic => diagnostic.Code == "FfmpegFeatureUnavailable" && diagnostic.Message.Contains("could not be read")).Should().Be(4);
         report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "Av1DecoderUnavailable" && diagnostic.Message.Contains("could not be read"));
     }
 
@@ -450,7 +453,7 @@ public sealed class DoctorServiceTests : IDisposable
         public List<string> VerifiedNames { get; } = [];
         public string AbAv1VersionLine { get; init; } = "ab-av1 0.11.7";
         public string Encoders { get; init; } = " V....D libsvtav1           SVT-AV1(Scalable Video Technology for AV1) encoder (codec av1)";
-        public string Filters { get; init; } = " ... libvmaf          VV->V      Calculate the VMAF between two video streams.";
+        public string Filters { get; init; } = " ... libvmaf          VV->V      Calculate the VMAF between two video streams.\n ... bwdif             V->V       Deinterlace the input image.";
         public string PixelFormats { get; init; } = "IO... yuv420p10le          3            10";
         public string Decoders { get; init; } = " V....D libdav1d           dav1d AV1 decoder by VideoLAN (codec av1)";
         // Models ffmpeg failing to run a listing query.

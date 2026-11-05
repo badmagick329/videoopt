@@ -41,4 +41,14 @@ public sealed class AbAv1VideoEncoderTests
         ];
         arguments.Should().Equal(expected);
     }
+
+    [Fact]
+    public void BuildArgumentsDeinterlacesWithTheVideosOwnKeyframeInterval()
+    {
+        var plan = new VideoPlan("bwdif=mode=send_field:parity=tff:deint=all", 599, "Deinterlaced.");
+
+        var arguments = new AbAv1VideoEncoder("ab-av1").BuildArguments("C:\\video.mp4", "C:\\out.mp4", 30, Settings.WithVideo(plan), AudioPlan.For(new MediaInfo("h264", 1, 0, 0, 0, 200, null)));
+
+        arguments.Should().ContainInOrder("--crf", "30", "--vfilter", "bwdif=mode=send_field:parity=tff:deint=all", "--keyint", "599", "--scd", "true", "--enc", "map=-0:d");
+    }
 }

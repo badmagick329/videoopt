@@ -114,6 +114,7 @@ public sealed class JobConsoleOutputTests : IDisposable
         new SqliteJobRepository(new SqliteDatabaseInitializer()),
         new ReadableFiles(),
         _ => new H264Probe(),
+        _ => new UnexpectedInterlaceDetector(),
         sessions,
         new FileFingerprintService(),
         new OutputManifestStore(),

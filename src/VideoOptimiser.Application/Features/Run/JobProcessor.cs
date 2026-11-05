@@ -14,6 +14,7 @@ public sealed class JobProcessor(
     IJobRepository jobs,
     IFileReadinessService readiness,
     Func<string, IMediaProbe> mediaProbeFactory,
+    Func<string, IInterlaceDetector> interlaceDetectorFactory,
     IProcessingSessionFactory sessions,
     IFileFingerprintService fingerprints,
     IOutputManifestStore manifests,
@@ -67,10 +68,11 @@ public sealed class JobProcessor(
             if (verdict.Skip) return await SkipAsync(job, databasePath, settings, verdict.Message!, progress, cancellationToken, verdict.SkipCategory);
             if (!verdict.Proceeds) return await FailAsync(job, databasePath, verdict.FailureCategory!, verdict.Message!, verdict.ExitCode, progress, cancellationToken);
             var (media, cap) = (verdict.Media!, verdict.Cap!);
-            // Saved with the job's next update, so the note is there from the first stage on and a new attempt replaces it.
-            job.Notes = AudioPlan.For(media) is { Dropped.Count: > 0 } audio ? [DroppedAudioNote(audio)] : [];
+            var video = await PlanVideoAsync(path, media, settings, cancellationToken);
+            // Saved with the job's next update, so the notes are there from the first stage on and a new attempt replaces them.
+            job.Notes = Notes(AudioPlan.For(media), video);
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.ConfiguredSampleCount);
-            var quality = settings.Quality.WithSampleCount(sampleCount).WithSizeCap(cap);
+            var quality = settings.Quality.WithSampleCount(sampleCount).WithSizeCap(cap).WithVideo(video);
 
             // Planned before anything is staged. The worker is asked about a finished encode only after the sweep, and the
             // finished encode is looked for there, not assumed from the status, so the job is recorded as Downloading only once
@@ -502,6 +504,26 @@ public sealed class JobProcessor(
     /// </summary>
     internal static JobStatus ResumePoint(JobStatus current, JobStatus? earlier) =>
         current is JobStatus.Queued or JobStatus.Staging && earlier is { } resume ? resume : current;
+
+    /// <summary>
+    /// Decides whether the encode deinterlaces the original (VOPT-199). idet decodes frames, which takes seconds, so it runs only
+    /// for a stream that says it is interlaced, and on this PC even for a remote run, before anything is staged.
+    /// </summary>
+    private async Task<VideoPlan> PlanVideoAsync(string path, MediaInfo media, AppSettings settings, CancellationToken cancellationToken)
+    {
+        if (!VideoPlan.StreamSaysInterlaced(media)) return VideoPlan.AsIs;
+        var fields = await interlaceDetectorFactory(settings.Tools.FfmpegPath).DetectAsync(path, media.DurationSeconds, cancellationToken);
+        return VideoPlan.For(media, fields);
+    }
+
+    private static List<string> Notes(AudioPlan audio, VideoPlan video)
+    {
+        List<string> notes = [];
+        if (audio.Dropped.Count > 0) notes.Add(DroppedAudioNote(audio));
+        // A note, so a wrong call on a misflagged original shows at review, where reject discards the AV1.
+        if (video.Note is { } deinterlaced) notes.Add(deinterlaced);
+        return notes;
+    }
 
     /// <summary>A note, not a validation warning: the person loses only what FFmpeg cannot carry, and a warning would keep every
     /// iPhone 16 video out of batch finalise.</summary>

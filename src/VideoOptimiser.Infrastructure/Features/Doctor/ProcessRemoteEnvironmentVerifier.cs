@@ -206,6 +206,7 @@ public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifie
             probe_tool ffprobe ffprobe
             if command -v ffmpeg >/dev/null 2>&1 && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q '[[:space:]]libsvtav1[[:space:]]'; then printf '{{Prefix}}ffmpeg_libsvtav1=1\n'; else printf '{{Prefix}}ffmpeg_libsvtav1=0\n'; fi
             if command -v ffmpeg >/dev/null 2>&1 && ffmpeg -hide_banner -filters 2>/dev/null | grep -q '[[:space:]]libvmaf[[:space:]]'; then printf '{{Prefix}}ffmpeg_libvmaf=1\n'; else printf '{{Prefix}}ffmpeg_libvmaf=0\n'; fi
+            if command -v ffmpeg >/dev/null 2>&1 && ffmpeg -hide_banner -filters 2>/dev/null | grep -q '[[:space:]]bwdif[[:space:]]'; then printf '{{Prefix}}ffmpeg_bwdif=1\n'; else printf '{{Prefix}}ffmpeg_bwdif=0\n'; fi
             if command -v ffmpeg >/dev/null 2>&1 && ffmpeg -hide_banner -pix_fmts 2>/dev/null | grep -q '[[:space:]]yuv420p10le[[:space:]]'; then printf '{{Prefix}}ffmpeg_yuv420p10le=1\n'; else printf '{{Prefix}}ffmpeg_yuv420p10le=0\n'; fi
             if command -v ffmpeg >/dev/null 2>&1 && ffmpeg -hide_banner -decoders 2>/dev/null | grep -q '[[:space:]]libdav1d[[:space:]]'; then printf '{{Prefix}}ffmpeg_libdav1d=1\n'; else printf '{{Prefix}}ffmpeg_libdav1d=0\n'; fi
             cpu_count=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
@@ -264,6 +265,7 @@ public sealed class ProcessRemoteEnvironmentVerifier : IRemoteEnvironmentVerifie
     [
         ("ffmpeg_libsvtav1", "libsvtav1"),
         ("ffmpeg_libvmaf", "libvmaf"),
+        ("ffmpeg_bwdif", "bwdif"),
         ("ffmpeg_yuv420p10le", "yuv420p10le")
     ];
 }

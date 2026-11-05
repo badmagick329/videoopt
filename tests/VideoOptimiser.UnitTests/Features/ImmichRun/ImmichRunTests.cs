@@ -50,6 +50,7 @@ public sealed class ImmichRunTests : IDisposable
             _repository,
             new ReadableFiles(),
             _ => new H264Probe(bitrate: 20_000_000),
+            _ => new UnexpectedInterlaceDetector(),
             new ProcessingSessionFactory(_ => new FixedCrfSearch(), _ => new FakeEncoder(), new UnexpectedExternalProcessRunner()),
             fingerprints,
             manifests,

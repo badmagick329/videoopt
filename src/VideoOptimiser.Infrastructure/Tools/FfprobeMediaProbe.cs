@@ -53,7 +53,20 @@ public static class FfprobeJsonParser
             GetInt(primaryVideo, "width"),
             GetInt(primaryVideo, "height"),
             GetLong(primaryVideo, "bit_rate") ?? OverallBitrate(format, size, duration),
-            [.. streams.Where(stream => GetString(stream, "codec_type") == "audio").Select(stream => new AudioTrack(GetString(stream, "codec_name") ?? "unknown", GetString(stream, "codec_tag_string")))]);
+            [.. streams.Where(stream => GetString(stream, "codec_type") == "audio").Select(stream => new AudioTrack(GetString(stream, "codec_name") ?? "unknown", GetString(stream, "codec_tag_string")))],
+            GetString(primaryVideo, "field_order"),
+            GetRate(primaryVideo, "avg_frame_rate") ?? GetRate(primaryVideo, "r_frame_rate"));
+    }
+
+    /// <summary>A rate such as <c>30000/1001</c>; null for ffprobe's <c>0/0</c>, which it prints when it does not know.</summary>
+    private static double? GetRate(JsonElement element, string property)
+    {
+        if (GetString(element, property)?.Split('/') is not [var numerator, var denominator]) return null;
+        var style = System.Globalization.NumberStyles.Integer;
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        return long.TryParse(numerator, style, culture, out var top) && long.TryParse(denominator, style, culture, out var bottom) && top > 0 && bottom > 0
+            ? (double)top / bottom
+            : null;
     }
 
     /// <summary>

@@ -110,6 +110,7 @@ public sealed class ResumePlanTests : IDisposable
         new SqliteJobRepository(new SqliteDatabaseInitializer()),
         new ReadableFiles(),
         _ => new H264Probe(),
+        _ => new UnexpectedInterlaceDetector(),
         new FixedSessionFactory(new ResumedWorkerSession()),
         new FileFingerprintService(),
         new OutputManifestStore(),

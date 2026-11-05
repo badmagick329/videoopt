@@ -76,6 +76,7 @@ internal static class ServiceRegistration
         services.AddSingleton<IAbAv1ProgressTranslator, AbAv1ProgressTranslator>();
         services.AddSingleton<IExternalProcessRunner, ExternalProcessRunner>();
         services.AddSingleton<Func<string, IMediaDecodeTester>>(provider => ffmpegPath => new FfmpegDecodeTester(ffmpegPath, provider.GetRequiredService<IExternalProcessRunner>()));
+        services.AddSingleton<Func<string, IInterlaceDetector>>(provider => ffmpegPath => new FfmpegInterlaceDetector(ffmpegPath, provider.GetRequiredService<IExternalProcessRunner>()));
         services.AddSingleton<IOutputManifestStore, OutputManifestStore>();
         services.AddSingleton<IFileFingerprintService, FileFingerprintService>();
         services.AddSingleton<IConsoleInput, ConsoleInput>();

@@ -119,6 +119,12 @@ Without the spatial track you lose head-tracked playback on Apple devices and Au
 
 If FFmpeg recognises none of a video's audio tracks, the video is skipped under either value, so you never get an AV1 with no sound.
 
+### Interlaced originals
+
+AV1 can't store interlaced video, so an interlaced original, such as a 1080i TV broadcast, is deinterlaced in the same encode. Each field becomes a frame of its own: 1080i at 29.97 fps becomes 1080p at 59.94 fps, and motion stays as smooth as it was. The video gets a note saying so.
+
+A video counts as interlaced only when its video stream is marked interlaced and most of its frames look interlaced too. Some videos are marked interlaced but hold ordinary progressive frames, and those are left alone. If one is deinterlaced by mistake, the note shows it when you review the video, and `queue reject` deletes the AV1 and keeps the original. There's no setting for this.
+
 ## Tools
 
 | Tool | Needed for | Where to get it |
@@ -126,6 +132,6 @@ If FFmpeg recognises none of a video's audio tracks, the video is skipped under 
 | FFmpeg and ffprobe | Every setup | The "full" build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), or `winget install Gyan.FFmpeg` |
 | ab-av1 0.11.7 or newer | Encoding on your PC | `cargo install ab-av1 --locked`, or `ab-av1.exe` from its [releases](https://github.com/alexheretic/ab-av1/releases) |
 
-To encode on your PC, FFmpeg needs libsvtav1, libvmaf and libdav1d; the full builds above have all three. A remote worker installs its own ab-av1 and FFmpeg, so your PC then needs only FFmpeg and ffprobe, with libdav1d for validation.
+To encode on your PC, FFmpeg needs libsvtav1, libvmaf, libdav1d and the bwdif filter; the full builds above have all four. A remote worker installs its own ab-av1 and FFmpeg, so your PC then needs only FFmpeg and ffprobe, with libdav1d for validation.
 
 Put the tools on `PATH`, or set their paths under `tools:` in the config. `doctor` checks them.

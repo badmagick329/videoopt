@@ -1,5 +1,6 @@
 using YamlDotNet.Serialization;
 using VideoOptimiser.Application.Eligibility;
+using VideoOptimiser.Application.Tools;
 
 namespace VideoOptimiser.Application.Configuration;
 
@@ -221,6 +222,17 @@ public sealed class QualitySettings
         var copy = (QualitySettings)MemberwiseClone();
         copy.MaxEncodedPercent = cap.Percent;
         copy.SizeCap = cap;
+        return copy;
+    }
+
+    /// <summary>The video's own picture treatment, set on a job's copy only, for the same reason as <see cref="SizeCap"/>:
+    /// ab-av1's search and encode, local or remote, must all apply it.</summary>
+    [YamlIgnore] public VideoPlan Video { get; private set; } = VideoPlan.AsIs;
+
+    public QualitySettings WithVideo(VideoPlan plan)
+    {
+        var copy = (QualitySettings)MemberwiseClone();
+        copy.Video = plan;
         return copy;
     }
 }

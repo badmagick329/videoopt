@@ -299,6 +299,8 @@ write_progress 98 "Verifying installed codecs"
     || die "FFmpeg does not expose the libdav1d AV1 decoder"
 "${PREFIX}/bin/ffmpeg" -hide_banner -filters 2>/dev/null | grep 'libvmaf' >/dev/null \
     || die "FFmpeg does not expose the libvmaf filter"
+"${PREFIX}/bin/ffmpeg" -hide_banner -filters 2>/dev/null | grep -E '[[:space:]]bwdif[[:space:]]' >/dev/null \
+    || die "FFmpeg does not expose the bwdif filter"
 "${PREFIX}/bin/ffmpeg" -hide_banner -pix_fmts 2>/dev/null | grep 'yuv420p10le' >/dev/null \
     || die "FFmpeg does not expose the yuv420p10le pixel format"
 

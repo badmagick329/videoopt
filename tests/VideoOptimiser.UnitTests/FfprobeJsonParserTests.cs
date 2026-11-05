@@ -75,6 +75,21 @@ public sealed class FfprobeJsonParserTests
             new AudioTrack("aac", "mp4a"), new AudioTrack("unknown", "apac"), new AudioTrack("apple_apac", "apac"), new AudioTrack("pcm_s24le"));
     }
 
+    /// <summary>
+    /// The frame rate is the average one: an interlaced H.264 broadcast reports its field rate as <c>r_frame_rate</c>. The
+    /// real-base rate stands in only when the average is ffprobe's unknown <c>0/0</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("""{ "codec_type": "video", "codec_name": "h264", "field_order": "tt", "r_frame_rate": "60000/1001", "avg_frame_rate": "30000/1001" }""", "tt", 30000.0 / 1001)]
+    [InlineData("""{ "codec_type": "video", "codec_name": "h264", "field_order": "progressive", "r_frame_rate": "25/1", "avg_frame_rate": "0/0" }""", "progressive", 25.0)]
+    [InlineData("""{ "codec_type": "video", "codec_name": "h264" }""", null, null)]
+    public void ParseReadsTheFieldOrderAndFrameRate(string stream, string? fieldOrder, double? frameRate)
+    {
+        var media = FfprobeJsonParser.Parse($$"""{ "streams": [ {{stream}} ] }""");
+
+        (media.PrimaryVideoFieldOrder, media.PrimaryVideoFrameRate).Should().Be((fieldOrder, frameRate));
+    }
+
     [Fact]
     public void ParseRejectsFilesWithOnlyAttachedCoverArt()
     {

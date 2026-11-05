@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixes
+
+- Interlaced videos, such as 1080i TV broadcasts, are now deinterlaced as they're converted, one frame per field, so 1080i at 29.97 fps becomes 1080p at 59.94 fps. Before, the AV1 kept the interlacing's comb lines for good. Only videos that are marked interlaced and look it are deinterlaced, and each one gets a note saying so. A worker now checks that its FFmpeg has the `bwdif` filter, and so does `doctor`.
 
 ## [0.17.1] - 2026-10-29
 ### Fixes

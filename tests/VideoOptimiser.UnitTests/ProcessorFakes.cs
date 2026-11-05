@@ -36,20 +36,45 @@ internal sealed class FuncProbe(Func<string, MediaInfo> media) : IMediaProbe
     }
 }
 
-/// <summary>A 1080p h264 original of 120 s at the given bitrate, with one audio stream unless <paramref name="audio"/> lists them;
-/// an encoded output (<c>.encoding.mp4</c>) probes as av1. <paramref name="sourceCodec"/> stands in for h264 on the original.</summary>
-internal sealed class H264Probe(IReadOnlyList<AudioTrack>? audio = null, long? bitrate = 10_000_000, string sourceCodec = "h264") : IMediaProbe
+/// <summary>A 1080p h264 original of 120 s at 29.97 fps and the given bitrate, with one audio stream unless <paramref name="audio"/>
+/// lists them; an encoded output (<c>.encoding.mp4</c>) probes as av1. <paramref name="sourceCodec"/> stands in for h264 on the
+/// original, and <paramref name="fieldOrder"/> is ffprobe's field order, none by default.</summary>
+internal sealed class H264Probe(IReadOnlyList<AudioTrack>? audio = null, long? bitrate = 10_000_000, string sourceCodec = "h264", string? fieldOrder = null) : IMediaProbe
 {
     public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : sourceCodec, 1, audio?.Count ?? 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, bitrate, audio));
+        Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : sourceCodec, 1, audio?.Count ?? 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, bitrate, audio, fieldOrder, 30000.0 / 1001));
 }
 
-/// <summary>Chooses CRF 42 at once, with no estimate.</summary>
+/// <summary>Chooses CRF 42 at once, with no estimate, and keeps the settings it was given.</summary>
 internal sealed class FixedCrfSearch : ICrfSearchClient
 {
+    public QualitySettings? Settings { get; private set; }
+
     public IReadOnlyList<string> BuildArguments(string inputPath, QualitySettings settings) => [];
-    public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
+    public Task<CrfSearchResult> SearchAsync(string inputPath, QualitySettings settings, IProgress<JobProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        Settings = settings;
+        return Task.FromResult(new CrfSearchResult(42, string.Empty, string.Empty, TimeSpan.Zero));
+    }
+}
+
+/// <summary>Answers every interlace check with <paramref name="fields"/> and counts the checks.</summary>
+internal sealed class FixedInterlaceDetector(FieldCounts fields) : IInterlaceDetector
+{
+    public int Calls { get; private set; }
+
+    public Task<FieldCounts> DetectAsync(string path, double? durationSeconds, CancellationToken cancellationToken = default)
+    {
+        Calls++;
+        return Task.FromResult(fields);
+    }
+}
+
+/// <summary>For a processor whose originals all say they are progressive, so nothing should decode them to look for combing.</summary>
+internal sealed class UnexpectedInterlaceDetector : IInterlaceDetector
+{
+    public Task<FieldCounts> DetectAsync(string path, double? durationSeconds, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("No interlace check is expected.");
 }
 
 /// <summary>Writes a small output and keeps what it was asked for.</summary>
@@ -58,6 +83,7 @@ internal sealed class FakeEncoder : IVideoEncoder
     public int CallCount { get; private set; }
     public string? OutputPath { get; private set; }
     public AudioPlan? Audio { get; private set; }
+    public QualitySettings? Settings { get; private set; }
 
     public IReadOnlyList<string> BuildArguments(string inputPath, string outputPath, int crf, QualitySettings settings, AudioPlan audio) => [];
 
@@ -66,6 +92,7 @@ internal sealed class FakeEncoder : IVideoEncoder
         CallCount++;
         OutputPath = outputPath;
         Audio = audio;
+        Settings = settings;
         await File.WriteAllTextAsync(outputPath, "av1", cancellationToken);
         return new EncodeResult(outputPath, TimeSpan.Zero);
     }

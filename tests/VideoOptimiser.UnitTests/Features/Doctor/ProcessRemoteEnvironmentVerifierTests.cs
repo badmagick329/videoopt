@@ -77,6 +77,7 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
         video-optimiser-doctor:tool_ffprobe=1
         video-optimiser-doctor:ffmpeg_libsvtav1=1
         video-optimiser-doctor:ffmpeg_libvmaf=1
+        video-optimiser-doctor:ffmpeg_bwdif=1
         video-optimiser-doctor:ffmpeg_yuv420p10le=1
         video-optimiser-doctor:ffmpeg_libdav1d=1
         video-optimiser-doctor:cpu_count=16
