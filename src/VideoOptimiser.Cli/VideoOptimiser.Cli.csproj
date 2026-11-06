@@ -20,7 +20,7 @@
     <ProjectReference Include="..\VideoOptimiser.Infrastructure\VideoOptimiser.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
     <!-- Draws the TUI (Features/Tui); AOT-clean, as the Trial A spike showed. Not Spectre.Console.Cli: the loop is our own. -->
     <PackageReference Include="Spectre.Console" Version="0.57.2" />
   </ItemGroup>
