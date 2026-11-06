@@ -4,6 +4,7 @@
 ### Fixes
 
 - Interlaced videos, such as 1080i TV broadcasts, are now deinterlaced as they're converted, one frame per field, so 1080i at 29.97 fps becomes 1080p at 59.94 fps. Before, the AV1 kept the interlacing's comb lines for good. Only videos that are marked interlaced and look it are deinterlaced, and each one gets a note saying so. A worker now checks that its FFmpeg has the `bwdif` filter, and so does `doctor`.
+- The exe is now built on .NET 10.0.14, which fixes a security flaw in .NET's Brotli decompression ([GHSA-p3jp-9v83-76w9](https://github.com/advisories/GHSA-p3jp-9v83-76w9)). VideoOptimiser never decompresses Brotli data, so it couldn't be exploited through the app. Building from source now needs SDK 10.0.403.
 
 ## [0.17.1] - 2026-10-29
 ### Fixes
