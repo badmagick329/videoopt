@@ -6,6 +6,10 @@
 - VideoOptimiser now needs ab-av1 0.12.0 or newer, and `doctor` fails on an older one, on your PC or on a worker. A new Hetzner worker installs 0.12.0. A worker created before this change keeps 0.11.7: delete it with `worker delete` and the next run creates a new one.
 - Every CRF search now names its VMAF model, the one ab-av1 0.11.7 picked by itself: `vmaf_4k_v0.6.1` for a video larger than 2560×1440 as it plays, and `vmaf_v0.6.1` for anything else, so scores don't change. Left to choose, ab-av1 0.12.0 switches to its newer v1.0.16 models once an FFmpeg update brings them, and the same `minimumVmaf` would then judge videos differently.
 
+### Converting
+
+- CRF searches take about an eighth less time, and the AV1s come out slightly bigger, by about 1% of the original's size. A search now stops at the first CRF that scores no more than 1 VMAF point above `quality.minimumVmaf`; ab-av1 used to keep trying CRFs that landed closer to it. The new `quality.crfSearch.scoreTolerance` (0 to 5, default `1`) sets that margin, and a lower value searches longer for smaller files. Changing it doesn't make videos skipped as not worth converting get checked again.
+
 ## [0.18.0] - 2026-11-06
 ### Fixes
 

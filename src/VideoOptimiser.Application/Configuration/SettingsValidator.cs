@@ -23,6 +23,11 @@ public sealed class SettingsValidator : ISettingsValidator
     public const int LowestCrf = 1;
     public const int HighestCrf = 63;
 
+    /// <summary>ab-av1's --score-tolerance; 0 is its most thorough search. Above about 3 the search accepts almost the
+    /// first passing CRF (+23 points of the original's size in VOPT-201's replay), so 5 is a generous cap.</summary>
+    public const double LowestScoreTolerance = 0;
+    public const double HighestScoreTolerance = 5;
+
     public IReadOnlyList<Diagnostic> Validate(AppSettings settings)
     {
         var diagnostics = new List<Diagnostic>();
@@ -104,6 +109,8 @@ public sealed class SettingsValidator : ISettingsValidator
         AddWhen(!maxCrfValid, "InvalidMaxCrf", $"quality.crfSearch.maxCrf must be a whole number between {LowestCrf} and {HighestCrf}.");
         // Only between two valid ends, so one typo gives one error.
         AddWhen(minCrfValid && maxCrfValid && settings.Quality.CrfSearch.MinCrf > settings.Quality.CrfSearch.MaxCrf, "InvalidCrfRange", "quality.crfSearch.minCrf cannot exceed maxCrf.");
+        // Written as "not inside" so NaN fails too, as for minimumVmaf.
+        AddWhen(!(settings.Quality.CrfSearch.ScoreTolerance is >= LowestScoreTolerance and <= HighestScoreTolerance), "InvalidScoreTolerance", Invariant($"quality.crfSearch.scoreTolerance must be a number between {LowestScoreTolerance} and {HighestScoreTolerance}."));
         AddWhen(settings.Quality.CrfSearch.ConfiguredSampleCount is < 1, "InvalidSampleCount", "quality.crfSearch.sampleCount must be at least 1.");
         ValidateDuration(settings.Quality.CrfSearch.SampleDuration, "quality.crfSearch.sampleDuration", diagnostics);
         AddWhen(string.IsNullOrWhiteSpace(settings.Quality.Encoder), "EncoderRequired", "quality.encoder is required.");

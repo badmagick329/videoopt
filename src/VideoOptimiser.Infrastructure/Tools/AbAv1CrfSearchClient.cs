@@ -22,6 +22,9 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
         "--max-crf", settings.CrfSearch.MaxCrf.ToString(CultureInfo.InvariantCulture),
         // CRFs are whole numbers throughout (jobs, manifests, encode). ab-av1 0.12 defaults svt-av1 to quarter steps.
         "--crf-increment", "1",
+        // A pass within this many VMAF points of minimumVmaf ends the search, trading slightly bigger files for shorter
+        // searches (VOPT-201). It conflicts with --thorough, which is never passed.
+        "--score-tolerance", settings.CrfSearch.ScoreTolerance.ToString("R", CultureInfo.InvariantCulture),
         "--samples", settings.CrfSearch.SampleCount.ToString(CultureInfo.InvariantCulture),
         "--sample-duration", settings.CrfSearch.SampleDuration,
         // Named rather than left to ab-av1, whose default model follows whatever libvmaf the machine has (see VmafModels).

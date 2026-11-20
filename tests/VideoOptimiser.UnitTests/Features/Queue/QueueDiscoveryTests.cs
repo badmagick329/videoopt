@@ -155,6 +155,7 @@ public sealed class QueueDiscoveryTests : IDisposable
     [Theory]
     [InlineData("same", true)]
     [InlineData("sampleCount", true)]
+    [InlineData("scoreTolerance", true)]
     [InlineData("minimumBytesSaved", false)]
     [InlineData("minimumBytesSavedRespelled", true)]
     [InlineData("unsupportedAudioDrop", true)]
@@ -166,6 +167,7 @@ public sealed class QueueDiscoveryTests : IDisposable
         switch (change)
         {
             case "sampleCount": _settings.Quality.CrfSearch.ConfiguredSampleCount = 9; break;
+            case "scoreTolerance": _settings.Quality.CrfSearch.ScoreTolerance = 2; break;
             case "minimumBytesSaved": _settings.Savings.MinimumBytesSaved = "50MiB"; break;
             case "minimumBytesSavedRespelled": _settings.Savings.MinimumBytesSaved = "1 MiB"; break;
             // The default adds nothing to the fingerprint, so upgrading leaves every earlier skip settled.

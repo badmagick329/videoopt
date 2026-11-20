@@ -1,3 +1,4 @@
+using System.Globalization;
 using FluentAssertions;
 using VideoOptimiser.Application.Configuration;
 using VideoOptimiser.Application.Jobs;
@@ -24,8 +25,28 @@ public sealed class AbAv1CrfSearchClientTests
 
         arguments.Should().Equal(
             "crf-search", "--input", "C:\\video.mp4", "--encoder", "libsvtav1", "--pix-format", "yuv420p10le",
-            "--preset", "6", "--min-vmaf", "95", "--max-encoded-percent", "80", "--min-crf", "18", "--max-crf", "50", "--crf-increment", "1", "--samples", "5", "--sample-duration", "20s",
+            "--preset", "6", "--min-vmaf", "95", "--max-encoded-percent", "80", "--min-crf", "18", "--max-crf", "50", "--crf-increment", "1", "--score-tolerance", "1", "--samples", "5", "--sample-duration", "20s",
             "--vmaf", "model=version=vmaf_v0.6.1", "--enc", "fps_mode=passthrough");
+    }
+
+    /// <summary>ab-av1 reads a comma as a bad number, so a PC set to a comma-decimal culture must still pass 0.75.</summary>
+    [Fact]
+    public void BuildArgumentsPassesTheScoreToleranceInvariantly()
+    {
+        var settings = new QualitySettings { CrfSearch = new CrfSearchSettings { ScoreTolerance = 0.75 } }.WithSampleCount(5);
+        var original = CultureInfo.CurrentCulture;
+        IReadOnlyList<string> arguments;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+            arguments = new AbAv1CrfSearchClient("ab-av1").BuildArguments("C:\\video.mp4", settings);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
+
+        arguments.Should().ContainInConsecutiveOrder("--score-tolerance", "0.75");
     }
 
     /// <summary>

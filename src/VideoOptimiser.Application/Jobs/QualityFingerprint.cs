@@ -10,6 +10,7 @@ namespace VideoOptimiser.Application.Jobs;
 /// Identifies the settings that decide whether AV1 is worth it for a video. A job skipped as not worth converting stores
 /// it, and discovery treats that skip as settled only while the fingerprint still matches, so loosening the quality bar
 /// checks the video again. Sample count and duration are left out: they change how the search measures, not what it demands.
+/// So is <c>quality.crfSearch.scoreTolerance</c>, for the same reason; including it would also check every skipped video again.
 /// <c>savings.minimumBytesSaved</c> is in because it sets the size cap; it counts as parsed bytes, so respelling it
 /// (<c>100MiB</c> as <c>100 MiB</c>) does not unsettle every skip.
 /// </summary>

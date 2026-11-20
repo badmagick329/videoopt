@@ -259,6 +259,8 @@ public sealed class CrfSearchSettings
 {
     [YamlMember(Alias = "minCrf")] public int MinCrf { get; set; } = 8;
     [YamlMember(Alias = "maxCrf")] public int MaxCrf { get; set; } = 50;
+    /// <summary>How many VMAF points above <c>minimumVmaf</c> a passing CRF may score and still end the search (VOPT-201).</summary>
+    [YamlMember(Alias = "scoreTolerance")] public double ScoreTolerance { get; set; } = 1;
     /// <summary>The count the user set, used for every video; null lets each video's duration pick it (VOPT-159).</summary>
     [YamlMember(Alias = "sampleCount")] public int? ConfiguredSampleCount { get; set; }
     [YamlMember(Alias = "sampleDuration")] public string SampleDuration { get; set; } = "20s";

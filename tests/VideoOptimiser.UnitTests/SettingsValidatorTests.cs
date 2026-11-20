@@ -70,6 +70,22 @@ public sealed class SettingsValidatorTests
     }
 
     [Theory]
+    [InlineData(SettingsValidator.LowestScoreTolerance - 0.1, false)]
+    [InlineData(SettingsValidator.LowestScoreTolerance, true)]
+    [InlineData(SettingsValidator.HighestScoreTolerance, true)]
+    [InlineData(SettingsValidator.HighestScoreTolerance + 0.1, false)]
+    [InlineData(double.NaN, false)]
+    public void ValidateRequiresAScoreToleranceFromZeroToFive(double tolerance, bool valid)
+    {
+        var settings = CreateValidSettings();
+        settings.Quality.CrfSearch.ScoreTolerance = tolerance;
+
+        var reported = new SettingsValidator().Validate(settings).Select(diagnostic => $"{diagnostic.Code}: {diagnostic.Message}");
+
+        reported.Should().Equal(valid ? [] : ["InvalidScoreTolerance: quality.crfSearch.scoreTolerance must be a number between 0 and 5."]);
+    }
+
+    [Theory]
     [InlineData("hevc", false)]
     [InlineData("AV1", true)]
     public void ValidateRefusesARuleThatAdmitsAv1(string codec, bool rejected)

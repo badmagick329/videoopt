@@ -168,6 +168,21 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
         loaded.Settings.Quality.CrfSearch.ConfiguredSampleCount.Should().Be(expected);
     }
 
+    [Theory]
+    [InlineData("", 1)]
+    [InlineData("scoreTolerance: 0.75", 0.75)]
+    public async Task LoadAsyncDefaultsAnAbsentScoreToleranceToOne(string line, double expected)
+    {
+        var loaded = await LoadAsync($"""
+            version: 1
+            quality:
+              crfSearch:
+                {line}
+            """);
+
+        loaded.Settings.Quality.CrfSearch.ScoreTolerance.Should().Be(expected);
+    }
+
     /// <summary>
     /// The null shapes the per-setting cases below don't reach: nothing after the colon inside a list item, a number, which
     /// fails while deserialising, and several at once, each named (VOPT-164).
@@ -175,6 +190,7 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     [Theory]
     [InlineData("eligibility:\n  rules:\n    - codecs: [\"h264\"]\n      resolution:", "eligibility.rules[0].resolution can't be empty.")]
     [InlineData("processing:\n  remoteSsh:\n    minimumCpuCount: null", "processing.remoteSsh.minimumCpuCount can't be empty.")]
+    [InlineData("quality:\n  crfSearch:\n    scoreTolerance: ~", "quality.crfSearch.scoreTolerance can't be empty.")]
     [InlineData("database:\n  path: ~\nquality:\n  encoder: ~", "database.path can't be empty. quality.encoder can't be empty.")]
     public async Task LoadAsyncNamesEachSettingLeftEmpty(string yaml, string expected)
     {
