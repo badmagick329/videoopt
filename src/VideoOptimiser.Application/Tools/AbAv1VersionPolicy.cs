@@ -10,11 +10,11 @@ public static class AbAv1VersionPolicy
     private const string OutputPrefix = "ab-av1 ";
 
     // The version the bootstrap pins and CI tests, so a job runs the ab-av1 code the tests exercised.
-    public static readonly Version Minimum = new(0, 11, 7);
+    public static readonly Version Minimum = new(0, 12, 0);
 
     /// <summary>
-    /// Accepts a bare version (<c>0.11.7</c>, <c>v0.11.7</c>) as the remote probe extracts it, and the raw
-    /// <c>--version</c> line (<c>ab-av1 0.11.7</c>) that local doctor already holds.
+    /// Accepts a bare version (<c>0.12.0</c>, <c>v0.12.0</c>) as the remote probe extracts it, and the raw
+    /// <c>--version</c> line (<c>ab-av1 0.12.0</c>) that local doctor already holds.
     /// </summary>
     public static bool TryParse(string? value, out Version version)
     {

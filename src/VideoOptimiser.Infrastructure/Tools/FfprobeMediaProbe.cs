@@ -55,7 +55,20 @@ public static class FfprobeJsonParser
             GetLong(primaryVideo, "bit_rate") ?? OverallBitrate(format, size, duration),
             [.. streams.Where(stream => GetString(stream, "codec_type") == "audio").Select(stream => new AudioTrack(GetString(stream, "codec_name") ?? "unknown", GetString(stream, "codec_tag_string")))],
             GetString(primaryVideo, "field_order"),
-            GetRate(primaryVideo, "avg_frame_rate") ?? GetRate(primaryVideo, "r_frame_rate"));
+            GetRate(primaryVideo, "avg_frame_rate") ?? GetRate(primaryVideo, "r_frame_rate"),
+            Rotation(primaryVideo));
+    }
+
+    /// <summary>The display matrix's rotation, which ffprobe prints as <c>rotation</c> on that entry of <c>side_data_list</c>.</summary>
+    private static int? Rotation(JsonElement stream)
+    {
+        if (!stream.TryGetProperty("side_data_list", out var sideData) || sideData.ValueKind != JsonValueKind.Array) return null;
+        foreach (var entry in sideData.EnumerateArray())
+        {
+            if (entry.ValueKind == JsonValueKind.Object && entry.TryGetProperty("rotation", out var rotation) && rotation.ValueKind == JsonValueKind.Number && rotation.TryGetDouble(out var degrees))
+                return (int)Math.Round(degrees, MidpointRounding.AwayFromZero);
+        }
+        return null;
     }
 
     /// <summary>A rate such as <c>30000/1001</c>; null for ffprobe's <c>0/0</c>, which it prints when it does not know.</summary>

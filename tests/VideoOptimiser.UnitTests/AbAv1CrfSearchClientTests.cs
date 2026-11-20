@@ -25,7 +25,32 @@ public sealed class AbAv1CrfSearchClientTests
         arguments.Should().Equal(
             "crf-search", "--input", "C:\\video.mp4", "--encoder", "libsvtav1", "--pix-format", "yuv420p10le",
             "--preset", "6", "--min-vmaf", "95", "--max-encoded-percent", "80", "--min-crf", "18", "--max-crf", "50", "--crf-increment", "1", "--samples", "5", "--sample-duration", "20s",
-            "--enc", "fps_mode=passthrough");
+            "--vmaf", "model=version=vmaf_v0.6.1", "--enc", "fps_mode=passthrough");
+    }
+
+    /// <summary>
+    /// The model ab-av1 0.11.7 picked on its own, named so a libvmaf with newer models can't change the scores (VOPT-202). It
+    /// judged the encoded sample, which FFmpeg stores upright, so a quarter-turned 4K phone video gets the standard model.
+    /// </summary>
+    [Theory]
+    [InlineData(1920, 1080, null, VmafModels.Standard)]
+    [InlineData(2560, 1440, null, VmafModels.Standard)]
+    [InlineData(3840, 1440, null, VmafModels.Standard)]
+    [InlineData(2561, 1441, null, VmafModels.FourK)]
+    [InlineData(3840, 2160, null, VmafModels.FourK)]
+    [InlineData(null, null, null, VmafModels.Standard)]
+    [InlineData(3840, 2160, 90, VmafModels.Standard)]
+    [InlineData(3840, 2160, -90, VmafModels.Standard)]
+    [InlineData(3840, 2160, 180, VmafModels.FourK)]
+    [InlineData(2160, 3840, 270, VmafModels.FourK)]
+    public void BuildArgumentsNamesTheVmafModelTheEncodedSampleSizeCalledFor(int? width, int? height, int? rotation, string model)
+    {
+        var media = new MediaInfo("hevc", 1, 1, 0, 0, 60, null, width, height, PrimaryVideoRotation: rotation);
+        var settings = new QualitySettings().WithSampleCount(5).WithVmafModel(VmafModels.For(media));
+
+        var arguments = new AbAv1CrfSearchClient("ab-av1").BuildArguments("C:\\video.mp4", settings);
+
+        arguments.Should().ContainInOrder("--vmaf", $"model=version={model}");
     }
 
     /// <summary>The samples are filtered as the encode will be, and the VMAF reference through the same filter, restamped to

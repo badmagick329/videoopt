@@ -601,6 +601,18 @@ public sealed class RemoteSshProcessingSessionTests : IDisposable
         runner.Requests.Should().ContainSingle(request => request.StandardInput != null, "one stage script is uploaded");
     }
 
+    /// <summary>The worker's search names the job's VMAF model too, so a newer libvmaf there can't score it differently (VOPT-202).</summary>
+    [Fact]
+    public async Task TheWorkersCrfSearchNamesTheJobsVmafModel()
+    {
+        var source = await SourceAsync();
+        var runner = new ScriptedProcessRunner([Ok(AtEnd("missing", "")), Ok(), Ok(), Ok(Sent("completed 0", "crf 42 successful\n")), Ok("crf 42 successful\n")]);
+
+        await CreateSession(Guid.NewGuid(), runner, source).SearchCrfAsync(source, new QualitySettings().WithSampleCount(5).WithVmafModel(VmafModels.FourK));
+
+        runner.Requests.Single(request => request.StandardInput != null).StandardInput.Should().Contain("'--vmaf' 'model=version=vmaf_4k_v0.6.1'");
+    }
+
     [Fact]
     public async Task AReattachedCrfSearchHasNoDuration()
     {

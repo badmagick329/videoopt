@@ -117,6 +117,22 @@ public sealed class JobProcessorTests : IDisposable
         (await _repository.GetAsync(DatabasePath, result.Job.Id))!.Notes.Should().Equal(note is null ? [] : [note]);
     }
 
+    /// <summary>The search scores with the model the run's own probe of the original calls for, rotation included (VOPT-202).
+    /// Forced, since the 4K originals fall outside the test rule's resolutions.</summary>
+    [Theory]
+    [InlineData(null, VmafModels.FourK)]
+    [InlineData(90, VmafModels.Standard)]
+    public async Task ProcessAsyncSearchesWithTheVmafModelTheOriginalCallsFor(int? rotation, string model)
+    {
+        var source = await SourceAsync();
+        var search = new FixedCrfSearch();
+
+        var result = await Processor(search: search, probe: new H264Probe(size: (3840, 2160), rotation: rotation)).ProcessAsync(DatabasePath, source, Settings(), force: true);
+
+        result.ExitCode.Should().Be(ExitCode.Success, result.Message);
+        search.Settings!.VmafModel.Should().Be(model);
+    }
+
     /// <summary>
     /// The remote session fails the job as soon as it is staged, so a skip proves nothing was uploaded. A video left with no
     /// audio is skipped even under drop, and even with --force: its AV1 would pass validation and replace the original.

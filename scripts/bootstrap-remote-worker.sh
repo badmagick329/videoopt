@@ -15,8 +15,8 @@ readonly SVT_AV1_COMMIT="cc569c1eb16832b7f1a649cac0b3bd1a8e4a814d"
 readonly FFMPEG_VERSION="8.0"
 readonly FFMPEG_SHA256="b2751fccb6cc4c77708113cd78b561059b6fa904b24162fa0be2d60273d27b8e"
 # Same version as scripts/install-media-tools.ps1, which CI tests; ToolVersionPinTests fails when they differ.
-readonly AB_AV1_VERSION="0.11.7"
-readonly AB_AV1_SHA256="40c035df608162fcb1c991d1474bc9bc8817e0354ac7aef5be5314d3efd64069"
+readonly AB_AV1_VERSION="0.12.0"
+readonly AB_AV1_SHA256="166eaac62b1dc680279c9962cc789eb9b280480ae33314b9b009044b4c9f9f1d"
 readonly AUTHORIZED_KEYS_SOURCE="${VIDEOOPT_AUTHORIZED_KEYS_FILE:-/root/.ssh/authorized_keys}"
 readonly PROGRESS_FILE="${PREFIX}/.bootstrap-progress"
 # Without it a failed script looks like a slow one, and the controller waits out the whole bootstrapTimeout (VOPT-140).

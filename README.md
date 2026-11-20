@@ -6,7 +6,7 @@ It finds videos worth converting in your folders or your [Immich](https://immich
 
 ## Quick start
 
-You need [FFmpeg](https://www.gyan.dev/ffmpeg/builds/) (the "full" build, or `winget install Gyan.FFmpeg`) and [ab-av1](https://github.com/alexheretic/ab-av1/releases) 0.11.7 or newer, on `PATH` ([details](docs/configuration.md#tools)).
+You need [FFmpeg](https://www.gyan.dev/ffmpeg/builds/) (the "full" build, or `winget install Gyan.FFmpeg`) and [ab-av1](https://github.com/alexheretic/ab-av1/releases) 0.12.0 or newer, on `PATH` ([details](docs/configuration.md#tools)).
 
 1. Download `video-optimiser-v<version>-win-x64.zip` from [Releases](https://github.com/badmagick329/videoopt/releases), unzip it, and open PowerShell in that folder.
 

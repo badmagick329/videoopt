@@ -19,7 +19,7 @@ public static class CrfSampleCountCalculator
     }
 
     /// <summary>
-    /// Mirrors ab-av1's own rule (sample_encode.rs, 0.11.7): when the samples would cover at least 85% of the video, or the
+    /// Mirrors ab-av1's own rule (sample_encode.rs, 0.12.0): when the samples would cover at least 85% of the video, or the
     /// sample duration is zero, it encodes the whole video once instead of cutting samples. Progress text must say so, or a
     /// 7-second clip is reported as two 20-second samples.
     /// </summary>

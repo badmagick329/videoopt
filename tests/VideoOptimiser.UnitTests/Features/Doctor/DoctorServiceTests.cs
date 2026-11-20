@@ -303,10 +303,10 @@ public sealed class DoctorServiceTests : IDisposable
         report.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "ImmichApiKeyRejected" && diagnostic.Status == DiagnosticStatus.Fail && diagnostic.Message == "what to fix");
     }
 
-    // The minimum is 0.11.7: one row each side of it, and one for a version that cannot be read.
+    // The minimum is 0.12.0: one row each side of it, and one for a version that cannot be read.
     [Theory]
-    [InlineData("ab-av1 0.11.6", ExitCode.MissingDependency, "AbAv1VersionInsufficient", DiagnosticStatus.Fail, "is too old; minimum required version is 0.11.7. Update it with 'cargo install ab-av1 --version 0.11.7 --locked'")]
-    [InlineData("ab-av1 0.11.7", ExitCode.Success, "AbAv1VersionSufficient", DiagnosticStatus.Pass, null)]
+    [InlineData("ab-av1 0.11.7", ExitCode.MissingDependency, "AbAv1VersionInsufficient", DiagnosticStatus.Fail, "is too old; minimum required version is 0.12.0. Update it with 'cargo install ab-av1 --version 0.12.0 --locked'")]
+    [InlineData("ab-av1 0.12.0", ExitCode.Success, "AbAv1VersionSufficient", DiagnosticStatus.Pass, null)]
     [InlineData("something unexpected", ExitCode.MissingDependency, "AbAv1VersionUnavailable", DiagnosticStatus.Fail, null)]
     public async Task AbAv1VersionIsJudgedAgainstTheMinimum(string versionLine, ExitCode exitCode, string code, DiagnosticStatus status, string? message)
     {
@@ -451,7 +451,7 @@ public sealed class DoctorServiceTests : IDisposable
     private sealed class FakeToolVerifier(bool isAvailable, string? unavailableName = null) : IToolVerifier
     {
         public List<string> VerifiedNames { get; } = [];
-        public string AbAv1VersionLine { get; init; } = "ab-av1 0.11.7";
+        public string AbAv1VersionLine { get; init; } = "ab-av1 0.12.0";
         public string Encoders { get; init; } = " V....D libsvtav1           SVT-AV1(Scalable Video Technology for AV1) encoder (codec av1)";
         public string Filters { get; init; } = " ... libvmaf          VV->V      Calculate the VMAF between two video streams.\n ... bwdif             V->V       Deinterlace the input image.";
         public string PixelFormats { get; init; } = "IO... yuv420p10le          3            10";

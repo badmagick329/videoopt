@@ -72,7 +72,8 @@ public sealed class JobProcessor(
             // Saved with the job's next update, so the notes are there from the first stage on and a new attempt replaces them.
             job.Notes = Notes(AudioPlan.For(media), video);
             var sampleCount = CrfSampleCountCalculator.Calculate(media.DurationSeconds, settings.Quality.CrfSearch.ConfiguredSampleCount);
-            var quality = settings.Quality.WithSampleCount(sampleCount).WithSizeCap(cap).WithVideo(video);
+            // From this run's own probe: the probe cache that discovery reads holds no rotation, so it cannot choose the model.
+            var quality = settings.Quality.WithSampleCount(sampleCount).WithSizeCap(cap).WithVideo(video).WithVmafModel(VmafModels.For(media));
 
             // Planned before anything is staged. The worker is asked about a finished encode only after the sweep, and the
             // finished encode is looked for there, not assumed from the status, so the job is recorded as Downloading only once

@@ -38,11 +38,12 @@ internal sealed class FuncProbe(Func<string, MediaInfo> media) : IMediaProbe
 
 /// <summary>A 1080p h264 original of 120 s at 29.97 fps and the given bitrate, with one audio stream unless <paramref name="audio"/>
 /// lists them; an encoded output (<c>.encoding.mp4</c>) probes as av1. <paramref name="sourceCodec"/> stands in for h264 on the
-/// original, and <paramref name="fieldOrder"/> is ffprobe's field order, none by default.</summary>
-internal sealed class H264Probe(IReadOnlyList<AudioTrack>? audio = null, long? bitrate = 10_000_000, string sourceCodec = "h264", string? fieldOrder = null) : IMediaProbe
+/// original, <paramref name="fieldOrder"/> is ffprobe's field order, none by default, and <paramref name="size"/> and
+/// <paramref name="rotation"/> replace the stored 1920×1080 and the display rotation, none by default.</summary>
+internal sealed class H264Probe(IReadOnlyList<AudioTrack>? audio = null, long? bitrate = 10_000_000, string sourceCodec = "h264", string? fieldOrder = null, (int Width, int Height)? size = null, int? rotation = null) : IMediaProbe
 {
     public Task<MediaInfo> ProbeAsync(string path, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : sourceCodec, 1, audio?.Count ?? 1, 0, 0, 120, new FileInfo(path).Length, 1920, 1080, bitrate, audio, fieldOrder, 30000.0 / 1001));
+        Task.FromResult(new MediaInfo(path.EndsWith(".encoding.mp4", StringComparison.OrdinalIgnoreCase) ? "av1" : sourceCodec, 1, audio?.Count ?? 1, 0, 0, 120, new FileInfo(path).Length, size?.Width ?? 1920, size?.Height ?? 1080, bitrate, audio, fieldOrder, 30000.0 / 1001, rotation));
 }
 
 /// <summary>Chooses CRF 42 at once, with no estimate, and keeps the settings it was given.</summary>

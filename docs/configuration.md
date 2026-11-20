@@ -64,6 +64,8 @@ If Immich cannot be searched, the report still covers your watch folders. `calib
 
 A value outside its range fails `config validate`, and `run` and the other commands that check the config refuse to start. Below about VMAF 80 the AV1 looks visibly worse than the original. The floor of 50 catches a typo such as `9.5` for `95` before it reaches your originals.
 
+VMAF scores come from the v0.6.1 models: `vmaf_4k_v0.6.1` for a video larger than 2560×1440 as it plays (a portrait phone video counts as tall, not wide), and `vmaf_v0.6.1` for anything else. VideoOptimiser names the model itself, on your PC and on a worker, so an FFmpeg update that brings newer models doesn't change the scores your `minimumVmaf` was set against.
+
 ## When a video is not worth converting
 
 Each video gets a size cap, whichever of these is stricter:
@@ -130,8 +132,8 @@ A video counts as interlaced only when its video stream is marked interlaced and
 | Tool | Needed for | Where to get it |
 | --- | --- | --- |
 | FFmpeg and ffprobe | Every setup | The "full" build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), or `winget install Gyan.FFmpeg` |
-| ab-av1 0.11.7 or newer | Encoding on your PC | `cargo install ab-av1 --locked`, or `ab-av1.exe` from its [releases](https://github.com/alexheretic/ab-av1/releases) |
+| ab-av1 0.12.0 or newer | Encoding on your PC | `cargo install ab-av1 --locked`, or `ab-av1.exe` from its [releases](https://github.com/alexheretic/ab-av1/releases) |
 
 To encode on your PC, FFmpeg needs libsvtav1, libvmaf, libdav1d and the bwdif filter; the full builds above have all four. A remote worker installs its own ab-av1 and FFmpeg, so your PC then needs only FFmpeg and ffprobe, with libdav1d for validation.
 
-Put the tools on `PATH`, or set their paths under `tools:` in the config. `doctor` checks them.
+Put the tools on `PATH`, or set their paths under `tools:` in the config. `doctor` checks them, and fails on an ab-av1 older than 0.12.0, on your PC or on a worker.

@@ -7,6 +7,8 @@ namespace VideoOptimiser.Infrastructure.Persistence;
 /// <summary>
 /// ffprobe results keyed by path. <paramref name="mode"/> is <see cref="SqliteOpenMode.ReadOnly"/> for a reader that must
 /// leave the file as it found it (<c>calibrate</c>), paired with an initializer that migrates nothing; stores then fail.
+/// The rows hold only what discovery reads. A run probes the original again (<c>JobProcessor</c>), so the facts
+/// only it needs, such as the display rotation that picks the VMAF model, are never read from a row cached before them.
 /// </summary>
 public sealed class SqliteMediaProbeCache(IDatabaseInitializer databaseInitializer, SqliteOpenMode mode = SqliteOpenMode.ReadWriteCreate) : IMediaProbeCache
 {

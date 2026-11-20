@@ -69,7 +69,7 @@ public sealed partial class ToolVersionPinTests
     [InlineData("VMAF", "3.0.0", "17a67b238ce0539bdeafdc95961abac64fa16ea8")]
     [InlineData("SVT_AV1", "3.1.0", "cc569c1eb16832b7f1a649cac0b3bd1a8e4a814d")]
     [InlineData("FFMPEG", "8.0", "b2751fccb6cc4c77708113cd78b561059b6fa904b24162fa0be2d60273d27b8e")]
-    [InlineData("AB_AV1", "0.11.7", "40c035df608162fcb1c991d1474bc9bc8817e0354ac7aef5be5314d3efd64069")]
+    [InlineData("AB_AV1", "0.12.0", "166eaac62b1dc680279c9962cc789eb9b280480ae33314b9b009044b4c9f9f1d")]
     public void EachBootstrapPinIsTheOneTakenForItsVersion(string name, string version, string pin)
     {
         var bootstrap = ReadScript("bootstrap-remote-worker.sh");

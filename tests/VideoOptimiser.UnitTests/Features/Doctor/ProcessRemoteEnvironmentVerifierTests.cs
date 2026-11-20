@@ -49,8 +49,8 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
 
     [Theory]
     [InlineData("video-optimiser-doctor:ffmpeg_libdav1d=0", "RemoteAv1DecoderUnavailable", "Remote FFmpeg does not expose the required libdav1d software AV1 decoder; AV1 decoding of originals and CRF search cannot run remotely.")]
-    [InlineData("video-optimiser-doctor:ab_av1_version=0.9.3", "RemoteAbAv1VersionInsufficient", "Remote ab-av1 version 0.9.3 is too old; minimum required version is 0.11.7.")]
-    [InlineData("video-optimiser-doctor:ab_av1_version=", "RemoteAbAv1VersionUnavailable", "Remote ab-av1 version could not be determined; minimum required version is 0.11.7.")]
+    [InlineData("video-optimiser-doctor:ab_av1_version=0.11.7", "RemoteAbAv1VersionInsufficient", "Remote ab-av1 version 0.11.7 is too old; minimum required version is 0.12.0.")]
+    [InlineData("video-optimiser-doctor:ab_av1_version=", "RemoteAbAv1VersionUnavailable", "Remote ab-av1 version could not be determined; minimum required version is 0.12.0.")]
     public void ParseProbeOutputFailsWhenTheRemoteDecoderOrAbAv1VersionIsUnusable(string probeLine, string expectedCode, string expectedMessage)
     {
         var key = probeLine[..(probeLine.IndexOf('=', StringComparison.Ordinal) + 1)];
@@ -72,7 +72,7 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
         video-optimiser-doctor:tool_sha256sum=1
         video-optimiser-doctor:tool_time=1
         video-optimiser-doctor:tool_ab_av1=1
-        video-optimiser-doctor:ab_av1_version=0.11.7
+        video-optimiser-doctor:ab_av1_version=0.12.0
         video-optimiser-doctor:tool_ffmpeg=1
         video-optimiser-doctor:tool_ffprobe=1
         video-optimiser-doctor:ffmpeg_libsvtav1=1

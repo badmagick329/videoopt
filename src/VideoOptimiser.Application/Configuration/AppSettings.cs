@@ -235,6 +235,17 @@ public sealed class QualitySettings
         copy.Video = plan;
         return copy;
     }
+
+    /// <summary>The VMAF model the video's search names (<see cref="VmafModels"/>), set on a job's copy only, for the same
+    /// reason as <see cref="SizeCap"/>: the search on this PC and on the worker must score alike.</summary>
+    [YamlIgnore] public string VmafModel { get; private set; } = VmafModels.Standard;
+
+    public QualitySettings WithVmafModel(string model)
+    {
+        var copy = (QualitySettings)MemberwiseClone();
+        copy.VmafModel = model;
+        return copy;
+    }
 }
 
 public static class UnsupportedAudioActions

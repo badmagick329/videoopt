@@ -20,10 +20,13 @@ public sealed class AbAv1CrfSearchClient(string executablePath) : ICrfSearchClie
         "--max-encoded-percent", settings.MaxEncodedPercent.ToString(CultureInfo.InvariantCulture),
         "--min-crf", settings.CrfSearch.MinCrf.ToString(CultureInfo.InvariantCulture),
         "--max-crf", settings.CrfSearch.MaxCrf.ToString(CultureInfo.InvariantCulture),
-        // CRFs are whole numbers throughout (jobs, manifests, encode). ab-av1 0.11 defaults svt-av1 to quarter steps.
+        // CRFs are whole numbers throughout (jobs, manifests, encode). ab-av1 0.12 defaults svt-av1 to quarter steps.
         "--crf-increment", "1",
         "--samples", settings.CrfSearch.SampleCount.ToString(CultureInfo.InvariantCulture),
         "--sample-duration", settings.CrfSearch.SampleDuration,
+        // Named rather than left to ab-av1, whose default model follows whatever libvmaf the machine has (see VmafModels).
+        // Naming one also turns off ab-av1's own 4K switch, which VmafModels.For makes instead.
+        "--vmaf", $"model=version={settings.VmafModel}",
         .. AbAv1VideoPlanArguments.ForSearch(settings.Video),
         // The same frames as the final encode (see AbAv1VideoEncoder), so each sample's VMAF and size predict it.
         "--enc", "fps_mode=passthrough"

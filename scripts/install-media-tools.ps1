@@ -13,9 +13,9 @@ $ProgressPreference = 'SilentlyContinue'
 
 $tools = @(
     @{
-        Name = 'ab-av1-0.11.7'
-        Url = 'https://github.com/alexheretic/ab-av1/releases/download/v0.11.7/ab-av1.exe'
-        Sha256 = 'a3a9534d2adecabc4861acf632d0f64741f56e2050d52032a5307bebb4fbdcc9'
+        Name = 'ab-av1-0.12.0'
+        Url = 'https://github.com/alexheretic/ab-av1/releases/download/v0.12.0/ab-av1.exe'
+        Sha256 = '773c2d9ab21e7cc2ac09d34059c52090ce47b2d31172c51f34bfea579a5cb6e7'
         File = 'ab-av1.exe'
         BinDirectory = '.'
     },

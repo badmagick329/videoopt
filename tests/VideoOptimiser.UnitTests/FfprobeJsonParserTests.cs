@@ -90,6 +90,14 @@ public sealed class FfprobeJsonParserTests
         (media.PrimaryVideoFieldOrder, media.PrimaryVideoFrameRate).Should().Be((fieldOrder, frameRate));
     }
 
+    /// <summary>The rotation is the display matrix entry's, wherever it sits in <c>side_data_list</c>; a stream without one has none.</summary>
+    [Theory]
+    [InlineData("""{ "codec_type": "video", "codec_name": "hevc", "side_data_list": [ { "side_data_type": "Ambient viewing environment" }, { "side_data_type": "Display Matrix", "rotation": -90 } ] }""", -90)]
+    [InlineData("""{ "codec_type": "video", "codec_name": "hevc", "side_data_list": [ { "side_data_type": "Ambient viewing environment" } ] }""", null)]
+    [InlineData("""{ "codec_type": "video", "codec_name": "hevc" }""", null)]
+    public void ParseReadsTheDisplayRotation(string stream, int? rotation) =>
+        FfprobeJsonParser.Parse($$"""{ "streams": [ {{stream}} ] }""").PrimaryVideoRotation.Should().Be(rotation);
+
     [Fact]
     public void ParseRejectsFilesWithOnlyAttachedCoverArt()
     {

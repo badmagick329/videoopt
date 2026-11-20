@@ -1,5 +1,7 @@
 namespace VideoOptimiser.Application.Tools;
 
+/// <param name="PrimaryVideoRotation">The display rotation in degrees from the stream's display matrix (90, -90, 180, 270,
+/// -270), or null when it has none. The width and height are as stored, before that rotation.</param>
 public sealed record MediaInfo(
     string PrimaryVideoCodec,
     int VideoStreamCount,
@@ -13,7 +15,8 @@ public sealed record MediaInfo(
     long? PrimaryVideoBitrate = null,
     IReadOnlyList<AudioTrack>? AudioTracks = null,
     string? PrimaryVideoFieldOrder = null,
-    double? PrimaryVideoFrameRate = null);
+    double? PrimaryVideoFrameRate = null,
+    int? PrimaryVideoRotation = null);
 
 /// <summary>One audio stream, in audio-stream order. <see cref="Tag"/> is the container's codec tag, which names a codec
 /// FFmpeg cannot identify (APAC is <c>apac</c>) when <see cref="Codec"/> is <c>unknown</c>.</summary>

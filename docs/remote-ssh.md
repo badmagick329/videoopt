@@ -12,7 +12,7 @@ The release zip holds `scripts/bootstrap-remote-worker.sh` beside the exe. The e
 
 The bootstrap installs this pinned stack under `/opt/video-optimiser`:
 
-- `ab-av1` 0.11.7
+- `ab-av1` 0.12.0
 - FFmpeg 8.0
 - SVT-AV1 3.1.0
 - libvmaf 3.0.0
