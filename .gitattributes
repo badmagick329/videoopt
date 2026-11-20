@@ -1,3 +1,6 @@
 # cloud-init and the worker run these with bash, which fails on CRLF.
 *.sh text eol=lf
+# C# raw string literals take the file's line endings, and some hold bash scripts sent to the worker (the doctor probe).
+# Without this, a core.autocrlf=true checkout, such as GitHub's Windows runners, builds them with CRLF and bash fails.
+*.cs text eol=lf
 tests/VideoOptimiser.UnitTests/Fixtures/** -text

@@ -10,6 +10,10 @@
 
 - CRF searches take about an eighth less time, and the AV1s come out slightly bigger, by about 1% of the original's size. A search now stops at the first CRF that scores no more than 1 VMAF point above `quality.minimumVmaf`; ab-av1 used to keep trying CRFs that landed closer to it. The new `quality.crfSearch.scoreTolerance` (0 to 5, default `1`) sets that margin, and a lower value searches longer for smaller files. Changing it doesn't make videos skipped as not worth converting get checked again.
 
+### Fixes
+
+- `doctor` in remote mode works with the downloaded release again. The EXE from the release page sent the worker its checks with Windows line endings, and bash stopped with `syntax error: unexpected end of file`, so every remote check failed. Runs were not affected.
+
 ## [0.18.0] - 2026-11-06
 ### Fixes
 

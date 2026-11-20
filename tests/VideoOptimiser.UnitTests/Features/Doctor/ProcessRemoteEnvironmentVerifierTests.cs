@@ -22,6 +22,16 @@ public sealed class ProcessRemoteEnvironmentVerifierTests
         arguments.Should().NotContain(argument => argument.Contains("StrictHostKeyChecking", StringComparison.OrdinalIgnoreCase));
     }
 
+    // The probe is a raw string literal, so it takes this source file's line endings. A CRLF checkout (Windows runners use
+    // core.autocrlf=true) once shipped it with CRs that bash rejected as a syntax error; .gitattributes pins *.cs to LF.
+    [Fact]
+    public void TheProbeScriptReachesBashWithoutCarriageReturns()
+    {
+        var arguments = ProcessRemoteEnvironmentVerifier.BuildArguments(new RemoteSshSettings { Host = "video-worker" });
+
+        arguments[^1].Should().NotContain("\r");
+    }
+
     [Fact]
     public void ParseProbeOutputReportsMissingFeaturesAndInsufficientResources()
     {
