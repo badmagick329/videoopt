@@ -61,11 +61,13 @@ If Immich cannot be searched, the report still covers your watch folders. `calib
 | `quality.preset` | `6` | -1 to 13. Lower is slower and usually gives smaller files. |
 | `quality.crfSearch.minCrf` | `8` | 1 to 63, and no higher than `maxCrf` |
 | `quality.crfSearch.maxCrf` | `50` | 1 to 63 |
-| `quality.crfSearch.scoreTolerance` | `1` | 0 to 5. Decimals are allowed. |
+| `quality.crfSearch.scoreTolerance` | `0.5` | 0 to 5. Decimals are allowed. |
 
 A value outside its range fails `config validate`, and `run` and the other commands that check the config refuse to start. Below about VMAF 80 the AV1 looks visibly worse than the original. The floor of 50 catches a typo such as `9.5` for `95` before it reaches your originals.
 
-`scoreTolerance` decides when a CRF search can stop: at the first CRF that meets `minimumVmaf` by no more than this many points. With a target of 97 and the default of 1, a CRF scoring 97.8 ends the search. Replaying 186 real searches, 1 made searches about 13% shorter than ab-av1's own default and the AV1s about 1% of the original's size bigger. A lower value searches longer for smaller files, and 0 is the most thorough; below about 0.75, searches take longer than ab-av1's default.
+`scoreTolerance` decides when a CRF search can stop: at the first CRF that meets `minimumVmaf` by no more than this many points. With a target of 97 and the default of 0.5, a CRF scoring 97.4 ends the search and one scoring 97.8 doesn't. In a replay of 186 real searches, 0.5 took the same time and gave the same sizes as ab-av1's own default.
+
+For remote runs, where you pay for the worker's time, set it to `1`: searches took about 13% less time, and the AV1s came out about 1% of the original's size bigger. Going lower than 0.5 doesn't help: at 0 searches took at least 22% longer and the files came out no smaller.
 
 VMAF scores come from the v0.6.1 models: `vmaf_4k_v0.6.1` for a video larger than 2560×1440 as it plays (a portrait phone video counts as tall, not wide), and `vmaf_v0.6.1` for anything else. VideoOptimiser names the model itself, on your PC and on a worker, so an FFmpeg update that brings newer models doesn't change the scores your `minimumVmaf` was set against.
 

@@ -8,7 +8,7 @@
 
 ### Converting
 
-- CRF searches take about an eighth less time, and the AV1s come out slightly bigger, by about 1% of the original's size. A search now stops at the first CRF that scores no more than 1 VMAF point above `quality.minimumVmaf`; ab-av1 used to keep trying CRFs that landed closer to it. The new `quality.crfSearch.scoreTolerance` (0 to 5, default `1`) sets that margin, and a lower value searches longer for smaller files. Changing it doesn't make videos skipped as not worth converting get checked again.
+- The new `quality.crfSearch.scoreTolerance` (0 to 5, default `0.5`) sets when a CRF search can stop: at the first CRF that scores no more than that many VMAF points above `quality.minimumVmaf`. The default takes about the same time and gives about the same sizes as before. For remote runs, `1` makes searches about an eighth shorter, which cuts what you pay for the worker, and the AV1s come out about 1% of the original's size bigger. Changing it doesn't make videos skipped as not worth converting get checked again.
 
 ### Fixes
 

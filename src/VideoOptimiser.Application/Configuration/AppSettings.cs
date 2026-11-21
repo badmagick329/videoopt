@@ -259,8 +259,12 @@ public sealed class CrfSearchSettings
 {
     [YamlMember(Alias = "minCrf")] public int MinCrf { get; set; } = 8;
     [YamlMember(Alias = "maxCrf")] public int MaxCrf { get; set; } = 50;
-    /// <summary>How many VMAF points above <c>minimumVmaf</c> a passing CRF may score and still end the search (VOPT-201).</summary>
-    [YamlMember(Alias = "scoreTolerance")] public double ScoreTolerance { get; set; } = 1;
+    /// <summary>
+    /// How many VMAF points above <c>minimumVmaf</c> a passing CRF may score and still end the search (VOPT-201). The default
+    /// of 0.5 matched ab-av1's own growing tolerance in the 186-search replay (same search time, same size), so upgraders see
+    /// no change; 1 suits a paid worker, where search time is money. Below 0.5 searches get longer without finding smaller files.
+    /// </summary>
+    [YamlMember(Alias = "scoreTolerance")] public double ScoreTolerance { get; set; } = 0.5;
     /// <summary>The count the user set, used for every video; null lets each video's duration pick it (VOPT-159).</summary>
     [YamlMember(Alias = "sampleCount")] public int? ConfiguredSampleCount { get; set; }
     [YamlMember(Alias = "sampleDuration")] public string SampleDuration { get; set; } = "20s";

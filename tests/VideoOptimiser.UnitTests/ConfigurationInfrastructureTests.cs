@@ -169,9 +169,9 @@ public sealed class ConfigurationInfrastructureTests : IDisposable
     }
 
     [Theory]
-    [InlineData("", 1)]
+    [InlineData("", 0.5)]
     [InlineData("scoreTolerance: 0.75", 0.75)]
-    public async Task LoadAsyncDefaultsAnAbsentScoreToleranceToOne(string line, double expected)
+    public async Task LoadAsyncDefaultsAnAbsentScoreToleranceToHalf(string line, double expected)
     {
         var loaded = await LoadAsync($"""
             version: 1

@@ -248,6 +248,8 @@ For an initial test with an empty queue, queue only one eligible video:
 
 `--first` limits only newly found videos; it does not remove existing queued jobs. An empty `run` does not create a worker. With work to do and no worker running, `run` shows the price and asks `Create the worker? [y/N]` first; see [How the worker is chosen](#how-the-worker-is-chosen). Before that it prints where it will encode, such as `Encoding on a new Hetzner worker created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.`
 
+The worker bills by the hour, and the CRF search takes about half of each video's time on it. Setting `quality.crfSearch.scoreTolerance: 1` (the default is `0.5`) makes searches about 13% shorter, and the AV1s about 1% of the original's size bigger. See [configuration.md](configuration.md#quality-settings).
+
 ### How a run ends
 
 When a run finishes, failed videos included, `deleteAfterRun: true` deletes the worker if the run used it, after outputs have been downloaded, checksum-verified, and validated locally, and confirms that the separately billable IPv4 address was also deleted. With `false` the run ends with `The worker <name> stays up, billed hourly, until it is deleted.` and `To delete it: video-optimiser worker delete`. The same ending applies to a run that never used a worker kept from an earlier run, and to a run that ends with an error once the worker exists, unless the worker never got ready (see below). The original videos stay untouched, ready to finalise.

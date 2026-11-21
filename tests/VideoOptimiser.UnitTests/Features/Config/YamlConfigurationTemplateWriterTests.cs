@@ -43,8 +43,8 @@ public sealed class YamlConfigurationTemplateWriterTests : IDisposable
         loaded.Settings.Processing.RemoteSsh.Hetzner.ServerTypes.Should().Equal("cx43", "cx53", "cpx42", "ccx33");
         loaded.Settings.Processing.RemoteSsh.Hetzner.MaxHourlyPrice.Should().Be(0.30m);
         loaded.Settings.Quality.MaxEncodedPercent.Should().Be(80);
-        loaded.Settings.Quality.CrfSearch.ScoreTolerance.Should().Be(1);
-        lines.Should().Contain("    scoreTolerance: 1");
+        loaded.Settings.Quality.CrfSearch.ScoreTolerance.Should().Be(0.5);
+        lines.Should().Contain("    scoreTolerance: 0.5");
         lines.Should().ContainInConsecutiveOrder("quality:", comment, "  # Minimum visual quality target used by CRF search.", $"  minimumVmaf: {vmaf}");
     }
 

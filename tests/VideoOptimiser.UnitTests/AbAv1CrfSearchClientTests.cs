@@ -25,7 +25,7 @@ public sealed class AbAv1CrfSearchClientTests
 
         arguments.Should().Equal(
             "crf-search", "--input", "C:\\video.mp4", "--encoder", "libsvtav1", "--pix-format", "yuv420p10le",
-            "--preset", "6", "--min-vmaf", "95", "--max-encoded-percent", "80", "--min-crf", "18", "--max-crf", "50", "--crf-increment", "1", "--score-tolerance", "1", "--samples", "5", "--sample-duration", "20s",
+            "--preset", "6", "--min-vmaf", "95", "--max-encoded-percent", "80", "--min-crf", "18", "--max-crf", "50", "--crf-increment", "1", "--score-tolerance", "0.5", "--samples", "5", "--sample-duration", "20s",
             "--vmaf", "model=version=vmaf_v0.6.1", "--enc", "fps_mode=passthrough");
     }
 
