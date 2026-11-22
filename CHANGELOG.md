@@ -13,6 +13,7 @@
 ### Fixes
 
 - `doctor` in remote mode works with the downloaded release again. The EXE from the release page sent the worker its checks with Windows line endings, and bash stopped with `syntax error: unexpected end of file`, so every remote check failed. Runs were not affected.
+- A remote run can now upload a video whose folder or file name has a character outside plain ASCII, such as `’` or `中`. The upload used to fail with `SFTP transfer failed: stat ...: No such file or directory`, because sftp was handed the name in the wrong text encoding. The video failed and its original stayed as it was.
 
 ## [0.18.0] - 2026-11-06
 ### Fixes

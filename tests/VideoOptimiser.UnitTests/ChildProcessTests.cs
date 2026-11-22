@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using FluentAssertions;
 using VideoOptimiser.Infrastructure.Tools;
 
@@ -6,7 +7,8 @@ namespace VideoOptimiser.UnitTests;
 
 /// <summary>
 /// Real children, Windows-only like the tools: <c>ping</c> runs for 30 seconds and never reads its input, so it stands in
-/// for a tool that is still busy; <c>cmd /c for</c> prints more lines than a pipe holds. The timeouts only stop a regression
+/// for a tool that is still busy; <c>cmd /c for</c> prints more lines than a pipe holds; <c>powershell</c> and <c>findstr</c>
+/// show the bytes crossing the pipes. The timeouts only stop a regression
 /// from hanging the suite; a passing test finishes long before them.
 /// </summary>
 public sealed class ChildProcessTests
@@ -54,6 +56,32 @@ public sealed class ChildProcessTests
 
         await run.Should().ThrowAsync<OperationCanceledException>();
         using (child) child!.HasExited.Should().BeTrue();
+    }
+
+    // ’ is byte 0x92 in code page 1252 and 中 is outside it, so neither survives a pipe that isn't UTF-8 (VOPT-204).
+    private const string NonAsciiName = "You’re 中";
+
+    [Fact]
+    public async Task StandardInputReachesTheChildAsUtf8WithoutABom()
+    {
+        // The child prints the bytes it read as hex, so what it saw doesn't depend on how its output is decoded.
+        var request = new ExternalProcessRequest("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+            "$m = New-Object IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($m); [BitConverter]::ToString($m.ToArray())"], NonAsciiName);
+
+        var result = await ChildProcess.RunAsync(request).WaitAsync(Guard);
+
+        result.StandardOutput.Trim().Replace("-", "").Should().Be(Convert.ToHexString(Encoding.UTF8.GetBytes(NonAsciiName)));
+    }
+
+    [Fact]
+    public async Task UnicodeTheChildWritesComesBackUnchanged()
+    {
+        // findstr copies matching lines byte for byte; with the input proven UTF-8 above, this pins how the output is decoded.
+        var request = new ExternalProcessRequest("findstr.exe", ["^"], NonAsciiName + "\n");
+
+        var result = await ChildProcess.RunAsync(request).WaitAsync(Guard);
+
+        result.StandardOutput.TrimEnd().Should().Be(NonAsciiName);
     }
 
     private sealed class CallbackFailed : Exception;

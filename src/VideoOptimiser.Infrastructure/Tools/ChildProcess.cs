@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
+using System.Text;
 
 namespace VideoOptimiser.Infrastructure.Tools;
 
@@ -9,6 +10,7 @@ namespace VideoOptimiser.Infrastructure.Tools;
 /// <list type="bullet">
 /// <item>Arguments go through <see cref="ProcessStartInfo.ArgumentList"/>, never a joined string, so a path with spaces or
 /// quotes reaches the tool as one argument.</item>
+/// <item>All three pipes are UTF-8 without a BOM, so a non-ASCII path in an sftp batch or in ffprobe's output survives.</item>
 /// <item>Standard input is written inside the guard: a cancel or a broken pipe mid-write kills the child instead of leaving
 /// ssh running with half its script.</item>
 /// <item>Any failure while the child runs, cancellation included, kills its whole tree, waits briefly for it to exit, and
@@ -22,6 +24,11 @@ internal static class ChildProcess
 {
     // Long enough for a killed tree to go, short enough that a cancel is never held up by a child that ignores the kill.
     private static readonly TimeSpan ExitWaitAfterKill = TimeSpan.FromSeconds(2);
+
+    // Every tool here reads and writes UTF-8, while .NET would default to the console's code page (1252 or 437 on most
+    // Windows machines). A path with ’ in an sftp batch reached sftp as byte 0x92 and the upload could not find the file
+    // (VOPT-204). No BOM: sftp would read it as part of the first command.
+    private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
 
     /// <summary>Runs to exit and returns both outputs verbatim (line endings included).</summary>
     public static Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken = default) =>
@@ -60,12 +67,16 @@ internal static class ChildProcess
 
     private static Process Start(ExternalProcessRequest request, Action<int>? onStarted)
     {
+        var redirectInput = request.StandardInput is not null;
         var startInfo = new ProcessStartInfo
         {
             FileName = request.FileName,
-            RedirectStandardInput = request.StandardInput is not null,
+            RedirectStandardInput = redirectInput,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardInputEncoding = redirectInput ? Utf8 : null,
+            StandardOutputEncoding = Utf8,
+            StandardErrorEncoding = Utf8,
             UseShellExecute = false,
             CreateNoWindow = true
         };
