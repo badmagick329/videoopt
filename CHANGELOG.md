@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.19.0] - 2026-11-22
 ### Tools
 
 - VideoOptimiser now needs ab-av1 0.12.0 or newer. Update yours before your next run on this PC; `doctor` tells you if it's too old. Videos get the same quality scores as before, so your `minimumVmaf` needs no change.
