@@ -35,8 +35,9 @@ public static partial class AbAv1Output
     }
 
     /// <summary>The last <c>Error:</c> line without its prefix, or null when the log has none.</summary>
+    // ab-av1's own failures print "Error:"; its argument parser prints "error:" (an older ab-av1 given a newer flag).
     public static string? LastErrorLine(string log) => Lines(log)
-        .Where(line => line.StartsWith("Error:", StringComparison.Ordinal))
+        .Where(line => line.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
         .Select(line => line["Error:".Length..].Trim())
         .LastOrDefault(line => line.Length > 0);
 

@@ -108,6 +108,8 @@ public sealed class AbAv1CrfSearchClientTests
 
     [Theory]
     [InlineData("[2026-10-13T10:55:18Z INFO  ab_av1::command::crf_search] encoding sample 1/5\nError: ffmpeg encode: Invalid data found when processing input\n", "ab-av1 crf-search failed with exit code 1: ffmpeg encode: Invalid data found when processing input")]
+    // ab-av1 0.11.7 refusing a flag it doesn't know: its argument parser writes a lowercase error: line, then a hint.
+    [InlineData("error: unexpected argument '--score-tolerance' found\n\nUsage: ab-av1.exe crf-search --input <INPUT> --min-vmaf <MIN_VMAF>\n\nFor more information, try '--help'.\n", "*: unexpected argument '--score-tolerance' found")]
     [InlineData("first line\nsecond line\n", "*: second line")]
     public async Task SearchReportsTheErrorLineOrElseTheLastLineForOtherFailures(string stderr, string message) =>
         await FluentActions.Awaiting(() => SearchFailingWithAsync(stderr, new QualitySettings()))
