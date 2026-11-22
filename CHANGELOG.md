@@ -3,12 +3,14 @@
 ## [Unreleased]
 ### Tools
 
-- VideoOptimiser now needs ab-av1 0.12.0 or newer, and `doctor` fails on an older one, on your PC or on a worker. A new Hetzner worker installs 0.12.0. A worker created before this change keeps 0.11.7: delete it with `worker delete` and the next run creates a new one.
-- Every CRF search now names its VMAF model, the one ab-av1 0.11.7 picked by itself: `vmaf_4k_v0.6.1` for a video larger than 2560×1440 as it plays, and `vmaf_v0.6.1` for anything else, so scores don't change. Left to choose, ab-av1 0.12.0 switches to its newer v1.0.16 models once an FFmpeg update brings them, and the same `minimumVmaf` would then judge videos differently.
+- VideoOptimiser now needs ab-av1 0.12.0 or newer. Update yours before your next run on this PC; `doctor` tells you if it's too old. Videos get the same quality scores as before, so your `minimumVmaf` needs no change.
+- If you kept a Hetzner worker running, delete it with `worker delete`. The next run creates a new one with the new ab-av1.
 
 ### Converting
 
-- The new `quality.crfSearch.scoreTolerance` (0 to 5, default `0.5`) sets when a CRF search can stop: at the first CRF that scores no more than that many VMAF points above `quality.minimumVmaf`. The default takes about the same time and gives about the same sizes as before. For remote runs, `1` makes searches about an eighth shorter, which cuts what you pay for the worker, and the AV1s come out about 1% of the original's size bigger. Changing it doesn't make videos skipped as not worth converting get checked again.
+- New setting `quality.crfSearch.scoreTolerance` (0 to 5, default `0.5`). A CRF search stops at the first CRF that scores no more than this many VMAF points above `quality.minimumVmaf`. A higher value ends searches sooner, and the AV1 can come out a little bigger than the smallest one that would pass. If you pay for a remote worker's time, try `1`.
+
+  Videos already skipped as not worth converting stay skipped when you change this setting.
 
 ### Fixes
 

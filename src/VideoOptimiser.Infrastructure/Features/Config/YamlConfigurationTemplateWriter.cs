@@ -151,9 +151,8 @@ quality:
     # Inclusive CRF search range.
     minCrf: 8
     maxCrf: 50
-    # How far above minimumVmaf a CRF may score and still end the search. Higher searches faster for slightly
-    # bigger files. For remote runs, where you pay for the worker's time, 1 makes searches about 13% shorter
-    # for AV1s about 1% of the original's size bigger. Below 0.5 searches take longer without saving space.
+    # How far above minimumVmaf a CRF may score and still end the search. Higher ends searches sooner, and the
+    # AV1 can come out a little bigger. If you pay for a remote worker's time, try 1.
     scoreTolerance: 0.5
     # Samples per search, for every video. Absent means one per two minutes of video, 2 to 12.
     # sampleCount: 5

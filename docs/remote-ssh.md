@@ -248,7 +248,7 @@ For an initial test with an empty queue, queue only one eligible video:
 
 `--first` limits only newly found videos; it does not remove existing queued jobs. An empty `run` does not create a worker. With work to do and no worker running, `run` shows the price and asks `Create the worker? [y/N]` first; see [How the worker is chosen](#how-the-worker-is-chosen). Before that it prints where it will encode, such as `Encoding on a new Hetzner worker created for this run, billed hourly, trying cx43, cx53, cpx42, ccx33 at up to EUR 0.30/h.`
 
-The worker bills by the hour, and the CRF search takes about half of each video's time on it. Setting `quality.crfSearch.scoreTolerance: 1` (the default is `0.5`) makes searches about 13% shorter, and the AV1s about 1% of the original's size bigger. See [configuration.md](configuration.md#quality-settings).
+The worker bills by the hour, and the CRF search is a large part of each video's time on it. Setting `quality.crfSearch.scoreTolerance: 1` (the default is `0.5`) ends searches sooner, and the AV1s can come out a little bigger. See [configuration.md](configuration.md#quality-settings).
 
 ### How a run ends
 
