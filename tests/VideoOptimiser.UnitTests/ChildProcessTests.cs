@@ -14,6 +14,9 @@ namespace VideoOptimiser.UnitTests;
 public sealed class ChildProcessTests
 {
     private static readonly TimeSpan Guard = TimeSpan.FromSeconds(10);
+    // Windows PowerShell can take over 10 seconds to start on a busy CI runner (both v0.19.0 CI runs timed out). The ping
+    // tests keep the short guard, which must stay under ping's 30 seconds to catch a child left running.
+    private static readonly TimeSpan PowerShellGuard = TimeSpan.FromSeconds(60);
     private static readonly ExternalProcessRequest LongPing = new("ping.exe", ["-n", "30", "127.0.0.1"]);
 
     [Fact]
@@ -68,7 +71,7 @@ public sealed class ChildProcessTests
         var request = new ExternalProcessRequest("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
             "$m = New-Object IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($m); [BitConverter]::ToString($m.ToArray())"], NonAsciiName);
 
-        var result = await ChildProcess.RunAsync(request).WaitAsync(Guard);
+        var result = await ChildProcess.RunAsync(request).WaitAsync(PowerShellGuard);
 
         result.StandardOutput.Trim().Replace("-", "").Should().Be(Convert.ToHexString(Encoding.UTF8.GetBytes(NonAsciiName)));
     }
